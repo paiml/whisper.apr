@@ -37,6 +37,10 @@ pub enum WhisperError {
     #[cfg(feature = "wasm")]
     #[error("wasm error: {0}")]
     Wasm(String),
+
+    /// Speaker diarization error
+    #[error("diarization error: {0}")]
+    Diarization(String),
 }
 
 #[cfg(test)]
@@ -56,11 +60,19 @@ mod tests {
         let format_err = WhisperError::Format("test".into());
         let tokenizer_err = WhisperError::Tokenizer("test".into());
         let inference_err = WhisperError::Inference("test".into());
+        let diarization_err = WhisperError::Diarization("test".into());
 
         assert!(matches!(audio_err, WhisperError::Audio(_)));
         assert!(matches!(model_err, WhisperError::Model(_)));
         assert!(matches!(format_err, WhisperError::Format(_)));
         assert!(matches!(tokenizer_err, WhisperError::Tokenizer(_)));
         assert!(matches!(inference_err, WhisperError::Inference(_)));
+        assert!(matches!(diarization_err, WhisperError::Diarization(_)));
+    }
+
+    #[test]
+    fn test_diarization_error_display() {
+        let err = WhisperError::Diarization("speaker identification failed".into());
+        assert_eq!(err.to_string(), "diarization error: speaker identification failed");
     }
 }
