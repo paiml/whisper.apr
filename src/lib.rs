@@ -1029,6 +1029,332 @@ impl WhisperApr {
             total_duration_secs,
         })
     }
+
+    // =========================================================================
+    // VAD-Triggered Transcription (WAPR-093)
+    // =========================================================================
+
+    /// Transcribe audio using VAD to detect and transcribe only speech segments
+    ///
+    /// This method uses Voice Activity Detection to:
+    /// 1. Detect speech segments in the audio
+    /// 2. Transcribe only the detected speech (skipping silence)
+    /// 3. Combine results with accurate timestamps
+    ///
+    /// # Arguments
+    /// * `audio` - Audio samples (mono, 16kHz, f32 normalized to [-1, 1])
+    /// * `options` - Transcription options
+    /// * `vad_config` - Optional VAD configuration (uses default if None)
+    ///
+    /// # Returns
+    /// VAD transcription result with speech segments and timestamps
+    ///
+    /// # Errors
+    /// Returns error if transcription fails
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use whisper_apr::{WhisperApr, TranscribeOptions};
+    ///
+    /// let whisper = WhisperApr::tiny();
+    /// let result = whisper.transcribe_with_vad(&audio, TranscribeOptions::default(), None)?;
+    ///
+    /// for segment in &result.segments {
+    ///     println!("[{:.2}s - {:.2}s] {}", segment.start, segment.end, segment.text);
+    /// }
+    /// ```
+    pub fn transcribe_with_vad(
+        &self,
+        audio: &[f32],
+        options: TranscribeOptions,
+        vad_config: Option<vad::VadConfig>,
+    ) -> WhisperResult<VadTranscriptionResult> {
+        let start_time = std::time::Instant::now();
+
+        // Create VAD detector
+        let config = vad_config.unwrap_or_default();
+        let mut vad = vad::VoiceActivityDetector::new(config);
+
+        // Detect speech segments
+        let speech_segments = vad.detect(audio);
+
+        if speech_segments.is_empty() {
+            return Ok(VadTranscriptionResult {
+                text: String::new(),
+                language: options.language.clone().unwrap_or_else(|| "en".to_string()),
+                segments: Vec::new(),
+                speech_segments: Vec::new(),
+                total_duration_secs: start_time.elapsed().as_secs_f32(),
+                speech_duration_secs: 0.0,
+            });
+        }
+
+        // Extract speech audio segments
+        let sample_rate = audio::SAMPLE_RATE as f32;
+        let mut speech_audios = Vec::with_capacity(speech_segments.len());
+        let mut speech_duration = 0.0f32;
+
+        for segment in &speech_segments {
+            let start_sample = (segment.start * sample_rate) as usize;
+            let end_sample = ((segment.end * sample_rate) as usize).min(audio.len());
+
+            if end_sample > start_sample {
+                speech_audios.push((
+                    segment.start,
+                    segment.end,
+                    audio[start_sample..end_sample].to_vec(),
+                ));
+                speech_duration += segment.duration();
+            }
+        }
+
+        // Transcribe each speech segment
+        let mut all_segments = Vec::new();
+        let mut full_text = String::new();
+        let language = options.language.clone().unwrap_or_else(|| "en".to_string());
+
+        for (seg_start, seg_end, speech_audio) in &speech_audios {
+            // Transcribe this segment
+            let result = self.transcribe(speech_audio, options.clone())?;
+
+            // Create segment with corrected timestamps
+            let segment = VadSpeechSegment {
+                start: *seg_start,
+                end: *seg_end,
+                text: result.text.clone(),
+                tokens: result
+                    .segments
+                    .first()
+                    .map(|s| s.tokens.clone())
+                    .unwrap_or_default(),
+            };
+
+            if !full_text.is_empty() {
+                full_text.push(' ');
+            }
+            full_text.push_str(&result.text);
+
+            all_segments.push(segment);
+        }
+
+        let total_duration_secs = start_time.elapsed().as_secs_f32();
+
+        Ok(VadTranscriptionResult {
+            text: full_text,
+            language,
+            segments: all_segments,
+            speech_segments: speech_segments
+                .into_iter()
+                .map(|s| (s.start, s.end))
+                .collect(),
+            total_duration_secs,
+            speech_duration_secs: speech_duration,
+        })
+    }
+
+    /// Transcribe audio with custom silence detector configuration
+    ///
+    /// Similar to `transcribe_with_vad` but uses silence detection for
+    /// segmenting audio based on silence gaps.
+    ///
+    /// # Arguments
+    /// * `audio` - Audio samples (mono, 16kHz, f32 normalized to [-1, 1])
+    /// * `options` - Transcription options
+    /// * `silence_config` - Optional silence detection configuration
+    ///
+    /// # Returns
+    /// VAD transcription result
+    ///
+    /// # Errors
+    /// Returns error if transcription fails
+    pub fn transcribe_with_silence_detection(
+        &self,
+        audio: &[f32],
+        options: TranscribeOptions,
+        silence_config: Option<vad::SilenceConfig>,
+    ) -> WhisperResult<VadTranscriptionResult> {
+        let start_time = std::time::Instant::now();
+
+        // Create silence detector
+        let config = silence_config.unwrap_or_default();
+        let mut detector = vad::SilenceDetector::new(config.clone(), audio::SAMPLE_RATE);
+
+        // Detect silence segments
+        let frame_size = 480; // 30ms at 16kHz
+        let silence_segments = detector.detect(audio, frame_size);
+
+        // Convert silence segments to speech segments (invert)
+        let speech_segments = self.invert_silence_segments(&silence_segments, audio.len());
+
+        if speech_segments.is_empty() {
+            return Ok(VadTranscriptionResult {
+                text: String::new(),
+                language: options.language.clone().unwrap_or_else(|| "en".to_string()),
+                segments: Vec::new(),
+                speech_segments: Vec::new(),
+                total_duration_secs: start_time.elapsed().as_secs_f32(),
+                speech_duration_secs: 0.0,
+            });
+        }
+
+        // Extract and transcribe speech segments
+        let sample_rate = audio::SAMPLE_RATE as f32;
+        let mut all_segments = Vec::new();
+        let mut full_text = String::new();
+        let mut speech_duration = 0.0f32;
+        let language = options.language.clone().unwrap_or_else(|| "en".to_string());
+
+        for (start, end) in &speech_segments {
+            let start_sample = (start * sample_rate) as usize;
+            let end_sample = ((end * sample_rate) as usize).min(audio.len());
+
+            if end_sample > start_sample {
+                let speech_audio = &audio[start_sample..end_sample];
+                let result = self.transcribe(speech_audio, options.clone())?;
+
+                let segment = VadSpeechSegment {
+                    start: *start,
+                    end: *end,
+                    text: result.text.clone(),
+                    tokens: result
+                        .segments
+                        .first()
+                        .map(|s| s.tokens.clone())
+                        .unwrap_or_default(),
+                };
+
+                if !full_text.is_empty() {
+                    full_text.push(' ');
+                }
+                full_text.push_str(&result.text);
+
+                speech_duration += end - start;
+                all_segments.push(segment);
+            }
+        }
+
+        let total_duration_secs = start_time.elapsed().as_secs_f32();
+
+        Ok(VadTranscriptionResult {
+            text: full_text,
+            language,
+            segments: all_segments,
+            speech_segments,
+            total_duration_secs,
+            speech_duration_secs: speech_duration,
+        })
+    }
+
+    /// Invert silence segments to get speech segments
+    fn invert_silence_segments(
+        &self,
+        silence_segments: &[vad::SilenceSegment],
+        audio_len: usize,
+    ) -> Vec<(f32, f32)> {
+        let sample_rate = audio::SAMPLE_RATE as f32;
+        let total_duration = audio_len as f32 / sample_rate;
+        let mut speech_segments = Vec::new();
+        let mut current_pos = 0.0f32;
+
+        for silence in silence_segments {
+            if silence.start > current_pos {
+                speech_segments.push((current_pos, silence.start));
+            }
+            current_pos = silence.end;
+        }
+
+        // Add final speech segment if there's audio after last silence
+        if current_pos < total_duration {
+            speech_segments.push((current_pos, total_duration));
+        }
+
+        speech_segments
+    }
+}
+
+/// Result of VAD-triggered transcription (WAPR-093)
+#[derive(Debug, Clone)]
+pub struct VadTranscriptionResult {
+    /// Full transcribed text (concatenated from all speech segments)
+    pub text: String,
+    /// Detected or specified language
+    pub language: String,
+    /// Transcribed speech segments with timestamps
+    pub segments: Vec<VadSpeechSegment>,
+    /// Raw speech segment timestamps (start, end) in seconds
+    pub speech_segments: Vec<(f32, f32)>,
+    /// Total processing time in seconds
+    pub total_duration_secs: f32,
+    /// Total speech duration in seconds (excludes silence)
+    pub speech_duration_secs: f32,
+}
+
+impl VadTranscriptionResult {
+    /// Get number of speech segments
+    #[must_use]
+    pub fn num_segments(&self) -> usize {
+        self.segments.len()
+    }
+
+    /// Check if any speech was detected
+    #[must_use]
+    pub fn has_speech(&self) -> bool {
+        !self.segments.is_empty()
+    }
+
+    /// Get silence ratio (0.0 = all speech, 1.0 = all silence)
+    #[must_use]
+    pub fn silence_ratio(&self, audio_duration: f32) -> f32 {
+        if audio_duration <= 0.0 {
+            return 1.0;
+        }
+        1.0 - (self.speech_duration_secs / audio_duration)
+    }
+
+    /// Get the first segment (if any)
+    #[must_use]
+    pub fn first_segment(&self) -> Option<&VadSpeechSegment> {
+        self.segments.first()
+    }
+
+    /// Get the last segment (if any)
+    #[must_use]
+    pub fn last_segment(&self) -> Option<&VadSpeechSegment> {
+        self.segments.last()
+    }
+
+    /// Iterate over segments
+    pub fn iter(&self) -> impl Iterator<Item = &VadSpeechSegment> {
+        self.segments.iter()
+    }
+}
+
+/// A speech segment detected by VAD (WAPR-093)
+#[derive(Debug, Clone)]
+pub struct VadSpeechSegment {
+    /// Start time in seconds
+    pub start: f32,
+    /// End time in seconds
+    pub end: f32,
+    /// Transcribed text for this segment
+    pub text: String,
+    /// Token IDs for this segment
+    pub tokens: Vec<u32>,
+}
+
+impl VadSpeechSegment {
+    /// Get duration of this segment
+    #[must_use]
+    pub fn duration(&self) -> f32 {
+        self.end - self.start
+    }
+
+    /// Check if segment has text
+    #[must_use]
+    pub fn has_text(&self) -> bool {
+        !self.text.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -1437,6 +1763,232 @@ mod tests {
         assert!(config.energy_threshold > 0.0);
         assert!(config.zcr_threshold > 0.0);
         assert!(config.min_speech_frames > 0);
+    }
+
+    // =========================================================================
+    // VAD-Triggered Transcription Tests (WAPR-093)
+    // =========================================================================
+
+    #[test]
+    fn test_vad_transcription_result_new() {
+        let result = VadTranscriptionResult {
+            text: "hello world".to_string(),
+            language: "en".to_string(),
+            segments: vec![],
+            speech_segments: vec![],
+            total_duration_secs: 1.0,
+            speech_duration_secs: 0.5,
+        };
+
+        assert_eq!(result.text, "hello world");
+        assert_eq!(result.language, "en");
+        assert!(!result.has_speech());
+        assert_eq!(result.num_segments(), 0);
+    }
+
+    #[test]
+    fn test_vad_transcription_result_with_segments() {
+        let result = VadTranscriptionResult {
+            text: "hello world".to_string(),
+            language: "en".to_string(),
+            segments: vec![
+                VadSpeechSegment {
+                    start: 0.0,
+                    end: 1.0,
+                    text: "hello".to_string(),
+                    tokens: vec![1, 2],
+                },
+                VadSpeechSegment {
+                    start: 1.5,
+                    end: 2.5,
+                    text: "world".to_string(),
+                    tokens: vec![3, 4],
+                },
+            ],
+            speech_segments: vec![(0.0, 1.0), (1.5, 2.5)],
+            total_duration_secs: 3.0,
+            speech_duration_secs: 2.0,
+        };
+
+        assert!(result.has_speech());
+        assert_eq!(result.num_segments(), 2);
+        assert!(result.first_segment().is_some());
+        assert!(result.last_segment().is_some());
+        assert_eq!(result.first_segment().map(|s| &s.text), Some(&"hello".to_string()));
+        assert_eq!(result.last_segment().map(|s| &s.text), Some(&"world".to_string()));
+    }
+
+    #[test]
+    fn test_vad_transcription_result_silence_ratio() {
+        let result = VadTranscriptionResult {
+            text: String::new(),
+            language: "en".to_string(),
+            segments: vec![],
+            speech_segments: vec![],
+            total_duration_secs: 1.0,
+            speech_duration_secs: 0.5,
+        };
+
+        let ratio = result.silence_ratio(2.0);
+        assert!((ratio - 0.75).abs() < 0.01); // 0.5 speech in 2.0 total = 0.75 silence
+    }
+
+    #[test]
+    fn test_vad_transcription_result_silence_ratio_zero_duration() {
+        let result = VadTranscriptionResult {
+            text: String::new(),
+            language: "en".to_string(),
+            segments: vec![],
+            speech_segments: vec![],
+            total_duration_secs: 0.0,
+            speech_duration_secs: 0.0,
+        };
+
+        let ratio = result.silence_ratio(0.0);
+        assert!((ratio - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_vad_transcription_result_iter() {
+        let result = VadTranscriptionResult {
+            text: "a b".to_string(),
+            language: "en".to_string(),
+            segments: vec![
+                VadSpeechSegment {
+                    start: 0.0,
+                    end: 1.0,
+                    text: "a".to_string(),
+                    tokens: vec![1],
+                },
+                VadSpeechSegment {
+                    start: 1.0,
+                    end: 2.0,
+                    text: "b".to_string(),
+                    tokens: vec![2],
+                },
+            ],
+            speech_segments: vec![(0.0, 1.0), (1.0, 2.0)],
+            total_duration_secs: 2.0,
+            speech_duration_secs: 2.0,
+        };
+
+        let texts: Vec<_> = result.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(texts, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_vad_speech_segment_duration() {
+        let segment = VadSpeechSegment {
+            start: 1.5,
+            end: 3.0,
+            text: "test".to_string(),
+            tokens: vec![1, 2, 3],
+        };
+
+        assert!((segment.duration() - 1.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_vad_speech_segment_has_text() {
+        let with_text = VadSpeechSegment {
+            start: 0.0,
+            end: 1.0,
+            text: "hello".to_string(),
+            tokens: vec![1],
+        };
+        let empty = VadSpeechSegment {
+            start: 0.0,
+            end: 1.0,
+            text: String::new(),
+            tokens: vec![],
+        };
+
+        assert!(with_text.has_text());
+        assert!(!empty.has_text());
+    }
+
+    #[test]
+    fn test_transcribe_with_vad_silence_only() {
+        let whisper = WhisperApr::tiny();
+        let silence = vec![0.0; 16000]; // 1 second of silence
+
+        let result = whisper
+            .transcribe_with_vad(&silence, TranscribeOptions::default(), None)
+            .expect("should succeed");
+
+        assert!(!result.has_speech());
+        assert_eq!(result.num_segments(), 0);
+        assert!(result.text.is_empty());
+    }
+
+    #[test]
+    fn test_transcribe_with_silence_detection_config() {
+        // Test that silence config can be created and used
+        let config = vad::SilenceConfig::new()
+            .with_min_silence_duration(0.3)
+            .with_max_silence_duration(2.0)
+            .with_silence_threshold(0.001);
+
+        assert!((config.min_silence_duration - 0.3).abs() < 0.01);
+        assert!((config.max_silence_duration - 2.0).abs() < 0.01);
+        assert!((config.silence_threshold - 0.001).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_invert_silence_segments_empty() {
+        let whisper = WhisperApr::tiny();
+        let audio_len = 16000; // 1 second
+
+        let silence_segments: Vec<vad::SilenceSegment> = vec![];
+        let speech = whisper.invert_silence_segments(&silence_segments, audio_len);
+
+        // No silence means all speech
+        assert_eq!(speech.len(), 1);
+        assert!((speech[0].0 - 0.0).abs() < 0.01);
+        assert!((speech[0].1 - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_invert_silence_segments_single() {
+        let whisper = WhisperApr::tiny();
+        let audio_len = 32000; // 2 seconds
+
+        let silence_segments = vec![vad::SilenceSegment {
+            start: 0.5,
+            end: 1.5,
+            noise_floor: 0.001,
+        }];
+        let speech = whisper.invert_silence_segments(&silence_segments, audio_len);
+
+        // Speech at beginning and end, with silence in middle
+        assert_eq!(speech.len(), 2);
+        assert!((speech[0].0 - 0.0).abs() < 0.01); // Start
+        assert!((speech[0].1 - 0.5).abs() < 0.01); // Before silence
+        assert!((speech[1].0 - 1.5).abs() < 0.01); // After silence
+        assert!((speech[1].1 - 2.0).abs() < 0.01); // End
+    }
+
+    #[test]
+    fn test_invert_silence_segments_multiple() {
+        let whisper = WhisperApr::tiny();
+        let audio_len = 48000; // 3 seconds
+
+        let silence_segments = vec![
+            vad::SilenceSegment {
+                start: 0.5,
+                end: 1.0,
+                noise_floor: 0.001,
+            },
+            vad::SilenceSegment {
+                start: 2.0,
+                end: 2.5,
+                noise_floor: 0.001,
+            },
+        ];
+        let speech = whisper.invert_silence_segments(&silence_segments, audio_len);
+
+        // Speech: 0-0.5, 1.0-2.0, 2.5-3.0
+        assert_eq!(speech.len(), 3);
     }
 
     #[test]

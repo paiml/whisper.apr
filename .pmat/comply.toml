@@ -4,16 +4,16 @@
 
 [project]
 name = "whisper-apr"
-version = "1.1.0"
+version = "1.2.0"
 spec_file = "docs/specifications/whisper.apr-wasm-first-spec.md"
 methodology = "EXTREME_TDD"
 quality_framework = "Toyota_Way"
 
 [metrics]
-total_tickets = 64
-completed_tickets = 64
-completion_rate = 100.0
-test_count = 966
+total_tickets = 76
+completed_tickets = 68
+completion_rate = 89.5
+test_count = 921
 line_coverage = 95.19
 property_tests = 19
 source_loc = 26000
@@ -445,3 +445,116 @@ status = "complete"
 sprint = "sprint_23_24"
 files = ["src/lib.rs", "src/wasm/mod.rs"]
 tdd_phase = "green"
+
+# =============================================================================
+# v1.2 Real-Time Streaming (Phase 3)
+# =============================================================================
+
+[sprints.sprint_25_26]
+name = "Voice Activity Detection"
+status = "complete"
+tickets = ["WAPR-090", "WAPR-091", "WAPR-092", "WAPR-093"]
+deliverable = "Lightweight VAD for efficient transcription triggering"
+completion_date = "2025-12-13"
+
+[sprints.sprint_27_28]
+name = "Streaming Inference"
+status = "pending"
+tickets = ["WAPR-100", "WAPR-101", "WAPR-102", "WAPR-103"]
+deliverable = "Streaming inference with partial results"
+
+[sprints.sprint_29_30]
+name = "Low-Latency Mode"
+status = "pending"
+tickets = ["WAPR-110", "WAPR-111", "WAPR-112", "WAPR-113"]
+deliverable = "Sub-500ms latency for real-time applications"
+
+# v1.2 Tickets - Voice Activity Detection
+
+[tickets.WAPR-090]
+description = "VAD model implementation (energy + zero-crossing rate)"
+status = "complete"
+sprint = "sprint_25_26"
+files = ["src/vad.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-091]
+description = "VAD integration with audio pipeline"
+status = "complete"
+sprint = "sprint_25_26"
+files = ["src/audio/mod.rs", "src/vad.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-092]
+description = "Silence detection with configurable thresholds"
+status = "complete"
+sprint = "sprint_25_26"
+files = ["src/vad.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-093]
+description = "VAD-triggered transcription"
+status = "complete"
+sprint = "sprint_25_26"
+files = ["src/lib.rs", "src/vad.rs"]
+tdd_phase = "green"
+
+# v1.2 Tickets - Streaming Inference
+
+[tickets.WAPR-100]
+description = "Streaming processor state machine"
+status = "pending"
+sprint = "sprint_27_28"
+files = ["src/streaming/mod.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-101]
+description = "Partial result generation"
+status = "pending"
+sprint = "sprint_27_28"
+files = ["src/streaming/mod.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-102]
+description = "Chunk overlap handling"
+status = "pending"
+sprint = "sprint_27_28"
+files = ["src/streaming/mod.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-103]
+description = "Streaming WASM API"
+status = "pending"
+sprint = "sprint_27_28"
+files = ["src/wasm/streaming.rs"]
+tdd_phase = "pending"
+
+# v1.2 Tickets - Low-Latency Mode
+
+[tickets.WAPR-110]
+description = "500ms chunk processing optimization"
+status = "pending"
+sprint = "sprint_29_30"
+files = ["src/streaming/mod.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-111]
+description = "Optimized KV cache for streaming"
+status = "pending"
+sprint = "sprint_29_30"
+files = ["src/model/decoder.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-112]
+description = "Latency benchmarking suite"
+status = "pending"
+sprint = "sprint_29_30"
+files = ["benches/latency.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-113]
+description = "Low-latency WASM bindings"
+status = "pending"
+sprint = "sprint_29_30"
+files = ["src/wasm/streaming.rs"]
+tdd_phase = "pending"
