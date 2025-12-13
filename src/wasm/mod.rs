@@ -38,9 +38,16 @@
 //! ```
 
 mod capabilities;
+mod gpu;
 mod worker;
 
 pub use capabilities::{Capabilities, ExecutionMode};
+pub use gpu::{
+    estimate_mat_mul_flops, estimate_mat_mul_memory, is_gpu_worthwhile,
+    recommended_backend_for_model, BackendSelectionWasm, BackendSelectorWasm, BackendTypeWasm,
+    DetectionOptionsWasm, GpuBackendWasm, GpuCapabilitiesWasm, GpuDetectionWasm, GpuLimitsWasm,
+    SelectionStrategyWasm, SelectorConfigWasm,
+};
 pub use worker::{ProgressPhase, WorkerConfig, WorkerMessageType, WorkerProgress, WorkerState};
 
 use wasm_bindgen::prelude::*;

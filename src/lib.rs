@@ -50,6 +50,9 @@ pub mod vad;
 /// WebGPU compute backend for accelerated inference
 pub mod gpu;
 
+/// Backend abstraction and automatic selection
+pub mod backend;
+
 #[cfg(feature = "wasm")]
 pub mod wasm;
 

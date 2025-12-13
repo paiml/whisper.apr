@@ -8,15 +8,16 @@ version = "1.3.0"
 spec_file = "docs/specifications/whisper.apr-wasm-first-spec.md"
 methodology = "EXTREME_TDD"
 quality_framework = "Toyota_Way"
+phase4_complete = true
 
 [metrics]
 total_tickets = 88
-completed_tickets = 84
-completion_rate = 95.5
-test_count = 1223
+completed_tickets = 88
+completion_rate = 100.0
+test_count = 1291
 line_coverage = 95.19
 property_tests = 19
-source_loc = 33000
+source_loc = 35000
 wasm_binary_kb = 668
 
 # v1.1 Roadmap: Extended Model Support
@@ -581,9 +582,10 @@ completion_date = "2025-12-13"
 
 [sprints.sprint_35_36]
 name = "Backend Selection & Integration"
-status = "pending"
+status = "complete"
 tickets = ["WAPR-140", "WAPR-141", "WAPR-142", "WAPR-143"]
 deliverable = "Automatic SIMD vs GPU backend selection with memory mapping"
+completion_date = "2025-12-13"
 
 # v1.3 Tickets - WebGPU Foundation
 
@@ -649,28 +651,28 @@ tdd_phase = "green"
 
 [tickets.WAPR-140]
 description = "Backend trait abstraction"
-status = "pending"
+status = "complete"
 sprint = "sprint_35_36"
 files = ["src/backend/mod.rs", "src/backend/traits.rs"]
-tdd_phase = "pending"
+tdd_phase = "green"
 
 [tickets.WAPR-141]
 description = "Automatic backend selection (SIMD vs GPU)"
-status = "pending"
+status = "complete"
 sprint = "sprint_35_36"
 files = ["src/backend/selector.rs"]
-tdd_phase = "pending"
+tdd_phase = "green"
 
 [tickets.WAPR-142]
 description = "Memory mapping for large models"
-status = "pending"
+status = "complete"
 sprint = "sprint_35_36"
 files = ["src/memory/mmap.rs"]
-tdd_phase = "pending"
+tdd_phase = "green"
 
 [tickets.WAPR-143]
 description = "WebGPU WASM bindings"
-status = "pending"
+status = "complete"
 sprint = "sprint_35_36"
 files = ["src/wasm/gpu.rs"]
-tdd_phase = "pending"
+tdd_phase = "green"
