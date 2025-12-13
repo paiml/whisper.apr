@@ -10,9 +10,6 @@
   <a href="https://github.com/paiml/whisper.apr/actions/workflows/ci.yml">
     <img src="https://github.com/paiml/whisper.apr/actions/workflows/ci.yml/badge.svg" alt="CI Status">
   </a>
-  <a href="https://codecov.io/gh/paiml/whisper.apr">
-    <img src="https://codecov.io/gh/paiml/whisper.apr/branch/main/graph/badge.svg" alt="Coverage">
-  </a>
   <a href="https://opensource.org/licenses/MIT">
     <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
   </a>
