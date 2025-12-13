@@ -4,19 +4,19 @@
 
 [project]
 name = "whisper-apr"
-version = "1.2.0"
+version = "1.3.0"
 spec_file = "docs/specifications/whisper.apr-wasm-first-spec.md"
 methodology = "EXTREME_TDD"
 quality_framework = "Toyota_Way"
 
 [metrics]
-total_tickets = 76
-completed_tickets = 76
-completion_rate = 100.0
-test_count = 1028
+total_tickets = 88
+completed_tickets = 80
+completion_rate = 90.9
+test_count = 1141
 line_coverage = 95.19
 property_tests = 19
-source_loc = 28000
+source_loc = 30500
 wasm_binary_kb = 668
 
 # v1.1 Roadmap: Extended Model Support
@@ -560,3 +560,116 @@ status = "complete"
 sprint = "sprint_29_30"
 files = ["src/wasm/mod.rs"]
 tdd_phase = "green"
+
+# =============================================================================
+# v1.3 WebGPU Backend (Phase 4)
+# =============================================================================
+
+[sprints.sprint_31_32]
+name = "WebGPU Foundation"
+status = "complete"
+tickets = ["WAPR-120", "WAPR-121", "WAPR-122", "WAPR-123"]
+deliverable = "WebGPU device management and basic compute pipeline"
+completion_date = "2025-12-13"
+
+[sprints.sprint_33_34]
+name = "WebGPU Matrix Operations"
+status = "pending"
+tickets = ["WAPR-130", "WAPR-131", "WAPR-132", "WAPR-133"]
+deliverable = "GPU-accelerated matrix operations for transformer inference"
+
+[sprints.sprint_35_36]
+name = "Backend Selection & Integration"
+status = "pending"
+tickets = ["WAPR-140", "WAPR-141", "WAPR-142", "WAPR-143"]
+deliverable = "Automatic SIMD vs GPU backend selection with memory mapping"
+
+# v1.3 Tickets - WebGPU Foundation
+
+[tickets.WAPR-120]
+description = "WebGPU device detection and initialization"
+status = "complete"
+sprint = "sprint_31_32"
+files = ["src/gpu/mod.rs", "src/gpu/device.rs", "src/gpu/error.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-121]
+description = "WebGPU buffer management"
+status = "complete"
+sprint = "sprint_31_32"
+files = ["src/gpu/buffer.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-122]
+description = "Basic compute shader pipeline"
+status = "complete"
+sprint = "sprint_31_32"
+files = ["src/gpu/pipeline.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-123]
+description = "WebGPU capabilities detection API"
+status = "complete"
+sprint = "sprint_31_32"
+files = ["src/gpu/capabilities.rs", "src/gpu/detect.rs"]
+tdd_phase = "green"
+
+# v1.3 Tickets - WebGPU Matrix Operations
+
+[tickets.WAPR-130]
+description = "Matrix multiplication compute shader"
+status = "pending"
+sprint = "sprint_33_34"
+files = ["src/gpu/shaders/matmul.wgsl", "src/gpu/ops/matmul.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-131]
+description = "Softmax compute shader"
+status = "pending"
+sprint = "sprint_33_34"
+files = ["src/gpu/shaders/softmax.wgsl", "src/gpu/ops/softmax.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-132]
+description = "Layer normalization compute shader"
+status = "pending"
+sprint = "sprint_33_34"
+files = ["src/gpu/shaders/layernorm.wgsl", "src/gpu/ops/layernorm.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-133]
+description = "GELU activation compute shader"
+status = "pending"
+sprint = "sprint_33_34"
+files = ["src/gpu/shaders/gelu.wgsl", "src/gpu/ops/gelu.rs"]
+tdd_phase = "pending"
+
+# v1.3 Tickets - Backend Selection & Integration
+
+[tickets.WAPR-140]
+description = "Backend trait abstraction"
+status = "pending"
+sprint = "sprint_35_36"
+files = ["src/backend/mod.rs", "src/backend/traits.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-141]
+description = "Automatic backend selection (SIMD vs GPU)"
+status = "pending"
+sprint = "sprint_35_36"
+files = ["src/backend/selector.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-142]
+description = "Memory mapping for large models"
+status = "pending"
+sprint = "sprint_35_36"
+files = ["src/memory/mmap.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-143]
+description = "WebGPU WASM bindings"
+status = "pending"
+sprint = "sprint_35_36"
+files = ["src/wasm/gpu.rs"]
+tdd_phase = "pending"
