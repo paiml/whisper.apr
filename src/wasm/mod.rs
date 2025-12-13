@@ -1127,6 +1127,313 @@ impl From<StreamingConfigWasm> for StreamingConfig {
     }
 }
 
+// =============================================================================
+// Low-Latency WASM Bindings (WAPR-113)
+// =============================================================================
+
+use crate::audio::LatencyMode;
+
+/// WASM latency mode enum for JavaScript interop
+#[wasm_bindgen]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LatencyModeWasm {
+    /// Standard mode (30s chunks, higher accuracy)
+    Standard = 0,
+    /// Low-latency mode (500ms chunks, faster response)
+    LowLatency = 1,
+    /// Ultra-low latency mode (250ms chunks, fastest response)
+    UltraLow = 2,
+    /// Custom configuration
+    Custom = 3,
+}
+
+impl From<LatencyMode> for LatencyModeWasm {
+    fn from(mode: LatencyMode) -> Self {
+        match mode {
+            LatencyMode::Standard => Self::Standard,
+            LatencyMode::LowLatency => Self::LowLatency,
+            LatencyMode::UltraLow => Self::UltraLow,
+            LatencyMode::Custom => Self::Custom,
+        }
+    }
+}
+
+impl From<LatencyModeWasm> for LatencyMode {
+    fn from(mode: LatencyModeWasm) -> Self {
+        match mode {
+            LatencyModeWasm::Standard => Self::Standard,
+            LatencyModeWasm::LowLatency => Self::LowLatency,
+            LatencyModeWasm::UltraLow => Self::UltraLow,
+            LatencyModeWasm::Custom => Self::Custom,
+        }
+    }
+}
+
+/// WASM-friendly low-latency streaming configuration
+///
+/// Provides pre-configured settings optimized for different latency requirements.
+///
+/// # Example
+///
+/// ```javascript
+/// // Create low-latency config for real-time applications
+/// const config = LowLatencyConfigWasm.lowLatency();
+/// console.log(`Chunk duration: ${config.chunkDurationMs}ms`);
+/// console.log(`Expected latency: ${config.expectedLatencyMs}ms`);
+///
+/// // Create ultra-low latency for voice assistants
+/// const ultraConfig = LowLatencyConfigWasm.ultraLow();
+/// ```
+#[wasm_bindgen]
+#[derive(Debug, Clone)]
+pub struct LowLatencyConfigWasm {
+    inner: StreamingConfig,
+}
+
+#[wasm_bindgen]
+impl LowLatencyConfigWasm {
+    /// Create a standard latency configuration (30s chunks)
+    ///
+    /// Best for batch-style transcription where accuracy is prioritized.
+    #[wasm_bindgen]
+    pub fn standard() -> Self {
+        Self {
+            inner: StreamingConfig::default(),
+        }
+    }
+
+    /// Create a low-latency configuration (500ms chunks)
+    ///
+    /// Optimized for real-time applications requiring fast response:
+    /// - 500ms chunk duration
+    /// - 50ms overlap
+    /// - 100ms minimum speech duration
+    /// - ~500ms expected latency
+    #[wasm_bindgen(js_name = lowLatency)]
+    pub fn low_latency() -> Self {
+        Self {
+            inner: StreamingConfig::low_latency(),
+        }
+    }
+
+    /// Create an ultra-low latency configuration (250ms chunks)
+    ///
+    /// Optimized for the fastest possible response:
+    /// - 250ms chunk duration
+    /// - 25ms overlap
+    /// - 50ms minimum speech duration
+    /// - ~250ms expected latency
+    ///
+    /// Note: May reduce transcription accuracy due to less context.
+    #[wasm_bindgen(js_name = ultraLow)]
+    pub fn ultra_low() -> Self {
+        Self {
+            inner: StreamingConfig::ultra_low_latency(),
+        }
+    }
+
+    /// Create a custom latency configuration
+    ///
+    /// # Arguments
+    /// * `chunk_duration_ms` - Chunk duration in milliseconds
+    /// * `overlap_ms` - Overlap between chunks in milliseconds
+    /// * `min_speech_ms` - Minimum speech duration to trigger processing
+    #[wasm_bindgen]
+    pub fn custom(chunk_duration_ms: u32, overlap_ms: u32, min_speech_ms: u32) -> Self {
+        let chunk_duration = chunk_duration_ms as f32 / 1000.0;
+        let chunk_overlap = overlap_ms as f32 / 1000.0;
+        let buffer_duration = chunk_duration * 4.0; // 4x chunk duration
+
+        Self {
+            inner: StreamingConfig::custom_latency(
+                chunk_duration,
+                chunk_overlap,
+                min_speech_ms,
+                buffer_duration,
+            ),
+        }
+    }
+
+    /// Get the latency mode
+    #[wasm_bindgen(getter, js_name = latencyMode)]
+    pub fn latency_mode(&self) -> LatencyModeWasm {
+        self.inner.latency_mode().into()
+    }
+
+    /// Get chunk duration in milliseconds
+    #[wasm_bindgen(getter, js_name = chunkDurationMs)]
+    pub fn chunk_duration_ms(&self) -> f32 {
+        self.inner.chunk_duration * 1000.0
+    }
+
+    /// Get chunk overlap in milliseconds
+    #[wasm_bindgen(getter, js_name = chunkOverlapMs)]
+    pub fn chunk_overlap_ms(&self) -> f32 {
+        self.inner.chunk_overlap * 1000.0
+    }
+
+    /// Get expected latency in milliseconds
+    ///
+    /// This is approximately the chunk duration plus processing overhead.
+    #[wasm_bindgen(getter, js_name = expectedLatencyMs)]
+    pub fn expected_latency_ms(&self) -> f32 {
+        self.inner.expected_latency_ms()
+    }
+
+    /// Get minimum speech duration in milliseconds
+    #[wasm_bindgen(getter, js_name = minSpeechDurationMs)]
+    pub fn min_speech_duration_ms(&self) -> u32 {
+        self.inner.min_speech_duration_ms
+    }
+
+    /// Check if this is a low-latency configuration
+    #[wasm_bindgen(getter, js_name = isLowLatency)]
+    pub fn is_low_latency(&self) -> bool {
+        self.inner.is_low_latency()
+    }
+
+    /// Get chunk size in samples (at 16kHz)
+    #[wasm_bindgen(getter, js_name = chunkSamples)]
+    pub fn chunk_samples(&self) -> usize {
+        self.inner.chunk_samples()
+    }
+
+    /// Get overlap size in samples (at 16kHz)
+    #[wasm_bindgen(getter, js_name = overlapSamples)]
+    pub fn overlap_samples(&self) -> usize {
+        self.inner.overlap_samples()
+    }
+
+    /// Enable VAD (Voice Activity Detection)
+    #[wasm_bindgen(js_name = withVad)]
+    pub fn with_vad(mut self, enable: bool) -> Self {
+        self.inner = if enable {
+            self.inner.with_vad()
+        } else {
+            self.inner.without_vad()
+        };
+        self
+    }
+
+    /// Set VAD threshold (0.0 - 1.0)
+    #[wasm_bindgen(js_name = withVadThreshold)]
+    pub fn with_vad_threshold(mut self, threshold: f32) -> Self {
+        self.inner = self.inner.vad_threshold(threshold);
+        self
+    }
+
+    /// Set input sample rate
+    #[wasm_bindgen(js_name = withInputSampleRate)]
+    pub fn with_input_sample_rate(mut self, rate: u32) -> Self {
+        self.inner.input_sample_rate = rate;
+        self
+    }
+
+    /// Convert to StreamingConfig for internal use
+    pub fn into_streaming_config(self) -> StreamingConfig {
+        self.inner
+    }
+}
+
+/// WASM-friendly streaming KV cache statistics
+#[wasm_bindgen]
+#[derive(Debug, Clone)]
+pub struct StreamingCacheStatsWasm {
+    seq_len: usize,
+    total_tokens: usize,
+    slide_count: usize,
+    window_size: usize,
+    utilization: f32,
+    memory_bytes: usize,
+}
+
+#[wasm_bindgen]
+impl StreamingCacheStatsWasm {
+    /// Get current sequence length in cache
+    #[wasm_bindgen(getter, js_name = seqLen)]
+    pub fn seq_len(&self) -> usize {
+        self.seq_len
+    }
+
+    /// Get total tokens processed
+    #[wasm_bindgen(getter, js_name = totalTokens)]
+    pub fn total_tokens(&self) -> usize {
+        self.total_tokens
+    }
+
+    /// Get number of window slides
+    #[wasm_bindgen(getter, js_name = slideCount)]
+    pub fn slide_count(&self) -> usize {
+        self.slide_count
+    }
+
+    /// Get window size
+    #[wasm_bindgen(getter, js_name = windowSize)]
+    pub fn window_size(&self) -> usize {
+        self.window_size
+    }
+
+    /// Get cache utilization (0.0 - 1.0)
+    #[wasm_bindgen(getter)]
+    pub fn utilization(&self) -> f32 {
+        self.utilization
+    }
+
+    /// Get memory usage in bytes
+    #[wasm_bindgen(getter, js_name = memoryBytes)]
+    pub fn memory_bytes(&self) -> usize {
+        self.memory_bytes
+    }
+
+    /// Get memory usage in KB
+    #[wasm_bindgen(getter, js_name = memoryKb)]
+    pub fn memory_kb(&self) -> f32 {
+        self.memory_bytes as f32 / 1024.0
+    }
+}
+
+impl From<crate::model::StreamingCacheStats> for StreamingCacheStatsWasm {
+    fn from(stats: crate::model::StreamingCacheStats) -> Self {
+        Self {
+            seq_len: stats.seq_len,
+            total_tokens: stats.total_tokens,
+            slide_count: stats.slide_count,
+            window_size: stats.window_size,
+            utilization: stats.utilization(),
+            memory_bytes: stats.memory_bytes,
+        }
+    }
+}
+
+/// Get latency recommendations for different use cases
+#[wasm_bindgen(js_name = getLatencyRecommendation)]
+pub fn get_latency_recommendation(use_case: &str) -> String {
+    match use_case.to_lowercase().as_str() {
+        "batch" | "transcription" | "offline" => {
+            "Use standard mode (30s chunks) for best accuracy with batch transcription.".to_string()
+        }
+        "realtime" | "real-time" | "live" | "streaming" => {
+            "Use low-latency mode (500ms chunks) for real-time applications.".to_string()
+        }
+        "voice-assistant" | "assistant" | "dictation" | "voice" => {
+            "Use ultra-low latency mode (250ms chunks) for voice assistants and dictation.".to_string()
+        }
+        "subtitles" | "captions" | "live-captions" => {
+            "Use low-latency mode (500ms chunks) for live captioning.".to_string()
+        }
+        _ => {
+            "Unknown use case. Available options: batch, realtime, voice-assistant, subtitles.".to_string()
+        }
+    }
+}
+
+/// Get expected latency for a given chunk duration
+#[wasm_bindgen(js_name = expectedLatencyForChunkMs)]
+pub fn expected_latency_for_chunk_ms(chunk_duration_ms: u32) -> f32 {
+    // Latency is approximately chunk duration + ~50ms processing overhead
+    chunk_duration_ms as f32 + 50.0
+}
+
 /// WASM-friendly partial transcription result
 #[wasm_bindgen]
 #[derive(Debug, Clone)]
@@ -1691,5 +1998,184 @@ mod streaming_tests {
             ProcessorStateWasm::from(ProcessorState::ChunkReady),
             ProcessorStateWasm::ChunkReady
         );
+    }
+
+    // =========================================================================
+    // WAPR-113: Low-Latency WASM Bindings Tests
+    // =========================================================================
+
+    #[test]
+    fn test_latency_mode_wasm_enum() {
+        assert_eq!(LatencyModeWasm::Standard as u32, 0);
+        assert_eq!(LatencyModeWasm::LowLatency as u32, 1);
+        assert_eq!(LatencyModeWasm::UltraLow as u32, 2);
+        assert_eq!(LatencyModeWasm::Custom as u32, 3);
+    }
+
+    #[test]
+    fn test_latency_mode_wasm_from_native() {
+        assert_eq!(
+            LatencyModeWasm::from(LatencyMode::Standard),
+            LatencyModeWasm::Standard
+        );
+        assert_eq!(
+            LatencyModeWasm::from(LatencyMode::LowLatency),
+            LatencyModeWasm::LowLatency
+        );
+        assert_eq!(
+            LatencyModeWasm::from(LatencyMode::UltraLow),
+            LatencyModeWasm::UltraLow
+        );
+        assert_eq!(
+            LatencyModeWasm::from(LatencyMode::Custom),
+            LatencyModeWasm::Custom
+        );
+    }
+
+    #[test]
+    fn test_latency_mode_wasm_to_native() {
+        assert_eq!(
+            LatencyMode::from(LatencyModeWasm::Standard),
+            LatencyMode::Standard
+        );
+        assert_eq!(
+            LatencyMode::from(LatencyModeWasm::LowLatency),
+            LatencyMode::LowLatency
+        );
+        assert_eq!(
+            LatencyMode::from(LatencyModeWasm::UltraLow),
+            LatencyMode::UltraLow
+        );
+        assert_eq!(
+            LatencyMode::from(LatencyModeWasm::Custom),
+            LatencyMode::Custom
+        );
+    }
+
+    #[test]
+    fn test_low_latency_config_standard() {
+        let config = LowLatencyConfigWasm::standard();
+        assert_eq!(config.latency_mode(), LatencyModeWasm::Standard);
+        assert!(!config.is_low_latency());
+        assert!((config.chunk_duration_ms() - 30000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_low_latency_config_low_latency() {
+        let config = LowLatencyConfigWasm::low_latency();
+        assert_eq!(config.latency_mode(), LatencyModeWasm::LowLatency);
+        assert!(config.is_low_latency());
+        assert!((config.chunk_duration_ms() - 500.0).abs() < 1.0);
+        assert!((config.chunk_overlap_ms() - 50.0).abs() < 1.0);
+        assert!((config.expected_latency_ms() - 500.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_low_latency_config_ultra_low() {
+        let config = LowLatencyConfigWasm::ultra_low();
+        assert_eq!(config.latency_mode(), LatencyModeWasm::UltraLow);
+        assert!(config.is_low_latency());
+        assert!((config.chunk_duration_ms() - 250.0).abs() < 1.0);
+        assert!((config.chunk_overlap_ms() - 25.0).abs() < 1.0);
+        assert!((config.expected_latency_ms() - 250.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_low_latency_config_custom() {
+        let config = LowLatencyConfigWasm::custom(300, 30, 50);
+        assert_eq!(config.latency_mode(), LatencyModeWasm::Custom);
+        assert!((config.chunk_duration_ms() - 300.0).abs() < 1.0);
+        assert!((config.chunk_overlap_ms() - 30.0).abs() < 1.0);
+        assert_eq!(config.min_speech_duration_ms(), 50);
+    }
+
+    #[test]
+    fn test_low_latency_config_chunk_samples() {
+        let config = LowLatencyConfigWasm::low_latency();
+        // 500ms at 16kHz = 8000 samples
+        assert_eq!(config.chunk_samples(), 8000);
+    }
+
+    #[test]
+    fn test_low_latency_config_overlap_samples() {
+        let config = LowLatencyConfigWasm::low_latency();
+        // 50ms at 16kHz = 800 samples
+        assert_eq!(config.overlap_samples(), 800);
+    }
+
+    #[test]
+    fn test_low_latency_config_with_vad() {
+        let config = LowLatencyConfigWasm::low_latency().with_vad(true);
+        // VAD should be enabled by default anyway
+        assert!(config.is_low_latency());
+    }
+
+    #[test]
+    fn test_low_latency_config_with_vad_threshold() {
+        let config = LowLatencyConfigWasm::low_latency().with_vad_threshold(0.5);
+        assert!(config.is_low_latency());
+    }
+
+    #[test]
+    fn test_low_latency_config_with_input_sample_rate() {
+        let config = LowLatencyConfigWasm::low_latency().with_input_sample_rate(48000);
+        assert_eq!(config.into_streaming_config().input_sample_rate, 48000);
+    }
+
+    #[test]
+    fn test_streaming_cache_stats_wasm() {
+        let native = crate::model::StreamingCacheStats {
+            seq_len: 32,
+            total_tokens: 100,
+            slide_count: 2,
+            window_size: 64,
+            context_overlap: 16,
+            memory_bytes: 8192,
+        };
+        let wasm: StreamingCacheStatsWasm = native.into();
+
+        assert_eq!(wasm.seq_len(), 32);
+        assert_eq!(wasm.total_tokens(), 100);
+        assert_eq!(wasm.slide_count(), 2);
+        assert_eq!(wasm.window_size(), 64);
+        assert!((wasm.utilization() - 0.5).abs() < 0.01);
+        assert_eq!(wasm.memory_bytes(), 8192);
+        assert!((wasm.memory_kb() - 8.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_get_latency_recommendation_batch() {
+        let rec = get_latency_recommendation("batch");
+        assert!(rec.contains("standard mode"));
+    }
+
+    #[test]
+    fn test_get_latency_recommendation_realtime() {
+        let rec = get_latency_recommendation("realtime");
+        assert!(rec.contains("low-latency mode"));
+    }
+
+    #[test]
+    fn test_get_latency_recommendation_voice_assistant() {
+        let rec = get_latency_recommendation("voice-assistant");
+        assert!(rec.contains("ultra-low latency"));
+    }
+
+    #[test]
+    fn test_get_latency_recommendation_subtitles() {
+        let rec = get_latency_recommendation("subtitles");
+        assert!(rec.contains("low-latency mode"));
+    }
+
+    #[test]
+    fn test_get_latency_recommendation_unknown() {
+        let rec = get_latency_recommendation("unknown");
+        assert!(rec.contains("Unknown use case"));
+    }
+
+    #[test]
+    fn test_expected_latency_for_chunk_ms() {
+        let latency = expected_latency_for_chunk_ms(500);
+        assert!((latency - 550.0).abs() < 1.0); // 500 + 50ms overhead
     }
 }

@@ -73,6 +73,10 @@ harness = false
 name = "wasm_simd"
 harness = false
 
+[[bench]]
+name = "streaming_latency"
+harness = false
+
 [[example]]
 name = "basic_transcription"
 path = "examples/basic_transcription.rs"
