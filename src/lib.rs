@@ -170,6 +170,46 @@ pub struct TranscriptionResult {
     pub segments: Vec<Segment>,
 }
 
+/// Result of batch transcription (WAPR-083)
+#[derive(Debug, Clone)]
+pub struct BatchTranscriptionResult {
+    /// Individual transcription results
+    pub results: Vec<TranscriptionResult>,
+    /// Total processing time in seconds
+    pub total_duration_secs: f32,
+}
+
+impl BatchTranscriptionResult {
+    /// Get number of transcriptions
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.results.len()
+    }
+
+    /// Check if empty
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.results.is_empty()
+    }
+
+    /// Get result by index
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<&TranscriptionResult> {
+        self.results.get(index)
+    }
+
+    /// Iterate over results
+    pub fn iter(&self) -> impl Iterator<Item = &TranscriptionResult> {
+        self.results.iter()
+    }
+
+    /// Get all texts
+    #[must_use]
+    pub fn texts(&self) -> Vec<&str> {
+        self.results.iter().map(|r| r.text.as_str()).collect()
+    }
+}
+
 /// Main Whisper ASR engine
 ///
 /// This is the primary interface for transcription. It handles:
@@ -790,6 +830,204 @@ impl WhisperApr {
     /// Get mutable decoder reference (for testing/loading)
     pub fn decoder_mut(&mut self) -> &mut model::Decoder {
         &mut self.decoder
+    }
+
+    // =========================================================================
+    // Batch Transcription API (WAPR-083)
+    // =========================================================================
+
+    /// Transcribe a batch of audio samples
+    ///
+    /// Processes multiple audio segments in parallel for improved throughput.
+    /// Each audio segment is transcribed independently with the same options.
+    ///
+    /// # Arguments
+    /// * `audio_batch` - Batch of audio samples (each: mono, 16kHz, f32 normalized)
+    /// * `options` - Transcription options (applied to all segments)
+    ///
+    /// # Returns
+    /// Batch transcription result with individual results for each segment
+    ///
+    /// # Errors
+    /// Returns error if any transcription fails
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let audio_segments = vec![audio1, audio2, audio3];
+    /// let result = whisper.transcribe_batch(&audio_segments, TranscribeOptions::default())?;
+    /// for (i, text) in result.texts().iter().enumerate() {
+    ///     println!("Segment {}: {}", i, text);
+    /// }
+    /// ```
+    pub fn transcribe_batch(
+        &self,
+        audio_batch: &[Vec<f32>],
+        options: TranscribeOptions,
+    ) -> WhisperResult<BatchTranscriptionResult> {
+        if audio_batch.is_empty() {
+            return Err(WhisperError::Audio("empty batch".into()));
+        }
+
+        let start_time = std::time::Instant::now();
+        let mut results = Vec::with_capacity(audio_batch.len());
+
+        // Process each audio segment
+        for audio in audio_batch {
+            let result = self.transcribe(audio, options.clone())?;
+            results.push(result);
+        }
+
+        let total_duration_secs = start_time.elapsed().as_secs_f32();
+
+        Ok(BatchTranscriptionResult {
+            results,
+            total_duration_secs,
+        })
+    }
+
+    /// Transcribe a batch using the batch preprocessor for efficiency
+    ///
+    /// Uses `BatchPreprocessor` for efficient mel spectrogram computation
+    /// across all audio segments before decoding.
+    ///
+    /// # Arguments
+    /// * `batch` - Pre-constructed audio batch
+    /// * `options` - Transcription options
+    ///
+    /// # Returns
+    /// Batch transcription result
+    ///
+    /// # Errors
+    /// Returns error if preprocessing or transcription fails
+    pub fn transcribe_audio_batch(
+        &self,
+        batch: &audio::AudioBatch,
+        options: TranscribeOptions,
+    ) -> WhisperResult<BatchTranscriptionResult> {
+        if batch.is_empty() {
+            return Err(WhisperError::Audio("empty batch".into()));
+        }
+
+        let start_time = std::time::Instant::now();
+
+        // Use batch preprocessor for efficient mel computation
+        let preprocessor = audio::BatchPreprocessor::new(audio::AudioConfig::default());
+        let mel_result = preprocessor.process_batch(batch)?;
+
+        let mut results = Vec::with_capacity(batch.len());
+        let language = options.language.clone().unwrap_or_else(|| "en".to_string());
+
+        // Process each mel spectrogram
+        for mel in &mel_result.mels {
+            // Encode audio features
+            let audio_features = self.encode(mel)?;
+
+            // Get initial tokens
+            let initial_tokens = self.get_initial_tokens(&language, options.task);
+
+            // Decode
+            let tokens = self.decode(&audio_features, &initial_tokens, &options)?;
+
+            // Extract segments
+            let segments = if timestamps::has_timestamps(&tokens) {
+                timestamps::extract_segments(&tokens, |ts| self.tokenizer.decode(ts).ok())
+            } else {
+                Vec::new()
+            };
+
+            // Convert to text
+            let text = self.tokenizer.decode(&tokens)?;
+
+            results.push(TranscriptionResult {
+                text,
+                language: language.clone(),
+                segments,
+            });
+        }
+
+        let total_duration_secs = start_time.elapsed().as_secs_f32();
+
+        Ok(BatchTranscriptionResult {
+            results,
+            total_duration_secs,
+        })
+    }
+
+    /// Create an audio batch from a slice of audio segments
+    #[must_use]
+    pub fn create_audio_batch(audio_segments: &[Vec<f32>]) -> audio::AudioBatch {
+        let mut batch = audio::AudioBatch::with_default_config();
+        for segment in audio_segments {
+            batch.add_segment(segment.clone());
+        }
+        batch
+    }
+
+    /// Transcribe with batch encoder for improved throughput
+    ///
+    /// Uses batched encoder forward pass for efficient processing of
+    /// multiple audio segments.
+    ///
+    /// # Arguments
+    /// * `audio_batch` - Batch of audio samples
+    /// * `options` - Transcription options
+    ///
+    /// # Returns
+    /// Batch transcription result
+    ///
+    /// # Errors
+    /// Returns error if transcription fails
+    pub fn transcribe_batch_optimized(
+        &self,
+        audio_batch: &[Vec<f32>],
+        options: TranscribeOptions,
+    ) -> WhisperResult<BatchTranscriptionResult> {
+        if audio_batch.is_empty() {
+            return Err(WhisperError::Audio("empty batch".into()));
+        }
+
+        let start_time = std::time::Instant::now();
+
+        // Compute mel spectrograms for all segments
+        let mut mels = Vec::with_capacity(audio_batch.len());
+        for audio in audio_batch {
+            let mel = self.compute_mel(audio)?;
+            mels.push(mel);
+        }
+
+        // Use batch encoder
+        let encoder_outputs = self.encoder.forward_batch(&mels)?;
+
+        let mut results = Vec::with_capacity(audio_batch.len());
+        let language = options.language.clone().unwrap_or_else(|| "en".to_string());
+
+        // Decode each encoder output
+        for features in &encoder_outputs {
+            let initial_tokens = self.get_initial_tokens(&language, options.task);
+            let tokens = self.decode(features, &initial_tokens, &options)?;
+
+            let segments = if timestamps::has_timestamps(&tokens) {
+                timestamps::extract_segments(&tokens, |ts| self.tokenizer.decode(ts).ok())
+            } else {
+                Vec::new()
+            };
+
+            let text = self.tokenizer.decode(&tokens)?;
+
+            results.push(TranscriptionResult {
+                text,
+                language: language.clone(),
+                segments,
+            });
+        }
+
+        let total_duration_secs = start_time.elapsed().as_secs_f32();
+
+        Ok(BatchTranscriptionResult {
+            results,
+            total_duration_secs,
+        })
     }
 }
 
@@ -1619,5 +1857,166 @@ mod tests {
         // Large: ~1.5B params * 4 bytes = ~6GB
         assert!(large.memory_size() > 5_000_000_000);
         assert!(large.memory_size() < 7_000_000_000);
+    }
+
+    // =========================================================================
+    // WAPR-083: Batch Transcription API Tests
+    // =========================================================================
+
+    #[test]
+    fn test_batch_transcription_result_len() {
+        let result = BatchTranscriptionResult {
+            results: vec![
+                TranscriptionResult {
+                    text: "Hello".to_string(),
+                    language: "en".to_string(),
+                    segments: vec![],
+                },
+                TranscriptionResult {
+                    text: "World".to_string(),
+                    language: "en".to_string(),
+                    segments: vec![],
+                },
+            ],
+            total_duration_secs: 1.5,
+        };
+
+        assert_eq!(result.len(), 2);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_batch_transcription_result_empty() {
+        let result = BatchTranscriptionResult {
+            results: vec![],
+            total_duration_secs: 0.0,
+        };
+
+        assert!(result.is_empty());
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_batch_transcription_result_get() {
+        let result = BatchTranscriptionResult {
+            results: vec![
+                TranscriptionResult {
+                    text: "First".to_string(),
+                    language: "en".to_string(),
+                    segments: vec![],
+                },
+                TranscriptionResult {
+                    text: "Second".to_string(),
+                    language: "es".to_string(),
+                    segments: vec![],
+                },
+            ],
+            total_duration_secs: 2.0,
+        };
+
+        assert!(result.get(0).is_some());
+        assert_eq!(result.get(0).map(|r| r.text.as_str()), Some("First"));
+        assert_eq!(result.get(1).map(|r| r.language.as_str()), Some("es"));
+        assert!(result.get(2).is_none());
+    }
+
+    #[test]
+    fn test_batch_transcription_result_texts() {
+        let result = BatchTranscriptionResult {
+            results: vec![
+                TranscriptionResult {
+                    text: "One".to_string(),
+                    language: "en".to_string(),
+                    segments: vec![],
+                },
+                TranscriptionResult {
+                    text: "Two".to_string(),
+                    language: "en".to_string(),
+                    segments: vec![],
+                },
+                TranscriptionResult {
+                    text: "Three".to_string(),
+                    language: "en".to_string(),
+                    segments: vec![],
+                },
+            ],
+            total_duration_secs: 3.0,
+        };
+
+        let texts = result.texts();
+        assert_eq!(texts, vec!["One", "Two", "Three"]);
+    }
+
+    #[test]
+    fn test_batch_transcription_result_iter() {
+        let result = BatchTranscriptionResult {
+            results: vec![
+                TranscriptionResult {
+                    text: "A".to_string(),
+                    language: "en".to_string(),
+                    segments: vec![],
+                },
+                TranscriptionResult {
+                    text: "B".to_string(),
+                    language: "en".to_string(),
+                    segments: vec![],
+                },
+            ],
+            total_duration_secs: 1.0,
+        };
+
+        let collected: Vec<&str> = result.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(collected, vec!["A", "B"]);
+    }
+
+    #[test]
+    fn test_transcribe_batch_empty() {
+        let whisper = WhisperApr::tiny();
+        let result = whisper.transcribe_batch(&[], TranscribeOptions::default());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_transcribe_audio_batch_empty() {
+        let whisper = WhisperApr::tiny();
+        let batch = audio::AudioBatch::with_default_config();
+        let result = whisper.transcribe_audio_batch(&batch, TranscribeOptions::default());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_transcribe_batch_optimized_empty() {
+        let whisper = WhisperApr::tiny();
+        let result = whisper.transcribe_batch_optimized(&[], TranscribeOptions::default());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_audio_batch() {
+        let segments = vec![
+            vec![0.1_f32, 0.2, 0.3],
+            vec![0.4_f32, 0.5],
+        ];
+
+        let batch = WhisperApr::create_audio_batch(&segments);
+        assert_eq!(batch.len(), 2);
+        assert!(!batch.is_empty());
+    }
+
+    #[test]
+    fn test_create_audio_batch_empty() {
+        let segments: Vec<Vec<f32>> = vec![];
+        let batch = WhisperApr::create_audio_batch(&segments);
+        assert!(batch.is_empty());
+    }
+
+    #[test]
+    fn test_batch_transcription_result_duration() {
+        let result = BatchTranscriptionResult {
+            results: vec![],
+            total_duration_secs: 5.25,
+        };
+
+        assert!((result.total_duration_secs - 5.25).abs() < f32::EPSILON);
     }
 }

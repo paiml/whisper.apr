@@ -338,6 +338,120 @@ impl DecoderKVCache {
     }
 }
 
+// ============================================================================
+// Batch KV Cache (WAPR-082)
+// ============================================================================
+
+/// Batch of KV caches for parallel decoding
+///
+/// Each batch item has its own independent KV cache for self-attention,
+/// allowing parallel decoding of multiple sequences.
+#[derive(Debug, Clone)]
+pub struct BatchDecoderCache {
+    /// Individual caches for each batch item
+    caches: Vec<DecoderKVCache>,
+    /// Number of layers
+    pub n_layers: usize,
+    /// Model dimension
+    pub d_model: usize,
+    /// Maximum sequence length
+    pub max_len: usize,
+}
+
+impl BatchDecoderCache {
+    /// Create a new batch of KV caches
+    #[must_use]
+    pub fn new(batch_size: usize, n_layers: usize, d_model: usize, max_len: usize) -> Self {
+        let caches = (0..batch_size)
+            .map(|_| DecoderKVCache::new(n_layers, d_model, max_len))
+            .collect();
+
+        Self {
+            caches,
+            n_layers,
+            d_model,
+            max_len,
+        }
+    }
+
+    /// Get the batch size
+    #[must_use]
+    pub fn batch_size(&self) -> usize {
+        self.caches.len()
+    }
+
+    /// Get a reference to a specific cache
+    #[must_use]
+    pub fn get_cache(&self, index: usize) -> Option<&DecoderKVCache> {
+        self.caches.get(index)
+    }
+
+    /// Get a mutable reference to a specific cache
+    pub fn get_cache_mut(&mut self, index: usize) -> Option<&mut DecoderKVCache> {
+        self.caches.get_mut(index)
+    }
+
+    /// Check if all caches are empty
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.caches.iter().all(DecoderKVCache::is_empty)
+    }
+
+    /// Clear all caches
+    pub fn clear_all(&mut self) {
+        for cache in &mut self.caches {
+            cache.clear();
+        }
+    }
+
+    /// Get sequence lengths for all batch items
+    #[must_use]
+    pub fn seq_lengths(&self) -> Vec<usize> {
+        self.caches.iter().map(DecoderKVCache::seq_len).collect()
+    }
+
+    /// Get maximum sequence length across all batch items
+    #[must_use]
+    pub fn max_seq_len(&self) -> usize {
+        self.caches.iter().map(DecoderKVCache::seq_len).max().unwrap_or(0)
+    }
+
+    /// Get total memory usage in bytes
+    #[must_use]
+    pub fn memory_bytes(&self) -> usize {
+        self.caches.iter().map(DecoderKVCache::memory_bytes).sum()
+    }
+}
+
+/// Output from batch decoder forward pass
+#[derive(Debug, Clone)]
+pub struct BatchDecoderOutput {
+    /// Logits for each batch item (batch_size × seq_len × n_vocab or batch_size × n_vocab)
+    pub logits: Vec<Vec<f32>>,
+    /// Sequence lengths for each batch item
+    pub seq_lengths: Vec<usize>,
+}
+
+impl BatchDecoderOutput {
+    /// Get batch size
+    #[must_use]
+    pub fn batch_size(&self) -> usize {
+        self.logits.len()
+    }
+
+    /// Check if empty
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.logits.is_empty()
+    }
+
+    /// Get logits for a specific batch item
+    #[must_use]
+    pub fn get_logits(&self, index: usize) -> Option<&Vec<f32>> {
+        self.logits.get(index)
+    }
+}
+
 /// Single transformer decoder block
 ///
 /// Contains masked self-attention, cross-attention to encoder, and FFN.
@@ -852,6 +966,193 @@ impl Decoder {
         }
 
         Ok(tokens)
+    }
+
+    // =========================================================================
+    // Batch Decoding Methods (WAPR-082)
+    // =========================================================================
+
+    /// Create a batch of KV caches for parallel decoding
+    #[must_use]
+    pub fn create_batch_cache(&self, batch_size: usize) -> BatchDecoderCache {
+        BatchDecoderCache::new(batch_size, self.n_layers, self.d_model, self.max_len)
+    }
+
+    /// Forward pass for a batch of token sequences
+    ///
+    /// Processes multiple independent sequences in parallel. Each sequence
+    /// can have a different length and encoder output.
+    ///
+    /// # Arguments
+    /// * `tokens_batch` - Batch of token sequences (batch_size × variable seq_len)
+    /// * `encoder_outputs` - Encoder hidden states for each batch item
+    ///
+    /// # Returns
+    /// Batch of logits over vocabulary
+    ///
+    /// # Errors
+    /// Returns error if batch sizes don't match or any sequence is invalid
+    pub fn forward_batch(
+        &self,
+        tokens_batch: &[Vec<u32>],
+        encoder_outputs: &[Vec<f32>],
+    ) -> WhisperResult<BatchDecoderOutput> {
+        if tokens_batch.is_empty() {
+            return Err(WhisperError::Model("empty batch".into()));
+        }
+        if tokens_batch.len() != encoder_outputs.len() {
+            return Err(WhisperError::Model(format!(
+                "batch size mismatch: {} tokens vs {} encoders",
+                tokens_batch.len(),
+                encoder_outputs.len()
+            )));
+        }
+
+        let mut logits = Vec::with_capacity(tokens_batch.len());
+        let mut seq_lengths = Vec::with_capacity(tokens_batch.len());
+
+        for (tokens, encoder_out) in tokens_batch.iter().zip(encoder_outputs.iter()) {
+            let item_logits = self.forward(tokens, encoder_out)?;
+            seq_lengths.push(tokens.len());
+            logits.push(item_logits);
+        }
+
+        Ok(BatchDecoderOutput { logits, seq_lengths })
+    }
+
+    /// Forward pass for a single position across all batch items with KV cache
+    ///
+    /// Processes one token per batch item, updating the KV cache for each.
+    /// This is efficient for autoregressive generation where all sequences
+    /// advance by one position at a time.
+    ///
+    /// # Arguments
+    /// * `tokens` - One token per batch item (length = batch_size)
+    /// * `encoder_outputs` - Encoder hidden states for each batch item
+    /// * `cache` - Mutable batch KV cache
+    ///
+    /// # Returns
+    /// Logits for each batch item (batch_size × n_vocab)
+    pub fn forward_one_batch(
+        &self,
+        tokens: &[u32],
+        encoder_outputs: &[Vec<f32>],
+        cache: &mut BatchDecoderCache,
+    ) -> WhisperResult<BatchDecoderOutput> {
+        let batch_size = cache.batch_size();
+
+        if tokens.len() != batch_size {
+            return Err(WhisperError::Model(format!(
+                "token count {} doesn't match batch size {}",
+                tokens.len(),
+                batch_size
+            )));
+        }
+        if encoder_outputs.len() != batch_size {
+            return Err(WhisperError::Model(format!(
+                "encoder count {} doesn't match batch size {}",
+                encoder_outputs.len(),
+                batch_size
+            )));
+        }
+
+        let mut logits = Vec::with_capacity(batch_size);
+
+        for (idx, (&token, encoder_out)) in tokens.iter().zip(encoder_outputs.iter()).enumerate() {
+            let item_cache = cache.get_cache_mut(idx).ok_or_else(|| {
+                WhisperError::Model(format!("cache index {} out of bounds", idx))
+            })?;
+
+            let item_logits = self.forward_one(token, encoder_out, item_cache)?;
+            logits.push(item_logits);
+        }
+
+        Ok(BatchDecoderOutput {
+            logits,
+            seq_lengths: vec![1; batch_size],
+        })
+    }
+
+    /// Generate tokens autoregressively for a batch of sequences
+    ///
+    /// # Arguments
+    /// * `encoder_outputs` - Encoder hidden states for each batch item
+    /// * `initial_tokens` - Initial token sequences for each batch item
+    /// * `max_tokens` - Maximum number of tokens to generate per sequence
+    /// * `eos_token` - End-of-sequence token ID
+    ///
+    /// # Returns
+    /// Generated token sequences (one per batch item)
+    pub fn generate_batch(
+        &self,
+        encoder_outputs: &[Vec<f32>],
+        initial_tokens: &[Vec<u32>],
+        max_tokens: usize,
+        eos_token: u32,
+    ) -> WhisperResult<Vec<Vec<u32>>> {
+        let batch_size = encoder_outputs.len();
+
+        if initial_tokens.len() != batch_size {
+            return Err(WhisperError::Model(format!(
+                "initial tokens count {} doesn't match batch size {}",
+                initial_tokens.len(),
+                batch_size
+            )));
+        }
+
+        let mut cache = self.create_batch_cache(batch_size);
+        let mut sequences: Vec<Vec<u32>> = initial_tokens.to_vec();
+        let mut finished = vec![false; batch_size];
+
+        // Prime the caches with initial tokens
+        for (idx, tokens) in initial_tokens.iter().enumerate() {
+            let item_cache = cache.get_cache_mut(idx).ok_or_else(|| {
+                WhisperError::Model(format!("cache index {} out of bounds", idx))
+            })?;
+
+            for &token in tokens {
+                let _ = self.forward_one(token, &encoder_outputs[idx], item_cache)?;
+            }
+        }
+
+        // Generate new tokens
+        for _ in 0..max_tokens {
+            // Check if all sequences are finished
+            if finished.iter().all(|&f| f) {
+                break;
+            }
+
+            // Get last token for each sequence
+            let last_tokens: Vec<u32> = sequences
+                .iter()
+                .map(|seq| *seq.last().unwrap_or(&0))
+                .collect();
+
+            // Forward pass for all batch items
+            let outputs = self.forward_one_batch(&last_tokens, encoder_outputs, &mut cache)?;
+
+            // Greedy selection for each batch item
+            for (idx, logits) in outputs.logits.iter().enumerate() {
+                if finished[idx] {
+                    continue;
+                }
+
+                let next_token = logits
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(i, _)| i as u32)
+                    .unwrap_or(eos_token);
+
+                sequences[idx].push(next_token);
+
+                if next_token == eos_token {
+                    finished[idx] = true;
+                }
+            }
+        }
+
+        Ok(sequences)
     }
 }
 
@@ -1640,5 +1941,264 @@ mod tests {
 
         // Cache should have grown
         assert_eq!(cache.seq_len(), 2);
+    }
+
+    // =========================================================================
+    // WAPR-082: Batched Decoder with Shared KV Cache Tests
+    // =========================================================================
+
+    #[test]
+    fn test_batch_decoder_cache_new() {
+        let cache = BatchDecoderCache::new(3, 4, 64, 100);
+        assert_eq!(cache.batch_size(), 3);
+        assert_eq!(cache.n_layers, 4);
+        assert_eq!(cache.d_model, 64);
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn test_batch_decoder_cache_get_cache() {
+        let cache = BatchDecoderCache::new(3, 4, 64, 100);
+
+        let item0 = cache.get_cache(0);
+        assert!(item0.is_some());
+        assert_eq!(item0.unwrap().n_layers, 4);
+
+        let item3 = cache.get_cache(3);
+        assert!(item3.is_none()); // Out of bounds
+    }
+
+    #[test]
+    fn test_batch_decoder_cache_get_cache_mut() {
+        let mut cache = BatchDecoderCache::new(2, 4, 8, 100);
+
+        // Append to first cache
+        {
+            let item0 = cache.get_cache_mut(0).unwrap();
+            item0.self_attn_cache[0].append(&[1.0; 8], &[2.0; 8]).unwrap();
+        }
+
+        // Verify
+        assert_eq!(cache.get_cache(0).unwrap().seq_len(), 1);
+        assert_eq!(cache.get_cache(1).unwrap().seq_len(), 0);
+    }
+
+    #[test]
+    fn test_batch_decoder_cache_clear_all() {
+        let mut cache = BatchDecoderCache::new(2, 4, 8, 100);
+
+        // Add data
+        cache.get_cache_mut(0).unwrap().self_attn_cache[0]
+            .append(&[1.0; 8], &[2.0; 8]).unwrap();
+        cache.get_cache_mut(1).unwrap().self_attn_cache[0]
+            .append(&[1.0; 8], &[2.0; 8]).unwrap();
+
+        cache.clear_all();
+
+        assert!(cache.get_cache(0).unwrap().is_empty());
+        assert!(cache.get_cache(1).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_batch_decoder_cache_seq_lengths() {
+        let mut cache = BatchDecoderCache::new(3, 4, 8, 100);
+
+        // Add different lengths
+        cache.get_cache_mut(0).unwrap().self_attn_cache[0]
+            .append(&[1.0; 16], &[2.0; 16]).unwrap(); // 2 positions
+        cache.get_cache_mut(1).unwrap().self_attn_cache[0]
+            .append(&[1.0; 8], &[2.0; 8]).unwrap(); // 1 position
+        // Item 2 stays empty
+
+        let lengths = cache.seq_lengths();
+        assert_eq!(lengths, vec![2, 1, 0]);
+    }
+
+    #[test]
+    fn test_batch_decoder_cache_max_seq_len() {
+        let mut cache = BatchDecoderCache::new(3, 4, 8, 100);
+
+        cache.get_cache_mut(0).unwrap().self_attn_cache[0]
+            .append(&[1.0; 8], &[2.0; 8]).unwrap();
+        cache.get_cache_mut(1).unwrap().self_attn_cache[0]
+            .append(&[1.0; 24], &[2.0; 24]).unwrap(); // 3 positions
+
+        assert_eq!(cache.max_seq_len(), 3);
+    }
+
+    #[test]
+    fn test_decoder_create_batch_cache() {
+        let config = ModelConfig::tiny();
+        let decoder = Decoder::new(&config);
+
+        let cache = decoder.create_batch_cache(4);
+
+        assert_eq!(cache.batch_size(), 4);
+        assert_eq!(cache.n_layers, decoder.n_layers());
+        assert_eq!(cache.d_model, decoder.d_model());
+    }
+
+    #[test]
+    fn test_decoder_forward_batch_basic() {
+        let config = ModelConfig::tiny();
+        let decoder = Decoder::new(&config);
+
+        // Batch of 2 token sequences
+        let tokens_batch = vec![
+            vec![0_u32, 1, 2],  // seq_len=3
+            vec![3_u32, 4],    // seq_len=2
+        ];
+        let encoder_outputs = vec![
+            vec![0.0_f32; 5 * 384],  // enc_len=5
+            vec![0.0_f32; 3 * 384],  // enc_len=3
+        ];
+
+        let result = decoder.forward_batch(&tokens_batch, &encoder_outputs)
+            .expect("forward_batch should succeed");
+
+        assert_eq!(result.batch_size(), 2);
+        assert_eq!(result.logits.len(), 2);
+        assert_eq!(result.logits[0].len(), 3 * decoder.n_vocab()); // seq_len * vocab
+        assert_eq!(result.logits[1].len(), 2 * decoder.n_vocab());
+    }
+
+    #[test]
+    fn test_decoder_forward_batch_empty() {
+        let config = ModelConfig::tiny();
+        let decoder = Decoder::new(&config);
+
+        let result = decoder.forward_batch(&[], &[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decoder_forward_batch_mismatch() {
+        let config = ModelConfig::tiny();
+        let decoder = Decoder::new(&config);
+
+        let tokens = vec![vec![0_u32]];
+        let encoders = vec![vec![0.0_f32; 384], vec![0.0_f32; 384]]; // Mismatch
+
+        let result = decoder.forward_batch(&tokens, &encoders);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decoder_forward_one_batch_basic() {
+        let config = ModelConfig::tiny();
+        let decoder = Decoder::new(&config);
+        let mut cache = decoder.create_batch_cache(2);
+
+        let tokens = vec![0_u32, 1_u32]; // One token per batch item
+        let encoder_outputs = vec![
+            vec![0.0_f32; 5 * 384],
+            vec![0.0_f32; 3 * 384],
+        ];
+
+        let result = decoder.forward_one_batch(&tokens, &encoder_outputs, &mut cache)
+            .expect("forward_one_batch should succeed");
+
+        assert_eq!(result.batch_size(), 2);
+        assert_eq!(result.logits.len(), 2);
+        assert_eq!(result.logits[0].len(), decoder.n_vocab());
+        assert_eq!(result.logits[1].len(), decoder.n_vocab());
+
+        // Cache should be updated
+        assert_eq!(cache.get_cache(0).unwrap().seq_len(), 1);
+        assert_eq!(cache.get_cache(1).unwrap().seq_len(), 1);
+    }
+
+    #[test]
+    fn test_decoder_forward_one_batch_multiple_steps() {
+        let config = ModelConfig::tiny();
+        let decoder = Decoder::new(&config);
+        let mut cache = decoder.create_batch_cache(2);
+
+        let encoder_outputs = vec![
+            vec![0.0_f32; 5 * 384],
+            vec![0.0_f32; 5 * 384],
+        ];
+
+        // Step 1
+        decoder.forward_one_batch(&[0, 1], &encoder_outputs, &mut cache).unwrap();
+        // Step 2
+        decoder.forward_one_batch(&[2, 3], &encoder_outputs, &mut cache).unwrap();
+        // Step 3
+        decoder.forward_one_batch(&[4, 5], &encoder_outputs, &mut cache).unwrap();
+
+        assert_eq!(cache.get_cache(0).unwrap().seq_len(), 3);
+        assert_eq!(cache.get_cache(1).unwrap().seq_len(), 3);
+    }
+
+    #[test]
+    fn test_decoder_forward_one_batch_size_mismatch() {
+        let config = ModelConfig::tiny();
+        let decoder = Decoder::new(&config);
+        let mut cache = decoder.create_batch_cache(2);
+
+        let tokens = vec![0_u32, 1, 2]; // 3 tokens but batch size is 2
+        let encoder_outputs = vec![vec![0.0_f32; 384], vec![0.0_f32; 384]];
+
+        let result = decoder.forward_one_batch(&tokens, &encoder_outputs, &mut cache);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decoder_generate_batch_basic() {
+        let config = ModelConfig::tiny();
+        let decoder = Decoder::new(&config);
+
+        let encoder_outputs = vec![
+            vec![0.0_f32; 5 * 384],
+            vec![0.0_f32; 5 * 384],
+        ];
+        let initial_tokens = vec![
+            vec![50258_u32], // SOT for first
+            vec![50258_u32], // SOT for second
+        ];
+        let eos = 50257_u32;
+
+        let result = decoder.generate_batch(&encoder_outputs, &initial_tokens, 5, eos)
+            .expect("generate_batch should succeed");
+
+        assert_eq!(result.len(), 2);
+        assert!(result[0].len() >= 1);
+        assert!(result[1].len() >= 1);
+    }
+
+    #[test]
+    fn test_batch_decoder_output_batch_size() {
+        let output = BatchDecoderOutput {
+            logits: vec![vec![0.0; 100], vec![0.0; 100], vec![0.0; 100]],
+            seq_lengths: vec![5, 3, 4],
+        };
+        assert_eq!(output.batch_size(), 3);
+    }
+
+    #[test]
+    fn test_batch_decoder_output_get_logits() {
+        let output = BatchDecoderOutput {
+            logits: vec![vec![1.0; 10], vec![2.0; 10]],
+            seq_lengths: vec![1, 1],
+        };
+
+        assert_eq!(output.get_logits(0).unwrap()[0], 1.0);
+        assert_eq!(output.get_logits(1).unwrap()[0], 2.0);
+        assert!(output.get_logits(2).is_none());
+    }
+
+    #[test]
+    fn test_batch_decoder_output_is_empty() {
+        let empty = BatchDecoderOutput {
+            logits: vec![],
+            seq_lengths: vec![],
+        };
+        assert!(empty.is_empty());
+
+        let non_empty = BatchDecoderOutput {
+            logits: vec![vec![0.0]],
+            seq_lengths: vec![1],
+        };
+        assert!(!non_empty.is_empty());
     }
 }
