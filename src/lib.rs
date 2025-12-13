@@ -56,6 +56,9 @@ pub mod gpu;
 /// Backend abstraction and automatic selection
 pub mod backend;
 
+/// Custom vocabulary fine-tuning and hotword boosting
+pub mod vocabulary;
+
 #[cfg(feature = "wasm")]
 pub mod wasm;
 

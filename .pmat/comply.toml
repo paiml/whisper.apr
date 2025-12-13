@@ -9,13 +9,13 @@ spec_file = "docs/specifications/whisper.apr-wasm-first-spec.md"
 methodology = "EXTREME_TDD"
 quality_framework = "Toyota_Way"
 phase4_complete = true
-phase5_in_progress = true
+phase5_complete = true
 
 [metrics]
 total_tickets = 100
-completed_tickets = 96
-completion_rate = 96.0
-test_count = 1458
+completed_tickets = 100
+completion_rate = 100.0
+test_count = 1567
 line_coverage = 95.19
 property_tests = 19
 source_loc = 35000
@@ -698,9 +698,10 @@ completion_date = "2025-12-13"
 
 [sprints.sprint_41_42]
 name = "Custom Vocabulary Fine-Tuning"
-status = "pending"
+status = "complete"
 tickets = ["WAPR-170", "WAPR-171", "WAPR-172", "WAPR-173"]
 deliverable = "Hotword boosting and domain-specific vocabulary adaptation"
+completion_date = "2025-12-13"
 
 # v2.0 Tickets - Speaker Diarization
 
@@ -766,28 +767,28 @@ tdd_phase = "green"
 
 [tickets.WAPR-170]
 description = "Hotword boosting via logit biasing"
-status = "pending"
+status = "complete"
 sprint = "sprint_41_42"
 files = ["src/vocabulary/hotwords.rs"]
-tdd_phase = "pending"
+tdd_phase = "green"
 
 [tickets.WAPR-171]
 description = "Custom vocabulary trie structure"
-status = "pending"
+status = "complete"
 sprint = "sprint_41_42"
 files = ["src/vocabulary/trie.rs"]
-tdd_phase = "pending"
+tdd_phase = "green"
 
 [tickets.WAPR-172]
 description = "Domain vocabulary adapter"
-status = "pending"
+status = "complete"
 sprint = "sprint_41_42"
 files = ["src/vocabulary/adapter.rs"]
-tdd_phase = "pending"
+tdd_phase = "green"
 
 [tickets.WAPR-173]
 description = "Vocabulary WASM API"
-status = "pending"
+status = "complete"
 sprint = "sprint_41_42"
 files = ["src/wasm/vocabulary.rs"]
-tdd_phase = "pending"
+tdd_phase = "green"
