@@ -1271,6 +1271,305 @@ impl WhisperApr {
 
         speech_segments
     }
+
+    // =========================================================================
+    // Streaming Transcription API (WAPR-101)
+    // =========================================================================
+
+    /// Transcribe audio with partial results for real-time streaming
+    ///
+    /// This method enables real-time transcription by returning partial results
+    /// as audio is being accumulated. It's designed for use with the
+    /// `StreamingProcessor` and emits interim transcriptions.
+    ///
+    /// # Arguments
+    /// * `partial_audio` - Partial audio buffer (may be incomplete utterance)
+    /// * `options` - Transcription options
+    /// * `is_final` - Whether this is the final audio chunk
+    ///
+    /// # Returns
+    /// Partial transcription result
+    ///
+    /// # Errors
+    /// Returns error if transcription fails
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use whisper_apr::{WhisperApr, TranscribeOptions};
+    ///
+    /// let whisper = WhisperApr::tiny();
+    ///
+    /// // Get partial result during streaming
+    /// let partial = whisper.transcribe_partial(&audio_buffer, TranscribeOptions::default(), false)?;
+    /// println!("Partial: {}", partial.text);
+    ///
+    /// // Get final result
+    /// let final_result = whisper.transcribe_partial(&audio_buffer, TranscribeOptions::default(), true)?;
+    /// println!("Final: {}", final_result.text);
+    /// ```
+    pub fn transcribe_partial(
+        &self,
+        partial_audio: &[f32],
+        options: TranscribeOptions,
+        is_final: bool,
+    ) -> WhisperResult<PartialTranscriptionResult> {
+        let start_time = std::time::Instant::now();
+
+        // Skip if audio is too short (less than 0.5s)
+        let min_samples = (audio::SAMPLE_RATE as f32 * 0.5) as usize;
+        if partial_audio.len() < min_samples {
+            return Ok(PartialTranscriptionResult {
+                text: String::new(),
+                language: options.language.clone().unwrap_or_else(|| "en".to_string()),
+                is_final,
+                confidence: 0.0,
+                duration_secs: partial_audio.len() as f32 / audio::SAMPLE_RATE as f32,
+                processing_time_secs: start_time.elapsed().as_secs_f32(),
+            });
+        }
+
+        // Transcribe the partial audio
+        let result = self.transcribe(partial_audio, options.clone())?;
+
+        let processing_time = start_time.elapsed().as_secs_f32();
+
+        Ok(PartialTranscriptionResult {
+            text: result.text,
+            language: result.language,
+            is_final,
+            confidence: 1.0, // Placeholder - could add proper confidence scoring
+            duration_secs: partial_audio.len() as f32 / audio::SAMPLE_RATE as f32,
+            processing_time_secs: processing_time,
+        })
+    }
+
+    /// Create a streaming transcription session
+    ///
+    /// Returns a `StreamingSession` that manages the streaming processor
+    /// and provides partial results as audio is pushed.
+    ///
+    /// # Arguments
+    /// * `options` - Transcription options to use for all partial and final results
+    /// * `input_sample_rate` - Sample rate of the input audio
+    ///
+    /// # Returns
+    /// A new streaming session
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use whisper_apr::{WhisperApr, TranscribeOptions};
+    ///
+    /// let whisper = WhisperApr::tiny();
+    /// let mut session = whisper.create_streaming_session(
+    ///     TranscribeOptions::default(),
+    ///     44100, // Input sample rate from microphone
+    /// );
+    ///
+    /// // Push audio chunks as they arrive
+    /// loop {
+    ///     let audio_chunk = get_audio_from_microphone();
+    ///     if let Some(partial) = session.push(&audio_chunk)? {
+    ///         println!("Partial: {}", partial.text);
+    ///     }
+    ///     if session.has_chunk() {
+    ///         let final_result = session.finalize()?;
+    ///         println!("Final: {}", final_result.text);
+    ///         break;
+    ///     }
+    /// }
+    /// ```
+    #[must_use]
+    pub fn create_streaming_session(
+        &self,
+        options: TranscribeOptions,
+        input_sample_rate: u32,
+    ) -> StreamingSession<'_> {
+        let streaming_config = audio::StreamingConfig::with_sample_rate(input_sample_rate);
+        let processor = audio::StreamingProcessor::new(streaming_config);
+
+        StreamingSession {
+            whisper: self,
+            processor,
+            options,
+            last_partial_text: String::new(),
+        }
+    }
+}
+
+/// Result of partial transcription during streaming (WAPR-101)
+#[derive(Debug, Clone)]
+pub struct PartialTranscriptionResult {
+    /// Transcribed text (may be incomplete)
+    pub text: String,
+    /// Detected or specified language
+    pub language: String,
+    /// Whether this is the final result
+    pub is_final: bool,
+    /// Confidence score (0.0 - 1.0)
+    pub confidence: f32,
+    /// Duration of audio processed in seconds
+    pub duration_secs: f32,
+    /// Time taken to process in seconds
+    pub processing_time_secs: f32,
+}
+
+impl PartialTranscriptionResult {
+    /// Check if result has any text
+    #[must_use]
+    pub fn has_text(&self) -> bool {
+        !self.text.is_empty()
+    }
+
+    /// Check if this is an empty interim result
+    #[must_use]
+    pub fn is_empty_interim(&self) -> bool {
+        self.text.is_empty() && !self.is_final
+    }
+
+    /// Get real-time factor (processing time / audio duration)
+    #[must_use]
+    pub fn real_time_factor(&self) -> f32 {
+        if self.duration_secs <= 0.0 {
+            0.0
+        } else {
+            self.processing_time_secs / self.duration_secs
+        }
+    }
+}
+
+/// Streaming transcription session (WAPR-101)
+///
+/// Manages the streaming processor and provides partial results
+/// as audio is accumulated.
+#[derive(Debug)]
+pub struct StreamingSession<'a> {
+    /// Reference to the Whisper model
+    whisper: &'a WhisperApr,
+    /// Streaming processor
+    processor: audio::StreamingProcessor,
+    /// Transcription options
+    options: TranscribeOptions,
+    /// Last partial text (for deduplication)
+    last_partial_text: String,
+}
+
+impl<'a> StreamingSession<'a> {
+    /// Push audio samples and get partial result if available
+    ///
+    /// # Arguments
+    /// * `audio` - Audio samples at the configured input sample rate
+    ///
+    /// # Returns
+    /// Optional partial transcription if enough audio has accumulated
+    ///
+    /// # Errors
+    /// Returns error if transcription fails
+    pub fn push(&mut self, audio: &[f32]) -> WhisperResult<Option<PartialTranscriptionResult>> {
+        self.processor.push_audio(audio);
+        self.processor.process();
+
+        // Check for partial result
+        if self.processor.has_partial() {
+            if let Some(partial_audio) = self.processor.get_partial() {
+                let result = self.whisper.transcribe_partial(
+                    &partial_audio,
+                    self.options.clone(),
+                    false,
+                )?;
+
+                // Deduplicate (don't return same text twice)
+                if result.text != self.last_partial_text {
+                    self.last_partial_text = result.text.clone();
+                    return Ok(Some(result));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Check if a full chunk is ready
+    #[must_use]
+    pub fn has_chunk(&self) -> bool {
+        self.processor.has_chunk()
+    }
+
+    /// Check for pending events
+    #[must_use]
+    pub fn has_events(&self) -> bool {
+        self.processor.has_events()
+    }
+
+    /// Drain and return all pending events
+    pub fn drain_events(&mut self) -> Vec<audio::StreamingEvent> {
+        self.processor.drain_events()
+    }
+
+    /// Get the final transcription for the accumulated chunk
+    ///
+    /// # Returns
+    /// Final transcription result
+    ///
+    /// # Errors
+    /// Returns error if no chunk is ready or transcription fails
+    pub fn finalize(&mut self) -> WhisperResult<PartialTranscriptionResult> {
+        let chunk = self.processor.get_chunk().ok_or_else(|| {
+            WhisperError::Audio("no chunk ready for finalization".into())
+        })?;
+
+        let result = self.whisper.transcribe_partial(&chunk, self.options.clone(), true)?;
+        self.last_partial_text.clear();
+
+        Ok(result)
+    }
+
+    /// Flush any remaining audio and get final result
+    ///
+    /// # Returns
+    /// Optional final transcription if there was audio to process
+    ///
+    /// # Errors
+    /// Returns error if transcription fails
+    pub fn flush(&mut self) -> WhisperResult<Option<PartialTranscriptionResult>> {
+        if let Some(chunk) = self.processor.flush() {
+            let result = self.whisper.transcribe_partial(&chunk, self.options.clone(), true)?;
+            self.last_partial_text.clear();
+            Ok(Some(result))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Reset the session state
+    pub fn reset(&mut self) {
+        self.processor.reset();
+        self.last_partial_text.clear();
+    }
+
+    /// Get streaming processor state
+    #[must_use]
+    pub fn state(&self) -> audio::ProcessorState {
+        self.processor.state()
+    }
+
+    /// Get chunk progress (0.0 - 1.0)
+    #[must_use]
+    pub fn chunk_progress(&self) -> f32 {
+        self.processor.chunk_progress()
+    }
+
+    /// Get partial duration in seconds
+    #[must_use]
+    pub fn partial_duration(&self) -> f32 {
+        self.processor.partial_duration()
+    }
+
+    /// Set partial result threshold in seconds
+    pub fn set_partial_threshold(&mut self, seconds: f32) {
+        self.processor.set_partial_threshold(seconds);
+    }
 }
 
 /// Result of VAD-triggered transcription (WAPR-093)
@@ -2570,5 +2869,229 @@ mod tests {
         };
 
         assert!((result.total_duration_secs - 5.25).abs() < f32::EPSILON);
+    }
+
+    // =========================================================================
+    // WAPR-101: Streaming Transcription API Tests
+    // =========================================================================
+
+    #[test]
+    fn test_partial_transcription_result_new() {
+        let result = PartialTranscriptionResult {
+            text: "hello".to_string(),
+            language: "en".to_string(),
+            is_final: false,
+            confidence: 0.95,
+            duration_secs: 1.5,
+            processing_time_secs: 0.3,
+        };
+
+        assert_eq!(result.text, "hello");
+        assert_eq!(result.language, "en");
+        assert!(!result.is_final);
+        assert!((result.confidence - 0.95).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_partial_transcription_result_has_text() {
+        let with_text = PartialTranscriptionResult {
+            text: "hello".to_string(),
+            language: "en".to_string(),
+            is_final: false,
+            confidence: 1.0,
+            duration_secs: 1.0,
+            processing_time_secs: 0.1,
+        };
+        let empty = PartialTranscriptionResult {
+            text: String::new(),
+            language: "en".to_string(),
+            is_final: false,
+            confidence: 0.0,
+            duration_secs: 0.5,
+            processing_time_secs: 0.05,
+        };
+
+        assert!(with_text.has_text());
+        assert!(!empty.has_text());
+    }
+
+    #[test]
+    fn test_partial_transcription_result_is_empty_interim() {
+        let empty_interim = PartialTranscriptionResult {
+            text: String::new(),
+            language: "en".to_string(),
+            is_final: false,
+            confidence: 0.0,
+            duration_secs: 0.5,
+            processing_time_secs: 0.05,
+        };
+        let empty_final = PartialTranscriptionResult {
+            text: String::new(),
+            language: "en".to_string(),
+            is_final: true,
+            confidence: 0.0,
+            duration_secs: 0.5,
+            processing_time_secs: 0.05,
+        };
+        let with_text = PartialTranscriptionResult {
+            text: "hello".to_string(),
+            language: "en".to_string(),
+            is_final: false,
+            confidence: 1.0,
+            duration_secs: 1.0,
+            processing_time_secs: 0.1,
+        };
+
+        assert!(empty_interim.is_empty_interim());
+        assert!(!empty_final.is_empty_interim()); // Final, not interim
+        assert!(!with_text.is_empty_interim()); // Has text
+    }
+
+    #[test]
+    fn test_partial_transcription_result_real_time_factor() {
+        let result = PartialTranscriptionResult {
+            text: "hello".to_string(),
+            language: "en".to_string(),
+            is_final: false,
+            confidence: 1.0,
+            duration_secs: 2.0,
+            processing_time_secs: 0.5,
+        };
+
+        // RTF = 0.5 / 2.0 = 0.25
+        assert!((result.real_time_factor() - 0.25).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_partial_transcription_result_real_time_factor_zero_duration() {
+        let result = PartialTranscriptionResult {
+            text: String::new(),
+            language: "en".to_string(),
+            is_final: false,
+            confidence: 0.0,
+            duration_secs: 0.0,
+            processing_time_secs: 0.0,
+        };
+
+        assert!((result.real_time_factor() - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_partial_transcription_result_debug_clone() {
+        let result = PartialTranscriptionResult {
+            text: "test".to_string(),
+            language: "en".to_string(),
+            is_final: true,
+            confidence: 0.9,
+            duration_secs: 1.0,
+            processing_time_secs: 0.1,
+        };
+
+        let debug_str = format!("{result:?}");
+        assert!(debug_str.contains("PartialTranscriptionResult"));
+
+        let cloned = result.clone();
+        assert_eq!(cloned.text, "test");
+        assert!(cloned.is_final);
+    }
+
+    #[test]
+    fn test_transcribe_partial_too_short() {
+        let whisper = WhisperApr::tiny();
+        let short_audio = vec![0.0; 4000]; // Only 0.25 seconds
+
+        let result = whisper
+            .transcribe_partial(&short_audio, TranscribeOptions::default(), false)
+            .expect("should succeed with empty result");
+
+        assert!(result.text.is_empty());
+        assert!(!result.is_final);
+        assert!((result.confidence - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_create_streaming_session() {
+        let whisper = WhisperApr::tiny();
+        let session = whisper.create_streaming_session(TranscribeOptions::default(), 44100);
+
+        assert_eq!(session.state(), audio::ProcessorState::WaitingForSpeech);
+        assert!((session.chunk_progress() - 0.0).abs() < 0.01);
+        assert!(!session.has_chunk());
+        assert!(!session.has_events());
+    }
+
+    #[test]
+    fn test_streaming_session_reset() {
+        let whisper = WhisperApr::tiny();
+        let mut session = whisper.create_streaming_session(TranscribeOptions::default(), 16000);
+
+        // Push some audio
+        session.push(&vec![0.1; 1000]).expect("push should work");
+
+        // Reset
+        session.reset();
+
+        assert_eq!(session.state(), audio::ProcessorState::WaitingForSpeech);
+        assert!((session.partial_duration() - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_streaming_session_set_partial_threshold() {
+        let whisper = WhisperApr::tiny();
+        let mut session = whisper.create_streaming_session(TranscribeOptions::default(), 16000);
+
+        session.set_partial_threshold(5.0);
+        // Verify it was set (indirectly through behavior, not directly accessible)
+        // The partial threshold affects when partial results are available
+    }
+
+    #[test]
+    fn test_streaming_session_finalize_no_chunk() {
+        let whisper = WhisperApr::tiny();
+        let mut session = whisper.create_streaming_session(TranscribeOptions::default(), 16000);
+
+        let result = session.finalize();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_streaming_session_flush_empty() {
+        let whisper = WhisperApr::tiny();
+        let mut session = whisper.create_streaming_session(TranscribeOptions::default(), 16000);
+
+        let result = session.flush().expect("flush should work");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_streaming_session_drain_events() {
+        let whisper = WhisperApr::tiny();
+        let mut session = whisper.create_streaming_session(TranscribeOptions::default(), 16000);
+
+        // Reset emits an event
+        session.reset();
+
+        let events = session.drain_events();
+        assert!(!events.is_empty());
+        assert!(events.iter().any(|e| matches!(e, audio::StreamingEvent::Reset)));
+    }
+
+    #[test]
+    fn test_streaming_session_push_silence() {
+        let whisper = WhisperApr::tiny();
+        let mut session = whisper.create_streaming_session(TranscribeOptions::default(), 16000);
+
+        // Push silence
+        let result = session.push(&vec![0.0; 16000]).expect("push should work");
+        assert!(result.is_none()); // No partial for silence
+    }
+
+    #[test]
+    fn test_streaming_session_debug() {
+        let whisper = WhisperApr::tiny();
+        let session = whisper.create_streaming_session(TranscribeOptions::default(), 16000);
+
+        let debug_str = format!("{session:?}");
+        assert!(debug_str.contains("StreamingSession"));
     }
 }

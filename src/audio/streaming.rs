@@ -111,6 +111,24 @@ impl StreamingConfig {
         self
     }
 
+    /// Set chunk overlap (WAPR-102)
+    ///
+    /// The overlap is the amount of audio from the end of the previous chunk
+    /// that is prepended to the next chunk. This helps maintain context across
+    /// chunk boundaries for better transcription accuracy.
+    #[must_use]
+    pub fn chunk_overlap(mut self, overlap: f32) -> Self {
+        self.chunk_overlap = overlap;
+        self
+    }
+
+    /// Set minimum speech duration in milliseconds
+    #[must_use]
+    pub fn min_speech_duration_ms(mut self, duration: u32) -> Self {
+        self.min_speech_duration_ms = duration;
+        self
+    }
+
     /// Get chunk size in samples at output rate
     #[must_use]
     pub fn chunk_samples(&self) -> usize {
@@ -131,8 +149,43 @@ pub enum ProcessorState {
     WaitingForSpeech,
     /// Currently accumulating speech
     AccumulatingSpeech,
+    /// Partial result is available (enough audio for interim transcription)
+    PartialResultReady,
     /// Chunk ready for processing
     ChunkReady,
+    /// Currently processing a chunk (transcription in progress)
+    Processing,
+    /// Error state (recoverable)
+    Error,
+}
+
+/// Event emitted by the streaming processor (WAPR-100)
+#[derive(Debug, Clone, PartialEq)]
+pub enum StreamingEvent {
+    /// Speech detection started
+    SpeechStart,
+    /// Speech detection ended
+    SpeechEnd,
+    /// Partial result is available
+    PartialReady {
+        /// Audio accumulated so far (samples)
+        accumulated_samples: usize,
+        /// Duration in seconds
+        duration_secs: f32,
+    },
+    /// Full chunk is ready for transcription
+    ChunkReady {
+        /// Chunk duration in seconds
+        duration_secs: f32,
+    },
+    /// Processing started
+    ProcessingStarted,
+    /// Processing completed
+    ProcessingCompleted,
+    /// Error occurred
+    Error(String),
+    /// Reset occurred
+    Reset,
 }
 
 /// Streaming audio processor for real-time transcription
@@ -142,6 +195,7 @@ pub enum ProcessorState {
 /// 2. Resampling from native rate to 16kHz
 /// 3. Voice activity detection to skip silence
 /// 4. Accumulating speech into 30s chunks for inference
+/// 5. Emitting events for state transitions (WAPR-100)
 #[derive(Debug)]
 pub struct StreamingProcessor {
     /// Configuration
@@ -158,13 +212,24 @@ pub struct StreamingProcessor {
     overlap_buffer: Vec<f32>,
     /// Current processor state
     state: ProcessorState,
+    /// Previous state (for detecting transitions)
+    prev_state: ProcessorState,
     /// Consecutive speech frames count
     speech_frames: u32,
     /// Consecutive silence frames count
     silence_frames: u32,
     /// Total samples processed
     samples_processed: u64,
+    /// Pending events queue (WAPR-100)
+    events: Vec<StreamingEvent>,
+    /// Threshold for partial result (samples) - typically 3-5 seconds
+    partial_threshold_samples: usize,
+    /// Last partial result position (to avoid duplicate events)
+    last_partial_position: usize,
 }
+
+/// Default partial result threshold: 3 seconds of audio at 16kHz
+const DEFAULT_PARTIAL_THRESHOLD_SECS: f32 = 3.0;
 
 impl StreamingProcessor {
     /// Create a new streaming processor with the given configuration
@@ -186,6 +251,8 @@ impl StreamingProcessor {
         let vad = VoiceActivityDetector::new(vad_config);
 
         let chunk_capacity = config.chunk_samples() + config.overlap_samples();
+        let partial_threshold_samples =
+            (DEFAULT_PARTIAL_THRESHOLD_SECS * config.output_sample_rate as f32) as usize;
 
         Self {
             config,
@@ -195,9 +262,13 @@ impl StreamingProcessor {
             chunk_buffer: Vec::with_capacity(chunk_capacity),
             overlap_buffer: Vec::new(),
             state: ProcessorState::WaitingForSpeech,
+            prev_state: ProcessorState::WaitingForSpeech,
             speech_frames: 0,
             silence_frames: 0,
             samples_processed: 0,
+            events: Vec::new(),
+            partial_threshold_samples,
+            last_partial_position: 0,
         }
     }
 
@@ -236,6 +307,206 @@ impl StreamingProcessor {
     pub fn has_chunk(&self) -> bool {
         self.state == ProcessorState::ChunkReady
             || self.chunk_buffer.len() >= self.config.chunk_samples()
+    }
+
+    // =========================================================================
+    // Chunk Overlap Management (WAPR-102)
+    // =========================================================================
+
+    /// Get the current overlap buffer length
+    #[must_use]
+    pub fn overlap_len(&self) -> usize {
+        self.overlap_buffer.len()
+    }
+
+    /// Get the overlap duration in seconds
+    #[must_use]
+    pub fn overlap_duration(&self) -> f32 {
+        self.overlap_buffer.len() as f32 / self.config.output_sample_rate as f32
+    }
+
+    /// Check if overlap buffer has data
+    #[must_use]
+    pub fn has_overlap(&self) -> bool {
+        !self.overlap_buffer.is_empty()
+    }
+
+    /// Get the configured overlap size in samples
+    #[must_use]
+    pub fn configured_overlap_samples(&self) -> usize {
+        self.config.overlap_samples()
+    }
+
+    /// Get the configured overlap duration in seconds
+    #[must_use]
+    pub fn configured_overlap_duration(&self) -> f32 {
+        self.config.chunk_overlap
+    }
+
+    /// Clear the overlap buffer
+    ///
+    /// This is useful when you want to start fresh without using
+    /// the previous chunk's context.
+    pub fn clear_overlap(&mut self) {
+        self.overlap_buffer.clear();
+    }
+
+    /// Get a copy of the overlap buffer for inspection
+    #[must_use]
+    pub fn get_overlap_buffer(&self) -> Vec<f32> {
+        self.overlap_buffer.clone()
+    }
+
+    /// Set a custom overlap buffer
+    ///
+    /// This allows injecting context from a previous transcription
+    /// when resuming a streaming session.
+    pub fn set_overlap_buffer(&mut self, overlap: Vec<f32>) {
+        self.overlap_buffer = overlap;
+    }
+
+    // =========================================================================
+    // Event Handling (WAPR-100)
+    // =========================================================================
+
+    /// Check if there are pending events
+    #[must_use]
+    pub fn has_events(&self) -> bool {
+        !self.events.is_empty()
+    }
+
+    /// Get number of pending events
+    #[must_use]
+    pub fn event_count(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Drain all pending events
+    pub fn drain_events(&mut self) -> Vec<StreamingEvent> {
+        core::mem::take(&mut self.events)
+    }
+
+    /// Pop the next event (if any)
+    pub fn pop_event(&mut self) -> Option<StreamingEvent> {
+        if self.events.is_empty() {
+            None
+        } else {
+            Some(self.events.remove(0))
+        }
+    }
+
+    /// Peek at the next event without removing it
+    #[must_use]
+    pub fn peek_event(&self) -> Option<&StreamingEvent> {
+        self.events.first()
+    }
+
+    /// Clear all pending events
+    pub fn clear_events(&mut self) {
+        self.events.clear();
+    }
+
+    // =========================================================================
+    // Partial Results (WAPR-100)
+    // =========================================================================
+
+    /// Check if a partial result is available
+    ///
+    /// Returns true if enough audio has been accumulated for an interim transcription
+    #[must_use]
+    pub fn has_partial(&self) -> bool {
+        self.state == ProcessorState::PartialResultReady
+            || (self.state == ProcessorState::AccumulatingSpeech
+                && self.chunk_buffer.len() >= self.partial_threshold_samples
+                && self.chunk_buffer.len() > self.last_partial_position)
+    }
+
+    /// Get partial audio for interim transcription
+    ///
+    /// Returns the currently accumulated audio without consuming it.
+    /// The chunk buffer continues to accumulate more audio.
+    pub fn get_partial(&mut self) -> Option<Vec<f32>> {
+        if !self.has_partial() {
+            return None;
+        }
+
+        // Update last partial position to avoid duplicate events
+        self.last_partial_position = self.chunk_buffer.len();
+
+        // Return a copy of accumulated audio
+        Some(self.chunk_buffer.clone())
+    }
+
+    /// Get partial audio duration in seconds
+    #[must_use]
+    pub fn partial_duration(&self) -> f32 {
+        self.chunk_buffer.len() as f32 / self.config.output_sample_rate as f32
+    }
+
+    /// Set the partial result threshold in seconds
+    ///
+    /// Controls how much audio must accumulate before a partial result is triggered.
+    pub fn set_partial_threshold(&mut self, seconds: f32) {
+        self.partial_threshold_samples =
+            (seconds * self.config.output_sample_rate as f32) as usize;
+    }
+
+    /// Get the partial result threshold in seconds
+    #[must_use]
+    pub fn partial_threshold(&self) -> f32 {
+        self.partial_threshold_samples as f32 / self.config.output_sample_rate as f32
+    }
+
+    // =========================================================================
+    // State Transitions (WAPR-100)
+    // =========================================================================
+
+    /// Mark processing as started
+    ///
+    /// Call this when you begin transcribing a chunk
+    pub fn mark_processing_started(&mut self) {
+        if self.state == ProcessorState::ChunkReady || self.state == ProcessorState::PartialResultReady {
+            self.prev_state = self.state;
+            self.state = ProcessorState::Processing;
+            self.events.push(StreamingEvent::ProcessingStarted);
+        }
+    }
+
+    /// Mark processing as completed
+    ///
+    /// Call this when transcription of a chunk is done
+    pub fn mark_processing_completed(&mut self) {
+        if self.state == ProcessorState::Processing {
+            self.state = ProcessorState::WaitingForSpeech;
+            self.events.push(StreamingEvent::ProcessingCompleted);
+        }
+    }
+
+    /// Mark an error occurred (recoverable)
+    pub fn mark_error(&mut self, message: &str) {
+        self.prev_state = self.state;
+        self.state = ProcessorState::Error;
+        self.events.push(StreamingEvent::Error(message.to_string()));
+    }
+
+    /// Recover from error state
+    pub fn recover_from_error(&mut self) {
+        if self.state == ProcessorState::Error {
+            self.state = ProcessorState::WaitingForSpeech;
+            self.chunk_buffer.clear();
+            self.last_partial_position = 0;
+        }
+    }
+
+    /// Get the previous state (before last transition)
+    #[must_use]
+    pub const fn prev_state(&self) -> ProcessorState {
+        self.prev_state
+    }
+
+    /// Emit an event internally
+    fn emit_event(&mut self, event: StreamingEvent) {
+        self.events.push(event);
     }
 
     /// Push audio samples into the processor
@@ -294,6 +565,9 @@ impl StreamingProcessor {
 
     /// Update internal state based on VAD result
     fn update_state(&mut self, is_speech: bool, samples: &[f32]) {
+        let prev_speech_frames = self.speech_frames;
+        let prev_silence_frames = self.silence_frames;
+
         if is_speech {
             self.speech_frames += 1;
             self.silence_frames = 0;
@@ -301,6 +575,9 @@ impl StreamingProcessor {
             self.silence_frames += 1;
             self.speech_frames = 0;
         }
+
+        // Track previous state for events
+        self.prev_state = self.state;
 
         // State machine
         match self.state {
@@ -311,31 +588,77 @@ impl StreamingProcessor {
                     self.chunk_buffer.clear();
                     self.chunk_buffer.extend(&self.overlap_buffer);
                     self.chunk_buffer.extend_from_slice(samples);
+                    self.last_partial_position = 0;
+
+                    // Emit speech start event (WAPR-100)
+                    self.emit_event(StreamingEvent::SpeechStart);
                 }
             }
             ProcessorState::AccumulatingSpeech => {
                 self.chunk_buffer.extend_from_slice(samples);
 
+                // Check for partial result threshold (WAPR-100)
+                if self.chunk_buffer.len() >= self.partial_threshold_samples
+                    && self.chunk_buffer.len() > self.last_partial_position
+                    && self.last_partial_position == 0
+                {
+                    // First partial result ready
+                    self.emit_event(StreamingEvent::PartialReady {
+                        accumulated_samples: self.chunk_buffer.len(),
+                        duration_secs: self.partial_duration(),
+                    });
+                }
+
                 // Check if chunk is complete
                 if self.chunk_buffer.len() >= self.config.chunk_samples() {
                     self.state = ProcessorState::ChunkReady;
+                    let duration = self.chunk_buffer.len() as f32 / self.config.output_sample_rate as f32;
+                    self.emit_event(StreamingEvent::ChunkReady { duration_secs: duration });
                 }
                 // Or if we hit extended silence (end of utterance)
                 else if !is_speech && self.silence_frames >= self.max_silence_frames() {
+                    // Emit speech end event
+                    self.emit_event(StreamingEvent::SpeechEnd);
+
                     // Partial chunk is ready
                     if self.chunk_buffer.len() >= self.config.overlap_samples() * 2 {
                         self.state = ProcessorState::ChunkReady;
+                        let duration = self.chunk_buffer.len() as f32 / self.config.output_sample_rate as f32;
+                        self.emit_event(StreamingEvent::ChunkReady { duration_secs: duration });
                     } else {
                         // Too short, discard and wait for more speech
                         self.state = ProcessorState::WaitingForSpeech;
                         self.chunk_buffer.clear();
+                        self.last_partial_position = 0;
                     }
+                }
+            }
+            ProcessorState::PartialResultReady => {
+                // Continue accumulating while partial is being processed
+                self.chunk_buffer.extend_from_slice(samples);
+
+                // Check if full chunk is now ready
+                if self.chunk_buffer.len() >= self.config.chunk_samples() {
+                    self.state = ProcessorState::ChunkReady;
+                    let duration = self.chunk_buffer.len() as f32 / self.config.output_sample_rate as f32;
+                    self.emit_event(StreamingEvent::ChunkReady { duration_secs: duration });
                 }
             }
             ProcessorState::ChunkReady => {
                 // Waiting for chunk to be consumed
             }
+            ProcessorState::Processing => {
+                // Waiting for processing to complete
+                // Audio is being buffered in input_buffer during this time
+            }
+            ProcessorState::Error => {
+                // Waiting for error recovery
+            }
         }
+
+        // Suppress unused variable warnings
+        let _ = prev_speech_frames;
+        let _ = prev_silence_frames;
     }
 
     /// Get minimum speech frames to trigger accumulation
@@ -375,9 +698,11 @@ impl StreamingProcessor {
 
         // Take the chunk
         let chunk = core::mem::take(&mut self.chunk_buffer);
+        self.prev_state = self.state;
         self.state = ProcessorState::WaitingForSpeech;
         self.speech_frames = 0;
         self.silence_frames = 0;
+        self.last_partial_position = 0;
 
         Some(chunk)
     }
@@ -404,8 +729,10 @@ impl StreamingProcessor {
         self.chunk_buffer.resize(target_size, 0.0);
 
         let chunk = core::mem::take(&mut self.chunk_buffer);
+        self.prev_state = self.state;
         self.state = ProcessorState::WaitingForSpeech;
         self.overlap_buffer.clear();
+        self.last_partial_position = 0;
 
         Some(chunk)
     }
@@ -415,9 +742,12 @@ impl StreamingProcessor {
         self.input_buffer.clear();
         self.chunk_buffer.clear();
         self.overlap_buffer.clear();
+        self.prev_state = self.state;
         self.state = ProcessorState::WaitingForSpeech;
         self.speech_frames = 0;
         self.silence_frames = 0;
+        self.last_partial_position = 0;
+        self.emit_event(StreamingEvent::Reset);
     }
 
     /// Get statistics about the processor
@@ -1022,5 +1352,654 @@ mod tests {
         assert_eq!(processor.state(), ProcessorState::AccumulatingSpeech);
         // Should include overlap + new samples
         assert!(processor.chunk_buffer.len() >= 320);
+    }
+
+    // =========================================================================
+    // WAPR-100: Enhanced State Machine Tests
+    // =========================================================================
+
+    #[test]
+    fn test_streaming_event_variants() {
+        // Test all event variants can be created
+        let speech_start = StreamingEvent::SpeechStart;
+        let speech_end = StreamingEvent::SpeechEnd;
+        let partial_ready = StreamingEvent::PartialReady {
+            accumulated_samples: 48000,
+            duration_secs: 3.0,
+        };
+        let chunk_ready = StreamingEvent::ChunkReady { duration_secs: 30.0 };
+        let processing_started = StreamingEvent::ProcessingStarted;
+        let processing_completed = StreamingEvent::ProcessingCompleted;
+        let error = StreamingEvent::Error("test error".to_string());
+        let reset = StreamingEvent::Reset;
+
+        // Test Debug and Clone
+        assert!(format!("{speech_start:?}").contains("SpeechStart"));
+        assert!(format!("{speech_end:?}").contains("SpeechEnd"));
+        assert!(format!("{partial_ready:?}").contains("PartialReady"));
+        assert!(format!("{chunk_ready:?}").contains("ChunkReady"));
+        assert!(format!("{processing_started:?}").contains("ProcessingStarted"));
+        assert!(format!("{processing_completed:?}").contains("ProcessingCompleted"));
+        assert!(format!("{error:?}").contains("Error"));
+        assert!(format!("{reset:?}").contains("Reset"));
+
+        // Test Clone
+        let cloned = speech_start.clone();
+        assert_eq!(cloned, StreamingEvent::SpeechStart);
+    }
+
+    #[test]
+    fn test_processor_state_new_variants() {
+        // Test new state variants
+        let partial_ready = ProcessorState::PartialResultReady;
+        let processing = ProcessorState::Processing;
+        let error = ProcessorState::Error;
+
+        assert!(format!("{partial_ready:?}").contains("PartialResultReady"));
+        assert!(format!("{processing:?}").contains("Processing"));
+        assert!(format!("{error:?}").contains("Error"));
+
+        // Test equality
+        assert_ne!(ProcessorState::PartialResultReady, ProcessorState::Processing);
+        assert_ne!(ProcessorState::Processing, ProcessorState::Error);
+    }
+
+    #[test]
+    fn test_event_handling_initial() {
+        let processor = StreamingProcessor::new(StreamingConfig::default());
+        assert!(!processor.has_events());
+        assert_eq!(processor.event_count(), 0);
+        assert!(processor.peek_event().is_none());
+    }
+
+    #[test]
+    fn test_event_pop_and_drain() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+
+        // Manually add events for testing
+        processor.events.push(StreamingEvent::SpeechStart);
+        processor.events.push(StreamingEvent::SpeechEnd);
+
+        assert!(processor.has_events());
+        assert_eq!(processor.event_count(), 2);
+
+        // Pop first event
+        let event = processor.pop_event();
+        assert!(event.is_some());
+        assert_eq!(event, Some(StreamingEvent::SpeechStart));
+        assert_eq!(processor.event_count(), 1);
+
+        // Drain remaining
+        let remaining = processor.drain_events();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0], StreamingEvent::SpeechEnd);
+        assert!(!processor.has_events());
+    }
+
+    #[test]
+    fn test_event_peek() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+        processor.events.push(StreamingEvent::Reset);
+
+        let peeked = processor.peek_event();
+        assert!(peeked.is_some());
+        assert_eq!(peeked, Some(&StreamingEvent::Reset));
+
+        // Peeking doesn't consume
+        assert_eq!(processor.event_count(), 1);
+    }
+
+    #[test]
+    fn test_clear_events() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+        processor.events.push(StreamingEvent::SpeechStart);
+        processor.events.push(StreamingEvent::SpeechEnd);
+
+        processor.clear_events();
+        assert!(!processor.has_events());
+        assert_eq!(processor.event_count(), 0);
+    }
+
+    #[test]
+    fn test_partial_result_threshold() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+
+        // Default threshold is 3 seconds = 48000 samples at 16kHz
+        assert!((processor.partial_threshold() - 3.0).abs() < 0.01);
+
+        // Change threshold
+        processor.set_partial_threshold(5.0);
+        assert!((processor.partial_threshold() - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_partial_duration() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            ..Default::default()
+        };
+        let mut processor = StreamingProcessor::new(config);
+
+        // Empty buffer
+        assert!((processor.partial_duration() - 0.0).abs() < 0.01);
+
+        // Add some samples
+        processor.chunk_buffer = vec![0.1; 16000]; // 1 second
+        assert!((processor.partial_duration() - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_has_partial_not_accumulating() {
+        let processor = StreamingProcessor::new(StreamingConfig::default());
+        assert!(!processor.has_partial()); // Not accumulating
+    }
+
+    #[test]
+    fn test_has_partial_below_threshold() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+        processor.state = ProcessorState::AccumulatingSpeech;
+        processor.chunk_buffer = vec![0.1; 16000]; // 1 second, below 3s threshold
+
+        assert!(!processor.has_partial());
+    }
+
+    #[test]
+    fn test_has_partial_above_threshold() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+        processor.state = ProcessorState::AccumulatingSpeech;
+        processor.chunk_buffer = vec![0.1; 64000]; // 4 seconds, above 3s threshold
+
+        assert!(processor.has_partial());
+    }
+
+    #[test]
+    fn test_get_partial() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+        processor.state = ProcessorState::AccumulatingSpeech;
+        processor.chunk_buffer = vec![0.1; 64000]; // 4 seconds
+
+        let partial = processor.get_partial();
+        assert!(partial.is_some());
+        assert_eq!(partial.as_ref().map(|p| p.len()), Some(64000));
+
+        // After getting partial, last_partial_position is updated
+        assert_eq!(processor.last_partial_position, 64000);
+
+        // Getting again without more audio returns None (already processed this position)
+        assert!(!processor.has_partial());
+    }
+
+    #[test]
+    fn test_processing_state_transitions() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+        processor.state = ProcessorState::ChunkReady;
+
+        // Mark processing started
+        processor.mark_processing_started();
+        assert_eq!(processor.state(), ProcessorState::Processing);
+        assert!(processor.has_events());
+
+        // Should have emitted ProcessingStarted event
+        let event = processor.pop_event();
+        assert_eq!(event, Some(StreamingEvent::ProcessingStarted));
+
+        // Mark processing completed
+        processor.mark_processing_completed();
+        assert_eq!(processor.state(), ProcessorState::WaitingForSpeech);
+
+        let event = processor.pop_event();
+        assert_eq!(event, Some(StreamingEvent::ProcessingCompleted));
+    }
+
+    #[test]
+    fn test_error_state() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+
+        processor.mark_error("Test error message");
+        assert_eq!(processor.state(), ProcessorState::Error);
+
+        let event = processor.pop_event();
+        assert!(matches!(event, Some(StreamingEvent::Error(msg)) if msg == "Test error message"));
+    }
+
+    #[test]
+    fn test_error_recovery() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+        processor.state = ProcessorState::Error;
+        processor.chunk_buffer = vec![0.1; 1000];
+        processor.last_partial_position = 500;
+
+        processor.recover_from_error();
+
+        assert_eq!(processor.state(), ProcessorState::WaitingForSpeech);
+        assert!(processor.chunk_buffer.is_empty());
+        assert_eq!(processor.last_partial_position, 0);
+    }
+
+    #[test]
+    fn test_prev_state_tracking() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            min_speech_duration_ms: 0,
+            ..Default::default()
+        };
+        let mut processor = StreamingProcessor::new(config);
+
+        assert_eq!(processor.prev_state(), ProcessorState::WaitingForSpeech);
+
+        // Transition to accumulating
+        processor.speech_frames = 1;
+        processor.update_state(true, &vec![0.1; 320]);
+
+        // Previous state should be WaitingForSpeech
+        assert_eq!(processor.prev_state(), ProcessorState::WaitingForSpeech);
+        assert_eq!(processor.state(), ProcessorState::AccumulatingSpeech);
+    }
+
+    #[test]
+    fn test_speech_start_event() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            min_speech_duration_ms: 0, // Immediate
+            ..Default::default()
+        };
+        let mut processor = StreamingProcessor::new(config);
+        processor.speech_frames = 1;
+
+        processor.update_state(true, &vec![0.1; 320]);
+
+        // Should have emitted SpeechStart event
+        assert!(processor.has_events());
+        let event = processor.pop_event();
+        assert_eq!(event, Some(StreamingEvent::SpeechStart));
+    }
+
+    #[test]
+    fn test_speech_end_and_chunk_ready_events() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            chunk_duration: 30.0,
+            chunk_overlap: 0.1,
+            ..Default::default()
+        };
+        let mut processor = StreamingProcessor::new(config);
+
+        // Set up as accumulating with enough audio
+        processor.state = ProcessorState::AccumulatingSpeech;
+        processor.chunk_buffer = vec![0.1; 5000];
+        processor.silence_frames = 50; // Extended silence
+
+        processor.update_state(false, &vec![0.0; 320]);
+
+        // Should have SpeechEnd then ChunkReady events
+        let events = processor.drain_events();
+        assert!(events.iter().any(|e| *e == StreamingEvent::SpeechEnd));
+        assert!(events.iter().any(|e| matches!(e, StreamingEvent::ChunkReady { .. })));
+    }
+
+    #[test]
+    fn test_reset_emits_event() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+        processor.state = ProcessorState::AccumulatingSpeech;
+        processor.chunk_buffer = vec![0.1; 1000];
+
+        processor.reset();
+
+        assert_eq!(processor.state(), ProcessorState::WaitingForSpeech);
+        assert!(processor.chunk_buffer.is_empty());
+
+        // Should have emitted Reset event
+        let event = processor.pop_event();
+        assert_eq!(event, Some(StreamingEvent::Reset));
+    }
+
+    #[test]
+    fn test_partial_ready_event_on_threshold() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            min_speech_duration_ms: 0,
+            ..Default::default()
+        };
+        let mut processor = StreamingProcessor::new(config);
+        processor.set_partial_threshold(0.1); // 1600 samples
+
+        // Transition to accumulating
+        processor.speech_frames = 1;
+        processor.update_state(true, &vec![0.1; 320]);
+        processor.drain_events(); // Clear SpeechStart event
+
+        // Accumulate past threshold
+        processor.state = ProcessorState::AccumulatingSpeech;
+        processor.chunk_buffer = vec![0.1; 1500]; // Just below threshold
+
+        processor.update_state(true, &vec![0.1; 320]);
+
+        // Should have emitted PartialReady event
+        let events = processor.drain_events();
+        assert!(events.iter().any(|e| matches!(e, StreamingEvent::PartialReady { .. })));
+    }
+
+    #[test]
+    fn test_processing_state_ignores_transitions() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+        processor.state = ProcessorState::Processing;
+        processor.chunk_buffer = vec![0.1; 1000];
+
+        // Calling update_state while processing should not change state
+        processor.update_state(true, &vec![0.1; 320]);
+
+        assert_eq!(processor.state(), ProcessorState::Processing);
+    }
+
+    #[test]
+    fn test_error_state_ignores_transitions() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+        processor.state = ProcessorState::Error;
+
+        processor.update_state(true, &vec![0.1; 320]);
+
+        assert_eq!(processor.state(), ProcessorState::Error);
+    }
+
+    #[test]
+    fn test_partial_result_ready_continues_accumulating() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            chunk_duration: 0.1, // 1600 samples for full chunk
+            ..Default::default()
+        };
+        let mut processor = StreamingProcessor::new(config);
+        processor.state = ProcessorState::PartialResultReady;
+        processor.chunk_buffer = vec![0.1; 1000];
+
+        processor.update_state(true, &vec![0.1; 320]);
+
+        // Should have accumulated more samples
+        assert_eq!(processor.chunk_buffer.len(), 1320);
+    }
+
+    #[test]
+    fn test_partial_to_chunk_ready_transition() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            chunk_duration: 0.1, // 1600 samples
+            ..Default::default()
+        };
+        let mut processor = StreamingProcessor::new(config);
+        processor.state = ProcessorState::PartialResultReady;
+        processor.chunk_buffer = vec![0.1; 1500]; // Close to full
+
+        processor.update_state(true, &vec![0.1; 320]);
+
+        // Should have transitioned to ChunkReady
+        assert_eq!(processor.state(), ProcessorState::ChunkReady);
+    }
+
+    #[test]
+    fn test_get_chunk_resets_partial_position() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            chunk_duration: 0.02,
+            chunk_overlap: 0.01,
+            ..Default::default()
+        };
+        let mut processor = StreamingProcessor::new(config);
+        processor.state = ProcessorState::ChunkReady;
+        processor.chunk_buffer = vec![0.1; 400];
+        processor.last_partial_position = 200;
+
+        let _ = processor.get_chunk();
+
+        // Should have reset partial position
+        assert_eq!(processor.last_partial_position, 0);
+    }
+
+    #[test]
+    fn test_flush_resets_partial_position() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            chunk_duration: 0.1,
+            chunk_overlap: 0.01,
+            ..Default::default()
+        };
+        let mut processor = StreamingProcessor::new(config);
+        processor.state = ProcessorState::AccumulatingSpeech;
+        processor.chunk_buffer = vec![0.1; 500];
+        processor.last_partial_position = 100;
+
+        let _ = processor.flush();
+
+        // Should have reset partial position
+        assert_eq!(processor.last_partial_position, 0);
+    }
+
+    #[test]
+    fn test_default_partial_threshold_constant() {
+        // Verify the constant is set correctly
+        assert!((DEFAULT_PARTIAL_THRESHOLD_SECS - 3.0).abs() < f32::EPSILON);
+    }
+
+    // =========================================================================
+    // WAPR-102: Chunk Overlap Handling Tests
+    // =========================================================================
+
+    #[test]
+    fn test_config_chunk_overlap_builder() {
+        let config = StreamingConfig::default().chunk_overlap(0.5);
+        assert!((config.chunk_overlap - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_config_min_speech_duration_builder() {
+        let config = StreamingConfig::default().min_speech_duration_ms(500);
+        assert_eq!(config.min_speech_duration_ms, 500);
+    }
+
+    #[test]
+    fn test_overlap_len_initial() {
+        let processor = StreamingProcessor::new(StreamingConfig::default());
+        assert_eq!(processor.overlap_len(), 0);
+    }
+
+    #[test]
+    fn test_overlap_duration_empty() {
+        let processor = StreamingProcessor::new(StreamingConfig::default());
+        assert!((processor.overlap_duration() - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_has_overlap_initial() {
+        let processor = StreamingProcessor::new(StreamingConfig::default());
+        assert!(!processor.has_overlap());
+    }
+
+    #[test]
+    fn test_configured_overlap_samples() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            chunk_overlap: 0.5, // 0.5 seconds
+            ..Default::default()
+        };
+        let processor = StreamingProcessor::new(config);
+        assert_eq!(processor.configured_overlap_samples(), 8000); // 0.5 * 16000
+    }
+
+    #[test]
+    fn test_configured_overlap_duration() {
+        let config = StreamingConfig {
+            chunk_overlap: 0.75,
+            ..Default::default()
+        };
+        let processor = StreamingProcessor::new(config);
+        assert!((processor.configured_overlap_duration() - 0.75).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_clear_overlap() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+        processor.overlap_buffer = vec![0.1; 1000];
+
+        processor.clear_overlap();
+
+        assert!(!processor.has_overlap());
+        assert_eq!(processor.overlap_len(), 0);
+    }
+
+    #[test]
+    fn test_get_overlap_buffer() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+        processor.overlap_buffer = vec![0.5; 100];
+
+        let overlap = processor.get_overlap_buffer();
+        assert_eq!(overlap.len(), 100);
+        assert!((overlap[0] - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_set_overlap_buffer() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+        let custom_overlap = vec![0.25; 200];
+
+        processor.set_overlap_buffer(custom_overlap.clone());
+
+        assert!(processor.has_overlap());
+        assert_eq!(processor.overlap_len(), 200);
+        let buffer = processor.get_overlap_buffer();
+        assert!((buffer[0] - 0.25).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_overlap_preserved_after_get_chunk() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            chunk_duration: 0.02, // 320 samples
+            chunk_overlap: 0.01,  // 160 samples overlap
+            ..Default::default()
+        };
+        let mut processor = StreamingProcessor::new(config);
+
+        // Fill chunk buffer with recognizable pattern
+        processor.chunk_buffer = (0..400).map(|i| i as f32 * 0.001).collect();
+        processor.state = ProcessorState::ChunkReady;
+
+        let _ = processor.get_chunk();
+
+        // Overlap buffer should have last 160 samples
+        assert!(processor.has_overlap());
+        assert_eq!(processor.overlap_len(), 160);
+
+        // Verify the overlap is from the end of the chunk
+        let overlap = processor.get_overlap_buffer();
+        // First sample of overlap should be sample 240 from original (400 - 160)
+        assert!((overlap[0] - 0.240).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_overlap_used_when_starting_accumulation() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            min_speech_duration_ms: 0, // Immediate
+            ..Default::default()
+        };
+        let mut processor = StreamingProcessor::new(config);
+
+        // Pre-populate overlap buffer
+        processor.overlap_buffer = vec![0.05; 100];
+        processor.speech_frames = 1;
+
+        let samples = vec![0.1; 320];
+        processor.update_state(true, &samples);
+
+        // Chunk buffer should include overlap + new samples
+        assert!(processor.chunk_buffer.len() >= 420);
+        // First 100 samples should be from overlap (0.05)
+        assert!((processor.chunk_buffer[0] - 0.05).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_overlap_duration_with_samples() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            ..Default::default()
+        };
+        let mut processor = StreamingProcessor::new(config);
+        processor.overlap_buffer = vec![0.1; 8000]; // 0.5 seconds
+
+        assert!((processor.overlap_duration() - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_overlap_reset_clears_buffer() {
+        let mut processor = StreamingProcessor::new(StreamingConfig::default());
+        processor.overlap_buffer = vec![0.1; 1000];
+
+        processor.reset();
+
+        assert!(!processor.has_overlap());
+    }
+
+    #[test]
+    fn test_flush_clears_overlap() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            chunk_duration: 0.1,
+            chunk_overlap: 0.01,
+            ..Default::default()
+        };
+        let mut processor = StreamingProcessor::new(config);
+        processor.state = ProcessorState::AccumulatingSpeech;
+        processor.chunk_buffer = vec![0.1; 500];
+        processor.overlap_buffer = vec![0.2; 100];
+
+        let _ = processor.flush();
+
+        assert!(!processor.has_overlap());
+    }
+
+    #[test]
+    fn test_multiple_chunks_preserve_overlap_chain() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            chunk_duration: 0.02,  // 320 samples
+            chunk_overlap: 0.005, // 80 samples overlap
+            min_speech_duration_ms: 0, // Immediate transition
+            ..Default::default()
+        };
+        let mut processor = StreamingProcessor::new(config);
+
+        // First chunk
+        processor.chunk_buffer = vec![0.1; 400];
+        processor.state = ProcessorState::ChunkReady;
+        let _ = processor.get_chunk();
+
+        // Verify overlap preserved
+        let first_overlap = processor.get_overlap_buffer();
+        assert_eq!(first_overlap.len(), 80);
+
+        // Second chunk - simulate accumulation that uses overlap
+        // Set speech_frames high enough to trigger transition
+        processor.speech_frames = 1;
+        processor.state = ProcessorState::WaitingForSpeech;
+        processor.update_state(true, &vec![0.2; 320]);
+
+        // After transition, chunk buffer should include overlap + new samples
+        assert!(processor.chunk_buffer.len() >= 320);
+        // Verify overlap was prepended (first 80 samples should be 0.1)
+        assert!((processor.chunk_buffer[0] - 0.1).abs() < 0.01);
     }
 }

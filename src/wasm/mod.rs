@@ -1022,3 +1022,674 @@ mod tests {
         assert!(model.is_none());
     }
 }
+
+// =============================================================================
+// WAPR-103: Streaming WASM API
+// =============================================================================
+
+use crate::audio::{ProcessorState, StreamingConfig, StreamingEvent, StreamingProcessor};
+use crate::PartialTranscriptionResult;
+
+/// WASM-friendly streaming configuration
+#[wasm_bindgen]
+#[derive(Debug, Clone)]
+pub struct StreamingConfigWasm {
+    input_sample_rate: u32,
+    chunk_duration: f32,
+    chunk_overlap: f32,
+    partial_threshold: f32,
+    enable_vad: bool,
+    vad_threshold: f32,
+}
+
+#[wasm_bindgen]
+impl StreamingConfigWasm {
+    /// Create default streaming config
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            input_sample_rate: 44100, // Common browser default
+            chunk_duration: 30.0,
+            chunk_overlap: 1.0,
+            partial_threshold: 3.0,
+            enable_vad: true,
+            vad_threshold: 0.3,
+        }
+    }
+
+    /// Set input sample rate
+    #[wasm_bindgen(js_name = setInputSampleRate)]
+    pub fn set_input_sample_rate(&mut self, rate: u32) {
+        self.input_sample_rate = rate;
+    }
+
+    /// Set chunk duration in seconds
+    #[wasm_bindgen(js_name = setChunkDuration)]
+    pub fn set_chunk_duration(&mut self, duration: f32) {
+        self.chunk_duration = duration;
+    }
+
+    /// Set chunk overlap in seconds
+    #[wasm_bindgen(js_name = setChunkOverlap)]
+    pub fn set_chunk_overlap(&mut self, overlap: f32) {
+        self.chunk_overlap = overlap;
+    }
+
+    /// Set partial result threshold in seconds
+    #[wasm_bindgen(js_name = setPartialThreshold)]
+    pub fn set_partial_threshold(&mut self, threshold: f32) {
+        self.partial_threshold = threshold;
+    }
+
+    /// Enable or disable VAD
+    #[wasm_bindgen(js_name = setEnableVad)]
+    pub fn set_enable_vad(&mut self, enable: bool) {
+        self.enable_vad = enable;
+    }
+
+    /// Set VAD threshold
+    #[wasm_bindgen(js_name = setVadThreshold)]
+    pub fn set_vad_threshold(&mut self, threshold: f32) {
+        self.vad_threshold = threshold;
+    }
+
+    /// Get input sample rate
+    #[wasm_bindgen(getter, js_name = inputSampleRate)]
+    pub fn input_sample_rate(&self) -> u32 {
+        self.input_sample_rate
+    }
+
+    /// Get chunk duration
+    #[wasm_bindgen(getter, js_name = chunkDuration)]
+    pub fn chunk_duration(&self) -> f32 {
+        self.chunk_duration
+    }
+
+    /// Get partial threshold
+    #[wasm_bindgen(getter, js_name = partialThreshold)]
+    pub fn partial_threshold(&self) -> f32 {
+        self.partial_threshold
+    }
+}
+
+impl Default for StreamingConfigWasm {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<StreamingConfigWasm> for StreamingConfig {
+    fn from(wasm: StreamingConfigWasm) -> Self {
+        StreamingConfig::default()
+            .chunk_duration(wasm.chunk_duration)
+            .chunk_overlap(wasm.chunk_overlap)
+            .vad_threshold(wasm.vad_threshold)
+    }
+}
+
+/// WASM-friendly partial transcription result
+#[wasm_bindgen]
+#[derive(Debug, Clone)]
+pub struct PartialTranscriptionResultWasm {
+    text: String,
+    language: String,
+    is_final: bool,
+    confidence: f32,
+    duration_secs: f32,
+    processing_time_secs: f32,
+}
+
+#[wasm_bindgen]
+impl PartialTranscriptionResultWasm {
+    /// Get the transcribed text
+    #[wasm_bindgen(getter)]
+    pub fn text(&self) -> String {
+        self.text.clone()
+    }
+
+    /// Get the detected language
+    #[wasm_bindgen(getter)]
+    pub fn language(&self) -> String {
+        self.language.clone()
+    }
+
+    /// Check if this is the final result
+    #[wasm_bindgen(getter, js_name = isFinal)]
+    pub fn is_final(&self) -> bool {
+        self.is_final
+    }
+
+    /// Get confidence score (0.0 - 1.0)
+    #[wasm_bindgen(getter)]
+    pub fn confidence(&self) -> f32 {
+        self.confidence
+    }
+
+    /// Get audio duration in seconds
+    #[wasm_bindgen(getter, js_name = durationSecs)]
+    pub fn duration_secs(&self) -> f32 {
+        self.duration_secs
+    }
+
+    /// Get processing time in seconds
+    #[wasm_bindgen(getter, js_name = processingTimeSecs)]
+    pub fn processing_time_secs(&self) -> f32 {
+        self.processing_time_secs
+    }
+
+    /// Get real-time factor
+    #[wasm_bindgen(js_name = realTimeFactor)]
+    pub fn real_time_factor(&self) -> f32 {
+        if self.duration_secs <= 0.0 {
+            0.0
+        } else {
+            self.processing_time_secs / self.duration_secs
+        }
+    }
+
+    /// Check if result has text
+    #[wasm_bindgen(js_name = hasText)]
+    pub fn has_text(&self) -> bool {
+        !self.text.is_empty()
+    }
+}
+
+impl From<PartialTranscriptionResult> for PartialTranscriptionResultWasm {
+    fn from(result: PartialTranscriptionResult) -> Self {
+        Self {
+            text: result.text,
+            language: result.language,
+            is_final: result.is_final,
+            confidence: result.confidence,
+            duration_secs: result.duration_secs,
+            processing_time_secs: result.processing_time_secs,
+        }
+    }
+}
+
+/// WASM-friendly streaming event types
+#[wasm_bindgen]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamingEventTypeWasm {
+    SpeechStart,
+    SpeechEnd,
+    PartialReady,
+    ChunkReady,
+    ProcessingStarted,
+    ProcessingCompleted,
+    Error,
+    Reset,
+}
+
+/// WASM-friendly streaming event
+#[wasm_bindgen]
+#[derive(Debug, Clone)]
+pub struct StreamingEventWasm {
+    event_type: StreamingEventTypeWasm,
+    accumulated_samples: Option<usize>,
+    duration_secs: Option<f32>,
+    error_message: Option<String>,
+}
+
+#[wasm_bindgen]
+impl StreamingEventWasm {
+    /// Get event type
+    #[wasm_bindgen(getter, js_name = eventType)]
+    pub fn event_type(&self) -> StreamingEventTypeWasm {
+        self.event_type
+    }
+
+    /// Get accumulated samples (for PartialReady events)
+    #[wasm_bindgen(getter, js_name = accumulatedSamples)]
+    pub fn accumulated_samples(&self) -> Option<usize> {
+        self.accumulated_samples
+    }
+
+    /// Get duration in seconds (for PartialReady/ChunkReady events)
+    #[wasm_bindgen(getter, js_name = durationSecs)]
+    pub fn duration_secs(&self) -> Option<f32> {
+        self.duration_secs
+    }
+
+    /// Get error message (for Error events)
+    #[wasm_bindgen(getter, js_name = errorMessage)]
+    pub fn error_message(&self) -> Option<String> {
+        self.error_message.clone()
+    }
+
+    /// Check if this is a speech-related event
+    #[wasm_bindgen(js_name = isSpeechEvent)]
+    pub fn is_speech_event(&self) -> bool {
+        matches!(
+            self.event_type,
+            StreamingEventTypeWasm::SpeechStart | StreamingEventTypeWasm::SpeechEnd
+        )
+    }
+
+    /// Check if this is a result-related event
+    #[wasm_bindgen(js_name = isResultEvent)]
+    pub fn is_result_event(&self) -> bool {
+        matches!(
+            self.event_type,
+            StreamingEventTypeWasm::PartialReady | StreamingEventTypeWasm::ChunkReady
+        )
+    }
+}
+
+impl From<StreamingEvent> for StreamingEventWasm {
+    fn from(event: StreamingEvent) -> Self {
+        match event {
+            StreamingEvent::SpeechStart => Self {
+                event_type: StreamingEventTypeWasm::SpeechStart,
+                accumulated_samples: None,
+                duration_secs: None,
+                error_message: None,
+            },
+            StreamingEvent::SpeechEnd => Self {
+                event_type: StreamingEventTypeWasm::SpeechEnd,
+                accumulated_samples: None,
+                duration_secs: None,
+                error_message: None,
+            },
+            StreamingEvent::PartialReady {
+                accumulated_samples,
+                duration_secs,
+            } => Self {
+                event_type: StreamingEventTypeWasm::PartialReady,
+                accumulated_samples: Some(accumulated_samples),
+                duration_secs: Some(duration_secs),
+                error_message: None,
+            },
+            StreamingEvent::ChunkReady { duration_secs } => Self {
+                event_type: StreamingEventTypeWasm::ChunkReady,
+                accumulated_samples: None,
+                duration_secs: Some(duration_secs),
+                error_message: None,
+            },
+            StreamingEvent::ProcessingStarted => Self {
+                event_type: StreamingEventTypeWasm::ProcessingStarted,
+                accumulated_samples: None,
+                duration_secs: None,
+                error_message: None,
+            },
+            StreamingEvent::ProcessingCompleted => Self {
+                event_type: StreamingEventTypeWasm::ProcessingCompleted,
+                accumulated_samples: None,
+                duration_secs: None,
+                error_message: None,
+            },
+            StreamingEvent::Error(msg) => Self {
+                event_type: StreamingEventTypeWasm::Error,
+                accumulated_samples: None,
+                duration_secs: None,
+                error_message: Some(msg),
+            },
+            StreamingEvent::Reset => Self {
+                event_type: StreamingEventTypeWasm::Reset,
+                accumulated_samples: None,
+                duration_secs: None,
+                error_message: None,
+            },
+        }
+    }
+}
+
+/// WASM-friendly processor state
+#[wasm_bindgen]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessorStateWasm {
+    WaitingForSpeech,
+    AccumulatingSpeech,
+    PartialResultReady,
+    ChunkReady,
+    Processing,
+    Error,
+}
+
+impl From<ProcessorState> for ProcessorStateWasm {
+    fn from(state: ProcessorState) -> Self {
+        match state {
+            ProcessorState::WaitingForSpeech => ProcessorStateWasm::WaitingForSpeech,
+            ProcessorState::AccumulatingSpeech => ProcessorStateWasm::AccumulatingSpeech,
+            ProcessorState::PartialResultReady => ProcessorStateWasm::PartialResultReady,
+            ProcessorState::ChunkReady => ProcessorStateWasm::ChunkReady,
+            ProcessorState::Processing => ProcessorStateWasm::Processing,
+            ProcessorState::Error => ProcessorStateWasm::Error,
+        }
+    }
+}
+
+/// WASM streaming session for real-time transcription
+///
+/// This provides a JavaScript-friendly streaming API for real-time
+/// speech-to-text transcription in the browser.
+///
+/// # Usage
+///
+/// ```javascript
+/// const config = new StreamingConfigWasm();
+/// config.setInputSampleRate(44100);
+///
+/// const session = new StreamingSessionWasm(whisper, config);
+///
+/// // Push audio chunks from MediaRecorder or Web Audio API
+/// const partial = session.pushAudio(audioFloat32Array);
+/// if (partial) {
+///     console.log("Partial:", partial.text);
+/// }
+///
+/// // Check for events
+/// while (session.hasEvents()) {
+///     const event = session.popEvent();
+///     console.log("Event:", event.eventType);
+/// }
+///
+/// // Get final result when chunk is ready
+/// if (session.hasChunk()) {
+///     const final = session.finalize();
+///     console.log("Final:", final.text);
+/// }
+/// ```
+#[wasm_bindgen]
+pub struct StreamingSessionWasm {
+    whisper: WhisperApr,
+    processor: StreamingProcessor,
+    options: TranscribeOptions,
+    last_partial_text: String,
+}
+
+#[wasm_bindgen]
+impl StreamingSessionWasm {
+    /// Create a new streaming session
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        whisper: &WhisperAprWasm,
+        config: StreamingConfigWasm,
+    ) -> Self {
+        let streaming_config = StreamingConfig {
+            input_sample_rate: config.input_sample_rate,
+            output_sample_rate: 16000,
+            chunk_duration: config.chunk_duration,
+            chunk_overlap: config.chunk_overlap,
+            buffer_duration: 5.0,
+            enable_vad: config.enable_vad,
+            vad_threshold: config.vad_threshold,
+            min_speech_duration_ms: 300,
+        };
+        let mut processor = StreamingProcessor::new(streaming_config);
+        processor.set_partial_threshold(config.partial_threshold);
+
+        Self {
+            whisper: whisper.inner.clone(),
+            processor,
+            options: TranscribeOptions::default(),
+            last_partial_text: String::new(),
+        }
+    }
+
+    /// Set transcription options
+    #[wasm_bindgen(js_name = setOptions)]
+    pub fn set_options(&mut self, options: TranscribeOptionsWasm) {
+        self.options = options.into();
+    }
+
+    /// Push audio samples and get partial result if available
+    #[wasm_bindgen(js_name = pushAudio)]
+    pub fn push_audio(&mut self, audio: &[f32]) -> Option<PartialTranscriptionResultWasm> {
+        self.processor.push_audio(audio);
+        self.processor.process();
+
+        // Check for partial result
+        if self.processor.has_partial() {
+            if let Some(partial_audio) = self.processor.get_partial() {
+                if let Ok(result) = self.whisper.transcribe_partial(
+                    &partial_audio,
+                    self.options.clone(),
+                    false,
+                ) {
+                    // Deduplicate
+                    if result.text != self.last_partial_text {
+                        self.last_partial_text = result.text.clone();
+                        return Some(result.into());
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Check if a complete chunk is ready
+    #[wasm_bindgen(js_name = hasChunk)]
+    pub fn has_chunk(&self) -> bool {
+        self.processor.has_chunk()
+    }
+
+    /// Check if there are pending events
+    #[wasm_bindgen(js_name = hasEvents)]
+    pub fn has_events(&self) -> bool {
+        self.processor.has_events()
+    }
+
+    /// Get the number of pending events
+    #[wasm_bindgen(js_name = eventCount)]
+    pub fn event_count(&self) -> usize {
+        self.processor.event_count()
+    }
+
+    /// Pop the next event
+    #[wasm_bindgen(js_name = popEvent)]
+    pub fn pop_event(&mut self) -> Option<StreamingEventWasm> {
+        self.processor.pop_event().map(|e| e.into())
+    }
+
+    /// Get the current processor state
+    #[wasm_bindgen(getter)]
+    pub fn state(&self) -> ProcessorStateWasm {
+        self.processor.state().into()
+    }
+
+    /// Get chunk progress (0.0 - 1.0)
+    #[wasm_bindgen(js_name = chunkProgress)]
+    pub fn chunk_progress(&self) -> f32 {
+        self.processor.chunk_progress()
+    }
+
+    /// Get partial audio duration in seconds
+    #[wasm_bindgen(js_name = partialDuration)]
+    pub fn partial_duration(&self) -> f32 {
+        self.processor.partial_duration()
+    }
+
+    /// Finalize and get the transcription result for the current chunk
+    #[wasm_bindgen]
+    pub fn finalize(&mut self) -> Result<PartialTranscriptionResultWasm, JsValue> {
+        let chunk = self.processor.get_chunk().ok_or_else(|| {
+            JsValue::from_str("no chunk ready for finalization")
+        })?;
+
+        let result = self.whisper.transcribe_partial(&chunk, self.options.clone(), true)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        self.last_partial_text.clear();
+        Ok(result.into())
+    }
+
+    /// Flush any remaining audio and get final result
+    #[wasm_bindgen]
+    pub fn flush(&mut self) -> Option<PartialTranscriptionResultWasm> {
+        if let Some(chunk) = self.processor.flush() {
+            if let Ok(result) = self.whisper.transcribe_partial(&chunk, self.options.clone(), true) {
+                self.last_partial_text.clear();
+                return Some(result.into());
+            }
+        }
+        None
+    }
+
+    /// Reset the session
+    #[wasm_bindgen]
+    pub fn reset(&mut self) {
+        self.processor.reset();
+        self.last_partial_text.clear();
+    }
+
+    /// Set partial result threshold in seconds
+    #[wasm_bindgen(js_name = setPartialThreshold)]
+    pub fn set_partial_threshold(&mut self, seconds: f32) {
+        self.processor.set_partial_threshold(seconds);
+    }
+}
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::*;
+
+    // =========================================================================
+    // StreamingConfigWasm Tests
+    // =========================================================================
+
+    #[test]
+    fn test_streaming_config_new() {
+        let config = StreamingConfigWasm::new();
+        assert_eq!(config.input_sample_rate, 44100);
+        assert!((config.chunk_duration - 30.0).abs() < 0.01);
+        assert!(config.enable_vad);
+    }
+
+    #[test]
+    fn test_streaming_config_setters() {
+        let mut config = StreamingConfigWasm::new();
+
+        config.set_input_sample_rate(16000);
+        assert_eq!(config.input_sample_rate(), 16000);
+
+        config.set_chunk_duration(15.0);
+        assert!((config.chunk_duration() - 15.0).abs() < 0.01);
+
+        config.set_partial_threshold(5.0);
+        assert!((config.partial_threshold() - 5.0).abs() < 0.01);
+
+        config.set_enable_vad(false);
+        assert!(!config.enable_vad);
+    }
+
+    // =========================================================================
+    // PartialTranscriptionResultWasm Tests
+    // =========================================================================
+
+    #[test]
+    fn test_partial_result_from() {
+        let native = PartialTranscriptionResult {
+            text: "hello".to_string(),
+            language: "en".to_string(),
+            is_final: false,
+            confidence: 0.95,
+            duration_secs: 2.0,
+            processing_time_secs: 0.4,
+        };
+
+        let wasm: PartialTranscriptionResultWasm = native.into();
+
+        assert_eq!(wasm.text(), "hello");
+        assert_eq!(wasm.language(), "en");
+        assert!(!wasm.is_final());
+        assert!((wasm.confidence() - 0.95).abs() < 0.01);
+        assert!((wasm.duration_secs() - 2.0).abs() < 0.01);
+        assert!((wasm.processing_time_secs() - 0.4).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_partial_result_real_time_factor() {
+        let result = PartialTranscriptionResultWasm {
+            text: "test".to_string(),
+            language: "en".to_string(),
+            is_final: true,
+            confidence: 1.0,
+            duration_secs: 4.0,
+            processing_time_secs: 1.0,
+        };
+
+        assert!((result.real_time_factor() - 0.25).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_partial_result_has_text() {
+        let with_text = PartialTranscriptionResultWasm {
+            text: "hello".to_string(),
+            language: "en".to_string(),
+            is_final: false,
+            confidence: 1.0,
+            duration_secs: 1.0,
+            processing_time_secs: 0.1,
+        };
+        let empty = PartialTranscriptionResultWasm {
+            text: String::new(),
+            language: "en".to_string(),
+            is_final: false,
+            confidence: 0.0,
+            duration_secs: 0.5,
+            processing_time_secs: 0.05,
+        };
+
+        assert!(with_text.has_text());
+        assert!(!empty.has_text());
+    }
+
+    // =========================================================================
+    // StreamingEventWasm Tests
+    // =========================================================================
+
+    #[test]
+    fn test_streaming_event_speech_start() {
+        let native = StreamingEvent::SpeechStart;
+        let wasm: StreamingEventWasm = native.into();
+
+        assert_eq!(wasm.event_type(), StreamingEventTypeWasm::SpeechStart);
+        assert!(wasm.is_speech_event());
+        assert!(!wasm.is_result_event());
+    }
+
+    #[test]
+    fn test_streaming_event_partial_ready() {
+        let native = StreamingEvent::PartialReady {
+            accumulated_samples: 48000,
+            duration_secs: 3.0,
+        };
+        let wasm: StreamingEventWasm = native.into();
+
+        assert_eq!(wasm.event_type(), StreamingEventTypeWasm::PartialReady);
+        assert_eq!(wasm.accumulated_samples(), Some(48000));
+        assert!((wasm.duration_secs().unwrap_or(0.0) - 3.0).abs() < 0.01);
+        assert!(wasm.is_result_event());
+    }
+
+    #[test]
+    fn test_streaming_event_error() {
+        let native = StreamingEvent::Error("test error".to_string());
+        let wasm: StreamingEventWasm = native.into();
+
+        assert_eq!(wasm.event_type(), StreamingEventTypeWasm::Error);
+        assert_eq!(wasm.error_message(), Some("test error".to_string()));
+    }
+
+    // =========================================================================
+    // ProcessorStateWasm Tests
+    // =========================================================================
+
+    #[test]
+    fn test_processor_state_conversion() {
+        assert_eq!(
+            ProcessorStateWasm::from(ProcessorState::WaitingForSpeech),
+            ProcessorStateWasm::WaitingForSpeech
+        );
+        assert_eq!(
+            ProcessorStateWasm::from(ProcessorState::AccumulatingSpeech),
+            ProcessorStateWasm::AccumulatingSpeech
+        );
+        assert_eq!(
+            ProcessorStateWasm::from(ProcessorState::ChunkReady),
+            ProcessorStateWasm::ChunkReady
+        );
+    }
+}
