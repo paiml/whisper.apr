@@ -41,6 +41,7 @@ mod capabilities;
 mod diarization;
 mod gpu;
 mod timestamps;
+mod vocabulary;
 mod worker;
 
 pub use capabilities::{Capabilities, ExecutionMode};
@@ -52,6 +53,11 @@ pub use timestamps::{
     get_word_timestamp_recommendation, AlignmentConfigWasm, TimestampInterpolatorWasm,
     TokenTimestampWasm, WordBoundaryWasm, WordTimestampExtractorWasm, WordTimestampResultWasm,
     WordWithTimestampWasm,
+};
+pub use vocabulary::{
+    DomainAdapterWasm, DomainConfigWasm, DomainTermWasm, DomainTypeWasm, HotwordBoosterWasm,
+    HotwordConfigWasm, HotwordWasm, TrieSearchResultWasm, VocabularyCustomizerWasm,
+    VocabularyTrieWasm,
 };
 pub use gpu::{
     estimate_mat_mul_flops, estimate_mat_mul_memory, is_gpu_worthwhile,
