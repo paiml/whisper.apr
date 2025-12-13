@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Whisper.apr Demos - Pure Rust WASM Speech Recognition</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --accent: #58a6ff;
+            --success: #3fb950;
+            --border: #30363d;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            padding: 3rem 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 3rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        .badges {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin-top: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            background: var(--bg-secondary);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            border: 1px solid var(--border);
+        }
+
+        .badge.success {
+            border-color: var(--success);
+            color: var(--success);
+        }
+
+        .demos {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .demo-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .demo-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--accent);
+        }
+
+        .demo-card h2 {
+            font-size: 1.25rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .demo-card p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+        }
+
+        .demo-card a {
+            display: inline-block;
+            background: var(--accent);
+            color: var(--bg-primary);
+            padding: 0.75rem 1.5rem;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: opacity 0.2s;
+        }
+
+        .demo-card a:hover {
+            opacity: 0.9;
+        }
+
+        .features {
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .features h2 {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .feature {
+            text-align: center;
+            padding: 1.5rem;
+        }
+
+        .feature-icon {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .feature h3 {
+            margin-bottom: 0.5rem;
+        }
+
+        .feature p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        footer {
+            margin-top: 4rem;
+            padding: 2rem 0;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Whisper.apr</h1>
+            <p class="subtitle">Pure Rust WASM-First Speech Recognition Engine</p>
+            <div class="badges">
+                <span class="badge success">757 Tests</span>
+                <span class="badge success">95.19% Coverage</span>
+                <span class="badge">668 KB WASM</span>
+                <span class="badge">Zero JavaScript</span>
+            </div>
+        </header>
+
+        <section class="demos">
+            <div class="demo-card">
+                <h2>Real-Time Transcription</h2>
+                <p>Transcribe speech from your microphone in real-time. Supports streaming partial results.</p>
+                <a href="realtime-transcription.html">Launch Demo</a>
+            </div>
+
+            <div class="demo-card">
+                <h2>Upload Transcription</h2>
+                <p>Upload audio or video files for transcription. Supports WAV, MP3, MP4, WebM.</p>
+                <a href="upload-transcription.html">Launch Demo</a>
+            </div>
+
+            <div class="demo-card">
+                <h2>Real-Time Translation</h2>
+                <p>Translate speech from 99 languages to English in real-time.</p>
+                <a href="realtime-translation.html">Launch Demo</a>
+            </div>
+
+            <div class="demo-card">
+                <h2>Upload Translation</h2>
+                <p>Upload audio files and translate to English. Export as SRT/VTT subtitles.</p>
+                <a href="upload-translation.html">Launch Demo</a>
+            </div>
+        </section>
+
+        <section class="features">
+            <h2>Key Features</h2>
+            <div class="feature-grid">
+                <div class="feature">
+                    <div class="feature-icon">🦀</div>
+                    <h3>Pure Rust</h3>
+                    <p>100% Rust compiled to WebAssembly. Zero JavaScript runtime.</p>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">🌐</div>
+                    <h3>99 Languages</h3>
+                    <p>Full Whisper language support with automatic detection.</p>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">🔒</div>
+                    <h3>Privacy First</h3>
+                    <p>All processing happens locally in your browser.</p>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">⚡</div>
+                    <h3>SIMD Optimized</h3>
+                    <p>WebAssembly SIMD for near-native performance.</p>
+                </div>
+            </div>
+        </section>
+
+        <footer>
+            <p>Built with EXTREME TDD methodology | <a href="https://github.com/paiml/whisper.apr">GitHub</a></p>
+        </footer>
+    </div>
+</body>
+</html>

@@ -1,0 +1,361 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Quality Gates - Whisper.apr - WASM-First Speech Recognition</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Pure Rust automatic speech recognition for the browser and beyond">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "rust";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Whisper.apr - WASM-First Speech Recognition</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/paiml/whisper.apr" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/paiml/whisper.apr/edit/main/book/src/development/quality-gates.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="quality-gates"><a class="header" href="#quality-gates">Quality Gates</a></h1>
+<p>Whisper.apr implements tiered quality gates following the <strong>bashrs</strong> methodology for fast feedback loops.</p>
+<h2 id="tier-overview"><a class="header" href="#tier-overview">Tier Overview</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Tier</th><th>Trigger</th><th>Duration</th><th>Purpose</th></tr></thead><tbody>
+<tr><td>Tier 1</td><td>On save</td><td>&lt;1s</td><td>Immediate feedback</td></tr>
+<tr><td>Tier 2</td><td>Pre-commit</td><td>&lt;5s</td><td>Validation before commit</td></tr>
+<tr><td>Tier 3</td><td>Pre-push</td><td>1-5min</td><td>Full validation</td></tr>
+<tr><td>Tier 4</td><td>CI/CD</td><td>5-60min</td><td>Comprehensive analysis</td></tr>
+</tbody></table>
+</div>
+<h2 id="tier-1-on-save-1s"><a class="header" href="#tier-1-on-save-1s">Tier 1: On-Save (&lt;1s)</a></h2>
+<p>Fast feedback for immediate issues:</p>
+<pre><code class="language-bash">make tier1
+# Or manually:
+cargo fmt --check &amp;&amp; cargo clippy -- -W all &amp;&amp; cargo check
+</code></pre>
+<p><strong>Validates:</strong></p>
+<ul>
+<li>Code formatting</li>
+<li>Common lint issues</li>
+<li>Compilation</li>
+</ul>
+<h2 id="tier-2-pre-commit-5s"><a class="header" href="#tier-2-pre-commit-5s">Tier 2: Pre-Commit (&lt;5s)</a></h2>
+<p>Quick validation before committing:</p>
+<pre><code class="language-bash">make tier2
+# Or manually:
+cargo test --lib &amp;&amp; cargo clippy -- -D warnings
+</code></pre>
+<p><strong>Validates:</strong></p>
+<ul>
+<li>All unit tests pass</li>
+<li>Zero clippy warnings</li>
+<li>Code compiles in test mode</li>
+</ul>
+<h2 id="tier-3-pre-push-1-5min"><a class="header" href="#tier-3-pre-push-1-5min">Tier 3: Pre-Push (1-5min)</a></h2>
+<p>Full validation before pushing:</p>
+<pre><code class="language-bash">make tier3
+</code></pre>
+<p><strong>Validates:</strong></p>
+<ul>
+<li>All tests (unit + property + integration)</li>
+<li>Coverage ≥95%</li>
+<li>Documentation builds</li>
+</ul>
+<h3 id="coverage-requirements"><a class="header" href="#coverage-requirements">Coverage Requirements</a></h3>
+<pre><code class="language-bash">make coverage
+</code></pre>
+<p>Current targets:</p>
+<ul>
+<li><strong>Line coverage</strong>: ≥95% (achieved: 95.19%)</li>
+<li><strong>Function coverage</strong>: ≥95%</li>
+<li><strong>Branch coverage</strong>: tracked</li>
+</ul>
+<h2 id="tier-4-cicd-5-60min"><a class="header" href="#tier-4-cicd-5-60min">Tier 4: CI/CD (5-60min)</a></h2>
+<p>Comprehensive analysis in CI pipeline:</p>
+<pre><code class="language-bash">make tier4
+</code></pre>
+<p><strong>Validates:</strong></p>
+<ul>
+<li>Everything from Tier 3</li>
+<li>Mutation testing (target: ≥85%)</li>
+<li>Security audit</li>
+<li>PMAT quality analysis</li>
+</ul>
+<h3 id="mutation-testing"><a class="header" href="#mutation-testing">Mutation Testing</a></h3>
+<pre><code class="language-bash">make mutants
+</code></pre>
+<p>Mutation testing validates test quality by introducing bugs and checking if tests catch them.</p>
+<h2 id="makefile-targets"><a class="header" href="#makefile-targets">Makefile Targets</a></h2>
+<pre><code class="language-makefile"># Tier 1: Fast feedback
+tier1:
+    cargo fmt --check
+    cargo clippy -- -W all
+    cargo check
+
+# Tier 2: Pre-commit
+tier2:
+    cargo test --lib
+    cargo clippy -- -D warnings
+
+# Tier 3: Pre-push
+tier3:
+    cargo test --all
+    make coverage
+
+# Tier 4: CI/CD
+tier4:
+    make tier3
+    make mutants
+</code></pre>
+<h2 id="lint-configuration"><a class="header" href="#lint-configuration">Lint Configuration</a></h2>
+<p>Whisper.apr uses strict clippy configuration in <code>Cargo.toml</code>:</p>
+<pre><code class="language-toml">[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "deny"      # Prevent panics
+expect_used = "warn"      # Discourage panics
+panic = "warn"            # Prevent explicit panics
+
+# DSP-specific allows
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+</code></pre>
+<h2 id="ci-integration"><a class="header" href="#ci-integration">CI Integration</a></h2>
+<p>Quality gates are enforced in <code>.github/workflows/ci.yml</code>:</p>
+<pre><code class="language-yaml">jobs:
+  tier2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make tier2
+
+  tier3:
+    runs-on: ubuntu-latest
+    needs: tier2
+    steps:
+      - uses: actions/checkout@v4
+      - run: make tier3
+
+  coverage:
+    runs-on: ubuntu-latest
+    needs: tier2
+    steps:
+      - uses: actions/checkout@v4
+      - run: make coverage
+      - uses: codecov/codecov-action@v4
+</code></pre>
+<h2 id="quality-metrics"><a class="header" href="#quality-metrics">Quality Metrics</a></h2>
+<p>Current project status:</p>
+<ul>
+<li><strong>Test count</strong>: 841 tests</li>
+<li><strong>Line coverage</strong>: 95.19%</li>
+<li><strong>Property tests</strong>: 19 tests</li>
+<li><strong>Zero clippy warnings</strong> (in strict mode)</li>
+<li><strong>Zero unsafe code</strong></li>
+</ul>
+<h2 id="best-practices"><a class="header" href="#best-practices">Best Practices</a></h2>
+<ol>
+<li><strong>Run tier1 on every save</strong> - Use editor integration</li>
+<li><strong>Run tier2 before every commit</strong> - Git hooks recommended</li>
+<li><strong>Run tier3 before every push</strong> - Catches integration issues</li>
+<li><strong>Never skip CI</strong> - Full validation catches edge cases</li>
+</ol>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../development/benchmarking.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../development/pmat-integration.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../development/benchmarking.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../development/pmat-integration.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+        <script src="../ace.js"></script>
+        <script src="../editor.js"></script>
+        <script src="../mode-rust.js"></script>
+        <script src="../theme-dawn.js"></script>
+        <script src="../theme-tomorrow_night.js"></script>
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

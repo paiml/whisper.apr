@@ -1,0 +1,375 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Core Concepts - Whisper.apr - WASM-First Speech Recognition</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Pure Rust automatic speech recognition for the browser and beyond">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "rust";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Whisper.apr - WASM-First Speech Recognition</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/paiml/whisper.apr" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/paiml/whisper.apr/edit/main/book/src/getting-started/core-concepts.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="core-concepts"><a class="header" href="#core-concepts">Core Concepts</a></h1>
+<p>Understanding the fundamentals of Whisper.apr.</p>
+<h2 id="the-whisper-model"><a class="header" href="#the-whisper-model">The Whisper Model</a></h2>
+<p>Whisper is a transformer-based encoder-decoder model for automatic speech recognition (ASR). It was trained on 680,000 hours of multilingual audio data.</p>
+<h3 id="architecture-summary"><a class="header" href="#architecture-summary">Architecture Summary</a></h3>
+<pre><code>Audio → Mel Spectrogram → Encoder → Cross-Attention → Decoder → Text
+</code></pre>
+<ol>
+<li><strong>Audio Input</strong>: Raw audio waveform (any sample rate)</li>
+<li><strong>Preprocessing</strong>: Resample to 16kHz, compute 80-bin mel spectrogram</li>
+<li><strong>Encoder</strong>: Process audio features through transformer layers</li>
+<li><strong>Decoder</strong>: Generate text tokens autoregressively</li>
+<li><strong>Output</strong>: Transcribed text with optional timestamps</li>
+</ol>
+<h2 id="model-sizes"><a class="header" href="#model-sizes">Model Sizes</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Model</th><th>Parameters</th><th>Multilingual</th><th>English-Only</th></tr></thead><tbody>
+<tr><td>tiny</td><td>39M</td><td>✓</td><td>✓</td></tr>
+<tr><td>base</td><td>74M</td><td>✓</td><td>✓</td></tr>
+<tr><td>small</td><td>244M</td><td>✓</td><td>✓</td></tr>
+<tr><td>medium</td><td>769M</td><td>✓</td><td>✓</td></tr>
+<tr><td>large</td><td>1.5B</td><td>✓</td><td>-</td></tr>
+</tbody></table>
+</div>
+<p><strong>Whisper.apr v1.0 supports</strong>: tiny, base, small</p>
+<h2 id="tasks"><a class="header" href="#tasks">Tasks</a></h2>
+<h3 id="transcription"><a class="header" href="#transcription">Transcription</a></h3>
+<p>Convert speech to text in the original language:</p>
+<pre><code class="language-rust">let options = TranscribeOptions {
+    task: Task::Transcribe,
+    language: Some("es".into()),  // Spanish audio → Spanish text
+    ..Default::default()
+};</code></pre>
+<h3 id="translation"><a class="header" href="#translation">Translation</a></h3>
+<p>Convert speech in any language to English:</p>
+<pre><code class="language-rust">let options = TranscribeOptions {
+    task: Task::Translate,
+    language: None,  // Auto-detect source language
+    ..Default::default()
+};</code></pre>
+<h2 id="decoding-strategies"><a class="header" href="#decoding-strategies">Decoding Strategies</a></h2>
+<h3 id="greedy-decoding"><a class="header" href="#greedy-decoding">Greedy Decoding</a></h3>
+<p>Select the highest probability token at each step:</p>
+<pre><code class="language-rust">let options = TranscribeOptions {
+    strategy: DecodingStrategy::Greedy,
+    ..Default::default()
+};</code></pre>
+<p><strong>Pros</strong>: Fast, memory-efficient
+<strong>Cons</strong>: May miss better sequences</p>
+<h3 id="beam-search"><a class="header" href="#beam-search">Beam Search</a></h3>
+<p>Explore multiple hypotheses in parallel:</p>
+<pre><code class="language-rust">let options = TranscribeOptions {
+    strategy: DecodingStrategy::BeamSearch {
+        beam_size: 5,      // Number of parallel hypotheses
+        temperature: 0.0,  // Deterministic (no sampling)
+        patience: 1.0,     // Early stopping patience
+    },
+    ..Default::default()
+};</code></pre>
+<p><strong>Pros</strong>: Higher quality transcriptions
+<strong>Cons</strong>: Slower, more memory</p>
+<h3 id="sampling"><a class="header" href="#sampling">Sampling</a></h3>
+<p>Sample from the probability distribution:</p>
+<pre><code class="language-rust">let options = TranscribeOptions {
+    strategy: DecodingStrategy::Sampling {
+        temperature: 0.8,  // Higher = more random
+        top_k: Some(40),   // Consider top-k tokens
+        top_p: Some(0.9),  // Nucleus sampling
+    },
+    ..Default::default()
+};</code></pre>
+<p><strong>Use case</strong>: Creative applications, multiple hypotheses</p>
+<h2 id="the-apr-format"><a class="header" href="#the-apr-format">The .apr Format</a></h2>
+<p>Whisper.apr uses a custom binary format optimized for web delivery:</p>
+<h3 id="structure"><a class="header" href="#structure">Structure</a></h3>
+<pre><code>┌────────────────────────────┐
+│ Magic: "APR1" (4 bytes)    │
+├────────────────────────────┤
+│ Version (2 bytes)          │
+├────────────────────────────┤
+│ Model Config               │
+├────────────────────────────┤
+│ Mel Filterbank             │
+├────────────────────────────┤
+│ Vocabulary (BPE)           │
+├────────────────────────────┤
+│ Encoder Weights (LZ4)      │
+├────────────────────────────┤
+│ Decoder Weights (LZ4)      │
+├────────────────────────────┤
+│ Checksum (CRC32)           │
+└────────────────────────────┘
+</code></pre>
+<h3 id="features"><a class="header" href="#features">Features</a></h3>
+<ul>
+<li><strong>LZ4 Compression</strong>: 2-3x size reduction</li>
+<li><strong>Streaming</strong>: 64KB blocks for progressive loading</li>
+<li><strong>Quantization</strong>: fp32, fp16, int8 support</li>
+<li><strong>Integrity</strong>: CRC32 checksum</li>
+</ul>
+<h2 id="language-support"><a class="header" href="#language-support">Language Support</a></h2>
+<p>Whisper supports 99 languages. Specify the language or use auto-detection:</p>
+<pre><code class="language-rust">// Explicit language
+let options = TranscribeOptions {
+    language: Some("ja".into()),  // Japanese
+    ..Default::default()
+};
+
+// Auto-detect
+let options = TranscribeOptions {
+    language: None,  // or Some("auto".into())
+    ..Default::default()
+};</code></pre>
+<h3 id="language-codes"><a class="header" href="#language-codes">Language Codes</a></h3>
+<p>Common language codes (ISO 639-1):</p>
+<ul>
+<li><code>en</code> - English</li>
+<li><code>es</code> - Spanish</li>
+<li><code>fr</code> - French</li>
+<li><code>de</code> - German</li>
+<li><code>zh</code> - Chinese</li>
+<li><code>ja</code> - Japanese</li>
+<li><code>ko</code> - Korean</li>
+<li><code>pt</code> - Portuguese</li>
+<li><code>ru</code> - Russian</li>
+<li><code>ar</code> - Arabic</li>
+</ul>
+<h2 id="word-timestamps"><a class="header" href="#word-timestamps">Word Timestamps</a></h2>
+<p>Get word-level timing information:</p>
+<pre><code class="language-rust">let options = TranscribeOptions {
+    word_timestamps: true,
+    ..Default::default()
+};
+
+let result = whisper.transcribe(&amp;audio, options)?;
+
+for segment in result.segments {
+    println!("[{:.2}s - {:.2}s] {}",
+        segment.start, segment.end, segment.text);
+}</code></pre>
+<h2 id="error-handling"><a class="header" href="#error-handling">Error Handling</a></h2>
+<p>All operations return <code>WhisperResult&lt;T&gt;</code>:</p>
+<pre><code class="language-rust">use whisper_apr::{WhisperError, WhisperResult};
+
+fn transcribe_file(path: &amp;str) -&gt; WhisperResult&lt;String&gt; {
+    let model_data = std::fs::read("model.apr")?;  // Io error
+    let whisper = WhisperApr::load(&amp;model_data)?;  // Format/Model error
+    let audio = load_audio(path)?;                  // Audio error
+    let result = whisper.transcribe(&amp;audio, Default::default())?;
+    Ok(result.text)
+}</code></pre>
+<p>Error variants:</p>
+<ul>
+<li><code>WhisperError::Audio</code> - Invalid audio format</li>
+<li><code>WhisperError::Model</code> - Model loading/inference error</li>
+<li><code>WhisperError::Format</code> - Invalid .apr format</li>
+<li><code>WhisperError::Tokenizer</code> - Tokenization error</li>
+<li><code>WhisperError::Inference</code> - Decoding error</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../getting-started/browser-integration.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../architecture/overview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../getting-started/browser-integration.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../architecture/overview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+        <script src="../ace.js"></script>
+        <script src="../editor.js"></script>
+        <script src="../mode-rust.js"></script>
+        <script src="../theme-dawn.js"></script>
+        <script src="../theme-tomorrow_night.js"></script>
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

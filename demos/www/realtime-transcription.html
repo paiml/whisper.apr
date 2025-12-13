@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Transcription - Whisper.apr</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --accent: #58a6ff;
+            --success: #3fb950;
+            --error: #f85149;
+            --warning: #d29922;
+            --border: #30363d;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: var(--bg-secondary);
+            padding: 1rem 2rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        header h1 { font-size: 1.25rem; }
+        header a { color: var(--accent); text-decoration: none; }
+
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+            width: 100%;
+        }
+
+        .status-bar {
+            background: var(--bg-secondary);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #status_indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+        }
+
+        .status-dot.recording { background: var(--error); animation: pulse 1s infinite; }
+        .status-dot.processing { background: var(--warning); animation: pulse 0.5s infinite; }
+        .status-dot.ready { background: var(--success); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #recording_duration {
+            font-family: monospace;
+            font-size: 1.25rem;
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            justify-content: center;
+        }
+
+        button {
+            padding: 1rem 2rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #start_recording {
+            background: var(--success);
+            color: white;
+        }
+
+        #stop_recording {
+            background: var(--error);
+            color: white;
+        }
+
+        #clear_transcript {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .waveform-container {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            min-height: 100px;
+            display: none;
+        }
+
+        .waveform-container.visible { display: block; }
+
+        #waveform_visualizer canvas {
+            width: 100%;
+            height: 80px;
+        }
+
+        .transcript-container {
+            flex: 1;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            min-height: 200px;
+        }
+
+        .transcript-container h2 {
+            font-size: 1rem;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+
+        #partial_transcript {
+            color: var(--text-secondary);
+            font-style: italic;
+            margin-bottom: 0.5rem;
+        }
+
+        #transcript_display {
+            line-height: 1.8;
+            white-space: pre-wrap;
+        }
+
+        #error_message {
+            background: rgba(248, 81, 73, 0.1);
+            border: 1px solid var(--error);
+            color: var(--error);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        #error_message.visible { display: block; }
+
+        #compatibility_warning {
+            background: rgba(210, 153, 34, 0.1);
+            border: 1px solid var(--warning);
+            color: var(--warning);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        #compatibility_warning.visible { display: block; }
+
+        /* Accessibility */
+        [role="status"] { position: absolute; left: -9999px; }
+        button:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Real-Time Transcription</h1>
+        <a href="index.html">Back to Demos</a>
+    </header>
+
+    <main>
+        <div id="compatibility_warning" role="alert">
+            Your browser does not support real-time audio recording. Please use a modern browser.
+        </div>
+
+        <div id="error_message" role="alert"></div>
+
+        <div class="status-bar">
+            <div id="status_indicator">
+                <span class="status-dot ready"></span>
+                <span>Ready</span>
+            </div>
+            <div id="recording_duration">0:00</div>
+        </div>
+
+        <div class="controls">
+            <button id="start_recording" aria-label="Start recording">
+                <span>Start Recording</span>
+            </button>
+            <button id="stop_recording" disabled aria-label="Stop recording">
+                <span>Stop Recording</span>
+            </button>
+            <button id="clear_transcript" aria-label="Clear transcript">
+                <span>Clear</span>
+            </button>
+        </div>
+
+        <div class="waveform-container" id="waveform_container">
+            <div id="waveform_visualizer">
+                <canvas></canvas>
+            </div>
+        </div>
+
+        <div class="transcript-container">
+            <h2>Transcript</h2>
+            <div id="partial_transcript"></div>
+            <div id="transcript_display" role="status" aria-live="polite"></div>
+        </div>
+    </main>
+
+    <script type="module">
+        // Pure Rust WASM module will be loaded here
+        // This is a minimal JavaScript loader - all logic is in Rust
+        import init, { RealtimeTranscriptionDemo, check_browser_compatibility } from './pkg/whisper_apr_demo_realtime_transcription.js';
+
+        async function main() {
+            await init();
+
+            const compat = check_browser_compatibility();
+            if (!compat.is_supported()) {
+                document.getElementById('compatibility_warning').classList.add('visible');
+                document.getElementById('start_recording').disabled = true;
+                return;
+            }
+
+            const demo = new RealtimeTranscriptionDemo();
+
+            // Wire up UI elements to Rust state machine
+            const startBtn = document.getElementById('start_recording');
+            const stopBtn = document.getElementById('stop_recording');
+            const clearBtn = document.getElementById('clear_transcript');
+
+            function updateUI() {
+                document.getElementById('status_indicator').innerHTML =
+                    `<span class="status-dot ${demo.state().toLowerCase()}"></span><span>${demo.status_text()}</span>`;
+                document.getElementById('recording_duration').textContent = demo.recording_duration();
+                document.getElementById('transcript_display').textContent = demo.transcript();
+                document.getElementById('partial_transcript').textContent = demo.partial_transcript();
+
+                startBtn.disabled = !demo.can_start_recording();
+                stopBtn.disabled = !demo.can_stop_recording();
+
+                const waveform = document.getElementById('waveform_container');
+                if (demo.state() === 'Recording') {
+                    waveform.classList.add('visible');
+                } else {
+                    waveform.classList.remove('visible');
+                }
+            }
+
+            startBtn.addEventListener('click', () => {
+                demo.start_recording();
+                updateUI();
+            });
+
+            stopBtn.addEventListener('click', () => {
+                demo.stop_recording();
+                updateUI();
+            });
+
+            clearBtn.addEventListener('click', () => {
+                demo.clear_transcript();
+                updateUI();
+            });
+
+            // Keyboard shortcuts
+            document.addEventListener('keydown', (e) => {
+                if (e.code === 'Space' && e.target === document.body) {
+                    e.preventDefault();
+                    if (demo.can_start_recording()) {
+                        demo.start_recording();
+                    } else if (demo.can_stop_recording()) {
+                        demo.stop_recording();
+                    }
+                    updateUI();
+                } else if (e.code === 'Escape') {
+                    demo.clear_transcript();
+                    updateUI();
+                }
+            });
+
+            updateUI();
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>

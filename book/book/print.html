@@ -1,0 +1,1519 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Whisper.apr - WASM-First Speech Recognition</title>
+        <meta name="robots" content="noindex">
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Pure Rust automatic speech recognition for the browser and beyond">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "rust";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Whisper.apr - WASM-First Speech Recognition</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/paiml/whisper.apr" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
+<p>Whisper.apr is a WASM-first automatic speech recognition (ASR) engine implementing OpenAI's Whisper architecture in pure Rust. Unlike whisper.cpp (C++ with Emscripten) or Python implementations, Whisper.apr is designed from inception for browser deployment via <code>wasm32-unknown-unknown</code>.</p>
+<h2 id="why-whisperapr"><a class="header" href="#why-whisperapr">Why Whisper.apr?</a></h2>
+<h3 id="privacy-first-transcription"><a class="header" href="#privacy-first-transcription">Privacy-First Transcription</a></h3>
+<p>Traditional speech recognition requires sending audio to cloud servers. Whisper.apr runs entirely in the browser:</p>
+<ul>
+<li><strong>No server roundtrips</strong> - Zero latency from network requests</li>
+<li><strong>Complete privacy</strong> - Audio never leaves the user's device</li>
+<li><strong>Offline capable</strong> - Works without internet connection</li>
+<li><strong>HIPAA/GDPR friendly</strong> - Simplifies compliance for sensitive applications</li>
+</ul>
+<h3 id="pure-rust-advantages"><a class="header" href="#pure-rust-advantages">Pure Rust Advantages</a></h3>
+<p>Building on Rust's superior WASM toolchain delivers:</p>
+<ul>
+<li><strong>30-40% smaller binaries</strong> through tree-shaking (vs Emscripten)</li>
+<li><strong>Native WASM SIMD</strong> - 128-bit intrinsics without wrapper overhead</li>
+<li><strong>Zero-copy buffers</strong> - Shared memory with JavaScript</li>
+<li><strong>Type safety</strong> - Catch errors at compile time</li>
+</ul>
+<h3 id="real-time-performance"><a class="header" href="#real-time-performance">Real-Time Performance</a></h3>
+<p>Whisper.apr achieves practical transcription speeds:</p>
+<div class="table-wrapper"><table><thead><tr><th>Model</th><th>Parameters</th><th>Target RTF</th><th>Memory</th></tr></thead><tbody>
+<tr><td>tiny</td><td>39M</td><td>2.0x</td><td>150MB</td></tr>
+<tr><td>base</td><td>74M</td><td>2.5x</td><td>300MB</td></tr>
+<tr><td>small</td><td>244M</td><td>4.0x</td><td>800MB</td></tr>
+</tbody></table>
+</div>
+<p><em>RTF = Real-Time Factor (2.0x means 60s audio takes 120s to process)</em></p>
+<h2 id="quick-example"><a class="header" href="#quick-example">Quick Example</a></h2>
+<pre><code class="language-javascript">import init, { WhisperApr } from 'whisper-apr';
+
+// Initialize WASM module
+await init();
+
+// Load model (streams from CDN)
+const whisper = await WhisperApr.load('/models/base.apr');
+
+// Transcribe audio
+const result = await whisper.transcribe(audioBuffer, {
+  language: 'auto',
+  task: 'transcribe',
+});
+
+console.log(result.text);
+</code></pre>
+<h2 id="design-philosophy"><a class="header" href="#design-philosophy">Design Philosophy</a></h2>
+<p>Whisper.apr follows Toyota Way principles:</p>
+<ol>
+<li><strong>Kaizen</strong> - Continuous improvement through iterative sprints</li>
+<li><strong>Jidoka</strong> - Quality built in via PMAT gates and mutation testing</li>
+<li><strong>Genchi Genbutsu</strong> - Reality-based performance targets from browser benchmarks</li>
+</ol>
+<h2 id="project-status"><a class="header" href="#project-status">Project Status</a></h2>
+<p>Whisper.apr is under active development. Current focus:</p>
+<ul>
+<li><input disabled="" type="checkbox" checked=""/>
+Core transformer architecture</li>
+<li><input disabled="" type="checkbox" checked=""/>
+Audio preprocessing (mel spectrogram)</li>
+<li><input disabled="" type="checkbox" checked=""/>
+BPE tokenization</li>
+<li><input disabled="" type="checkbox"/>
+Greedy decoding</li>
+<li><input disabled="" type="checkbox"/>
+Beam search</li>
+<li><input disabled="" type="checkbox"/>
+.apr model format</li>
+<li><input disabled="" type="checkbox"/>
+JavaScript bindings</li>
+</ul>
+<h2 id="next-steps"><a class="header" href="#next-steps">Next Steps</a></h2>
+<ul>
+<li><a href="./getting-started/installation.html">Installation</a> - Set up your development environment</li>
+<li><a href="./getting-started/quick-start.html">Quick Start</a> - Transcribe your first audio</li>
+<li><a href="./architecture/overview.html">Architecture</a> - Understand the system design</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="installation"><a class="header" href="#installation">Installation</a></h1>
+<h2 id="browser-usage-npm"><a class="header" href="#browser-usage-npm">Browser Usage (npm)</a></h2>
+<p>For web applications, install via npm:</p>
+<pre><code class="language-bash">npm install whisper-apr
+</code></pre>
+<p>Or with yarn:</p>
+<pre><code class="language-bash">yarn add whisper-apr
+</code></pre>
+<h2 id="rust-library"><a class="header" href="#rust-library">Rust Library</a></h2>
+<p>Add to your <code>Cargo.toml</code>:</p>
+<pre><code class="language-toml">[dependencies]
+whisper-apr = "0.1"
+</code></pre>
+<h3 id="feature-flags"><a class="header" href="#feature-flags">Feature Flags</a></h3>
+<pre><code class="language-toml">[dependencies]
+whisper-apr = { version = "0.1", features = ["wasm", "simd"] }
+</code></pre>
+<p>Available features:</p>
+<ul>
+<li><code>std</code> (default) - Standard library support</li>
+<li><code>wasm</code> - WASM bindings via wasm-bindgen</li>
+<li><code>simd</code> - Explicit SIMD optimization paths</li>
+<li><code>tracing</code> - Performance tracing via renacer</li>
+</ul>
+<h2 id="building-from-source"><a class="header" href="#building-from-source">Building from Source</a></h2>
+<h3 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h3>
+<ul>
+<li>Rust 1.85+ (edition 2024)</li>
+<li>wasm-pack (for WASM builds)</li>
+<li>Node.js 18+ (for running browser tests)</li>
+</ul>
+<h3 id="clone-and-build"><a class="header" href="#clone-and-build">Clone and Build</a></h3>
+<pre><code class="language-bash">git clone https://github.com/paiml/whisper.apr
+cd whisper.apr
+
+# Native build
+cargo build --release
+
+# WASM build
+cargo build --target wasm32-unknown-unknown --features wasm --release
+
+# Or use wasm-pack for npm package
+wasm-pack build --target web --release
+</code></pre>
+<h3 id="running-tests"><a class="header" href="#running-tests">Running Tests</a></h3>
+<pre><code class="language-bash"># All tests
+cargo test
+
+# WASM tests (requires Chrome)
+wasm-pack test --headless --chrome
+</code></pre>
+<h2 id="model-download"><a class="header" href="#model-download">Model Download</a></h2>
+<p>Download pre-converted <code>.apr</code> models:</p>
+<pre><code class="language-bash"># tiny model (~40MB)
+curl -O https://models.paiml.com/whisper/tiny.apr
+
+# base model (~75MB)
+curl -O https://models.paiml.com/whisper/base.apr
+</code></pre>
+<p>Or use the model converter to create <code>.apr</code> from PyTorch weights:</p>
+<pre><code class="language-bash">cd models/converter
+python convert.py --model base --output base.apr
+</code></pre>
+<h2 id="verifying-installation"><a class="header" href="#verifying-installation">Verifying Installation</a></h2>
+<pre><code class="language-rust">use whisper_apr::{WhisperApr, TranscribeOptions};
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    // Load model
+    let model_data = std::fs::read("base.apr")?;
+    let whisper = WhisperApr::load(&amp;model_data)?;
+
+    println!("Model loaded successfully!");
+    Ok(())
+}</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="quick-start"><a class="header" href="#quick-start">Quick Start</a></h1>
+<p>This guide walks through transcribing audio with Whisper.apr.</p>
+<h2 id="browser-javascript"><a class="header" href="#browser-javascript">Browser (JavaScript)</a></h2>
+<h3 id="basic-setup"><a class="header" href="#basic-setup">Basic Setup</a></h3>
+<pre><code class="language-html">&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+  &lt;title&gt;Whisper.apr Demo&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;input type="file" id="audioFile" accept="audio/*"&gt;
+  &lt;button id="transcribe"&gt;Transcribe&lt;/button&gt;
+  &lt;pre id="result"&gt;&lt;/pre&gt;
+
+  &lt;script type="module"&gt;
+    import init, { WhisperApr } from './whisper_apr.js';
+
+    let whisper = null;
+
+    async function setup() {
+      // Initialize WASM
+      await init();
+
+      // Load model with progress callback
+      whisper = await WhisperApr.load('/models/base.apr', {
+        onProgress: (loaded, total) =&gt; {
+          console.log(`Loading: ${(loaded/total*100).toFixed(1)}%`);
+        }
+      });
+
+      console.log('Model ready!');
+    }
+
+    document.getElementById('transcribe').onclick = async () =&gt; {
+      const file = document.getElementById('audioFile').files[0];
+      if (!file || !whisper) return;
+
+      // Decode audio to Float32Array
+      const audioContext = new AudioContext({ sampleRate: 16000 });
+      const arrayBuffer = await file.arrayBuffer();
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      const samples = audioBuffer.getChannelData(0);
+
+      // Transcribe
+      const result = await whisper.transcribe(samples, {
+        language: 'auto',
+        task: 'transcribe',
+      });
+
+      document.getElementById('result').textContent = result.text;
+    };
+
+    setup();
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre>
+<h3 id="with-timestamps"><a class="header" href="#with-timestamps">With Timestamps</a></h3>
+<pre><code class="language-javascript">const result = await whisper.transcribe(samples, {
+  language: 'en',
+  task: 'transcribe',
+  wordTimestamps: true,
+});
+
+for (const segment of result.segments) {
+  console.log(`[${segment.start.toFixed(2)}s - ${segment.end.toFixed(2)}s] ${segment.text}`);
+}
+</code></pre>
+<h2 id="rust"><a class="header" href="#rust">Rust</a></h2>
+<h3 id="basic-transcription"><a class="header" href="#basic-transcription">Basic Transcription</a></h3>
+<pre><code class="language-rust">use whisper_apr::{WhisperApr, TranscribeOptions, Task};
+
+fn main() -&gt; whisper_apr::WhisperResult&lt;()&gt; {
+    // Load model
+    let model_data = std::fs::read("base.apr")?;
+    let whisper = WhisperApr::load(&amp;model_data)?;
+
+    // Load audio (must be 16kHz mono f32)
+    let audio: Vec&lt;f32&gt; = load_audio("speech.wav")?;
+
+    // Transcribe
+    let result = whisper.transcribe(&amp;audio, TranscribeOptions::default())?;
+
+    println!("Transcription: {}", result.text);
+    println!("Language: {}", result.language);
+
+    Ok(())
+}</code></pre>
+<h3 id="translation"><a class="header" href="#translation">Translation</a></h3>
+<pre><code class="language-rust">let result = whisper.transcribe(&amp;audio, TranscribeOptions {
+    task: Task::Translate,  // Translate to English
+    ..Default::default()
+})?;</code></pre>
+<h3 id="beam-search"><a class="header" href="#beam-search">Beam Search</a></h3>
+<pre><code class="language-rust">use whisper_apr::DecodingStrategy;
+
+let result = whisper.transcribe(&amp;audio, TranscribeOptions {
+    strategy: DecodingStrategy::BeamSearch {
+        beam_size: 5,
+        temperature: 0.0,
+        patience: 1.0,
+    },
+    ..Default::default()
+})?;</code></pre>
+<h2 id="audio-requirements"><a class="header" href="#audio-requirements">Audio Requirements</a></h2>
+<p>Whisper.apr expects:</p>
+<ul>
+<li><strong>Sample rate</strong>: 16,000 Hz</li>
+<li><strong>Channels</strong>: Mono (single channel)</li>
+<li><strong>Format</strong>: 32-bit float (-1.0 to 1.0)</li>
+<li><strong>Duration</strong>: Up to 30 seconds per chunk</li>
+</ul>
+<h3 id="converting-audio"><a class="header" href="#converting-audio">Converting Audio</a></h3>
+<p>Using ffmpeg:</p>
+<pre><code class="language-bash">ffmpeg -i input.mp3 -ar 16000 -ac 1 -f f32le output.raw
+</code></pre>
+<p>In JavaScript:</p>
+<pre><code class="language-javascript">const audioContext = new AudioContext({ sampleRate: 16000 });
+const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+const mono = audioBuffer.getChannelData(0);  // First channel as Float32Array
+</code></pre>
+<h2 id="next-steps-1"><a class="header" href="#next-steps-1">Next Steps</a></h2>
+<ul>
+<li><a href="getting-started/./browser-integration.html">Browser Integration</a> - Web Worker setup, React hooks</li>
+<li><a href="getting-started/./core-concepts.html">Core Concepts</a> - Understanding the transcription pipeline</li>
+<li><a href="getting-started/../performance/benchmarks.html">Performance</a> - Optimizing for your use case</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="browser-integration"><a class="header" href="#browser-integration">Browser Integration</a></h1>
+<p>Integrating Whisper.apr into web applications.</p>
+<h2 id="web-workers"><a class="header" href="#web-workers">Web Workers</a></h2>
+<p>For smooth UI, run inference in a Web Worker:</p>
+<pre><code class="language-javascript">// whisper-worker.js
+import init, { WhisperApr } from 'whisper-apr';
+
+let whisper = null;
+
+self.onmessage = async (e) =&gt; {
+  const { type, data } = e.data;
+
+  switch (type) {
+    case 'init':
+      await init();
+      whisper = await WhisperApr.load(data.modelUrl, {
+        onProgress: (loaded, total) =&gt; {
+          self.postMessage({ type: 'progress', loaded, total });
+        }
+      });
+      self.postMessage({ type: 'ready' });
+      break;
+
+    case 'transcribe':
+      const result = await whisper.transcribe(data.audio, data.options);
+      self.postMessage({ type: 'result', result });
+      break;
+  }
+};
+</code></pre>
+<pre><code class="language-javascript">// main.js
+const worker = new Worker('./whisper-worker.js', { type: 'module' });
+
+worker.postMessage({ type: 'init', data: { modelUrl: '/models/base.apr' } });
+
+worker.onmessage = (e) =&gt; {
+  const { type, ...data } = e.data;
+
+  switch (type) {
+    case 'progress':
+      console.log(`Loading: ${(data.loaded/data.total*100).toFixed(1)}%`);
+      break;
+    case 'ready':
+      console.log('Model ready!');
+      break;
+    case 'result':
+      console.log('Transcription:', data.result.text);
+      break;
+  }
+};
+</code></pre>
+<h2 id="react-integration"><a class="header" href="#react-integration">React Integration</a></h2>
+<pre><code class="language-jsx">import { useState, useEffect, useCallback } from 'react';
+import init, { WhisperApr } from 'whisper-apr';
+
+function useWhisper(modelUrl) {
+  const [whisper, setWhisper] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() =&gt; {
+    async function load() {
+      await init();
+      const model = await WhisperApr.load(modelUrl, {
+        onProgress: (loaded, total) =&gt; setProgress(loaded / total),
+      });
+      setWhisper(model);
+      setLoading(false);
+    }
+    load();
+  }, [modelUrl]);
+
+  const transcribe = useCallback(async (audio, options = {}) =&gt; {
+    if (!whisper) throw new Error('Model not loaded');
+    return whisper.transcribe(audio, options);
+  }, [whisper]);
+
+  return { whisper, loading, progress, transcribe };
+}
+
+function TranscriptionApp() {
+  const { loading, progress, transcribe } = useWhisper('/models/base.apr');
+  const [result, setResult] = useState('');
+
+  const handleFile = async (e) =&gt; {
+    const file = e.target.files[0];
+    const audioContext = new AudioContext({ sampleRate: 16000 });
+    const arrayBuffer = await file.arrayBuffer();
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    const samples = audioBuffer.getChannelData(0);
+
+    const transcription = await transcribe(samples);
+    setResult(transcription.text);
+  };
+
+  if (loading) {
+    return &lt;div&gt;Loading model: {(progress * 100).toFixed(1)}%&lt;/div&gt;;
+  }
+
+  return (
+    &lt;div&gt;
+      &lt;input type="file" accept="audio/*" onChange={handleFile} /&gt;
+      &lt;pre&gt;{result}&lt;/pre&gt;
+    &lt;/div&gt;
+  );
+}
+</code></pre>
+<h2 id="vue-integration"><a class="header" href="#vue-integration">Vue Integration</a></h2>
+<pre><code class="language-vue">&lt;template&gt;
+  &lt;div&gt;
+    &lt;div v-if="loading"&gt;Loading: {{ (progress * 100).toFixed(1) }}%&lt;/div&gt;
+    &lt;div v-else&gt;
+      &lt;input type="file" accept="audio/*" @change="handleFile" /&gt;
+      &lt;pre&gt;{{ result }}&lt;/pre&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+
+&lt;script setup&gt;
+import { ref, onMounted } from 'vue';
+import init, { WhisperApr } from 'whisper-apr';
+
+const whisper = ref(null);
+const loading = ref(true);
+const progress = ref(0);
+const result = ref('');
+
+onMounted(async () =&gt; {
+  await init();
+  whisper.value = await WhisperApr.load('/models/base.apr', {
+    onProgress: (loaded, total) =&gt; { progress.value = loaded / total; }
+  });
+  loading.value = false;
+});
+
+async function handleFile(e) {
+  const file = e.target.files[0];
+  const audioContext = new AudioContext({ sampleRate: 16000 });
+  const arrayBuffer = await file.arrayBuffer();
+  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+  const samples = audioBuffer.getChannelData(0);
+
+  const transcription = await whisper.value.transcribe(samples);
+  result.value = transcription.text;
+}
+&lt;/script&gt;
+</code></pre>
+<h2 id="microphone-recording"><a class="header" href="#microphone-recording">Microphone Recording</a></h2>
+<pre><code class="language-javascript">async function recordAndTranscribe(whisper, durationMs = 5000) {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const audioContext = new AudioContext({ sampleRate: 16000 });
+  const source = audioContext.createMediaStreamSource(stream);
+  const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+  const chunks = [];
+
+  processor.onaudioprocess = (e) =&gt; {
+    chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  };
+
+  source.connect(processor);
+  processor.connect(audioContext.destination);
+
+  // Record for specified duration
+  await new Promise(resolve =&gt; setTimeout(resolve, durationMs));
+
+  // Stop recording
+  processor.disconnect();
+  source.disconnect();
+  stream.getTracks().forEach(track =&gt; track.stop());
+
+  // Combine chunks
+  const totalLength = chunks.reduce((sum, chunk) =&gt; sum + chunk.length, 0);
+  const audio = new Float32Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    audio.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  // Transcribe
+  return whisper.transcribe(audio);
+}
+</code></pre>
+<h2 id="progressive-web-app-pwa"><a class="header" href="#progressive-web-app-pwa">Progressive Web App (PWA)</a></h2>
+<p>For offline support, cache the model in a Service Worker:</p>
+<pre><code class="language-javascript">// service-worker.js
+const CACHE_NAME = 'whisper-apr-v1';
+const MODEL_URLS = [
+  '/models/base.apr',
+  '/whisper_apr.js',
+  '/whisper_apr_bg.wasm',
+];
+
+self.addEventListener('install', (event) =&gt; {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) =&gt; cache.addAll(MODEL_URLS))
+  );
+});
+
+self.addEventListener('fetch', (event) =&gt; {
+  event.respondWith(
+    caches.match(event.request).then((response) =&gt; {
+      return response || fetch(event.request);
+    })
+  );
+});
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="core-concepts"><a class="header" href="#core-concepts">Core Concepts</a></h1>
+<p>Understanding the fundamentals of Whisper.apr.</p>
+<h2 id="the-whisper-model"><a class="header" href="#the-whisper-model">The Whisper Model</a></h2>
+<p>Whisper is a transformer-based encoder-decoder model for automatic speech recognition (ASR). It was trained on 680,000 hours of multilingual audio data.</p>
+<h3 id="architecture-summary"><a class="header" href="#architecture-summary">Architecture Summary</a></h3>
+<pre><code>Audio → Mel Spectrogram → Encoder → Cross-Attention → Decoder → Text
+</code></pre>
+<ol>
+<li><strong>Audio Input</strong>: Raw audio waveform (any sample rate)</li>
+<li><strong>Preprocessing</strong>: Resample to 16kHz, compute 80-bin mel spectrogram</li>
+<li><strong>Encoder</strong>: Process audio features through transformer layers</li>
+<li><strong>Decoder</strong>: Generate text tokens autoregressively</li>
+<li><strong>Output</strong>: Transcribed text with optional timestamps</li>
+</ol>
+<h2 id="model-sizes"><a class="header" href="#model-sizes">Model Sizes</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Model</th><th>Parameters</th><th>Multilingual</th><th>English-Only</th></tr></thead><tbody>
+<tr><td>tiny</td><td>39M</td><td>✓</td><td>✓</td></tr>
+<tr><td>base</td><td>74M</td><td>✓</td><td>✓</td></tr>
+<tr><td>small</td><td>244M</td><td>✓</td><td>✓</td></tr>
+<tr><td>medium</td><td>769M</td><td>✓</td><td>✓</td></tr>
+<tr><td>large</td><td>1.5B</td><td>✓</td><td>-</td></tr>
+</tbody></table>
+</div>
+<p><strong>Whisper.apr v1.0 supports</strong>: tiny, base, small</p>
+<h2 id="tasks"><a class="header" href="#tasks">Tasks</a></h2>
+<h3 id="transcription"><a class="header" href="#transcription">Transcription</a></h3>
+<p>Convert speech to text in the original language:</p>
+<pre><code class="language-rust">let options = TranscribeOptions {
+    task: Task::Transcribe,
+    language: Some("es".into()),  // Spanish audio → Spanish text
+    ..Default::default()
+};</code></pre>
+<h3 id="translation-1"><a class="header" href="#translation-1">Translation</a></h3>
+<p>Convert speech in any language to English:</p>
+<pre><code class="language-rust">let options = TranscribeOptions {
+    task: Task::Translate,
+    language: None,  // Auto-detect source language
+    ..Default::default()
+};</code></pre>
+<h2 id="decoding-strategies"><a class="header" href="#decoding-strategies">Decoding Strategies</a></h2>
+<h3 id="greedy-decoding"><a class="header" href="#greedy-decoding">Greedy Decoding</a></h3>
+<p>Select the highest probability token at each step:</p>
+<pre><code class="language-rust">let options = TranscribeOptions {
+    strategy: DecodingStrategy::Greedy,
+    ..Default::default()
+};</code></pre>
+<p><strong>Pros</strong>: Fast, memory-efficient
+<strong>Cons</strong>: May miss better sequences</p>
+<h3 id="beam-search-1"><a class="header" href="#beam-search-1">Beam Search</a></h3>
+<p>Explore multiple hypotheses in parallel:</p>
+<pre><code class="language-rust">let options = TranscribeOptions {
+    strategy: DecodingStrategy::BeamSearch {
+        beam_size: 5,      // Number of parallel hypotheses
+        temperature: 0.0,  // Deterministic (no sampling)
+        patience: 1.0,     // Early stopping patience
+    },
+    ..Default::default()
+};</code></pre>
+<p><strong>Pros</strong>: Higher quality transcriptions
+<strong>Cons</strong>: Slower, more memory</p>
+<h3 id="sampling"><a class="header" href="#sampling">Sampling</a></h3>
+<p>Sample from the probability distribution:</p>
+<pre><code class="language-rust">let options = TranscribeOptions {
+    strategy: DecodingStrategy::Sampling {
+        temperature: 0.8,  // Higher = more random
+        top_k: Some(40),   // Consider top-k tokens
+        top_p: Some(0.9),  // Nucleus sampling
+    },
+    ..Default::default()
+};</code></pre>
+<p><strong>Use case</strong>: Creative applications, multiple hypotheses</p>
+<h2 id="the-apr-format"><a class="header" href="#the-apr-format">The .apr Format</a></h2>
+<p>Whisper.apr uses a custom binary format optimized for web delivery:</p>
+<h3 id="structure"><a class="header" href="#structure">Structure</a></h3>
+<pre><code>┌────────────────────────────┐
+│ Magic: "APR1" (4 bytes)    │
+├────────────────────────────┤
+│ Version (2 bytes)          │
+├────────────────────────────┤
+│ Model Config               │
+├────────────────────────────┤
+│ Mel Filterbank             │
+├────────────────────────────┤
+│ Vocabulary (BPE)           │
+├────────────────────────────┤
+│ Encoder Weights (LZ4)      │
+├────────────────────────────┤
+│ Decoder Weights (LZ4)      │
+├────────────────────────────┤
+│ Checksum (CRC32)           │
+└────────────────────────────┘
+</code></pre>
+<h3 id="features"><a class="header" href="#features">Features</a></h3>
+<ul>
+<li><strong>LZ4 Compression</strong>: 2-3x size reduction</li>
+<li><strong>Streaming</strong>: 64KB blocks for progressive loading</li>
+<li><strong>Quantization</strong>: fp32, fp16, int8 support</li>
+<li><strong>Integrity</strong>: CRC32 checksum</li>
+</ul>
+<h2 id="language-support"><a class="header" href="#language-support">Language Support</a></h2>
+<p>Whisper supports 99 languages. Specify the language or use auto-detection:</p>
+<pre><code class="language-rust">// Explicit language
+let options = TranscribeOptions {
+    language: Some("ja".into()),  // Japanese
+    ..Default::default()
+};
+
+// Auto-detect
+let options = TranscribeOptions {
+    language: None,  // or Some("auto".into())
+    ..Default::default()
+};</code></pre>
+<h3 id="language-codes"><a class="header" href="#language-codes">Language Codes</a></h3>
+<p>Common language codes (ISO 639-1):</p>
+<ul>
+<li><code>en</code> - English</li>
+<li><code>es</code> - Spanish</li>
+<li><code>fr</code> - French</li>
+<li><code>de</code> - German</li>
+<li><code>zh</code> - Chinese</li>
+<li><code>ja</code> - Japanese</li>
+<li><code>ko</code> - Korean</li>
+<li><code>pt</code> - Portuguese</li>
+<li><code>ru</code> - Russian</li>
+<li><code>ar</code> - Arabic</li>
+</ul>
+<h2 id="word-timestamps"><a class="header" href="#word-timestamps">Word Timestamps</a></h2>
+<p>Get word-level timing information:</p>
+<pre><code class="language-rust">let options = TranscribeOptions {
+    word_timestamps: true,
+    ..Default::default()
+};
+
+let result = whisper.transcribe(&amp;audio, options)?;
+
+for segment in result.segments {
+    println!("[{:.2}s - {:.2}s] {}",
+        segment.start, segment.end, segment.text);
+}</code></pre>
+<h2 id="error-handling"><a class="header" href="#error-handling">Error Handling</a></h2>
+<p>All operations return <code>WhisperResult&lt;T&gt;</code>:</p>
+<pre><code class="language-rust">use whisper_apr::{WhisperError, WhisperResult};
+
+fn transcribe_file(path: &amp;str) -&gt; WhisperResult&lt;String&gt; {
+    let model_data = std::fs::read("model.apr")?;  // Io error
+    let whisper = WhisperApr::load(&amp;model_data)?;  // Format/Model error
+    let audio = load_audio(path)?;                  // Audio error
+    let result = whisper.transcribe(&amp;audio, Default::default())?;
+    Ok(result.text)
+}</code></pre>
+<p>Error variants:</p>
+<ul>
+<li><code>WhisperError::Audio</code> - Invalid audio format</li>
+<li><code>WhisperError::Model</code> - Model loading/inference error</li>
+<li><code>WhisperError::Format</code> - Invalid .apr format</li>
+<li><code>WhisperError::Tokenizer</code> - Tokenization error</li>
+<li><code>WhisperError::Inference</code> - Decoding error</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="architecture-overview"><a class="header" href="#architecture-overview">Architecture Overview</a></h1>
+<p>Whisper.apr implements OpenAI's Whisper architecture in pure Rust, optimized for WASM deployment.</p>
+<h2 id="high-level-architecture"><a class="header" href="#high-level-architecture">High-Level Architecture</a></h2>
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│                        Whisper.apr                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐  │
+│  │    Audio     │    │     Mel      │    │    Transformer   │  │
+│  │ Preprocessor │───►│  Spectrogram │───►│     Encoder      │  │
+│  └──────────────┘    └──────────────┘    └────────┬─────────┘  │
+│                                                    │            │
+│                                                    ▼            │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐  │
+│  │   Output     │◄───│   Tokenizer  │◄───│    Transformer   │  │
+│  │    Text      │    │    (BPE)     │    │     Decoder      │  │
+│  └──────────────┘    └──────────────┘    └──────────────────┘  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="key-components"><a class="header" href="#key-components">Key Components</a></h2>
+<h3 id="audio-pipeline-srcaudio"><a class="header" href="#audio-pipeline-srcaudio">Audio Pipeline (<code>src/audio/</code>)</a></h3>
+<ol>
+<li><strong>Resampler</strong> - Converts input audio to 16kHz mono</li>
+<li><strong>MelFilterbank</strong> - Computes 80-bin mel spectrogram</li>
+<li><strong>Normalization</strong> - Standardizes input for the encoder</li>
+</ol>
+<h3 id="transformer-srcmodel"><a class="header" href="#transformer-srcmodel">Transformer (<code>src/model/</code>)</a></h3>
+<ol>
+<li>
+<p><strong>Encoder</strong> - Processes mel spectrogram into audio features</p>
+<ul>
+<li>Convolutional stem (2 layers)</li>
+<li>Transformer blocks with self-attention</li>
+<li>Sinusoidal positional encoding</li>
+</ul>
+</li>
+<li>
+<p><strong>Decoder</strong> - Generates text tokens autoregressively</p>
+<ul>
+<li>Masked self-attention</li>
+<li>Cross-attention to encoder output</li>
+<li>Linear projection to vocabulary</li>
+</ul>
+</li>
+<li>
+<p><strong>Attention</strong> - Multi-head attention with SIMD optimization</p>
+<ul>
+<li>Query, Key, Value projections</li>
+<li>Scaled dot-product attention</li>
+<li>Output projection</li>
+</ul>
+</li>
+</ol>
+<h3 id="tokenizer-srctokenizer"><a class="header" href="#tokenizer-srctokenizer">Tokenizer (<code>src/tokenizer/</code>)</a></h3>
+<ul>
+<li>BPE (Byte Pair Encoding) tokenization</li>
+<li>51,865 token vocabulary</li>
+<li>Special tokens for language, task, timestamps</li>
+</ul>
+<h3 id="inference-srcinference"><a class="header" href="#inference-srcinference">Inference (<code>src/inference/</code>)</a></h3>
+<ol>
+<li><strong>Greedy</strong> - Fast, memory-efficient decoding</li>
+<li><strong>BeamSearch</strong> - Higher quality with configurable beam width</li>
+</ol>
+<h2 id="data-flow"><a class="header" href="#data-flow">Data Flow</a></h2>
+<pre><code>Audio (f32[])
+    │
+    ▼
+Resample to 16kHz
+    │
+    ▼
+Mel Spectrogram [T, 80]
+    │
+    ▼
+Encoder (Transformer)
+    │
+    ▼
+Audio Features [T/2, d_model]
+    │
+    ▼
+Decoder (Autoregressive)
+    │
+    ▼
+Token IDs [N]
+    │
+    ▼
+BPE Decode
+    │
+    ▼
+Text Output
+</code></pre>
+<h2 id="model-configurations"><a class="header" href="#model-configurations">Model Configurations</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Model</th><th>d_model</th><th>n_heads</th><th>n_layers</th><th>Parameters</th></tr></thead><tbody>
+<tr><td>tiny</td><td>384</td><td>6</td><td>4</td><td>39M</td></tr>
+<tr><td>base</td><td>512</td><td>8</td><td>6</td><td>74M</td></tr>
+<tr><td>small</td><td>768</td><td>12</td><td>12</td><td>244M</td></tr>
+</tbody></table>
+</div>
+<h2 id="wasm-considerations"><a class="header" href="#wasm-considerations">WASM Considerations</a></h2>
+<ul>
+<li><strong>Memory Limits</strong>: Safari iOS ~1GB, other browsers ~4GB</li>
+<li><strong>SIMD</strong>: WASM SIMD 128-bit for 2-4x speedup</li>
+<li><strong>Streaming</strong>: Progressive model loading via 64KB blocks</li>
+<li><strong>Web Workers</strong>: Offload inference from main thread</li>
+</ul>
+<h2 id="trueno-integration"><a class="header" href="#trueno-integration">Trueno Integration</a></h2>
+<p>All matrix operations dispatch through Trueno for automatic SIMD acceleration:</p>
+<pre><code class="language-rust">use trueno::{Vector, Matrix};
+
+// Trueno selects optimal backend (Scalar, SIMD, WASM SIMD)
+let attention_scores = trueno::matmul(&amp;query, &amp;key.transpose());
+let softmax_weights = trueno::softmax(&amp;attention_scores);
+let output = trueno::matmul(&amp;softmax_weights, &amp;value);</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="wasm-first-design"><a class="header" href="#wasm-first-design">WASM-First Design</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="audio-pipeline"><a class="header" href="#audio-pipeline">Audio Pipeline</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="transformer-architecture"><a class="header" href="#transformer-architecture">Transformer Architecture</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="encoder"><a class="header" href="#encoder">Encoder</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="decoder"><a class="header" href="#decoder">Decoder</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="multi-head-attention"><a class="header" href="#multi-head-attention">Multi-Head Attention</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="apr-model-format"><a class="header" href="#apr-model-format">.apr Model Format</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="quantization"><a class="header" href="#quantization">Quantization</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="trueno-integration-1"><a class="header" href="#trueno-integration-1">Trueno Integration</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="whisperapr"><a class="header" href="#whisperapr">WhisperApr</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="transcribeoptions"><a class="header" href="#transcribeoptions">TranscribeOptions</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="transcriptionresult"><a class="header" href="#transcriptionresult">TranscriptionResult</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="decodingstrategy"><a class="header" href="#decodingstrategy">DecodingStrategy</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="audio-processing"><a class="header" href="#audio-processing">Audio Processing</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="error-handling-1"><a class="header" href="#error-handling-1">Error Handling</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="javascript-bindings"><a class="header" href="#javascript-bindings">JavaScript Bindings</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="benchmarks-overview"><a class="header" href="#benchmarks-overview">Benchmarks Overview</a></h1>
+<p>Whisper.apr includes comprehensive benchmarks to track performance and guide optimization.</p>
+<h2 id="running-benchmarks"><a class="header" href="#running-benchmarks">Running Benchmarks</a></h2>
+<pre><code class="language-bash"># Run all benchmarks
+cargo bench
+
+# Run specific benchmark group
+cargo bench --bench inference
+cargo bench --bench wasm_simd
+
+# Run with HTML report
+cargo bench -- --save-baseline main
+</code></pre>
+<h2 id="benchmark-groups"><a class="header" href="#benchmark-groups">Benchmark Groups</a></h2>
+<h3 id="inference-benchmarks-benchesinferencers"><a class="header" href="#inference-benchmarks-benchesinferencers">Inference Benchmarks (<code>benches/inference.rs</code>)</a></h3>
+<p>End-to-end transcription performance:</p>
+<div class="table-wrapper"><table><thead><tr><th>Benchmark</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>mel_spectrogram</code></td><td>Audio → mel spectrogram conversion</td></tr>
+<tr><td><code>encoder</code></td><td>Encoder forward pass (various sequence lengths)</td></tr>
+<tr><td><code>decoder_greedy</code></td><td>Greedy decoding performance</td></tr>
+<tr><td><code>decoder_beam</code></td><td>Beam search with different beam sizes</td></tr>
+<tr><td><code>transcribe_e2e</code></td><td>Full pipeline end-to-end</td></tr>
+<tr><td><code>tokenizer</code></td><td>BPE encode/decode</td></tr>
+<tr><td><code>attention</code></td><td>Multi-head attention computation</td></tr>
+</tbody></table>
+</div>
+<h3 id="simd-benchmarks-bencheswasm_simdrs"><a class="header" href="#simd-benchmarks-bencheswasm_simdrs">SIMD Benchmarks (<code>benches/wasm_simd.rs</code>)</a></h3>
+<p>Scalar vs SIMD performance comparison:</p>
+<div class="table-wrapper"><table><thead><tr><th>Benchmark</th><th>Description</th><th>Expected Speedup</th></tr></thead><tbody>
+<tr><td><code>matmul</code></td><td>Matrix multiplication</td><td>3-4x</td></tr>
+<tr><td><code>softmax</code></td><td>Softmax activation</td><td>2-3x</td></tr>
+<tr><td><code>dot_product</code></td><td>Vector dot product</td><td>3-4x</td></tr>
+<tr><td><code>gelu</code></td><td>GELU activation</td><td>2-3x</td></tr>
+<tr><td><code>layer_norm</code></td><td>Layer normalization</td><td>2-3x</td></tr>
+</tbody></table>
+</div>
+<h2 id="performance-targets"><a class="header" href="#performance-targets">Performance Targets</a></h2>
+<h3 id="real-time-factor-rtf"><a class="header" href="#real-time-factor-rtf">Real-Time Factor (RTF)</a></h3>
+<p>RTF = processing_time / audio_duration</p>
+<div class="table-wrapper"><table><thead><tr><th>Model</th><th>Target RTF</th><th>Audio</th><th>Expected Time</th></tr></thead><tbody>
+<tr><td>tiny</td><td>≤2.0x</td><td>60s</td><td>≤120s</td></tr>
+<tr><td>base</td><td>≤2.5x</td><td>60s</td><td>≤150s</td></tr>
+<tr><td>small</td><td>≤4.0x</td><td>60s</td><td>≤240s</td></tr>
+</tbody></table>
+</div>
+<h3 id="memory-budget"><a class="header" href="#memory-budget">Memory Budget</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Model</th><th>WASM Size</th><th>Peak Memory</th></tr></thead><tbody>
+<tr><td>tiny</td><td>~40MB</td><td>≤150MB</td></tr>
+<tr><td>base</td><td>~75MB</td><td>≤350MB</td></tr>
+<tr><td>small</td><td>~250MB</td><td>≤800MB</td></tr>
+</tbody></table>
+</div>
+<h2 id="interpreting-results"><a class="header" href="#interpreting-results">Interpreting Results</a></h2>
+<p>Criterion provides statistical analysis:</p>
+<pre><code>mel_spectrogram/compute/30s
+                        time:   [12.345 ms 12.456 ms 12.567 ms]
+                        thrpt:  [2.3891 Melem/s 2.4106 Melem/s 2.4321 Melem/s]
+                 change: [-2.1234% -1.5678% -1.0123%] (p = 0.00 &lt; 0.05)
+                        Performance has improved.
+</code></pre>
+<ul>
+<li><strong>time</strong>: Mean execution time with confidence interval</li>
+<li><strong>thrpt</strong>: Throughput (elements or bytes per second)</li>
+<li><strong>change</strong>: Comparison to baseline (if available)</li>
+</ul>
+<h2 id="browser-benchmarks"><a class="header" href="#browser-benchmarks">Browser Benchmarks</a></h2>
+<p>For WASM performance in browsers:</p>
+<pre><code class="language-bash"># Build WASM
+wasm-pack build --target web --release
+
+# Run browser benchmarks
+cd browser-bench
+npm install
+npm run bench
+</code></pre>
+<p>Browser benchmark results are saved to <code>benchmark-results/</code>.</p>
+<h2 id="continuous-benchmarking"><a class="header" href="#continuous-benchmarking">Continuous Benchmarking</a></h2>
+<p>CI runs benchmarks on every PR:</p>
+<ol>
+<li>Benchmarks run against <code>main</code> baseline</li>
+<li>Results compared for regressions</li>
+<li>PR blocked if &gt;10% performance regression</li>
+<li>Results archived for historical tracking</li>
+</ol>
+<h2 id="profiling-integration"><a class="header" href="#profiling-integration">Profiling Integration</a></h2>
+<p>Use Renacer for detailed profiling:</p>
+<pre><code class="language-bash"># Profile with source correlation
+renacer --function-time --source -- cargo bench --bench inference
+
+# Generate flamegraph
+renacer --flamegraph -- cargo bench --bench inference &gt; flame.svg
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="real-time-factor-analysis"><a class="header" href="#real-time-factor-analysis">Real-Time Factor Analysis</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="wasm-simd-performance"><a class="header" href="#wasm-simd-performance">WASM SIMD Performance</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="memory-optimization"><a class="header" href="#memory-optimization">Memory Optimization</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="model-quantization-impact"><a class="header" href="#model-quantization-impact">Model Quantization Impact</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="browser-comparison"><a class="header" href="#browser-comparison">Browser Comparison</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="profiling-with-renacer"><a class="header" href="#profiling-with-renacer">Profiling with Renacer</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="basic-transcription-1"><a class="header" href="#basic-transcription-1">Basic Transcription</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="real-time-microphone"><a class="header" href="#real-time-microphone">Real-Time Microphone</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="file-upload"><a class="header" href="#file-upload">File Upload</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="language-detection"><a class="header" href="#language-detection">Language Detection</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="translation-2"><a class="header" href="#translation-2">Translation</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="web-worker-integration"><a class="header" href="#web-worker-integration">Web Worker Integration</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="react-integration-1"><a class="header" href="#react-integration-1">React Integration</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="progressive-web-app"><a class="header" href="#progressive-web-app">Progressive Web App</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="contributing"><a class="header" href="#contributing">Contributing</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="extreme-tdd"><a class="header" href="#extreme-tdd">Extreme TDD</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="testing"><a class="header" href="#testing">Testing</a></h1>
+<p>Whisper.apr follows <strong>EXTREME TDD</strong> methodology with comprehensive testing at multiple levels.</p>
+<h2 id="test-distribution"><a class="header" href="#test-distribution">Test Distribution</a></h2>
+<p>The project targets the following test distribution:</p>
+<ul>
+<li><strong>60%</strong> Unit tests</li>
+<li><strong>30%</strong> Property-based tests</li>
+<li><strong>10%</strong> Integration tests</li>
+</ul>
+<h2 id="running-tests-1"><a class="header" href="#running-tests-1">Running Tests</a></h2>
+<pre><code class="language-bash"># All tests (unit + property + integration + doc)
+cargo test
+
+# Fast tests with nextest (recommended)
+make test-fast
+
+# Unit tests only
+cargo test --lib
+
+# Property-based tests only
+cargo test property_ --lib
+
+# Doc tests
+cargo test --doc
+</code></pre>
+<h2 id="coverage"><a class="header" href="#coverage">Coverage</a></h2>
+<p>The project maintains <strong>≥95% line coverage</strong> using <code>cargo-llvm-cov</code>:</p>
+<pre><code class="language-bash"># Generate coverage report
+make coverage
+
+# View HTML report
+open target/coverage/html/index.html
+</code></pre>
+<h3 id="current-coverage-stats"><a class="header" href="#current-coverage-stats">Current Coverage Stats</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Module</th><th>Line Coverage</th></tr></thead><tbody>
+<tr><td>audio/streaming.rs</td><td>99.45%</td></tr>
+<tr><td>audio/ring_buffer.rs</td><td>98.94%</td></tr>
+<tr><td>format/checksum.rs</td><td>100.00%</td></tr>
+<tr><td>simd.rs</td><td>95.19%</td></tr>
+<tr><td><strong>TOTAL</strong></td><td><strong>95.19%</strong></td></tr>
+</tbody></table>
+</div>
+<h2 id="test-categories"><a class="header" href="#test-categories">Test Categories</a></h2>
+<h3 id="unit-tests"><a class="header" href="#unit-tests">Unit Tests</a></h3>
+<p>Located alongside the code in <code>#[cfg(test)]</code> modules:</p>
+<pre><code class="language-rust">#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mel_filterbank_new() {
+        let mel = MelFilterbank::new(80, 400, 16000);
+        assert_eq!(mel.n_mels(), 80);
+    }
+}</code></pre>
+<h3 id="property-based-tests"><a class="header" href="#property-based-tests">Property-Based Tests</a></h3>
+<p>Using <code>proptest</code> for invariant validation:</p>
+<pre><code class="language-rust">#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(50))]
+
+        #[test]
+        fn property_softmax_sums_to_one(len in 4usize..128) {
+            let logits: Vec&lt;f32&gt; = (0..len)
+                .map(|i| (i as f32 * 0.1).sin())
+                .collect();
+            let probs = simd::softmax(&amp;logits);
+            let sum: f32 = probs.iter().sum();
+            prop_assert!((sum - 1.0).abs() &lt; 1e-5);
+        }
+    }
+}</code></pre>
+<h3 id="integration-tests"><a class="header" href="#integration-tests">Integration Tests</a></h3>
+<p>End-to-end tests in <code>tests/</code> directory testing the full transcription pipeline.</p>
+<h2 id="makefile-targets"><a class="header" href="#makefile-targets">Makefile Targets</a></h2>
+<pre><code class="language-bash">make test-fast    # Fast tests with nextest
+make coverage     # Coverage with HTML report
+make tier1        # Quick validation (&lt;1s)
+make tier2        # Pre-commit (&lt;5s)
+make tier3        # Pre-push (1-5min)
+</code></pre>
+<h2 id="mutation-testing"><a class="header" href="#mutation-testing">Mutation Testing</a></h2>
+<p>Validate test quality with <code>cargo-mutants</code>:</p>
+<pre><code class="language-bash"># Run mutation tests
+make mutants
+
+# Quick mutation test on changed files
+make mutants-quick
+
+# List mutants for a specific file
+cargo mutants --list --file src/simd.rs
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="unit-tests-1"><a class="header" href="#unit-tests-1">Unit Tests</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="property-based-tests-1"><a class="header" href="#property-based-tests-1">Property-Based Tests</a></h1>
+<p>Whisper.apr uses <strong>proptest</strong> for property-based testing to validate invariants across randomly generated inputs.</p>
+<h2 id="why-property-based-testing"><a class="header" href="#why-property-based-testing">Why Property-Based Testing?</a></h2>
+<p>Traditional unit tests check specific examples:</p>
+<pre><code class="language-rust">assert_eq!(softmax(&amp;[1.0, 2.0, 3.0]).iter().sum::&lt;f32&gt;(), 1.0);</code></pre>
+<p>Property tests verify <strong>invariants</strong> across many random inputs:</p>
+<pre><code class="language-rust">proptest! {
+    #[test]
+    fn property_softmax_sums_to_one(logits in vec(any::&lt;f32&gt;(), 4..128)) {
+        let probs = softmax(&amp;logits);
+        prop_assert!((probs.iter().sum::&lt;f32&gt;() - 1.0).abs() &lt; 1e-5);
+    }
+}</code></pre>
+<h2 id="property-test-modules"><a class="header" href="#property-test-modules">Property Test Modules</a></h2>
+<h3 id="mel-filterbank-audiomelrs"><a class="header" href="#mel-filterbank-audiomelrs">Mel Filterbank (<code>audio/mel.rs</code>)</a></h3>
+<pre><code class="language-rust">proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+
+    // Mel scale is monotonically increasing
+    #[test]
+    fn property_mel_scale_monotonic(freq in 0.0f32..20000.0) {
+        let mel1 = MelFilterbank::hz_to_mel(freq);
+        let mel2 = MelFilterbank::hz_to_mel(freq + 1.0);
+        prop_assert!(mel2 &gt;= mel1);
+    }
+
+    // Hz -&gt; Mel -&gt; Hz roundtrip
+    #[test]
+    fn property_mel_hz_roundtrip(freq in 20.0f32..8000.0) {
+        let mel = MelFilterbank::hz_to_mel(freq);
+        let back = MelFilterbank::mel_to_hz(mel);
+        prop_assert!((freq - back).abs() &lt; 1e-2);
+    }
+
+    // Filterbank values are non-negative
+    #[test]
+    fn property_filterbank_nonnegative(n_mels in 20usize..128, n_fft in 256usize..1024) {
+        let mel = MelFilterbank::new(n_mels, n_fft, 16000);
+        for val in &amp;mel.filters {
+            prop_assert!(*val &gt;= 0.0);
+        }
+    }
+}</code></pre>
+<h3 id="ring-buffer-audioring_bufferrs"><a class="header" href="#ring-buffer-audioring_bufferrs">Ring Buffer (<code>audio/ring_buffer.rs</code>)</a></h3>
+<pre><code class="language-rust">proptest! {
+    // Write/read preserves data integrity
+    #[test]
+    fn property_write_read_preserves_data(
+        capacity in 64usize..1024,
+        data_len in 1usize..512
+    ) {
+        let capacity = capacity.max(data_len + 1);
+        let mut buffer = RingBuffer::new(capacity);
+        let data: Vec&lt;f32&gt; = (0..data_len).map(|i| i as f32).collect();
+
+        buffer.write(&amp;data);
+        let mut output = vec![0.0; data_len];
+        let read = buffer.read(&amp;mut output);
+
+        prop_assert_eq!(read, data_len);
+        prop_assert_eq!(output, data);
+    }
+
+    // Clear empties the buffer
+    #[test]
+    fn property_clear_empties_buffer(capacity in 32usize..256) {
+        let mut buffer = RingBuffer::new(capacity);
+        buffer.write(&amp;[1.0, 2.0, 3.0]);
+        buffer.clear();
+
+        prop_assert!(buffer.is_empty());
+        prop_assert_eq!(buffer.available_read(), 0);
+    }
+}</code></pre>
+<h3 id="simd-operations-simdrs"><a class="header" href="#simd-operations-simdrs">SIMD Operations (<code>simd.rs</code>)</a></h3>
+<pre><code class="language-rust">proptest! {
+    // Dot product is commutative
+    #[test]
+    fn property_dot_commutative(len in 4usize..256) {
+        let a: Vec&lt;f32&gt; = (0..len).map(|i| (i as f32 * 0.1).sin()).collect();
+        let b: Vec&lt;f32&gt; = (0..len).map(|i| (i as f32 * 0.2).cos()).collect();
+
+        let ab = simd::dot(&amp;a, &amp;b);
+        let ba = simd::dot(&amp;b, &amp;a);
+        prop_assert!((ab - ba).abs() &lt; 1e-5);
+    }
+
+    // Softmax output sums to 1.0
+    #[test]
+    fn property_softmax_sums_to_one(len in 4usize..128) {
+        let logits: Vec&lt;f32&gt; = (0..len).map(|i| (i as f32 * 0.1).sin()).collect();
+        let probs = simd::softmax(&amp;logits);
+        let sum: f32 = probs.iter().sum();
+        prop_assert!((sum - 1.0).abs() &lt; 1e-5);
+    }
+
+    // GELU is bounded for reasonable inputs
+    #[test]
+    fn property_gelu_bounded(len in 4usize..128) {
+        let input: Vec&lt;f32&gt; = (0..len).map(|i| (i as f32 * 0.1 - 5.0)).collect();
+        let output = simd::gelu(&amp;input);
+        for (x, y) in input.iter().zip(output.iter()) {
+            prop_assert!(y.is_finite());
+            prop_assert!(*y &gt;= -0.5 &amp;&amp; *y &lt;= *x + 0.5);
+        }
+    }
+
+    // Layer norm produces mean ~0, std ~1
+    #[test]
+    fn property_layer_norm_mean_zero(len in 8usize..256) {
+        let data: Vec&lt;f32&gt; = (0..len).map(|i| (i as f32 * 0.1).sin()).collect();
+        let gamma = vec![1.0; len];
+        let beta = vec![0.0; len];
+        let normalized = simd::layer_norm(&amp;data, &amp;gamma, &amp;beta, 1e-5);
+        let mean: f32 = normalized.iter().sum::&lt;f32&gt;() / len as f32;
+        prop_assert!(mean.abs() &lt; 1e-5);
+    }
+}</code></pre>
+<h3 id="tokenizer-tokenizermodrs"><a class="header" href="#tokenizer-tokenizermodrs">Tokenizer (<code>tokenizer/mod.rs</code>)</a></h3>
+<pre><code class="language-rust">proptest! {
+    // Encode produces valid token IDs
+    #[test]
+    fn property_encode_produces_valid_tokens(s in "[a-zA-Z0-9 ]{1,50}") {
+        let tokenizer = BpeTokenizer::with_base_tokens();
+        if let Ok(tokens) = tokenizer.encode(&amp;s) {
+            for token in &amp;tokens {
+                prop_assert!((*token as usize) &lt; tokenizer.vocab_size());
+            }
+        }
+    }
+
+    // Whisper special tokens are in expected range
+    #[test]
+    fn property_special_tokens_reasonable(_dummy in 0u8..1) {
+        let tokenizer = BpeTokenizer::with_base_tokens();
+        let special_tokens = [SOT, EOT, TRANSCRIBE, TRANSLATE, NO_TIMESTAMPS];
+
+        for token in special_tokens {
+            prop_assert!(
+                (token as usize) &gt;= 50257 &amp;&amp; (token as usize) &lt; 60000
+            );
+            prop_assert!(tokenizer.vocab_size() &gt; 0);
+        }
+    }
+}</code></pre>
+<h2 id="configuration"><a class="header" href="#configuration">Configuration</a></h2>
+<p>Property tests use a reduced case count (50) for fast CI execution:</p>
+<pre><code class="language-rust">proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+    // tests...
+}</code></pre>
+<p>For thorough local testing, increase cases:</p>
+<pre><code class="language-bash">PROPTEST_CASES=1000 cargo test property_
+</code></pre>
+<h2 id="running-property-tests"><a class="header" href="#running-property-tests">Running Property Tests</a></h2>
+<pre><code class="language-bash"># Run all property tests
+cargo test property_ --lib
+
+# Run with verbose output
+cargo test property_ --lib -- --nocapture
+
+# Run specific module's property tests
+cargo test audio::mel::tests::property_tests --lib
+</code></pre>
+<h2 id="best-practices"><a class="header" href="#best-practices">Best Practices</a></h2>
+<ol>
+<li><strong>Test invariants, not examples</strong>: Focus on properties that should hold for ALL inputs</li>
+<li><strong>Use meaningful ranges</strong>: <code>freq in 20.0f32..8000.0</code> (audible range) instead of <code>any::&lt;f32&gt;()</code></li>
+<li><strong>Keep tests fast</strong>: Use 50 cases for CI, more for local testing</li>
+<li><strong>Handle edge cases</strong>: Property tests often find unexpected edge cases</li>
+<li><strong>Save regression seeds</strong>: Proptest saves failing seeds in <code>proptest-regressions/</code></li>
+</ol>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="wasm-tests"><a class="header" href="#wasm-tests">WASM Tests</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="wer-validation"><a class="header" href="#wer-validation">WER Validation</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="benchmarking"><a class="header" href="#benchmarking">Benchmarking</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="quality-gates"><a class="header" href="#quality-gates">Quality Gates</a></h1>
+<p>Whisper.apr implements tiered quality gates following the <strong>bashrs</strong> methodology for fast feedback loops.</p>
+<h2 id="tier-overview"><a class="header" href="#tier-overview">Tier Overview</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Tier</th><th>Trigger</th><th>Duration</th><th>Purpose</th></tr></thead><tbody>
+<tr><td>Tier 1</td><td>On save</td><td>&lt;1s</td><td>Immediate feedback</td></tr>
+<tr><td>Tier 2</td><td>Pre-commit</td><td>&lt;5s</td><td>Validation before commit</td></tr>
+<tr><td>Tier 3</td><td>Pre-push</td><td>1-5min</td><td>Full validation</td></tr>
+<tr><td>Tier 4</td><td>CI/CD</td><td>5-60min</td><td>Comprehensive analysis</td></tr>
+</tbody></table>
+</div>
+<h2 id="tier-1-on-save-1s"><a class="header" href="#tier-1-on-save-1s">Tier 1: On-Save (&lt;1s)</a></h2>
+<p>Fast feedback for immediate issues:</p>
+<pre><code class="language-bash">make tier1
+# Or manually:
+cargo fmt --check &amp;&amp; cargo clippy -- -W all &amp;&amp; cargo check
+</code></pre>
+<p><strong>Validates:</strong></p>
+<ul>
+<li>Code formatting</li>
+<li>Common lint issues</li>
+<li>Compilation</li>
+</ul>
+<h2 id="tier-2-pre-commit-5s"><a class="header" href="#tier-2-pre-commit-5s">Tier 2: Pre-Commit (&lt;5s)</a></h2>
+<p>Quick validation before committing:</p>
+<pre><code class="language-bash">make tier2
+# Or manually:
+cargo test --lib &amp;&amp; cargo clippy -- -D warnings
+</code></pre>
+<p><strong>Validates:</strong></p>
+<ul>
+<li>All unit tests pass</li>
+<li>Zero clippy warnings</li>
+<li>Code compiles in test mode</li>
+</ul>
+<h2 id="tier-3-pre-push-1-5min"><a class="header" href="#tier-3-pre-push-1-5min">Tier 3: Pre-Push (1-5min)</a></h2>
+<p>Full validation before pushing:</p>
+<pre><code class="language-bash">make tier3
+</code></pre>
+<p><strong>Validates:</strong></p>
+<ul>
+<li>All tests (unit + property + integration)</li>
+<li>Coverage ≥95%</li>
+<li>Documentation builds</li>
+</ul>
+<h3 id="coverage-requirements"><a class="header" href="#coverage-requirements">Coverage Requirements</a></h3>
+<pre><code class="language-bash">make coverage
+</code></pre>
+<p>Current targets:</p>
+<ul>
+<li><strong>Line coverage</strong>: ≥95% (achieved: 95.19%)</li>
+<li><strong>Function coverage</strong>: ≥95%</li>
+<li><strong>Branch coverage</strong>: tracked</li>
+</ul>
+<h2 id="tier-4-cicd-5-60min"><a class="header" href="#tier-4-cicd-5-60min">Tier 4: CI/CD (5-60min)</a></h2>
+<p>Comprehensive analysis in CI pipeline:</p>
+<pre><code class="language-bash">make tier4
+</code></pre>
+<p><strong>Validates:</strong></p>
+<ul>
+<li>Everything from Tier 3</li>
+<li>Mutation testing (target: ≥85%)</li>
+<li>Security audit</li>
+<li>PMAT quality analysis</li>
+</ul>
+<h3 id="mutation-testing-1"><a class="header" href="#mutation-testing-1">Mutation Testing</a></h3>
+<pre><code class="language-bash">make mutants
+</code></pre>
+<p>Mutation testing validates test quality by introducing bugs and checking if tests catch them.</p>
+<h2 id="makefile-targets-1"><a class="header" href="#makefile-targets-1">Makefile Targets</a></h2>
+<pre><code class="language-makefile"># Tier 1: Fast feedback
+tier1:
+    cargo fmt --check
+    cargo clippy -- -W all
+    cargo check
+
+# Tier 2: Pre-commit
+tier2:
+    cargo test --lib
+    cargo clippy -- -D warnings
+
+# Tier 3: Pre-push
+tier3:
+    cargo test --all
+    make coverage
+
+# Tier 4: CI/CD
+tier4:
+    make tier3
+    make mutants
+</code></pre>
+<h2 id="lint-configuration"><a class="header" href="#lint-configuration">Lint Configuration</a></h2>
+<p>Whisper.apr uses strict clippy configuration in <code>Cargo.toml</code>:</p>
+<pre><code class="language-toml">[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "deny"      # Prevent panics
+expect_used = "warn"      # Discourage panics
+panic = "warn"            # Prevent explicit panics
+
+# DSP-specific allows
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+</code></pre>
+<h2 id="ci-integration"><a class="header" href="#ci-integration">CI Integration</a></h2>
+<p>Quality gates are enforced in <code>.github/workflows/ci.yml</code>:</p>
+<pre><code class="language-yaml">jobs:
+  tier2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make tier2
+
+  tier3:
+    runs-on: ubuntu-latest
+    needs: tier2
+    steps:
+      - uses: actions/checkout@v4
+      - run: make tier3
+
+  coverage:
+    runs-on: ubuntu-latest
+    needs: tier2
+    steps:
+      - uses: actions/checkout@v4
+      - run: make coverage
+      - uses: codecov/codecov-action@v4
+</code></pre>
+<h2 id="quality-metrics"><a class="header" href="#quality-metrics">Quality Metrics</a></h2>
+<p>Current project status:</p>
+<ul>
+<li><strong>Test count</strong>: 841 tests</li>
+<li><strong>Line coverage</strong>: 95.19%</li>
+<li><strong>Property tests</strong>: 19 tests</li>
+<li><strong>Zero clippy warnings</strong> (in strict mode)</li>
+<li><strong>Zero unsafe code</strong></li>
+</ul>
+<h2 id="best-practices-1"><a class="header" href="#best-practices-1">Best Practices</a></h2>
+<ol>
+<li><strong>Run tier1 on every save</strong> - Use editor integration</li>
+<li><strong>Run tier2 before every commit</strong> - Git hooks recommended</li>
+<li><strong>Run tier3 before every push</strong> - Catches integration issues</li>
+<li><strong>Never skip CI</strong> - Full validation catches edge cases</li>
+</ol>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="pmat-integration"><a class="header" href="#pmat-integration">PMAT Integration</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="custom-model-conversion"><a class="header" href="#custom-model-conversion">Custom Model Conversion</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="streaming-inference"><a class="header" href="#streaming-inference">Streaming Inference</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="voice-activity-detection"><a class="header" href="#voice-activity-detection">Voice Activity Detection</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="webgpu-backend"><a class="header" href="#webgpu-backend">WebGPU Backend</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="server-side-deployment"><a class="header" href="#server-side-deployment">Server-Side Deployment</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="edge-deployment"><a class="header" href="#edge-deployment">Edge Deployment</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="optimizing-for-mobile"><a class="header" href="#optimizing-for-mobile">Optimizing for Mobile</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="glossary"><a class="header" href="#glossary">Glossary</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="references"><a class="header" href="#references">References</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="faq"><a class="header" href="#faq">FAQ</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="changelog"><a class="header" href="#changelog">Changelog</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="whisper-model-comparison"><a class="header" href="#whisper-model-comparison">Whisper Model Comparison</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="browser-compatibility"><a class="header" href="#browser-compatibility">Browser Compatibility</a></h1>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+        <script src="ace.js"></script>
+        <script src="editor.js"></script>
+        <script src="mode-rust.js"></script>
+        <script src="theme-dawn.js"></script>
+        <script src="theme-tomorrow_night.js"></script>
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+        <script>
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+
+    </div>
+    </body>
+</html>
