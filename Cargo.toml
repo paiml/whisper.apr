@@ -1,0 +1,121 @@
+[package]
+name = "whisper-apr"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "WASM-first automatic speech recognition engine implementing OpenAI Whisper"
+license = "MIT"
+repository = "https://github.com/paiml/whisper.apr"
+documentation = "https://docs.rs/whisper-apr"
+readme = "README.md"
+keywords = ["whisper", "speech-recognition", "asr", "wasm", "audio"]
+categories = ["multimedia::audio", "wasm", "science"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["std"]
+std = []
+wasm = ["wasm-bindgen", "js-sys", "web-sys", "console_error_panic_hook"]
+simd = []
+tracing = ["dep:tracing"]
+
+[dependencies]
+# Core dependencies
+thiserror = "2"
+
+# SIMD acceleration (trueno integration)
+trueno = "0.8"
+
+# FFT for mel spectrogram computation
+rustfft = "6.2"
+
+# Optional: WASM bindings
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+    "AudioContext",
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "console",
+] }
+console_error_panic_hook = { version = "0.1", optional = true }
+
+# Optional: Tracing for renacer integration
+tracing = { version = "0.1", optional = true }
+
+[dev-dependencies]
+proptest = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+# WASM testing with Probar (Playwright-compatible testing framework)
+jugar-probar = { version = "0.2", default-features = false }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = "z"
+
+[profile.release-wasm]
+inherits = "release"
+opt-level = "z"
+
+[[bench]]
+name = "inference"
+harness = false
+
+[[bench]]
+name = "wasm_simd"
+harness = false
+
+[[example]]
+name = "basic_transcription"
+path = "examples/basic_transcription.rs"
+
+[[example]]
+name = "streaming_audio"
+path = "examples/streaming_audio.rs"
+
+[[example]]
+name = "mel_spectrogram"
+path = "examples/mel_spectrogram.rs"
+
+[[example]]
+name = "language_detection"
+path = "examples/language_detection.rs"
+
+[[example]]
+name = "simd_operations"
+path = "examples/simd_operations.rs"
+
+[lints.rust]
+unsafe_code = "warn"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "warn"
+# DSP/Audio code allows
+cast_precision_loss = "allow"     # Intentional in DSP code
+cast_possible_truncation = "allow" # Intentional in DSP code
+cast_sign_loss = "allow"          # Intentional in DSP code
+cast_lossless = "allow"           # Readability preference
+cast_possible_wrap = "allow"      # Intentional index conversions
+# Development allows (will be fixed as code matures)
+missing_const_for_fn = "allow"    # Will be added incrementally
+must_use_candidate = "allow"      # Will be added incrementally
+missing_errors_doc = "allow"      # Will be documented incrementally
+derivable_impls = "allow"         # Some manual impls are intentional
+doc_markdown = "allow"            # Will be fixed incrementally
+redundant_closure_for_method_calls = "allow"  # Readability preference
+needless_pass_by_value = "allow"  # Sometimes intentional for clarity

@@ -1,0 +1,447 @@
+# PMAT Comply Work Tracking for Whisper.apr
+# Spec: docs/specifications/whisper.apr-wasm-first-spec.md
+# Methodology: EXTREME TDD + Toyota Way
+
+[project]
+name = "whisper-apr"
+version = "1.1.0"
+spec_file = "docs/specifications/whisper.apr-wasm-first-spec.md"
+methodology = "EXTREME_TDD"
+quality_framework = "Toyota_Way"
+
+[metrics]
+total_tickets = 64
+completed_tickets = 60
+completion_rate = 93.8
+test_count = 949
+line_coverage = 95.19
+property_tests = 19
+source_loc = 24500
+wasm_binary_kb = 668
+
+# v1.1 Roadmap: Extended Model Support
+# - medium and large model support
+# - Int4 quantization for larger models
+# - Dynamic batch processing
+
+[sprints]
+
+[sprints.sprint_1_2]
+name = "Foundation"
+status = "complete"
+tickets = ["WAPR-001", "WAPR-002", "WAPR-003", "WAPR-004", "WAPR-005"]
+deliverable = "WASM build pipeline, basic audio loading"
+completion_date = "2025-12-13"
+
+[sprints.sprint_3_4]
+name = "Mel Spectrogram"
+status = "complete"
+tickets = ["WAPR-010", "WAPR-011", "WAPR-012", "WAPR-013"]
+deliverable = "Mel spectrogram computation matching Whisper reference"
+completion_date = "2025-12-13"
+
+[sprints.sprint_5_6]
+name = "Tokenizer"
+status = "complete"
+tickets = ["WAPR-020", "WAPR-021", "WAPR-022", "WAPR-023"]
+deliverable = "BPE tokenizer with vocabulary loading"
+completion_date = "2025-12-13"
+
+[sprints.sprint_7_8]
+name = "Encoder"
+status = "complete"
+tickets = ["WAPR-030", "WAPR-031", "WAPR-032", "WAPR-033", "WAPR-034"]
+deliverable = "Transformer encoder with attention"
+completion_date = "2025-12-13"
+
+[sprints.sprint_9_10]
+name = "Decoder"
+status = "complete"
+tickets = ["WAPR-040", "WAPR-041", "WAPR-042", "WAPR-043"]
+deliverable = "Transformer decoder with cross-attention"
+completion_date = "2025-12-13"
+
+[sprints.sprint_11_12]
+name = "Model Format"
+status = "complete"
+tickets = ["WAPR-050", "WAPR-051", "WAPR-052", "WAPR-053"]
+deliverable = ".apr format specification and converter"
+completion_date = "2025-12-13"
+
+[sprints.sprint_13_14]
+name = "Integration"
+status = "complete"
+tickets = ["WAPR-060", "WAPR-061", "WAPR-062", "WAPR-063"]
+deliverable = "End-to-end transcription"
+completion_date = "2025-12-13"
+
+[sprints.sprint_15_16]
+name = "Optimization"
+status = "complete"
+tickets = ["WAPR-PERF-001", "WAPR-PERF-002", "WAPR-PERF-003", "WAPR-PERF-004"]
+deliverable = "Performance meeting targets"
+completion_date = "2025-12-13"
+
+[sprints.sprint_17_18]
+name = "Polish & Release"
+status = "complete"
+tickets = ["WAPR-DOC-001", "WAPR-DOC-002", "WAPR-DOC-003", "WAPR-QA-001", "WAPR-QA-002"]
+deliverable = "v1.0.0 release"
+completion_date = "2025-12-13"
+
+[sprints.sprint_19_20]
+name = "Probar Demo Applications"
+status = "complete"
+tickets = ["WAPR-DEMO-001", "WAPR-DEMO-002", "WAPR-DEMO-003", "WAPR-DEMO-004", "WAPR-DEMO-005"]
+deliverable = "Four production-ready WASM demos with EXTREME TDD coverage"
+completion_date = "2025-12-13"
+
+# Individual ticket tracking
+[tickets.WAPR-001]
+description = "Project scaffolding with workspace"
+status = "complete"
+sprint = "sprint_1_2"
+files = ["Cargo.toml", "src/lib.rs"]
+
+[tickets.WAPR-002]
+description = "WASM build configuration"
+status = "complete"
+sprint = "sprint_1_2"
+files = ["Cargo.toml", "Makefile"]
+
+[tickets.WAPR-003]
+description = "CI/CD pipeline (GitHub Actions)"
+status = "complete"
+sprint = "sprint_1_2"
+files = [".github/workflows/ci.yml"]
+
+[tickets.WAPR-004]
+description = "Audio buffer handling"
+status = "complete"
+sprint = "sprint_1_2"
+files = ["src/audio/mod.rs", "src/audio/ring_buffer.rs"]
+
+[tickets.WAPR-005]
+description = "Basic resampling (linear)"
+status = "complete"
+sprint = "sprint_1_2"
+files = ["src/audio/resampler.rs"]
+
+[tickets.WAPR-010]
+description = "FFT implementation (Cooley-Tukey)"
+status = "complete"
+sprint = "sprint_3_4"
+files = ["src/audio/mel.rs"]
+
+[tickets.WAPR-011]
+description = "WASM SIMD FFT optimization"
+status = "complete"
+sprint = "sprint_3_4"
+files = ["src/simd.rs"]
+
+[tickets.WAPR-012]
+description = "Mel filterbank computation"
+status = "complete"
+sprint = "sprint_3_4"
+files = ["src/audio/mel.rs"]
+
+[tickets.WAPR-013]
+description = "Spectrogram accuracy tests"
+status = "complete"
+sprint = "sprint_3_4"
+files = ["src/audio/mel.rs"]
+
+[tickets.WAPR-020]
+description = "BPE tokenizer implementation"
+status = "complete"
+sprint = "sprint_5_6"
+files = ["src/tokenizer/mod.rs"]
+
+[tickets.WAPR-021]
+description = "Vocabulary serialization (.apr)"
+status = "complete"
+sprint = "sprint_5_6"
+files = ["src/tokenizer/vocab.rs"]
+
+[tickets.WAPR-022]
+description = "Special tokens handling"
+status = "complete"
+sprint = "sprint_5_6"
+files = ["src/tokenizer/mod.rs"]
+
+[tickets.WAPR-023]
+description = "Multi-language support"
+status = "complete"
+sprint = "sprint_5_6"
+files = ["src/detection.rs"]
+
+[tickets.WAPR-030]
+description = "Multi-head attention"
+status = "complete"
+sprint = "sprint_7_8"
+files = ["src/model/attention.rs"]
+
+[tickets.WAPR-031]
+description = "Feed-forward network"
+status = "complete"
+sprint = "sprint_7_8"
+files = ["src/model/encoder.rs"]
+
+[tickets.WAPR-032]
+description = "Layer normalization"
+status = "complete"
+sprint = "sprint_7_8"
+files = ["src/simd.rs"]
+
+[tickets.WAPR-033]
+description = "Positional encoding"
+status = "complete"
+sprint = "sprint_7_8"
+files = ["src/model/encoder.rs"]
+
+[tickets.WAPR-034]
+description = "Encoder stack assembly"
+status = "complete"
+sprint = "sprint_7_8"
+files = ["src/model/encoder.rs"]
+
+[tickets.WAPR-040]
+description = "Masked self-attention"
+status = "complete"
+sprint = "sprint_9_10"
+files = ["src/model/decoder.rs"]
+
+[tickets.WAPR-041]
+description = "Cross-attention"
+status = "complete"
+sprint = "sprint_9_10"
+files = ["src/model/decoder.rs"]
+
+[tickets.WAPR-042]
+description = "Greedy decoding"
+status = "complete"
+sprint = "sprint_9_10"
+files = ["src/inference/greedy.rs"]
+
+[tickets.WAPR-043]
+description = "Beam search decoding"
+status = "complete"
+sprint = "sprint_9_10"
+files = ["src/inference/beam.rs"]
+
+[tickets.WAPR-050]
+description = ".apr format specification"
+status = "complete"
+sprint = "sprint_11_12"
+files = ["src/format/mod.rs"]
+
+[tickets.WAPR-051]
+description = "safetensors → .apr converter (Rust)"
+status = "complete"
+sprint = "sprint_11_12"
+files = ["src/format/mod.rs"]
+
+[tickets.WAPR-052]
+description = "Streaming decompression"
+status = "complete"
+sprint = "sprint_11_12"
+files = ["src/format/compress.rs"]
+
+[tickets.WAPR-053]
+description = "Quantization (int8)"
+status = "complete"
+sprint = "sprint_11_12"
+files = ["src/model/quantized.rs"]
+
+[tickets.WAPR-060]
+description = "Full inference pipeline"
+status = "complete"
+sprint = "sprint_13_14"
+files = ["src/inference/mod.rs"]
+
+[tickets.WAPR-061]
+description = "wasm-bindgen exports (pure Rust)"
+status = "complete"
+sprint = "sprint_13_14"
+files = ["src/wasm/mod.rs"]
+
+[tickets.WAPR-062]
+description = "Web Worker support"
+status = "complete"
+sprint = "sprint_13_14"
+files = ["src/wasm/worker.rs"]
+
+[tickets.WAPR-063]
+description = "Progress callbacks"
+status = "complete"
+sprint = "sprint_13_14"
+files = ["src/progress.rs"]
+
+[tickets.WAPR-PERF-001]
+description = "SIMD matmul optimization"
+status = "complete"
+sprint = "sprint_15_16"
+files = ["src/simd.rs"]
+
+[tickets.WAPR-PERF-002]
+description = "Memory pool implementation"
+status = "complete"
+sprint = "sprint_15_16"
+files = ["src/memory.rs"]
+
+[tickets.WAPR-PERF-003]
+description = "KV cache optimization"
+status = "complete"
+sprint = "sprint_15_16"
+files = ["src/model/decoder.rs"]
+
+[tickets.WAPR-PERF-004]
+description = "Browser benchmark suite"
+status = "complete"
+sprint = "sprint_15_16"
+files = ["benches/"]
+
+[tickets.WAPR-DOC-001]
+description = "API documentation"
+status = "complete"
+sprint = "sprint_17_18"
+files = ["src/lib.rs"]
+
+[tickets.WAPR-DOC-002]
+description = "Usage examples"
+status = "complete"
+sprint = "sprint_17_18"
+files = ["examples/"]
+
+[tickets.WAPR-DOC-003]
+description = "Performance guide"
+status = "complete"
+sprint = "sprint_17_18"
+files = ["book/"]
+
+[tickets.WAPR-QA-001]
+description = "Security audit"
+status = "complete"
+sprint = "sprint_17_18"
+files = ["Cargo.toml"]
+
+[tickets.WAPR-QA-002]
+description = "Cross-browser testing"
+status = "complete"
+sprint = "sprint_17_18"
+files = ["tests/"]
+
+[tickets.WAPR-DEMO-001]
+description = "Real-time microphone transcription"
+status = "complete"
+sprint = "sprint_19_20"
+files = ["demos/realtime-transcription/"]
+
+[tickets.WAPR-DEMO-002]
+description = "Audio/video file upload transcription"
+status = "complete"
+sprint = "sprint_19_20"
+files = ["demos/upload-transcription/"]
+
+[tickets.WAPR-DEMO-003]
+description = "Real-time microphone translation"
+status = "complete"
+sprint = "sprint_19_20"
+files = ["demos/realtime-translation/"]
+
+[tickets.WAPR-DEMO-004]
+description = "Audio/video file upload translation"
+status = "complete"
+sprint = "sprint_19_20"
+files = ["demos/upload-translation/"]
+
+[tickets.WAPR-DEMO-005]
+description = "Probar test suite (95%+ GUI coverage)"
+status = "complete"
+sprint = "sprint_19_20"
+files = ["demos/tests/quality_gates.rs"]
+
+# =============================================================================
+# v1.1 Extended Model Support (Phase 2)
+# =============================================================================
+
+[sprints.sprint_21_22]
+name = "Extended Model Support"
+status = "complete"
+tickets = ["WAPR-070", "WAPR-071", "WAPR-072", "WAPR-073", "WAPR-074"]
+deliverable = "Medium/large model support with Int4 quantization"
+completion_date = "2025-12-13"
+
+[sprints.sprint_23_24]
+name = "Dynamic Batch Processing"
+status = "in_progress"
+tickets = ["WAPR-080", "WAPR-081", "WAPR-082", "WAPR-083"]
+deliverable = "Efficient batch inference for multiple audio segments"
+start_date = "2025-12-13"
+
+# v1.1 Tickets - Extended Model Support
+
+[tickets.WAPR-070]
+description = "Medium model configuration (1024-dim, 24 layers, 16 heads)"
+status = "complete"
+sprint = "sprint_21_22"
+files = ["src/model/mod.rs", "src/lib.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-071]
+description = "Large model configuration (1280-dim, 32 layers, 20 heads)"
+status = "complete"
+sprint = "sprint_21_22"
+files = ["src/model/mod.rs", "src/lib.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-072]
+description = "Int4 quantization implementation"
+status = "complete"
+sprint = "sprint_21_22"
+files = ["src/model/quantized.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-073]
+description = "Mixed-precision inference (int4 weights, fp16 activations)"
+status = "complete"
+sprint = "sprint_21_22"
+files = ["src/model/quantized.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-074]
+description = "Model size detection and auto-configuration"
+status = "complete"
+sprint = "sprint_21_22"
+files = ["src/format/mod.rs"]
+tdd_phase = "green"
+
+# v1.1 Tickets - Dynamic Batch Processing
+
+[tickets.WAPR-080]
+description = "Batch audio preprocessing"
+status = "complete"
+sprint = "sprint_23_24"
+files = ["src/audio/batch.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-081]
+description = "Batched encoder forward pass"
+status = "complete"
+sprint = "sprint_23_24"
+files = ["src/model/encoder.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-082]
+description = "Batched decoder with shared KV cache"
+status = "pending"
+sprint = "sprint_23_24"
+files = ["src/model/decoder.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-083]
+description = "Batch transcription API"
+status = "pending"
+sprint = "sprint_23_24"
+files = ["src/lib.rs", "src/wasm/mod.rs"]
+tdd_phase = "pending"

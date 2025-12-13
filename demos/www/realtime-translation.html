@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Translation - Whisper.apr</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --accent: #58a6ff;
+            --success: #3fb950;
+            --error: #f85149;
+            --warning: #d29922;
+            --border: #30363d;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: var(--bg-secondary);
+            padding: 1rem 2rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        header h1 { font-size: 1.25rem; }
+        header a { color: var(--accent); text-decoration: none; }
+
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+            width: 100%;
+        }
+
+        .status-bar {
+            background: var(--bg-secondary);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        #status_indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+        }
+
+        .status-dot.recording { background: var(--error); animation: pulse 1s infinite; }
+        .status-dot.processing { background: var(--warning); animation: pulse 0.5s infinite; }
+        .status-dot.ready { background: var(--success); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #recording_duration {
+            font-family: monospace;
+            font-size: 1.25rem;
+        }
+
+        .language-info {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: var(--bg-tertiary);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+        }
+
+        #detected_language {
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        #detection_confidence {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 1rem 2rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #start_recording {
+            background: var(--success);
+            color: white;
+        }
+
+        #stop_recording {
+            background: var(--error);
+            color: white;
+        }
+
+        #clear_transcript {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .display-mode {
+            display: flex;
+            gap: 0.5rem;
+            background: var(--bg-secondary);
+            padding: 0.25rem;
+            border-radius: 6px;
+            margin-bottom: 1.5rem;
+            justify-content: center;
+        }
+
+        .display-mode button {
+            padding: 0.5rem 1rem;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        .display-mode button.active {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border-radius: 4px;
+        }
+
+        .transcript-container {
+            flex: 1;
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .transcript-container.side-by-side {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .transcript-container.translation-only {
+            grid-template-columns: 1fr;
+        }
+
+        .transcript-panel {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            min-height: 200px;
+        }
+
+        .transcript-panel h2 {
+            font-size: 1rem;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .transcript-panel h2 .lang-badge {
+            background: var(--bg-tertiary);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: normal;
+        }
+
+        #partial_source, #partial_translation {
+            color: var(--text-secondary);
+            font-style: italic;
+            margin-bottom: 0.5rem;
+            min-height: 1.5rem;
+        }
+
+        #source_display, #translation_display {
+            line-height: 1.8;
+            white-space: pre-wrap;
+        }
+
+        #error_message {
+            background: rgba(248, 81, 73, 0.1);
+            border: 1px solid var(--error);
+            color: var(--error);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        #error_message.visible { display: block; }
+
+        #compatibility_warning {
+            background: rgba(210, 153, 34, 0.1);
+            border: 1px solid var(--warning);
+            color: var(--warning);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        #compatibility_warning.visible { display: block; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .transcript-container.side-by-side {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Accessibility */
+        [role="status"] { position: absolute; left: -9999px; }
+        button:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Real-Time Translation</h1>
+        <a href="index.html">Back to Demos</a>
+    </header>
+
+    <main>
+        <div id="compatibility_warning" role="alert">
+            Your browser does not support real-time audio recording. Please use a modern browser.
+        </div>
+
+        <div id="error_message" role="alert"></div>
+
+        <div class="status-bar">
+            <div id="status_indicator">
+                <span class="status-dot ready"></span>
+                <span>Ready</span>
+            </div>
+            <div class="language-info">
+                <span>Detected:</span>
+                <span id="detected_language">--</span>
+                <span id="detection_confidence"></span>
+            </div>
+            <div id="recording_duration">0:00</div>
+        </div>
+
+        <div class="controls">
+            <button id="start_recording" aria-label="Start recording">
+                <span>Start Recording</span>
+            </button>
+            <button id="stop_recording" disabled aria-label="Stop recording">
+                <span>Stop Recording</span>
+            </button>
+            <button id="clear_transcript" aria-label="Clear transcript">
+                <span>Clear</span>
+            </button>
+        </div>
+
+        <div class="display-mode">
+            <button id="mode_side_by_side" class="active">Side by Side</button>
+            <button id="mode_translation_only">Translation Only</button>
+        </div>
+
+        <div class="transcript-container side-by-side" id="transcript_container">
+            <div class="transcript-panel" id="source_panel">
+                <h2>
+                    Original
+                    <span class="lang-badge" id="source_lang_badge">Auto-detect</span>
+                </h2>
+                <div id="partial_source"></div>
+                <div id="source_display" role="status" aria-live="polite"></div>
+            </div>
+            <div class="transcript-panel">
+                <h2>
+                    Translation
+                    <span class="lang-badge">English</span>
+                </h2>
+                <div id="partial_translation"></div>
+                <div id="translation_display" role="status" aria-live="polite"></div>
+            </div>
+        </div>
+    </main>
+
+    <script type="module">
+        import init, { RealtimeTranslationDemo, check_browser_compatibility } from './pkg/whisper_apr_demo_realtime_translation.js';
+
+        async function main() {
+            await init();
+
+            const compat = check_browser_compatibility();
+            if (!compat.is_supported()) {
+                document.getElementById('compatibility_warning').classList.add('visible');
+                document.getElementById('start_recording').disabled = true;
+                return;
+            }
+
+            const demo = new RealtimeTranslationDemo();
+
+            const startBtn = document.getElementById('start_recording');
+            const stopBtn = document.getElementById('stop_recording');
+            const clearBtn = document.getElementById('clear_transcript');
+            const sideBySideBtn = document.getElementById('mode_side_by_side');
+            const translationOnlyBtn = document.getElementById('mode_translation_only');
+            const transcriptContainer = document.getElementById('transcript_container');
+            const sourcePanel = document.getElementById('source_panel');
+
+            function updateUI() {
+                const state = demo.state().toLowerCase();
+                document.getElementById('status_indicator').innerHTML =
+                    `<span class="status-dot ${state}"></span><span>${demo.status_text()}</span>`;
+                document.getElementById('recording_duration').textContent = demo.recording_duration();
+
+                // Language detection
+                const langInfo = demo.detected_language_info();
+                if (langInfo) {
+                    document.getElementById('detected_language').textContent = langInfo.name();
+                    document.getElementById('detection_confidence').textContent =
+                        `(${Math.round(langInfo.confidence() * 100)}%)`;
+                    document.getElementById('source_lang_badge').textContent = langInfo.code();
+                } else {
+                    document.getElementById('detected_language').textContent = '--';
+                    document.getElementById('detection_confidence').textContent = '';
+                    document.getElementById('source_lang_badge').textContent = 'Auto-detect';
+                }
+
+                // Transcripts
+                document.getElementById('source_display').textContent = demo.source_transcript();
+                document.getElementById('translation_display').textContent = demo.translation();
+                document.getElementById('partial_source').textContent = demo.partial_source();
+                document.getElementById('partial_translation').textContent = demo.partial_translation();
+
+                startBtn.disabled = !demo.can_start_recording();
+                stopBtn.disabled = !demo.can_stop_recording();
+            }
+
+            // Display mode switching
+            function setDisplayMode(mode) {
+                if (mode === 'side-by-side') {
+                    transcriptContainer.classList.remove('translation-only');
+                    transcriptContainer.classList.add('side-by-side');
+                    sourcePanel.style.display = 'block';
+                    sideBySideBtn.classList.add('active');
+                    translationOnlyBtn.classList.remove('active');
+                } else {
+                    transcriptContainer.classList.remove('side-by-side');
+                    transcriptContainer.classList.add('translation-only');
+                    sourcePanel.style.display = 'none';
+                    translationOnlyBtn.classList.add('active');
+                    sideBySideBtn.classList.remove('active');
+                }
+                demo.set_display_mode(mode);
+            }
+
+            sideBySideBtn.addEventListener('click', () => setDisplayMode('side-by-side'));
+            translationOnlyBtn.addEventListener('click', () => setDisplayMode('translation-only'));
+
+            startBtn.addEventListener('click', () => {
+                demo.start_recording();
+                updateUI();
+            });
+
+            stopBtn.addEventListener('click', () => {
+                demo.stop_recording();
+                updateUI();
+            });
+
+            clearBtn.addEventListener('click', () => {
+                demo.clear();
+                updateUI();
+            });
+
+            // Keyboard shortcuts
+            document.addEventListener('keydown', (e) => {
+                if (e.code === 'Space' && e.target === document.body) {
+                    e.preventDefault();
+                    if (demo.can_start_recording()) {
+                        demo.start_recording();
+                    } else if (demo.can_stop_recording()) {
+                        demo.stop_recording();
+                    }
+                    updateUI();
+                } else if (e.code === 'Escape') {
+                    demo.clear();
+                    updateUI();
+                } else if (e.code === 'KeyT' && e.ctrlKey) {
+                    e.preventDefault();
+                    const currentMode = transcriptContainer.classList.contains('side-by-side');
+                    setDisplayMode(currentMode ? 'translation-only' : 'side-by-side');
+                }
+            });
+
+            updateUI();
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>

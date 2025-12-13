@@ -1,0 +1,309 @@
+<!DOCTYPE HTML>
+<html lang="en" class="rust sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Benchmarks Overview - Whisper.apr - WASM-First Speech Recognition</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Pure Rust automatic speech recognition for the browser and beyond">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "rust";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('rust')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Whisper.apr - WASM-First Speech Recognition</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/paiml/whisper.apr" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/paiml/whisper.apr/edit/main/book/src/performance/benchmarks.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="benchmarks-overview"><a class="header" href="#benchmarks-overview">Benchmarks Overview</a></h1>
+<p>Whisper.apr includes comprehensive benchmarks to track performance and guide optimization.</p>
+<h2 id="running-benchmarks"><a class="header" href="#running-benchmarks">Running Benchmarks</a></h2>
+<pre><code class="language-bash"># Run all benchmarks
+cargo bench
+
+# Run specific benchmark group
+cargo bench --bench inference
+cargo bench --bench wasm_simd
+
+# Run with HTML report
+cargo bench -- --save-baseline main
+</code></pre>
+<h2 id="benchmark-groups"><a class="header" href="#benchmark-groups">Benchmark Groups</a></h2>
+<h3 id="inference-benchmarks-benchesinferencers"><a class="header" href="#inference-benchmarks-benchesinferencers">Inference Benchmarks (<code>benches/inference.rs</code>)</a></h3>
+<p>End-to-end transcription performance:</p>
+<div class="table-wrapper"><table><thead><tr><th>Benchmark</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>mel_spectrogram</code></td><td>Audio → mel spectrogram conversion</td></tr>
+<tr><td><code>encoder</code></td><td>Encoder forward pass (various sequence lengths)</td></tr>
+<tr><td><code>decoder_greedy</code></td><td>Greedy decoding performance</td></tr>
+<tr><td><code>decoder_beam</code></td><td>Beam search with different beam sizes</td></tr>
+<tr><td><code>transcribe_e2e</code></td><td>Full pipeline end-to-end</td></tr>
+<tr><td><code>tokenizer</code></td><td>BPE encode/decode</td></tr>
+<tr><td><code>attention</code></td><td>Multi-head attention computation</td></tr>
+</tbody></table>
+</div>
+<h3 id="simd-benchmarks-bencheswasm_simdrs"><a class="header" href="#simd-benchmarks-bencheswasm_simdrs">SIMD Benchmarks (<code>benches/wasm_simd.rs</code>)</a></h3>
+<p>Scalar vs SIMD performance comparison:</p>
+<div class="table-wrapper"><table><thead><tr><th>Benchmark</th><th>Description</th><th>Expected Speedup</th></tr></thead><tbody>
+<tr><td><code>matmul</code></td><td>Matrix multiplication</td><td>3-4x</td></tr>
+<tr><td><code>softmax</code></td><td>Softmax activation</td><td>2-3x</td></tr>
+<tr><td><code>dot_product</code></td><td>Vector dot product</td><td>3-4x</td></tr>
+<tr><td><code>gelu</code></td><td>GELU activation</td><td>2-3x</td></tr>
+<tr><td><code>layer_norm</code></td><td>Layer normalization</td><td>2-3x</td></tr>
+</tbody></table>
+</div>
+<h2 id="performance-targets"><a class="header" href="#performance-targets">Performance Targets</a></h2>
+<h3 id="real-time-factor-rtf"><a class="header" href="#real-time-factor-rtf">Real-Time Factor (RTF)</a></h3>
+<p>RTF = processing_time / audio_duration</p>
+<div class="table-wrapper"><table><thead><tr><th>Model</th><th>Target RTF</th><th>Audio</th><th>Expected Time</th></tr></thead><tbody>
+<tr><td>tiny</td><td>≤2.0x</td><td>60s</td><td>≤120s</td></tr>
+<tr><td>base</td><td>≤2.5x</td><td>60s</td><td>≤150s</td></tr>
+<tr><td>small</td><td>≤4.0x</td><td>60s</td><td>≤240s</td></tr>
+</tbody></table>
+</div>
+<h3 id="memory-budget"><a class="header" href="#memory-budget">Memory Budget</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Model</th><th>WASM Size</th><th>Peak Memory</th></tr></thead><tbody>
+<tr><td>tiny</td><td>~40MB</td><td>≤150MB</td></tr>
+<tr><td>base</td><td>~75MB</td><td>≤350MB</td></tr>
+<tr><td>small</td><td>~250MB</td><td>≤800MB</td></tr>
+</tbody></table>
+</div>
+<h2 id="interpreting-results"><a class="header" href="#interpreting-results">Interpreting Results</a></h2>
+<p>Criterion provides statistical analysis:</p>
+<pre><code>mel_spectrogram/compute/30s
+                        time:   [12.345 ms 12.456 ms 12.567 ms]
+                        thrpt:  [2.3891 Melem/s 2.4106 Melem/s 2.4321 Melem/s]
+                 change: [-2.1234% -1.5678% -1.0123%] (p = 0.00 &lt; 0.05)
+                        Performance has improved.
+</code></pre>
+<ul>
+<li><strong>time</strong>: Mean execution time with confidence interval</li>
+<li><strong>thrpt</strong>: Throughput (elements or bytes per second)</li>
+<li><strong>change</strong>: Comparison to baseline (if available)</li>
+</ul>
+<h2 id="browser-benchmarks"><a class="header" href="#browser-benchmarks">Browser Benchmarks</a></h2>
+<p>For WASM performance in browsers:</p>
+<pre><code class="language-bash"># Build WASM
+wasm-pack build --target web --release
+
+# Run browser benchmarks
+cd browser-bench
+npm install
+npm run bench
+</code></pre>
+<p>Browser benchmark results are saved to <code>benchmark-results/</code>.</p>
+<h2 id="continuous-benchmarking"><a class="header" href="#continuous-benchmarking">Continuous Benchmarking</a></h2>
+<p>CI runs benchmarks on every PR:</p>
+<ol>
+<li>Benchmarks run against <code>main</code> baseline</li>
+<li>Results compared for regressions</li>
+<li>PR blocked if &gt;10% performance regression</li>
+<li>Results archived for historical tracking</li>
+</ol>
+<h2 id="profiling-integration"><a class="header" href="#profiling-integration">Profiling Integration</a></h2>
+<p>Use Renacer for detailed profiling:</p>
+<pre><code class="language-bash"># Profile with source correlation
+renacer --function-time --source -- cargo bench --bench inference
+
+# Generate flamegraph
+renacer --flamegraph -- cargo bench --bench inference &gt; flame.svg
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../api-reference/javascript-bindings.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../performance/rtf-analysis.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../api-reference/javascript-bindings.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../performance/rtf-analysis.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+        <script src="../ace.js"></script>
+        <script src="../editor.js"></script>
+        <script src="../mode-rust.js"></script>
+        <script src="../theme-dawn.js"></script>
+        <script src="../theme-tomorrow_night.js"></script>
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

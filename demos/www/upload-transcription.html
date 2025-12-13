@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload Transcription - Whisper.apr</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --accent: #58a6ff;
+            --success: #3fb950;
+            --error: #f85149;
+            --border: #30363d;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        header {
+            background: var(--bg-secondary);
+            padding: 1rem 2rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        header h1 { font-size: 1.25rem; }
+        header a { color: var(--accent); text-decoration: none; }
+
+        main {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .drop-zone {
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            padding: 3rem;
+            text-align: center;
+            margin-bottom: 1.5rem;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .drop-zone:hover, .drop-zone.drag-over {
+            border-color: var(--accent);
+            background: rgba(88, 166, 255, 0.05);
+        }
+
+        .drop-zone.file-selected {
+            border-color: var(--success);
+            background: rgba(63, 185, 80, 0.05);
+        }
+
+        .drop-zone h2 {
+            margin-bottom: 0.5rem;
+        }
+
+        .drop-zone p {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+
+        #file_input {
+            display: none;
+        }
+
+        .file-button {
+            display: inline-block;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            padding: 0.75rem 1.5rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            cursor: pointer;
+        }
+
+        #file_info {
+            background: var(--bg-secondary);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            display: none;
+        }
+
+        #file_info.visible { display: block; }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        button {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        #transcribe {
+            background: var(--accent);
+            color: white;
+        }
+
+        #download_result {
+            background: var(--success);
+            color: white;
+        }
+
+        #clear {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .progress-container {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            display: none;
+        }
+
+        .progress-container.visible { display: block; }
+
+        #progress_bar {
+            height: 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+
+        #progress_bar .fill {
+            height: 100%;
+            background: var(--accent);
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        #progress_text {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .transcript-container {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            min-height: 200px;
+        }
+
+        .transcript-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .transcript-header h2 {
+            font-size: 1rem;
+            color: var(--text-secondary);
+        }
+
+        #format_selector {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 0.5rem;
+            border-radius: 4px;
+        }
+
+        #transcript_display {
+            line-height: 1.8;
+            white-space: pre-wrap;
+        }
+
+        .transcript-segment {
+            margin-bottom: 1rem;
+            padding-left: 1rem;
+            border-left: 2px solid var(--border);
+        }
+
+        .timestamp {
+            color: var(--text-secondary);
+            font-family: monospace;
+            font-size: 0.875rem;
+        }
+
+        #error_message {
+            background: rgba(248, 81, 73, 0.1);
+            border: 1px solid var(--error);
+            color: var(--error);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        #error_message.visible { display: block; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Upload Transcription</h1>
+        <a href="index.html">Back to Demos</a>
+    </header>
+
+    <main>
+        <div id="error_message" role="alert"></div>
+
+        <div class="drop-zone" id="drop_zone">
+            <h2>Drop audio or video file here</h2>
+            <p>Supported: WAV, MP3, OGG, MP4, WebM (max 100MB)</p>
+            <label class="file-button" for="file_input">
+                Select File
+            </label>
+            <input type="file" id="file_input" accept=".wav,.mp3,.ogg,.mp4,.webm,.m4a,.flac" aria-label="Select audio or video file">
+        </div>
+
+        <div id="file_info">
+            <strong id="file_name"></strong>
+            <span id="file_size"></span>
+            <span id="file_duration"></span>
+        </div>
+
+        <div class="controls">
+            <button id="transcribe" disabled aria-label="Transcribe file">Transcribe</button>
+            <button id="download_result" disabled aria-label="Download transcript">Download</button>
+            <button id="clear" aria-label="Clear">Clear</button>
+        </div>
+
+        <div class="progress-container" id="progress_container">
+            <div id="progress_bar"><div class="fill"></div></div>
+            <div id="progress_text">Processing...</div>
+            <div id="chunk_progress"></div>
+        </div>
+
+        <div class="transcript-container">
+            <div class="transcript-header">
+                <h2>Transcript</h2>
+                <select id="format_selector" aria-label="Download format">
+                    <option value="txt">Plain Text (.txt)</option>
+                    <option value="srt">Subtitles (.srt)</option>
+                    <option value="vtt">WebVTT (.vtt)</option>
+                </select>
+            </div>
+            <div id="transcript_display" role="status" aria-live="polite"></div>
+        </div>
+    </main>
+
+    <script type="module">
+        import init, { UploadTranscriptionDemo } from './pkg/whisper_apr_demo_upload_transcription.js';
+
+        async function main() {
+            await init();
+            const demo = new UploadTranscriptionDemo();
+
+            const dropZone = document.getElementById('drop_zone');
+            const fileInput = document.getElementById('file_input');
+            const transcribeBtn = document.getElementById('transcribe');
+            const downloadBtn = document.getElementById('download_result');
+            const clearBtn = document.getElementById('clear');
+
+            function updateUI() {
+                const fileInfo = demo.file_info();
+                if (fileInfo) {
+                    document.getElementById('file_info').classList.add('visible');
+                    document.getElementById('file_name').textContent = fileInfo.name();
+                    document.getElementById('file_size').textContent = ` (${fileInfo.size_formatted()})`;
+                    dropZone.classList.add('file-selected');
+                } else {
+                    document.getElementById('file_info').classList.remove('visible');
+                    dropZone.classList.remove('file-selected');
+                }
+
+                transcribeBtn.disabled = !demo.can_transcribe();
+                downloadBtn.disabled = !demo.can_download();
+
+                const progress = demo.progress();
+                if (demo.state() === 'Transcribing') {
+                    document.getElementById('progress_container').classList.add('visible');
+                    document.querySelector('#progress_bar .fill').style.width = `${progress.percent()}%`;
+                    document.getElementById('progress_text').textContent = `${Math.round(progress.percent())}%`;
+                    document.getElementById('chunk_progress').textContent = progress.chunk_text();
+                } else {
+                    document.getElementById('progress_container').classList.remove('visible');
+                }
+
+                document.getElementById('transcript_display').textContent = demo.transcript_text();
+            }
+
+            // File selection
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    demo.on_file_selected(file.name, file.size);
+                    updateUI();
+                }
+            });
+
+            // Drag and drop
+            dropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropZone.classList.add('drag-over');
+            });
+
+            dropZone.addEventListener('dragleave', () => {
+                dropZone.classList.remove('drag-over');
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+                const file = e.dataTransfer.files[0];
+                if (file) {
+                    demo.on_file_selected(file.name, file.size);
+                    updateUI();
+                }
+            });
+
+            dropZone.addEventListener('click', () => fileInput.click());
+
+            transcribeBtn.addEventListener('click', () => {
+                demo.start_transcription();
+                updateUI();
+            });
+
+            downloadBtn.addEventListener('click', () => {
+                const format = document.getElementById('format_selector').value;
+                let content, filename;
+
+                if (format === 'srt') {
+                    content = demo.export_srt();
+                    filename = 'transcript.srt';
+                } else if (format === 'vtt') {
+                    content = demo.export_vtt();
+                    filename = 'transcript.vtt';
+                } else {
+                    content = demo.export_txt();
+                    filename = 'transcript.txt';
+                }
+
+                const blob = new Blob([content], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(url);
+            });
+
+            clearBtn.addEventListener('click', () => {
+                demo.clear();
+                fileInput.value = '';
+                updateUI();
+            });
+
+            updateUI();
+        }
+
+        main().catch(console.error);
+    </script>
+</body>
+</html>

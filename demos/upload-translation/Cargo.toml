@@ -1,0 +1,38 @@
+[package]
+name = "whisper-apr-demo-upload-translation"
+description = "Audio/video file upload translation demo for whisper-apr"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+whisper-apr.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = [
+    "File",
+    "FileReader",
+    "Blob",
+    "AudioContext",
+    "AudioBuffer",
+    "Window",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "HtmlInputElement",
+    "HtmlButtonElement",
+    "ProgressEvent",
+    "console",
+] }
+
+[dev-dependencies]
+probar.workspace = true
+
+[lints]
+workspace = true

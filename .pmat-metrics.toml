@@ -1,0 +1,78 @@
+# O(1) Quality Gate Metric Thresholds for Whisper.apr
+# Spec: WASM-First Speech Recognition Engine
+# Pattern: Toyota Way - Jidoka (MEAN mode: warnings = errors)
+
+[thresholds]
+# Hard limits (block commits) - based on specification Section 9
+lint_max_ms = 30_000              # 30s (Tier 1 target: sub-second lint-fast)
+lint_full_max_ms = 60_000         # 60s (Tier 2 target: full clippy)
+test_tier1_max_ms = 5_000         # 5s (Tier 1 target: sub-second focused tests)
+test_tier2_max_ms = 300_000       # 5min (Tier 2 target: full tests)
+coverage_max_ms = 600_000         # 10min (Tier 2 coverage analysis)
+bench_max_ms = 600_000            # 10min (Tier 3 benchmarks)
+binary_max_bytes = 100_000_000    # 100MB (WASM binary size target from spec)
+
+# Soft limits (warnings only) - Tier 3 targets
+build_release_max_ms = 300_000    # 5min (Rust + WASM build time)
+mutation_test_max_ms = 3_600_000  # 60min (Tier 4 mutation testing)
+fuzz_test_max_ms = 600_000        # 10min (Tier 4 fuzzing)
+
+# WASM-specific thresholds
+wasm_build_max_ms = 180_000       # 3min (WASM compilation target)
+wasm_size_max_bytes = 100_000_000 # 100MB (spec: binary_size_max_mb = 100)
+
+[staleness]
+# Metrics older than this trigger warnings
+max_age_days = 7
+
+[enforcement]
+# Pre-commit behavior (MEAN mode = strict)
+fail_on_stale_metrics = false     # Warn, don't block
+fail_on_missing_metrics = false   # Allow commits if no cache
+fail_on_threshold_violation = true # Block commits on violations (MEAN mode)
+
+[trend_analysis]
+# Track metrics for Kaizen (continuous improvement)
+enabled = true
+retention_days = 90
+alert_on_regression = true
+regression_threshold_pct = 10.0   # Alert if >10% slower
+
+# Whisper.apr quality gates (from specification Section 9.1)
+[quality_gates]
+# EXTREME TDD targets (certeza-inspired)
+min_coverage_pct = 95.0           # Target: ≥95% line coverage (spec requirement)
+min_mutation_score_pct = 85.0     # Target: ≥85% mutation score (spec requirement)
+max_cyclomatic_complexity = 10    # Target: ≤10 per function (spec requirement)
+min_tdg_grade = "A+"              # Target: A+ (≥95.0) (spec requirement)
+max_unsafe_blocks = 50            # Minimize unsafe (WASM SIMD may need some)
+max_unwrap_calls = 0              # Zero tolerance - all errors handled with Result
+
+# SATD (Self-Admitted Technical Debt)
+max_satd_comments = 0             # Zero TODO/FIXME/HACK comments (spec Section 9.1)
+
+# Documentation
+min_doc_coverage_pct = 90.0       # 90%+ rustdoc coverage (spec Section 9.1)
+
+# Duplication
+max_duplication_pct = 5.0         # <5% Type-3 clones (spec Section 9.1)
+
+# Performance budgets (WASM targets from specification Section 8)
+[performance]
+# Real-Time Factor targets (RTF = processing time / audio duration)
+max_rtf_tiny = 2.0                # tiny model: ≤2.0x real-time
+max_rtf_base = 2.5                # base model: ≤2.5x real-time
+max_rtf_small = 4.0               # small model: ≤4.0x real-time
+
+# Memory budgets (from spec Section 8.2)
+max_memory_tiny_mb = 150          # tiny model peak memory
+max_memory_base_mb = 350          # base model peak memory (300MB target + buffer)
+max_memory_small_mb = 800         # small model peak memory
+
+# SIMD speedup targets
+min_simd_speedup = 2.0            # 2x minimum SIMD speedup over scalar
+
+# WASM-specific gates (from spec Section 14.3)
+[wasm]
+binary_size_max_mb = 100          # WASM binary size limit
+memory_peak_max_mb = 500          # WASM memory peak limit

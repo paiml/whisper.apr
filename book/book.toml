@@ -1,0 +1,25 @@
+[book]
+authors = ["Pragmatic AI Labs <info@paiml.com>"]
+language = "en"
+multilingual = false
+src = "src"
+title = "Whisper.apr - WASM-First Speech Recognition"
+description = "Pure Rust automatic speech recognition for the browser and beyond"
+
+[build]
+build-dir = "book"
+create-missing = true
+use-default-preprocessors = true
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/paiml/whisper.apr"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/paiml/whisper.apr/edit/main/book/{path}"
+
+[output.html.playground]
+editable = true
+copyable = true
+copy-js = true
+runnable = false

@@ -1,0 +1,195 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # Core library checks
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-features
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-features
+
+  # Demo crates
+  demos:
+    name: Demo Crates
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: demos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: demos -> target
+
+      - name: Check demos
+        run: cargo check --all-features
+
+      - name: Clippy demos
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test demos
+        run: cargo test --all-features
+
+      - name: Build WASM
+        run: |
+          cargo build --target wasm32-unknown-unknown --release -p whisper-apr-demo-realtime-transcription
+          cargo build --target wasm32-unknown-unknown --release -p whisper-apr-demo-upload-transcription
+          cargo build --target wasm32-unknown-unknown --release -p whisper-apr-demo-realtime-translation
+          cargo build --target wasm32-unknown-unknown --release -p whisper-apr-demo-upload-translation
+
+  # Coverage report
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Generate coverage
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+
+  # Demo coverage
+  demo-coverage:
+    name: Demo Coverage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: demos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: demos -> target
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Generate demo coverage
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(cargo llvm-cov --all-features --workspace --summary-only 2>/dev/null | grep -oP 'Total.*\K[0-9]+\.[0-9]+(?=%)' || echo "0")
+          echo "Coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 90" | bc -l) )); then
+            echo "Coverage ${COVERAGE}% is below 90% threshold"
+            exit 1
+          fi
+
+  # Security audit
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      - name: Run audit
+        run: cargo audit
+        continue-on-error: true
+
+  # Documentation
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build docs
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # WASM bundle size check
+  wasm-size:
+    name: WASM Bundle Size
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: demos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: demos -> target
+
+      - name: Build release WASM
+        run: |
+          cargo build --target wasm32-unknown-unknown --release -p whisper-apr-demo-realtime-transcription
+          cargo build --target wasm32-unknown-unknown --release -p whisper-apr-demo-upload-transcription
+          cargo build --target wasm32-unknown-unknown --release -p whisper-apr-demo-realtime-translation
+          cargo build --target wasm32-unknown-unknown --release -p whisper-apr-demo-upload-translation
+
+      - name: Check bundle sizes
+        run: |
+          echo "WASM Bundle Sizes:"
+          for wasm in target/wasm32-unknown-unknown/release/*.wasm; do
+            SIZE=$(stat -f%z "$wasm" 2>/dev/null || stat -c%s "$wasm")
+            SIZE_KB=$((SIZE / 1024))
+            echo "  $(basename $wasm): ${SIZE_KB}KB"
+            # Warn if any demo exceeds 1MB
+            if [ $SIZE_KB -gt 1024 ]; then
+              echo "WARNING: $(basename $wasm) exceeds 1MB"
+            fi
+          done

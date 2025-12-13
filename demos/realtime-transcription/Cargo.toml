@@ -1,0 +1,38 @@
+[package]
+name = "whisper-apr-demo-realtime-transcription"
+description = "Real-time microphone transcription demo for whisper-apr"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+whisper-apr.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = [
+    "AudioContext",
+    "AudioWorkletNode",
+    "MediaStream",
+    "MediaStreamConstraints",
+    "MediaDevices",
+    "Navigator",
+    "Window",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "HtmlButtonElement",
+    "console",
+] }
+
+[dev-dependencies]
+probar.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true
