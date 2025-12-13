@@ -18,6 +18,7 @@ crate-type = ["cdylib", "rlib"]
 default = ["std"]
 std = []
 wasm = ["wasm-bindgen", "js-sys", "web-sys", "console_error_panic_hook"]
+webgpu = ["wgpu"]
 simd = []
 tracing = ["dep:tracing"]
 
@@ -44,6 +45,9 @@ console_error_panic_hook = { version = "0.1", optional = true }
 
 # Optional: Tracing for renacer integration
 tracing = { version = "0.1", optional = true }
+
+# Optional: WebGPU compute backend
+wgpu = { version = "23", optional = true }
 
 [dev-dependencies]
 proptest = "1"

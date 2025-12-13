@@ -47,6 +47,9 @@ pub mod timestamps;
 pub mod tokenizer;
 pub mod vad;
 
+/// WebGPU compute backend for accelerated inference
+pub mod gpu;
+
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
