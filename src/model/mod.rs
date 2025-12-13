@@ -8,7 +8,10 @@ mod encoder;
 pub mod quantized;
 
 pub use attention::{LinearWeights, MultiHeadAttention};
-pub use decoder::{Decoder, DecoderBlock, DecoderKVCache, LayerKVCache};
+pub use decoder::{
+    BatchDecoderCache, BatchDecoderOutput, Decoder, DecoderBlock, DecoderKVCache, LayerKVCache,
+    StreamingCacheStats, StreamingKVCache,
+};
 pub use encoder::{Conv1d, ConvFrontend, Encoder, EncoderBlock, FeedForward, LayerNorm};
 pub use quantized::{QuantizedLinear, QuantizedTensor};
 

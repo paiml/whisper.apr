@@ -13,8 +13,11 @@ pub use mel::MelFilterbank;
 pub use resampler::{Resampler, SincResampler};
 pub use ring_buffer::RingBuffer;
 pub use streaming::{
-    ProcessorState, ProcessorStats, StreamingConfig, StreamingEvent, StreamingProcessor,
-    DEFAULT_CHUNK_DURATION, DEFAULT_CHUNK_OVERLAP, MIN_SPEECH_DURATION_MS,
+    LatencyMode, ProcessorState, ProcessorStats, StreamingConfig, StreamingEvent,
+    StreamingProcessor, DEFAULT_CHUNK_DURATION, DEFAULT_CHUNK_OVERLAP,
+    LOW_LATENCY_BUFFER_DURATION, LOW_LATENCY_CHUNK_DURATION, LOW_LATENCY_CHUNK_OVERLAP,
+    LOW_LATENCY_FRAME_SIZE_MS, LOW_LATENCY_MIN_SPEECH_MS, LOW_LATENCY_PARTIAL_THRESHOLD,
+    MIN_SPEECH_DURATION_MS,
 };
 
 // Re-export VAD types from root module for audio pipeline integration

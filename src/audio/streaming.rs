@@ -44,6 +44,42 @@ pub const DEFAULT_CHUNK_OVERLAP: f32 = 1.0;
 /// Minimum speech duration to trigger chunk (prevents spurious triggers)
 pub const MIN_SPEECH_DURATION_MS: u32 = 500;
 
+// =============================================================================
+// Low-Latency Mode Constants (WAPR-110)
+// =============================================================================
+
+/// Low-latency chunk duration (500ms target)
+pub const LOW_LATENCY_CHUNK_DURATION: f32 = 0.5;
+
+/// Low-latency overlap (50ms)
+pub const LOW_LATENCY_CHUNK_OVERLAP: f32 = 0.05;
+
+/// Low-latency minimum speech duration (100ms)
+pub const LOW_LATENCY_MIN_SPEECH_MS: u32 = 100;
+
+/// Low-latency partial threshold (250ms - half a chunk)
+pub const LOW_LATENCY_PARTIAL_THRESHOLD: f32 = 0.25;
+
+/// Low-latency buffer duration (shorter for reduced memory)
+pub const LOW_LATENCY_BUFFER_DURATION: f32 = 5.0;
+
+/// Low-latency frame size for VAD (10ms = 160 samples at 16kHz)
+pub const LOW_LATENCY_FRAME_SIZE_MS: u32 = 10;
+
+/// Latency mode for streaming configuration
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LatencyMode {
+    /// Standard latency (30s chunks, higher accuracy)
+    #[default]
+    Standard,
+    /// Low latency (500ms chunks, faster response)
+    LowLatency,
+    /// Ultra-low latency (250ms chunks, fastest response)
+    UltraLow,
+    /// Custom latency settings
+    Custom,
+}
+
 /// Configuration for the streaming audio processor
 #[derive(Debug, Clone)]
 pub struct StreamingConfig {
@@ -63,6 +99,8 @@ pub struct StreamingConfig {
     pub min_speech_duration_ms: u32,
     /// Ring buffer duration in seconds
     pub buffer_duration: f32,
+    /// Latency mode (WAPR-110)
+    pub latency_mode: LatencyMode,
 }
 
 impl Default for StreamingConfig {
@@ -76,6 +114,7 @@ impl Default for StreamingConfig {
             vad_threshold: 0.5,
             min_speech_duration_ms: MIN_SPEECH_DURATION_MS,
             buffer_duration: 120.0, // 2 minutes per spec 11.3
+            latency_mode: LatencyMode::Standard,
         }
     }
 }
@@ -88,6 +127,115 @@ impl StreamingConfig {
             input_sample_rate,
             ..Default::default()
         }
+    }
+
+    /// Create a low-latency configuration (500ms chunks)
+    ///
+    /// Optimized for real-time applications requiring fast response:
+    /// - 500ms chunk duration
+    /// - 50ms overlap
+    /// - 100ms minimum speech duration
+    /// - 5 second buffer
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let config = StreamingConfig::low_latency();
+    /// let processor = StreamingProcessor::new(config);
+    /// ```
+    #[must_use]
+    pub fn low_latency() -> Self {
+        Self {
+            input_sample_rate: 44100,
+            output_sample_rate: SAMPLE_RATE,
+            chunk_duration: LOW_LATENCY_CHUNK_DURATION,
+            chunk_overlap: LOW_LATENCY_CHUNK_OVERLAP,
+            enable_vad: true,
+            vad_threshold: 0.5,
+            min_speech_duration_ms: LOW_LATENCY_MIN_SPEECH_MS,
+            buffer_duration: LOW_LATENCY_BUFFER_DURATION,
+            latency_mode: LatencyMode::LowLatency,
+        }
+    }
+
+    /// Create an ultra-low-latency configuration (250ms chunks)
+    ///
+    /// Optimized for the fastest possible response:
+    /// - 250ms chunk duration
+    /// - 25ms overlap
+    /// - 50ms minimum speech duration
+    /// - 2 second buffer
+    ///
+    /// Note: Ultra-low latency may reduce transcription accuracy due to
+    /// less context being available to the model.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let config = StreamingConfig::ultra_low_latency();
+    /// let processor = StreamingProcessor::new(config);
+    /// ```
+    #[must_use]
+    pub fn ultra_low_latency() -> Self {
+        Self {
+            input_sample_rate: 44100,
+            output_sample_rate: SAMPLE_RATE,
+            chunk_duration: 0.25, // 250ms
+            chunk_overlap: 0.025, // 25ms
+            enable_vad: true,
+            vad_threshold: 0.5,
+            min_speech_duration_ms: 50, // 50ms
+            buffer_duration: 2.0, // 2 seconds
+            latency_mode: LatencyMode::UltraLow,
+        }
+    }
+
+    /// Create a custom latency configuration
+    ///
+    /// Allows fine-tuning of all latency parameters.
+    #[must_use]
+    pub fn custom_latency(
+        chunk_duration: f32,
+        chunk_overlap: f32,
+        min_speech_duration_ms: u32,
+        buffer_duration: f32,
+    ) -> Self {
+        Self {
+            input_sample_rate: 44100,
+            output_sample_rate: SAMPLE_RATE,
+            chunk_duration,
+            chunk_overlap,
+            enable_vad: true,
+            vad_threshold: 0.5,
+            min_speech_duration_ms,
+            buffer_duration,
+            latency_mode: LatencyMode::Custom,
+        }
+    }
+
+    /// Set the latency mode (changes mode marker only)
+    #[must_use]
+    pub fn with_latency_mode(mut self, mode: LatencyMode) -> Self {
+        self.latency_mode = mode;
+        self
+    }
+
+    /// Get the current latency mode
+    #[must_use]
+    pub const fn latency_mode(&self) -> LatencyMode {
+        self.latency_mode
+    }
+
+    /// Get the expected latency in milliseconds
+    ///
+    /// This is approximately the chunk duration plus processing overhead.
+    #[must_use]
+    pub fn expected_latency_ms(&self) -> f32 {
+        self.chunk_duration * 1000.0
+    }
+
+    /// Check if this is a low-latency configuration
+    #[must_use]
+    pub const fn is_low_latency(&self) -> bool {
+        matches!(self.latency_mode, LatencyMode::LowLatency | LatencyMode::UltraLow)
     }
 
     /// Disable VAD (process all audio regardless of speech)
@@ -2001,5 +2149,285 @@ mod tests {
         assert!(processor.chunk_buffer.len() >= 320);
         // Verify overlap was prepended (first 80 samples should be 0.1)
         assert!((processor.chunk_buffer[0] - 0.1).abs() < 0.01);
+    }
+
+    // =========================================================================
+    // WAPR-110: Low-Latency Mode Tests
+    // =========================================================================
+
+    #[test]
+    fn test_latency_mode_enum() {
+        // Test all LatencyMode variants
+        let standard = LatencyMode::Standard;
+        let low = LatencyMode::LowLatency;
+        let ultra = LatencyMode::UltraLow;
+        let custom = LatencyMode::Custom;
+
+        assert_eq!(standard, LatencyMode::Standard);
+        assert_eq!(low, LatencyMode::LowLatency);
+        assert_eq!(ultra, LatencyMode::UltraLow);
+        assert_eq!(custom, LatencyMode::Custom);
+
+        // Test Debug
+        assert!(format!("{standard:?}").contains("Standard"));
+        assert!(format!("{low:?}").contains("LowLatency"));
+        assert!(format!("{ultra:?}").contains("UltraLow"));
+        assert!(format!("{custom:?}").contains("Custom"));
+
+        // Test Copy
+        let copied = standard;
+        assert_eq!(copied, LatencyMode::Standard);
+    }
+
+    #[test]
+    fn test_latency_mode_default() {
+        let mode = LatencyMode::default();
+        assert_eq!(mode, LatencyMode::Standard);
+    }
+
+    #[test]
+    fn test_low_latency_constants() {
+        // Verify constant values match spec
+        assert!((LOW_LATENCY_CHUNK_DURATION - 0.5).abs() < f32::EPSILON);
+        assert!((LOW_LATENCY_CHUNK_OVERLAP - 0.05).abs() < f32::EPSILON);
+        assert_eq!(LOW_LATENCY_MIN_SPEECH_MS, 100);
+        assert!((LOW_LATENCY_PARTIAL_THRESHOLD - 0.25).abs() < f32::EPSILON);
+        assert!((LOW_LATENCY_BUFFER_DURATION - 5.0).abs() < f32::EPSILON);
+        assert_eq!(LOW_LATENCY_FRAME_SIZE_MS, 10);
+    }
+
+    #[test]
+    fn test_streaming_config_default_latency_mode() {
+        let config = StreamingConfig::default();
+        assert_eq!(config.latency_mode, LatencyMode::Standard);
+    }
+
+    #[test]
+    fn test_streaming_config_low_latency() {
+        let config = StreamingConfig::low_latency();
+
+        assert_eq!(config.latency_mode, LatencyMode::LowLatency);
+        assert!((config.chunk_duration - 0.5).abs() < f32::EPSILON);
+        assert!((config.chunk_overlap - 0.05).abs() < f32::EPSILON);
+        assert_eq!(config.min_speech_duration_ms, 100);
+        assert!((config.buffer_duration - 5.0).abs() < f32::EPSILON);
+        assert!(config.enable_vad);
+    }
+
+    #[test]
+    fn test_streaming_config_ultra_low_latency() {
+        let config = StreamingConfig::ultra_low_latency();
+
+        assert_eq!(config.latency_mode, LatencyMode::UltraLow);
+        assert!((config.chunk_duration - 0.25).abs() < f32::EPSILON);
+        assert!((config.chunk_overlap - 0.025).abs() < f32::EPSILON);
+        assert_eq!(config.min_speech_duration_ms, 50);
+        assert!((config.buffer_duration - 2.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_streaming_config_custom_latency() {
+        let config = StreamingConfig::custom_latency(0.75, 0.1, 200, 10.0);
+
+        assert_eq!(config.latency_mode, LatencyMode::Custom);
+        assert!((config.chunk_duration - 0.75).abs() < f32::EPSILON);
+        assert!((config.chunk_overlap - 0.1).abs() < f32::EPSILON);
+        assert_eq!(config.min_speech_duration_ms, 200);
+        assert!((config.buffer_duration - 10.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_streaming_config_with_latency_mode() {
+        let config = StreamingConfig::default().with_latency_mode(LatencyMode::Custom);
+        assert_eq!(config.latency_mode, LatencyMode::Custom);
+    }
+
+    #[test]
+    fn test_streaming_config_latency_mode_getter() {
+        let config = StreamingConfig::low_latency();
+        assert_eq!(config.latency_mode(), LatencyMode::LowLatency);
+    }
+
+    #[test]
+    fn test_expected_latency_ms_standard() {
+        let config = StreamingConfig::default();
+        assert!((config.expected_latency_ms() - 30000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_expected_latency_ms_low_latency() {
+        let config = StreamingConfig::low_latency();
+        assert!((config.expected_latency_ms() - 500.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_expected_latency_ms_ultra_low() {
+        let config = StreamingConfig::ultra_low_latency();
+        assert!((config.expected_latency_ms() - 250.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_is_low_latency_standard() {
+        let config = StreamingConfig::default();
+        assert!(!config.is_low_latency());
+    }
+
+    #[test]
+    fn test_is_low_latency_low() {
+        let config = StreamingConfig::low_latency();
+        assert!(config.is_low_latency());
+    }
+
+    #[test]
+    fn test_is_low_latency_ultra() {
+        let config = StreamingConfig::ultra_low_latency();
+        assert!(config.is_low_latency());
+    }
+
+    #[test]
+    fn test_is_low_latency_custom() {
+        let config = StreamingConfig::custom_latency(0.5, 0.05, 100, 5.0);
+        assert!(!config.is_low_latency()); // Custom is not considered low-latency
+    }
+
+    #[test]
+    fn test_low_latency_chunk_samples() {
+        let config = StreamingConfig::low_latency();
+        // 0.5s * 16000 = 8000 samples
+        assert_eq!(config.chunk_samples(), 8000);
+    }
+
+    #[test]
+    fn test_ultra_low_latency_chunk_samples() {
+        let config = StreamingConfig::ultra_low_latency();
+        // 0.25s * 16000 = 4000 samples
+        assert_eq!(config.chunk_samples(), 4000);
+    }
+
+    #[test]
+    fn test_low_latency_overlap_samples() {
+        let config = StreamingConfig::low_latency();
+        // 0.05s * 16000 = 800 samples
+        assert_eq!(config.overlap_samples(), 800);
+    }
+
+    #[test]
+    fn test_processor_with_low_latency_config() {
+        let config = StreamingConfig::low_latency();
+        let processor = StreamingProcessor::new(config);
+
+        assert_eq!(processor.state(), ProcessorState::WaitingForSpeech);
+        // Partial threshold should be adjusted for low latency (250ms)
+        // Default is 3s, but for 500ms chunks we'd use shorter threshold
+    }
+
+    #[test]
+    fn test_processor_low_latency_min_speech_frames() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            min_speech_duration_ms: 100, // Low-latency default
+            ..StreamingConfig::low_latency()
+        };
+        let processor = StreamingProcessor::new(config);
+
+        // 100ms / 30ms per frame = 3 frames
+        assert_eq!(processor.min_speech_frames(), 3);
+    }
+
+    #[test]
+    fn test_low_latency_end_to_end() {
+        // Full integration test for low-latency mode
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            chunk_duration: 0.5,
+            chunk_overlap: 0.05,
+            enable_vad: false, // Disable VAD for deterministic test
+            min_speech_duration_ms: 0,
+            ..StreamingConfig::low_latency()
+        };
+        let mut processor = StreamingProcessor::new(config);
+
+        // Push 500ms of audio (8000 samples at 16kHz)
+        let audio = vec![0.1; 8000];
+        processor.push_audio(&audio);
+        processor.process();
+
+        // Should have a chunk ready (or accumulating)
+        assert!(processor.has_chunk() || processor.chunk_len() > 0);
+    }
+
+    #[test]
+    fn test_ultra_low_latency_end_to_end() {
+        let config = StreamingConfig {
+            input_sample_rate: 16000,
+            output_sample_rate: 16000,
+            enable_vad: false,
+            min_speech_duration_ms: 0,
+            ..StreamingConfig::ultra_low_latency()
+        };
+        let mut processor = StreamingProcessor::new(config);
+
+        // Push 250ms of audio (4000 samples at 16kHz)
+        let audio = vec![0.1; 4000];
+        processor.push_audio(&audio);
+        processor.process();
+
+        // Should have started accumulating or have chunk ready
+        assert!(processor.has_chunk() || processor.chunk_len() > 0);
+    }
+
+    #[test]
+    fn test_low_latency_builder_chain() {
+        // Test that builders can be chained with low-latency config
+        let config = StreamingConfig::low_latency()
+            .without_vad()
+            .vad_threshold(0.3);
+
+        assert_eq!(config.latency_mode, LatencyMode::LowLatency);
+        assert!(!config.enable_vad);
+        assert!((config.vad_threshold - 0.3).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_latency_mode_equality() {
+        assert_eq!(LatencyMode::Standard, LatencyMode::Standard);
+        assert_ne!(LatencyMode::Standard, LatencyMode::LowLatency);
+        assert_ne!(LatencyMode::LowLatency, LatencyMode::UltraLow);
+        assert_ne!(LatencyMode::UltraLow, LatencyMode::Custom);
+    }
+
+    #[test]
+    fn test_low_latency_config_sample_rates() {
+        let config = StreamingConfig::low_latency();
+        assert_eq!(config.input_sample_rate, 44100);
+        assert_eq!(config.output_sample_rate, SAMPLE_RATE); // 16000
+    }
+
+    #[test]
+    fn test_processor_stats_with_low_latency() {
+        let config = StreamingConfig::low_latency();
+        let mut processor = StreamingProcessor::new(config);
+
+        processor.push_audio(&vec![0.1; 1000]);
+        let stats = processor.stats();
+
+        assert_eq!(stats.samples_processed, 1000);
+        assert_eq!(stats.state, ProcessorState::WaitingForSpeech);
+    }
+
+    #[test]
+    fn test_low_latency_reset() {
+        let config = StreamingConfig::low_latency();
+        let mut processor = StreamingProcessor::new(config);
+
+        processor.push_audio(&vec![0.1; 5000]);
+        processor.process();
+        processor.reset();
+
+        assert_eq!(processor.state(), ProcessorState::WaitingForSpeech);
+        assert_eq!(processor.chunk_len(), 0);
+        assert!(!processor.has_overlap());
     }
 }

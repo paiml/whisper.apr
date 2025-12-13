@@ -339,6 +339,293 @@ impl DecoderKVCache {
 }
 
 // ============================================================================
+// Streaming KV Cache (WAPR-111)
+// ============================================================================
+
+/// Streaming KV cache optimized for low-latency inference
+///
+/// This cache variant supports:
+/// - Sliding window operation for bounded memory
+/// - Efficient warm-up from previous chunk context
+/// - Quick reset without deallocation
+/// - Memory-bounded operation for long streaming sessions
+#[derive(Debug, Clone)]
+pub struct StreamingKVCache {
+    /// Inner decoder cache
+    inner: DecoderKVCache,
+    /// Maximum sliding window size (in tokens)
+    window_size: usize,
+    /// Context overlap (tokens to keep when sliding)
+    context_overlap: usize,
+    /// Total tokens processed (may exceed window_size)
+    total_tokens: usize,
+    /// Number of times the window has slid
+    slide_count: usize,
+}
+
+impl StreamingKVCache {
+    /// Create a new streaming KV cache
+    ///
+    /// # Arguments
+    /// * `n_layers` - Number of transformer layers
+    /// * `d_model` - Model dimension
+    /// * `window_size` - Maximum tokens in cache before sliding
+    /// * `context_overlap` - Tokens to keep when sliding (for context)
+    #[must_use]
+    pub fn new(n_layers: usize, d_model: usize, window_size: usize, context_overlap: usize) -> Self {
+        Self {
+            inner: DecoderKVCache::new(n_layers, d_model, window_size),
+            window_size,
+            context_overlap: context_overlap.min(window_size / 2), // Max 50% overlap
+            total_tokens: 0,
+            slide_count: 0,
+        }
+    }
+
+    /// Create with low-latency settings (smaller window, less overlap)
+    ///
+    /// Optimized for 500ms chunk processing:
+    /// - Window: 64 tokens (~2 seconds of output)
+    /// - Overlap: 16 tokens (~500ms of context)
+    #[must_use]
+    pub fn low_latency(n_layers: usize, d_model: usize) -> Self {
+        Self::new(n_layers, d_model, 64, 16)
+    }
+
+    /// Create with ultra-low latency settings
+    ///
+    /// Optimized for 250ms chunk processing:
+    /// - Window: 32 tokens (~1 second of output)
+    /// - Overlap: 8 tokens (~250ms of context)
+    #[must_use]
+    pub fn ultra_low_latency(n_layers: usize, d_model: usize) -> Self {
+        Self::new(n_layers, d_model, 32, 8)
+    }
+
+    /// Create with standard settings (larger window for accuracy)
+    ///
+    /// Optimized for standard 30s chunk processing:
+    /// - Window: 448 tokens (full context)
+    /// - Overlap: 64 tokens
+    #[must_use]
+    pub fn standard(n_layers: usize, d_model: usize) -> Self {
+        Self::new(n_layers, d_model, 448, 64)
+    }
+
+    /// Get the current sequence length in cache
+    #[must_use]
+    pub fn seq_len(&self) -> usize {
+        self.inner.seq_len()
+    }
+
+    /// Get total tokens processed (including those that have slid out)
+    #[must_use]
+    pub fn total_tokens(&self) -> usize {
+        self.total_tokens
+    }
+
+    /// Get number of times the window has slid
+    #[must_use]
+    pub fn slide_count(&self) -> usize {
+        self.slide_count
+    }
+
+    /// Get remaining capacity before sliding is needed
+    #[must_use]
+    pub fn remaining_capacity(&self) -> usize {
+        self.window_size.saturating_sub(self.seq_len())
+    }
+
+    /// Check if cache will need to slide on next append
+    #[must_use]
+    pub fn will_slide(&self) -> bool {
+        self.seq_len() >= self.window_size
+    }
+
+    /// Check if cache is empty
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Get the window size
+    #[must_use]
+    pub fn window_size(&self) -> usize {
+        self.window_size
+    }
+
+    /// Get the context overlap
+    #[must_use]
+    pub fn context_overlap(&self) -> usize {
+        self.context_overlap
+    }
+
+    /// Get a reference to the inner cache for reading K/V
+    #[must_use]
+    pub fn inner(&self) -> &DecoderKVCache {
+        &self.inner
+    }
+
+    /// Get a mutable reference to the inner cache
+    pub fn inner_mut(&mut self) -> &mut DecoderKVCache {
+        &mut self.inner
+    }
+
+    /// Append key/value to a specific layer with automatic sliding
+    ///
+    /// If the cache is full, this will slide the window by removing
+    /// old entries and keeping `context_overlap` tokens for context.
+    pub fn append_with_slide(
+        &mut self,
+        layer_idx: usize,
+        key: &[f32],
+        value: &[f32],
+    ) -> WhisperResult<()> {
+        let new_len = key.len() / self.inner.d_model;
+
+        // Check if we need to slide
+        if self.seq_len() + new_len > self.window_size {
+            self.slide_window()?;
+        }
+
+        // Append to cache
+        self.inner.self_attn_cache[layer_idx].append(key, value)?;
+        self.total_tokens += new_len;
+
+        Ok(())
+    }
+
+    /// Slide the window, keeping only the context overlap
+    pub fn slide_window(&mut self) -> WhisperResult<()> {
+        let keep_from = self.seq_len().saturating_sub(self.context_overlap);
+
+        for cache in &mut self.inner.self_attn_cache {
+            if let (Some(k_range), Some(v_range)) = (
+                cache.get_key_range(keep_from, cache.len()),
+                cache.get_value_range(keep_from, cache.len()),
+            ) {
+                let new_keys = k_range.to_vec();
+                let new_values = v_range.to_vec();
+
+                cache.reset();
+                cache.key.extend_from_slice(&new_keys);
+                cache.value.extend_from_slice(&new_values);
+                cache.seq_len = self.context_overlap;
+            }
+        }
+
+        self.slide_count += 1;
+        Ok(())
+    }
+
+    /// Reset the cache for a new streaming segment
+    ///
+    /// This clears all data but preserves allocated memory for efficiency.
+    pub fn reset(&mut self) {
+        for cache in &mut self.inner.self_attn_cache {
+            cache.reset();
+        }
+        for cache in &mut self.inner.cross_attn_cache {
+            cache.reset();
+        }
+        self.inner.cross_attn_cached = false;
+        // Keep total_tokens and slide_count for statistics
+    }
+
+    /// Full reset including statistics
+    pub fn full_reset(&mut self) {
+        self.reset();
+        self.total_tokens = 0;
+        self.slide_count = 0;
+    }
+
+    /// Warm up the cache with context from a previous chunk
+    ///
+    /// This pre-fills the cache with key/value tensors from the end
+    /// of a previous transcription, providing context continuity.
+    pub fn warm_up(&mut self, layer_idx: usize, keys: &[f32], values: &[f32]) -> WhisperResult<()> {
+        if layer_idx >= self.inner.n_layers {
+            return Err(WhisperError::Model(format!(
+                "layer index {} out of bounds (max {})",
+                layer_idx,
+                self.inner.n_layers
+            )));
+        }
+
+        let n_tokens = keys.len() / self.inner.d_model;
+        let tokens_to_use = n_tokens.min(self.context_overlap);
+
+        if tokens_to_use > 0 {
+            let start_idx = (n_tokens - tokens_to_use) * self.inner.d_model;
+            self.inner.self_attn_cache[layer_idx].append(
+                &keys[start_idx..],
+                &values[start_idx..],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Get memory usage in bytes
+    #[must_use]
+    pub fn memory_bytes(&self) -> usize {
+        self.inner.memory_bytes()
+    }
+
+    /// Get statistics about the streaming cache
+    #[must_use]
+    pub fn stats(&self) -> StreamingCacheStats {
+        StreamingCacheStats {
+            seq_len: self.seq_len(),
+            total_tokens: self.total_tokens,
+            slide_count: self.slide_count,
+            window_size: self.window_size,
+            context_overlap: self.context_overlap,
+            memory_bytes: self.memory_bytes(),
+        }
+    }
+}
+
+/// Statistics about a streaming KV cache
+#[derive(Debug, Clone)]
+pub struct StreamingCacheStats {
+    /// Current sequence length in cache
+    pub seq_len: usize,
+    /// Total tokens processed
+    pub total_tokens: usize,
+    /// Number of window slides
+    pub slide_count: usize,
+    /// Window size
+    pub window_size: usize,
+    /// Context overlap
+    pub context_overlap: usize,
+    /// Memory usage in bytes
+    pub memory_bytes: usize,
+}
+
+impl StreamingCacheStats {
+    /// Get cache utilization (0.0 to 1.0)
+    #[must_use]
+    pub fn utilization(&self) -> f32 {
+        if self.window_size == 0 {
+            0.0
+        } else {
+            self.seq_len as f32 / self.window_size as f32
+        }
+    }
+
+    /// Get average tokens per slide
+    #[must_use]
+    pub fn tokens_per_slide(&self) -> f32 {
+        if self.slide_count == 0 {
+            self.total_tokens as f32
+        } else {
+            self.total_tokens as f32 / self.slide_count as f32
+        }
+    }
+}
+
+// ============================================================================
 // Batch KV Cache (WAPR-082)
 // ============================================================================
 
@@ -2200,5 +2487,299 @@ mod tests {
             seq_lengths: vec![1],
         };
         assert!(!non_empty.is_empty());
+    }
+
+    // =========================================================================
+    // WAPR-111: Streaming KV Cache Tests
+    // =========================================================================
+
+    #[test]
+    fn test_streaming_kv_cache_new() {
+        let cache = StreamingKVCache::new(4, 64, 100, 20);
+        assert_eq!(cache.window_size(), 100);
+        assert_eq!(cache.context_overlap(), 20);
+        assert!(cache.is_empty());
+        assert_eq!(cache.seq_len(), 0);
+        assert_eq!(cache.total_tokens(), 0);
+        assert_eq!(cache.slide_count(), 0);
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_low_latency() {
+        let cache = StreamingKVCache::low_latency(4, 64);
+        assert_eq!(cache.window_size(), 64);
+        assert_eq!(cache.context_overlap(), 16);
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_ultra_low_latency() {
+        let cache = StreamingKVCache::ultra_low_latency(4, 64);
+        assert_eq!(cache.window_size(), 32);
+        assert_eq!(cache.context_overlap(), 8);
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_standard() {
+        let cache = StreamingKVCache::standard(4, 64);
+        assert_eq!(cache.window_size(), 448);
+        assert_eq!(cache.context_overlap(), 64);
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_overlap_clamped() {
+        // Context overlap should be clamped to max 50% of window
+        let cache = StreamingKVCache::new(4, 64, 100, 80);
+        assert_eq!(cache.context_overlap(), 50); // Clamped to 50% of 100
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_remaining_capacity() {
+        let mut cache = StreamingKVCache::new(4, 8, 10, 2);
+        assert_eq!(cache.remaining_capacity(), 10);
+
+        // Add some data
+        cache.inner_mut().self_attn_cache[0]
+            .append(&[1.0; 8], &[2.0; 8])
+            .unwrap();
+        assert_eq!(cache.remaining_capacity(), 9);
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_will_slide() {
+        let mut cache = StreamingKVCache::new(4, 8, 3, 1);
+        assert!(!cache.will_slide());
+
+        // Fill to capacity
+        cache.inner_mut().self_attn_cache[0].append(&[1.0; 8], &[2.0; 8]).unwrap();
+        cache.inner_mut().self_attn_cache[0].append(&[1.0; 8], &[2.0; 8]).unwrap();
+        cache.inner_mut().self_attn_cache[0].append(&[1.0; 8], &[2.0; 8]).unwrap();
+
+        assert!(cache.will_slide());
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_append_with_slide() {
+        let mut cache = StreamingKVCache::new(2, 8, 4, 2);
+
+        // Append 3 tokens - should not trigger slide
+        for _ in 0..3 {
+            cache.append_with_slide(0, &[1.0; 8], &[2.0; 8]).unwrap();
+        }
+        assert_eq!(cache.seq_len(), 3);
+        assert_eq!(cache.slide_count(), 0);
+
+        // Append 2 more - should trigger slide (total would be 5 > window 4)
+        cache.append_with_slide(0, &[1.0; 8], &[2.0; 8]).unwrap();
+        cache.append_with_slide(0, &[1.0; 8], &[2.0; 8]).unwrap();
+
+        assert!(cache.slide_count() > 0);
+        assert!(cache.seq_len() <= cache.window_size());
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_slide_preserves_overlap() {
+        let mut cache = StreamingKVCache::new(1, 4, 5, 2);
+
+        // Fill with recognizable values
+        for i in 0..5 {
+            let keys: Vec<f32> = (0..4).map(|d| (i * 4 + d) as f32).collect();
+            let values: Vec<f32> = (0..4).map(|d| (i * 4 + d + 100) as f32).collect();
+            cache.inner_mut().self_attn_cache[0].append(&keys, &values).unwrap();
+        }
+        assert_eq!(cache.seq_len(), 5);
+
+        // Slide window
+        cache.slide_window().unwrap();
+
+        // Should have kept last 2 tokens (context_overlap)
+        assert_eq!(cache.seq_len(), 2);
+        assert_eq!(cache.slide_count(), 1);
+
+        // Check that the preserved values are from the end
+        let keys = cache.inner().self_attn_cache[0].get_key();
+        // Should have tokens 3 and 4 (indices from 0..5)
+        // Token 3's first key value = 12.0
+        assert!((keys[0] - 12.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_reset() {
+        let mut cache = StreamingKVCache::new(2, 8, 10, 2);
+
+        // Add data and slide
+        for _ in 0..15 {
+            cache.append_with_slide(0, &[1.0; 8], &[2.0; 8]).unwrap();
+        }
+
+        let prev_total = cache.total_tokens();
+        let prev_slides = cache.slide_count();
+
+        cache.reset();
+
+        assert!(cache.is_empty());
+        // Statistics should be preserved
+        assert_eq!(cache.total_tokens(), prev_total);
+        assert_eq!(cache.slide_count(), prev_slides);
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_full_reset() {
+        let mut cache = StreamingKVCache::new(2, 8, 10, 2);
+
+        for _ in 0..15 {
+            cache.append_with_slide(0, &[1.0; 8], &[2.0; 8]).unwrap();
+        }
+
+        cache.full_reset();
+
+        assert!(cache.is_empty());
+        assert_eq!(cache.total_tokens(), 0);
+        assert_eq!(cache.slide_count(), 0);
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_warm_up() {
+        let mut cache = StreamingKVCache::new(2, 4, 10, 3);
+
+        // Warm up with 5 tokens worth of data
+        let keys: Vec<f32> = (0..20).map(|i| i as f32).collect();
+        let values: Vec<f32> = (0..20).map(|i| i as f32 + 100.0).collect();
+
+        cache.warm_up(0, &keys, &values).unwrap();
+
+        // Should have used last context_overlap (3) tokens
+        assert_eq!(cache.seq_len(), 3);
+
+        // Check that it's the last 3 tokens
+        let cached_keys = cache.inner().self_attn_cache[0].get_key();
+        // Token 2 (3rd from end of 5): value 8 (2*4)
+        assert!((cached_keys[0] - 8.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_warm_up_invalid_layer() {
+        let mut cache = StreamingKVCache::new(2, 4, 10, 3);
+
+        let result = cache.warm_up(5, &[1.0; 8], &[2.0; 8]); // Layer 5 doesn't exist
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_stats() {
+        let mut cache = StreamingKVCache::new(2, 8, 10, 2);
+
+        // Add some tokens
+        for _ in 0..5 {
+            cache.append_with_slide(0, &[1.0; 8], &[2.0; 8]).unwrap();
+        }
+
+        let stats = cache.stats();
+        assert_eq!(stats.seq_len, 5);
+        assert_eq!(stats.total_tokens, 5);
+        assert_eq!(stats.window_size, 10);
+        assert_eq!(stats.context_overlap, 2);
+        assert!((stats.utilization() - 0.5).abs() < 0.01); // 5/10 = 0.5
+    }
+
+    #[test]
+    fn test_streaming_cache_stats_utilization() {
+        let stats = StreamingCacheStats {
+            seq_len: 25,
+            total_tokens: 100,
+            slide_count: 3,
+            window_size: 50,
+            context_overlap: 10,
+            memory_bytes: 1000,
+        };
+
+        assert!((stats.utilization() - 0.5).abs() < 0.01); // 25/50
+    }
+
+    #[test]
+    fn test_streaming_cache_stats_tokens_per_slide() {
+        let stats = StreamingCacheStats {
+            seq_len: 25,
+            total_tokens: 100,
+            slide_count: 4,
+            window_size: 50,
+            context_overlap: 10,
+            memory_bytes: 1000,
+        };
+
+        assert!((stats.tokens_per_slide() - 25.0).abs() < 0.01); // 100/4
+    }
+
+    #[test]
+    fn test_streaming_cache_stats_tokens_per_slide_no_slides() {
+        let stats = StreamingCacheStats {
+            seq_len: 10,
+            total_tokens: 10,
+            slide_count: 0,
+            window_size: 50,
+            context_overlap: 10,
+            memory_bytes: 1000,
+        };
+
+        assert!((stats.tokens_per_slide() - 10.0).abs() < 0.01); // total_tokens
+    }
+
+    #[test]
+    fn test_streaming_cache_stats_zero_window() {
+        let stats = StreamingCacheStats {
+            seq_len: 0,
+            total_tokens: 0,
+            slide_count: 0,
+            window_size: 0,
+            context_overlap: 0,
+            memory_bytes: 0,
+        };
+
+        assert!((stats.utilization() - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_inner_accessors() {
+        let mut cache = StreamingKVCache::new(2, 8, 10, 2);
+
+        // Test inner() accessor
+        let inner_ref = cache.inner();
+        assert_eq!(inner_ref.n_layers, 2);
+
+        // Test inner_mut() accessor
+        let inner_mut = cache.inner_mut();
+        inner_mut.self_attn_cache[0].append(&[1.0; 8], &[2.0; 8]).unwrap();
+
+        assert_eq!(cache.seq_len(), 1);
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_memory_bytes() {
+        let mut cache = StreamingKVCache::new(2, 8, 10, 2);
+        assert_eq!(cache.memory_bytes(), 0);
+
+        cache.inner_mut().self_attn_cache[0].append(&[1.0; 8], &[2.0; 8]).unwrap();
+        assert!(cache.memory_bytes() > 0);
+    }
+
+    #[test]
+    fn test_streaming_kv_cache_continuous_streaming() {
+        // Simulate a long streaming session
+        let mut cache = StreamingKVCache::new(2, 8, 20, 5);
+
+        for _ in 0..100 {
+            cache.append_with_slide(0, &[1.0; 8], &[2.0; 8]).unwrap();
+        }
+
+        // Cache should be bounded
+        assert!(cache.seq_len() <= cache.window_size());
+
+        // Should have slid multiple times
+        assert!(cache.slide_count() > 0);
+
+        // Total tokens should be tracked
+        assert_eq!(cache.total_tokens(), 100);
+
+        let stats = cache.stats();
+        assert!(stats.tokens_per_slide() > 0.0);
     }
 }
