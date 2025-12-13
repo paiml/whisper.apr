@@ -13,9 +13,9 @@ phase5_in_progress = true
 
 [metrics]
 total_tickets = 100
-completed_tickets = 92
-completion_rate = 92.0
-test_count = 1376
+completed_tickets = 96
+completion_rate = 96.0
+test_count = 1458
 line_coverage = 95.19
 property_tests = 19
 source_loc = 35000
@@ -691,9 +691,10 @@ completion_date = "2025-12-13"
 
 [sprints.sprint_39_40]
 name = "Improved Word-Level Timestamps"
-status = "pending"
+status = "complete"
 tickets = ["WAPR-160", "WAPR-161", "WAPR-162", "WAPR-163"]
 deliverable = "Cross-attention based word alignment with confidence scores"
+completion_date = "2025-12-13"
 
 [sprints.sprint_41_42]
 name = "Custom Vocabulary Fine-Tuning"
@@ -735,31 +736,31 @@ tdd_phase = "green"
 
 [tickets.WAPR-160]
 description = "Cross-attention alignment extraction"
-status = "pending"
+status = "complete"
 sprint = "sprint_39_40"
 files = ["src/timestamps/alignment.rs"]
-tdd_phase = "pending"
+tdd_phase = "green"
 
 [tickets.WAPR-161]
 description = "Word boundary detection with confidence"
-status = "pending"
+status = "complete"
 sprint = "sprint_39_40"
 files = ["src/timestamps/boundaries.rs"]
-tdd_phase = "pending"
+tdd_phase = "green"
 
 [tickets.WAPR-162]
 description = "Timestamp interpolation for sub-word tokens"
-status = "pending"
+status = "complete"
 sprint = "sprint_39_40"
 files = ["src/timestamps/interpolation.rs"]
-tdd_phase = "pending"
+tdd_phase = "green"
 
 [tickets.WAPR-163]
 description = "Word timestamps WASM API"
-status = "pending"
+status = "complete"
 sprint = "sprint_39_40"
 files = ["src/wasm/timestamps.rs"]
-tdd_phase = "pending"
+tdd_phase = "green"
 
 # v2.0 Tickets - Custom Vocabulary
 

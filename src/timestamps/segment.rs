@@ -107,7 +107,7 @@ where
 }
 
 /// Check if a token is a control token (SOT, EOT, LANG, TASK, etc.)
-fn is_control_token(token: u32) -> bool {
+pub fn is_control_token(token: u32) -> bool {
     token == special_tokens::SOT
         || token == special_tokens::EOT
         || token == special_tokens::TRANSCRIBE
@@ -121,6 +121,18 @@ fn is_control_token(token: u32) -> bool {
 fn is_language_token(token: u32) -> bool {
     // Language tokens are in range [LANG_BASE, TRANSCRIBE)
     (special_tokens::LANG_BASE..special_tokens::TRANSCRIBE).contains(&token)
+}
+
+/// Check if a token is a timestamp token
+#[must_use]
+pub fn is_timestamp(token: u32) -> bool {
+    special_tokens::is_timestamp(token)
+}
+
+/// Convert timestamp token to seconds
+#[must_use]
+pub fn timestamp_to_seconds(token: u32) -> Option<f32> {
+    special_tokens::timestamp_to_seconds(token)
 }
 
 /// Parse timestamps from a token sequence (without decoding text)

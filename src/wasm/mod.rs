@@ -40,12 +40,18 @@
 mod capabilities;
 mod diarization;
 mod gpu;
+mod timestamps;
 mod worker;
 
 pub use capabilities::{Capabilities, ExecutionMode};
 pub use diarization::{
     get_diarization_recommendation, DiarizationConfigWasm, DiarizationResultWasm, DiarizerWasm,
     EmbeddingExtractorWasm, SpeakerEmbeddingWasm, SpeakerSegmentWasm, TurnDetectorWasm,
+};
+pub use timestamps::{
+    get_word_timestamp_recommendation, AlignmentConfigWasm, TimestampInterpolatorWasm,
+    TokenTimestampWasm, WordBoundaryWasm, WordTimestampExtractorWasm, WordTimestampResultWasm,
+    WordWithTimestampWasm,
 };
 pub use gpu::{
     estimate_mat_mul_flops, estimate_mat_mul_memory, is_gpu_worthwhile,
