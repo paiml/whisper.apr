@@ -600,4 +600,127 @@ mod tests {
         let result = op.execute(BackendType::Auto).expect("Should execute");
         assert_eq!(result.len(), 64);
     }
+
+    // =========================================================================
+    // Additional Coverage Tests (WAPR-QA)
+    // =========================================================================
+
+    #[test]
+    fn test_backend_type_is_auto() {
+        assert!(BackendType::Auto.is_auto());
+        assert!(!BackendType::Simd.is_auto());
+        assert!(!BackendType::Gpu.is_auto());
+        assert!(!BackendType::Cpu.is_auto());
+    }
+
+    #[test]
+    fn test_backend_type_name() {
+        assert_eq!(BackendType::Simd.name(), "SIMD");
+        assert_eq!(BackendType::Gpu.name(), "GPU");
+        assert_eq!(BackendType::Cpu.name(), "CPU");
+        assert_eq!(BackendType::Auto.name(), "Auto");
+    }
+
+    #[test]
+    fn test_backend_capabilities_default() {
+        let caps = BackendCapabilities::default();
+        assert_eq!(caps.backend_type, BackendType::Cpu);
+        assert!(caps.available);
+        assert_eq!(caps.max_parallelism, 1);
+    }
+
+    #[test]
+    fn test_matmul_op_execute_gpu() {
+        let op = MatMulOp::new(8, 8, 8);
+        let result = op.execute_gpu().expect("Should execute");
+        assert_eq!(result.len(), 64);
+    }
+
+    #[test]
+    fn test_softmax_op_execute_simd() {
+        let op = SoftmaxOp::new(4, 8);
+        let result = op.execute_simd().expect("Should execute");
+        assert_eq!(result.len(), 32);
+    }
+
+    #[test]
+    fn test_softmax_op_execute_gpu() {
+        let op = SoftmaxOp::new(4, 8);
+        let result = op.execute_gpu().expect("Should execute");
+        assert_eq!(result.len(), 32);
+    }
+
+    #[test]
+    fn test_softmax_op_flops() {
+        let op = SoftmaxOp::new(4, 8);
+        assert!(op.estimated_flops() > 0);
+    }
+
+    #[test]
+    fn test_softmax_op_memory() {
+        let op = SoftmaxOp::new(4, 8);
+        let mem = op.memory_requirement();
+        assert_eq!(mem, 4 * 8 * 4 * 2); // rows * cols * sizeof(f32) * 2
+    }
+
+    #[test]
+    fn test_layer_norm_op_execute_gpu() {
+        let op = LayerNormOp::new(4, 64);
+        let result = op.execute_gpu().expect("Should execute");
+        assert_eq!(result.len(), 256);
+    }
+
+    #[test]
+    fn test_layer_norm_op_flops() {
+        let op = LayerNormOp::new(4, 64);
+        assert!(op.estimated_flops() > 0);
+    }
+
+    #[test]
+    fn test_layer_norm_op_memory() {
+        let op = LayerNormOp::new(4, 64);
+        let mem = op.memory_requirement();
+        assert!(mem > 0);
+    }
+
+    #[test]
+    fn test_gelu_op_execute_gpu() {
+        let op = GeluOp::new(64);
+        let result = op.execute_gpu().expect("Should execute");
+        assert_eq!(result.len(), 64);
+    }
+
+    #[test]
+    fn test_gelu_op_flops() {
+        let op = GeluOp::new(64);
+        assert!(op.estimated_flops() > 0);
+    }
+
+    #[test]
+    fn test_gelu_op_memory() {
+        let op = GeluOp::new(64);
+        let mem = op.memory_requirement();
+        assert_eq!(mem, 64 * 4 * 2); // input + output
+    }
+
+    #[test]
+    fn test_compute_op_execute_simd_backend() {
+        let op = MatMulOp::new(8, 8, 8);
+        let result = op.execute(BackendType::Simd).expect("Should execute");
+        assert_eq!(result.len(), 64);
+    }
+
+    #[test]
+    fn test_compute_op_execute_gpu_backend() {
+        let op = MatMulOp::new(8, 8, 8);
+        let result = op.execute(BackendType::Gpu).expect("Should execute");
+        assert_eq!(result.len(), 64);
+    }
+
+    #[test]
+    fn test_compute_op_execute_cpu_backend() {
+        let op = MatMulOp::new(8, 8, 8);
+        let result = op.execute(BackendType::Cpu).expect("Should execute");
+        assert_eq!(result.len(), 64);
+    }
 }

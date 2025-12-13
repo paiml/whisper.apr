@@ -7,6 +7,7 @@ use super::{BUFFER_ALIGNMENT, MAX_BUFFER_SIZE};
 
 /// Buffer usage flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct GpuBufferUsage {
     /// Can be used as source for copy operations
     pub copy_src: bool,
@@ -229,6 +230,7 @@ impl GpuBuffer {
     ///
     /// Note: This doesn't actually allocate GPU memory without the webgpu feature.
     /// Use `GpuDevice::create_buffer` for actual allocation.
+    #[allow(clippy::items_after_statements)]
     pub fn new(descriptor: GpuBufferDescriptor) -> GpuResult<Self> {
         descriptor.validate()?;
 
@@ -324,12 +326,13 @@ impl GpuBuffer {
 #[inline]
 #[must_use]
 pub fn align_size(size: u64, alignment: u64) -> u64 {
-    ((size + alignment - 1) / alignment) * alignment
+    size.div_ceil(alignment) * alignment
 }
 
 /// Check if an offset is properly aligned
 #[inline]
 #[must_use]
+#[allow(dead_code)]
 pub fn is_aligned(offset: u64, alignment: u64) -> bool {
     offset % alignment == 0
 }
@@ -337,6 +340,7 @@ pub fn is_aligned(offset: u64, alignment: u64) -> bool {
 /// Calculate the number of elements that fit in a buffer
 #[inline]
 #[must_use]
+#[allow(dead_code)]
 pub fn elements_in_buffer<T>(buffer_size: u64) -> usize {
     (buffer_size as usize) / std::mem::size_of::<T>()
 }
@@ -344,11 +348,13 @@ pub fn elements_in_buffer<T>(buffer_size: u64) -> usize {
 /// Calculate buffer size for a number of elements
 #[inline]
 #[must_use]
+#[allow(dead_code)]
 pub fn buffer_size_for<T>(count: usize) -> u64 {
     (count * std::mem::size_of::<T>()) as u64
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

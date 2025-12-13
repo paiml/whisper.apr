@@ -373,25 +373,29 @@ impl DomainAdapter {
         }
     }
 
+    #[allow(clippy::needless_pass_by_ref_mut)]
     fn load_medical_terms(&mut self) {
-        // Placeholder: In production, load from vocabulary file
-        // These are example token IDs (would need real tokenizer)
+        let _ = self; // Placeholder: In production, will load from vocabulary file
     }
 
+    #[allow(clippy::needless_pass_by_ref_mut)]
     fn load_legal_terms(&mut self) {
-        // Placeholder
+        let _ = self; // Placeholder
     }
 
+    #[allow(clippy::needless_pass_by_ref_mut)]
     fn load_technical_terms(&mut self) {
-        // Placeholder
+        let _ = self; // Placeholder
     }
 
+    #[allow(clippy::needless_pass_by_ref_mut)]
     fn load_financial_terms(&mut self) {
-        // Placeholder
+        let _ = self; // Placeholder
     }
 
+    #[allow(clippy::needless_pass_by_ref_mut)]
     fn load_scientific_terms(&mut self) {
-        // Placeholder
+        let _ = self; // Placeholder
     }
 
     /// Get terms by category
@@ -463,6 +467,7 @@ impl DomainAdapter {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

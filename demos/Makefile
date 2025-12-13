@@ -137,6 +137,25 @@ clean:
 	@echo "✅ Clean complete"
 
 # ============================================================================
+# Package for Deployment (WAPR-182)
+# ============================================================================
+
+DEPLOY_PATH := whisper-apr
+
+## Package demos for deployment (output to dist/)
+package: build
+	@echo "📦 Packaging demos for deployment..."
+	@mkdir -p dist/$(DEPLOY_PATH)
+	@for demo in realtime-transcription upload-transcription realtime-translation upload-translation; do \
+		mkdir -p dist/$(DEPLOY_PATH)/$$demo; \
+		cp -r $$demo/pkg dist/$(DEPLOY_PATH)/$$demo/; \
+	done
+	@cp www/*.html dist/$(DEPLOY_PATH)/
+	@echo "✅ Package ready at: dist/$(DEPLOY_PATH)/"
+	@echo ""
+	@echo "To deploy, copy dist/$(DEPLOY_PATH) to your deployment target."
+
+# ============================================================================
 # Help
 # ============================================================================
 
@@ -155,6 +174,9 @@ help:
 	@echo "  make tier2        - Pre-commit (<5s)"
 	@echo "  make tier3        - Pre-push (1-5 min)"
 	@echo "  make tier4        - CI/CD (5-60 min)"
+	@echo ""
+	@echo "Packaging:"
+	@echo "  make package      - Build and package for deployment"
 	@echo ""
 	@echo "Development:"
 	@echo "  make serve        - Start dev server"

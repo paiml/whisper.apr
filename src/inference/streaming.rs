@@ -213,9 +213,8 @@ impl StreamingTranscriber {
         }
 
         // Get the audio chunk
-        let chunk = match self.processor.get_chunk() {
-            Some(c) => c,
-            None => return Ok(None),
+        let Some(chunk) = self.processor.get_chunk() else {
+            return Ok(None);
         };
 
         self.state = TranscriberState::Processing;
@@ -252,6 +251,7 @@ impl StreamingTranscriber {
     }
 
     /// Transcribe a mel spectrogram chunk
+    #[allow(clippy::unnecessary_wraps)]
     fn transcribe_chunk(&self, mel_spec: &[f32]) -> WhisperResult<StreamingResult> {
         // Placeholder: In full implementation, this would:
         // 1. Run encoder on mel spectrogram

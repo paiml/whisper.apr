@@ -28,11 +28,10 @@ pub mod adapter;
 pub mod hotwords;
 pub mod trie;
 
-pub use adapter::{DomainAdapter, DomainConfig, DomainType};
+pub use adapter::{DomainAdapter, DomainConfig, DomainTerm, DomainType};
 pub use hotwords::{Hotword, HotwordBooster, HotwordConfig};
 pub use trie::{TrieNode, VocabularyTrie, TrieSearchResult};
 
-use crate::error::WhisperResult;
 
 /// Combined vocabulary customization for inference
 #[derive(Debug, Clone)]

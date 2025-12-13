@@ -242,8 +242,7 @@ impl TimestampInterpolator {
                     .iter()
                     .enumerate()
                     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                    .map(|(idx, _)| idx)
-                    .unwrap_or(0);
+                    .map_or(0, |(idx, _)| idx);
                 let next_time = (next_peak as f32 / frame_rate).clamp(word_start, word_end);
                 (next_time - token_center).max(duration / tokens.len() as f32 * 0.5)
             } else {
@@ -268,6 +267,7 @@ impl TimestampInterpolator {
     }
 
     /// Linear interpolation
+    #[allow(clippy::unnecessary_wraps)]
     fn interpolate_linear(
         &self,
         word_start: f32,
@@ -275,6 +275,7 @@ impl TimestampInterpolator {
         tokens: &[String],
         start_index: usize,
     ) -> WhisperResult<Vec<TokenTimestamp>> {
+        let _ = self; // Method for consistency
         let duration = word_end - word_start;
         let token_duration = duration / tokens.len() as f32;
 
@@ -299,6 +300,7 @@ impl TimestampInterpolator {
     }
 
     /// Character-proportional interpolation
+    #[allow(clippy::unnecessary_wraps)]
     fn interpolate_char_proportional(
         &self,
         word_start: f32,
@@ -306,6 +308,7 @@ impl TimestampInterpolator {
         tokens: &[String],
         start_index: usize,
     ) -> WhisperResult<Vec<TokenTimestamp>> {
+        let _ = self; // Method for consistency
         let duration = word_end - word_start;
         let total_chars: usize = tokens.iter().map(|t| t.chars().count().max(1)).sum();
 
@@ -332,6 +335,7 @@ impl TimestampInterpolator {
     }
 
     /// Weighted interpolation (combination of linear and character-proportional)
+    #[allow(clippy::unnecessary_wraps)]
     fn interpolate_weighted(
         &self,
         word_start: f32,
@@ -350,8 +354,7 @@ impl TimestampInterpolator {
             let char_count = text.chars().count().max(1);
             let char_duration = (char_count as f32 / total_chars as f32) * duration;
 
-            let weighted_duration = self.config.char_weight * char_duration
-                + self.config.uniform_weight * uniform_duration;
+            let weighted_duration = self.config.char_weight.mul_add(char_duration, self.config.uniform_weight * uniform_duration);
 
             let token_end = (current_time + weighted_duration).min(word_end);
 

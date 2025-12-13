@@ -97,12 +97,12 @@ impl TrieNode {
 
     /// Get child for token
     #[must_use]
-    pub fn get_child(&self, token: u32) -> Option<&TrieNode> {
+    pub fn get_child(&self, token: u32) -> Option<&Self> {
         self.children.get(&token)
     }
 
     /// Get mutable child for token
-    pub fn get_child_mut(&mut self, token: u32) -> Option<&mut TrieNode> {
+    pub fn get_child_mut(&mut self, token: u32) -> Option<&mut Self> {
         self.children.get_mut(&token)
     }
 
@@ -113,11 +113,11 @@ impl TrieNode {
     }
 
     /// Insert or get child node
-    pub fn get_or_create_child(&mut self, token: u32) -> &mut TrieNode {
+    pub fn get_or_create_child(&mut self, token: u32) -> &mut Self {
         let next_depth = self.depth + 1;
         self.children
             .entry(token)
-            .or_insert_with(|| TrieNode::new(next_depth))
+            .or_insert_with(|| Self::new(next_depth))
     }
 
     /// Mark as terminal with boost value
@@ -252,8 +252,7 @@ impl VocabularyTrie {
     #[must_use]
     pub fn contains(&self, tokens: &[u32]) -> bool {
         self.get_node(tokens)
-            .map(|n| n.is_terminal())
-            .unwrap_or(false)
+            .is_some_and(|n| n.is_terminal())
     }
 
     /// Check if any entry starts with the given prefix
@@ -273,6 +272,7 @@ impl VocabularyTrie {
 
     /// Search for continuations from a given prefix
     #[must_use]
+    #[allow(clippy::option_if_let_else)]
     pub fn search(&self, prefix: &[u32]) -> TrieSearchResult {
         match self.get_node(prefix) {
             Some(node) => {
@@ -290,7 +290,7 @@ impl VocabularyTrie {
                     })
                     .collect();
 
-                let matching_entries = self.count_entries_under(node);
+                let matching_entries = Self::count_entries_under(node);
 
                 TrieSearchResult {
                     continuations,
@@ -305,10 +305,10 @@ impl VocabularyTrie {
     }
 
     /// Count total entries under a node
-    fn count_entries_under(&self, node: &TrieNode) -> usize {
-        let mut count = if node.is_terminal() { 1 } else { 0 };
+    fn count_entries_under(node: &TrieNode) -> usize {
+        let mut count = usize::from(node.is_terminal());
         for child in node.children.values() {
-            count += self.count_entries_under(child);
+            count += Self::count_entries_under(child);
         }
         count
     }
@@ -339,12 +339,11 @@ impl VocabularyTrie {
     #[must_use]
     pub fn all_entries(&self) -> Vec<(Vec<u32>, String, f32)> {
         let mut entries = Vec::new();
-        self.collect_entries(&self.root, Vec::new(), &mut entries);
+        Self::collect_entries(&self.root, Vec::new(), &mut entries);
         entries
     }
 
     fn collect_entries(
-        &self,
         node: &TrieNode,
         path: Vec<u32>,
         entries: &mut Vec<(Vec<u32>, String, f32)>,
@@ -358,7 +357,7 @@ impl VocabularyTrie {
         for (&token, child) in &node.children {
             let mut new_path = path.clone();
             new_path.push(token);
-            self.collect_entries(child, new_path, entries);
+            Self::collect_entries(child, new_path, entries);
         }
     }
 

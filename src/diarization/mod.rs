@@ -194,14 +194,14 @@ impl DiarizationResult {
         self.segments
             .windows(2)
             .filter_map(|w| {
-                if w[0].speaker_id() != w[1].speaker_id() {
+                if w[0].speaker_id() == w[1].speaker_id() {
+                    None
+                } else {
                     Some(SpeakerTurn::new(
                         w[0].speaker_id(),
                         w[1].speaker_id(),
                         w[0].end(),
                     ))
-                } else {
-                    None
                 }
             })
             .collect()
@@ -301,15 +301,12 @@ impl Diarizer {
 
     /// Cluster speaker embeddings
     fn cluster_speakers(&self, embeddings: &[SpeakerEmbedding]) -> WhisperResult<ClusteringResult> {
+        // All algorithms currently use spectral clustering as the implementation
         let algorithm = match self.config.clustering.algorithm {
-            ClusteringAlgorithm::Spectral => {
+            ClusteringAlgorithm::Spectral
+            | ClusteringAlgorithm::KMeans
+            | ClusteringAlgorithm::Agglomerative => {
                 SpectralClustering::new(self.config.clustering.clone())
-            }
-            ClusteringAlgorithm::KMeans => {
-                SpectralClustering::new(self.config.clustering.clone()) // fallback to spectral
-            }
-            ClusteringAlgorithm::Agglomerative => {
-                SpectralClustering::new(self.config.clustering.clone()) // fallback to spectral
             }
         };
 
@@ -322,6 +319,7 @@ impl Diarizer {
         segments: &[SpeakerSegment],
         clustering: &ClusteringResult,
     ) -> WhisperResult<Vec<SpeakerSegment>> {
+        let _ = self; // Method for consistency with diarization pipeline
         let labels = clustering.labels();
 
         if labels.len() != segments.len() {
@@ -343,7 +341,7 @@ impl Diarizer {
             return segments;
         }
 
-        segments.sort_by(|a, b| a.start().partial_cmp(&b.start()).unwrap());
+        segments.sort_by(|a, b| a.start().total_cmp(&b.start()));
 
         let mut merged = Vec::new();
         let mut current = segments[0].clone();

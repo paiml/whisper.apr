@@ -164,7 +164,7 @@ impl GeluConfig {
     /// Calculate number of workgroups needed
     #[must_use]
     pub fn num_workgroups(&self) -> u32 {
-        (self.num_elements + self.workgroup_size - 1) / self.workgroup_size
+        self.num_elements.div_ceil(self.workgroup_size)
     }
 }
 
@@ -181,6 +181,7 @@ pub struct GpuGelu {
 
 impl GpuGelu {
     /// Create a new GELU operation
+    #[allow(clippy::items_after_statements)]
     pub fn new(config: GeluConfig) -> GpuResult<Self> {
         config.validate()?;
 
@@ -244,7 +245,7 @@ impl GpuGelu {
         let workgroup_size = self.config.workgroup_size;
 
         let gelu_function = match self.config.approximation {
-            GeluApproximation::Exact => r#"
+            GeluApproximation::Exact => r"
 // Exact GELU: x * 0.5 * (1 + erf(x / sqrt(2)))
 // We approximate erf using a polynomial
 fn gelu(x: f32) -> f32 {
@@ -257,8 +258,8 @@ fn gelu(x: f32) -> f32 {
     let erf_approx = sign(a) * (1.0 - 1.0 / (1.0 + 0.278393 * abs(a) + 0.230389 * a2 + 0.000972 * a3 + 0.078108 * a2 * a2));
 
     return x * 0.5 * (1.0 + erf_approx);
-}"#,
-            GeluApproximation::Tanh => r#"
+}",
+            GeluApproximation::Tanh => r"
 // Tanh approximation (most common in transformers)
 // x * 0.5 * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
 fn gelu(x: f32) -> f32 {
@@ -266,15 +267,15 @@ fn gelu(x: f32) -> f32 {
     let coeff = 0.044715;
     let inner = sqrt_2_over_pi * (x + coeff * x * x * x);
     return x * 0.5 * (1.0 + tanh(inner));
-}"#,
-            GeluApproximation::Sigmoid => r#"
+}",
+            GeluApproximation::Sigmoid => r"
 // Sigmoid approximation (fastest)
 // x * sigmoid(1.702 * x)
 fn gelu(x: f32) -> f32 {
     let sigmoid_input = 1.702 * x;
     let sigmoid_val = 1.0 / (1.0 + exp(-sigmoid_input));
     return x * sigmoid_val;
-}"#,
+}",
         };
 
         let output_binding = if self.config.inplace {
@@ -284,23 +285,23 @@ fn gelu(x: f32) -> f32 {
         };
 
         let compute_body = if self.config.inplace {
-            r#"
+            r"
     let idx = global_id.x;
     if (idx >= params.num_elements) {
         return;
     }
-    data[idx] = gelu(data[idx]);"#
+    data[idx] = gelu(data[idx]);"
         } else {
-            r#"
+            r"
     let idx = global_id.x;
     if (idx >= params.num_elements) {
         return;
     }
-    output[idx] = gelu(input[idx]);"#
+    output[idx] = gelu(input[idx]);"
         };
 
         format!(
-            r#"// GELU activation shader ({approx})
+            r"// GELU activation shader ({approx})
 // Elements: {num_elements}
 // Workgroup size: {wg_size}
 {gelu_fn}
@@ -315,7 +316,7 @@ struct Params {{
 @compute @workgroup_size({wg_size}, 1, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {{{compute_body}
 }}
-"#,
+",
             approx = self.config.approximation.description(),
             num_elements = self.config.num_elements,
             wg_size = workgroup_size,
@@ -327,7 +328,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {{{compute_body}
 }
 
 /// WGSL shader source for GELU (tanh approximation)
-pub const GELU_SHADER_TANH: &str = r#"
+#[allow(dead_code)]
+pub const GELU_SHADER_TANH: &str = r"
 struct Params {
     num_elements: u32,
     _padding1: u32,
@@ -355,10 +357,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     output[idx] = gelu(input[idx]);
 }
-"#;
+";
 
 /// WGSL shader source for GELU (sigmoid approximation - fastest)
-pub const GELU_SHADER_SIGMOID: &str = r#"
+#[allow(dead_code)]
+pub const GELU_SHADER_SIGMOID: &str = r"
 struct Params {
     num_elements: u32,
     _padding1: u32,
@@ -384,7 +387,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     output[idx] = gelu(input[idx]);
 }
-"#;
+";
 
 #[cfg(test)]
 mod tests {

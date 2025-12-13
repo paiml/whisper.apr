@@ -282,7 +282,7 @@ pub fn quantize_f32_to_i4_packed(data: &[f32]) -> (Vec<u8>, f32) {
     };
 
     // Quantize and pack
-    let packed_len = (data.len() + 1) / 2;
+    let packed_len = data.len().div_ceil(2);
     let mut packed = vec![0u8; packed_len];
 
     for (i, &x) in data.iter().enumerate() {

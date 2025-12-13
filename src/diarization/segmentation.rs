@@ -327,7 +327,7 @@ impl TurnDetector {
         // Compute adaptive threshold based on signal statistics
         let sorted_energy: Vec<f32> = {
             let mut e = energy.to_vec();
-            e.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            e.sort_by(|a, b| a.total_cmp(b));
             e
         };
 
@@ -435,6 +435,7 @@ impl TurnDetector {
 
     /// Merge change points that are close together
     fn merge_nearby_points(&self, points: &[f32], min_gap: f32) -> Vec<f32> {
+        let _ = self; // Method for consistency
         if points.is_empty() {
             return Vec::new();
         }

@@ -1,0 +1,19 @@
+[package]
+name = "whisper-apr-demo-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Probar GUI and pixel testing suite for whisper.apr demos"
+
+[dependencies]
+probar.workspace = true
+image = "0.24"
+futures = "0.3"
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

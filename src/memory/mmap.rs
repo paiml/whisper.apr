@@ -185,7 +185,7 @@ impl MemoryRegion {
     pub fn aligned_size(&self) -> u64 {
         let aligned_start = self.aligned_offset();
         let end = self.offset + self.size;
-        let aligned_end = ((end + self.alignment - 1) / self.alignment) * self.alignment;
+        let aligned_end = end.div_ceil(self.alignment) * self.alignment;
         aligned_end - aligned_start
     }
 }
@@ -391,8 +391,7 @@ impl WeightDtype {
         match self {
             Self::F32 => 4,
             Self::F16 | Self::Bf16 => 2,
-            Self::Int8 => 1,
-            Self::Int4 => 1, // Packed, but minimum addressable is 1 byte
+            Self::Int8 | Self::Int4 => 1, // Int4 packed, but minimum addressable is 1 byte
         }
     }
 

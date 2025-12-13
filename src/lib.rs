@@ -242,7 +242,7 @@ impl BatchTranscriptionResult {
 /// let result = whisper.transcribe(&audio, TranscribeOptions::default())?;
 /// println!("{}", result.text);
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WhisperApr {
     /// Model configuration
     config: model::ModelConfig,
@@ -1094,7 +1094,7 @@ impl WhisperApr {
         if speech_segments.is_empty() {
             return Ok(VadTranscriptionResult {
                 text: String::new(),
-                language: options.language.clone().unwrap_or_else(|| "en".to_string()),
+                language: options.language.unwrap_or_else(|| "en".to_string()),
                 segments: Vec::new(),
                 speech_segments: Vec::new(),
                 total_duration_secs: start_time.elapsed().as_secs_f32(),
@@ -1190,7 +1190,7 @@ impl WhisperApr {
 
         // Create silence detector
         let config = silence_config.unwrap_or_default();
-        let mut detector = vad::SilenceDetector::new(config.clone(), audio::SAMPLE_RATE);
+        let mut detector = vad::SilenceDetector::new(config, audio::SAMPLE_RATE);
 
         // Detect silence segments
         let frame_size = 480; // 30ms at 16kHz
@@ -1202,7 +1202,7 @@ impl WhisperApr {
         if speech_segments.is_empty() {
             return Ok(VadTranscriptionResult {
                 text: String::new(),
-                language: options.language.clone().unwrap_or_else(|| "en".to_string()),
+                language: options.language.unwrap_or_else(|| "en".to_string()),
                 segments: Vec::new(),
                 speech_segments: Vec::new(),
                 total_duration_secs: start_time.elapsed().as_secs_f32(),
@@ -1264,6 +1264,7 @@ impl WhisperApr {
         silence_segments: &[vad::SilenceSegment],
         audio_len: usize,
     ) -> Vec<(f32, f32)> {
+        let _ = self; // Method for consistency with transcription pipeline
         let sample_rate = audio::SAMPLE_RATE as f32;
         let total_duration = audio_len as f32 / sample_rate;
         let mut speech_segments = Vec::new();
@@ -1333,7 +1334,7 @@ impl WhisperApr {
         if partial_audio.len() < min_samples {
             return Ok(PartialTranscriptionResult {
                 text: String::new(),
-                language: options.language.clone().unwrap_or_else(|| "en".to_string()),
+                language: options.language.unwrap_or_else(|| "en".to_string()),
                 is_final,
                 confidence: 0.0,
                 duration_secs: partial_audio.len() as f32 / audio::SAMPLE_RATE as f32,
@@ -1342,7 +1343,7 @@ impl WhisperApr {
         }
 
         // Transcribe the partial audio
-        let result = self.transcribe(partial_audio, options.clone())?;
+        let result = self.transcribe(partial_audio, options)?;
 
         let processing_time = start_time.elapsed().as_secs_f32();
 
@@ -1467,7 +1468,7 @@ pub struct StreamingSession<'a> {
     last_partial_text: String,
 }
 
-impl<'a> StreamingSession<'a> {
+impl StreamingSession<'_> {
     /// Push audio samples and get partial result if available
     ///
     /// # Arguments
@@ -1493,7 +1494,7 @@ impl<'a> StreamingSession<'a> {
 
                 // Deduplicate (don't return same text twice)
                 if result.text != self.last_partial_text {
-                    self.last_partial_text = result.text.clone();
+                    result.text.clone_into(&mut self.last_partial_text);
                     return Ok(Some(result));
                 }
             }
@@ -3105,5 +3106,330 @@ mod tests {
 
         let debug_str = format!("{session:?}");
         assert!(debug_str.contains("StreamingSession"));
+    }
+
+    // =========================================================================
+    // Additional Coverage Tests
+    // =========================================================================
+
+    #[test]
+    fn test_streaming_session_state() {
+        let whisper = WhisperApr::tiny();
+        let session = whisper.create_streaming_session(TranscribeOptions::default(), 16000);
+
+        // Initial state should be WaitingForSpeech
+        let state = session.state();
+        assert_eq!(state, audio::ProcessorState::WaitingForSpeech);
+    }
+
+    #[test]
+    fn test_streaming_session_chunk_progress() {
+        let whisper = WhisperApr::tiny();
+        let session = whisper.create_streaming_session(TranscribeOptions::default(), 16000);
+
+        let progress = session.chunk_progress();
+        assert!(progress >= 0.0 && progress <= 1.0);
+    }
+
+    #[test]
+    fn test_streaming_session_partial_duration() {
+        let whisper = WhisperApr::tiny();
+        let session = whisper.create_streaming_session(TranscribeOptions::default(), 16000);
+
+        let duration = session.partial_duration();
+        assert!(duration >= 0.0);
+    }
+
+    #[test]
+    fn test_partial_transcription_result_rtf_with_zero_processing() {
+        let result = PartialTranscriptionResult {
+            text: "test".to_string(),
+            language: "en".to_string(),
+            is_final: true,
+            confidence: 0.9,
+            duration_secs: 5.0,
+            processing_time_secs: 0.0,
+        };
+
+        let rtf = result.real_time_factor();
+        assert!(rtf >= 0.0);
+    }
+
+    #[test]
+    fn test_vad_transcription_result_methods_empty() {
+        let result = VadTranscriptionResult {
+            text: "Hello world".to_string(),
+            language: "en".to_string(),
+            segments: vec![],
+            speech_segments: vec![],
+            total_duration_secs: 5.0,
+            speech_duration_secs: 0.0,
+        };
+
+        assert_eq!(result.num_segments(), 0);
+        assert!(!result.has_speech());
+    }
+
+    #[test]
+    fn test_batch_transcription_result_defaults() {
+        let result = BatchTranscriptionResult {
+            results: vec![],
+            total_duration_secs: 0.0,
+        };
+
+        assert_eq!(result.len(), 0);
+        assert!(result.is_empty());
+        assert!(result.get(0).is_none());
+        assert!(result.texts().is_empty());
+    }
+
+    #[test]
+    fn test_whisper_config_accessors() {
+        let whisper = WhisperApr::tiny();
+        let config = whisper.config();
+
+        assert!(config.n_vocab > 0);
+        assert!(config.n_audio_ctx > 0);
+        assert!(config.n_text_ctx > 0);
+    }
+
+    #[test]
+    fn test_transcribe_options_all_fields() {
+        let options = TranscribeOptions {
+            language: Some("fr".to_string()),
+            task: Task::Translate,
+            strategy: DecodingStrategy::BeamSearch {
+                beam_size: 3,
+                temperature: 0.2,
+                patience: 1.5,
+            },
+            word_timestamps: true,
+        };
+
+        assert_eq!(options.language, Some("fr".to_string()));
+        assert_eq!(options.task, Task::Translate);
+        assert!(options.word_timestamps);
+    }
+
+    #[test]
+    fn test_segment_with_tokens() {
+        let segment = Segment {
+            text: "Hello".to_string(),
+            start: 0.0,
+            end: 1.0,
+            tokens: vec![1, 2, 3, 4, 5],
+        };
+
+        assert_eq!(segment.tokens.len(), 5);
+        assert!((segment.end - segment.start - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_model_from_config() {
+        let config = model::ModelConfig::tiny();
+        let whisper = WhisperApr::from_config(config);
+
+        assert_eq!(whisper.model_type(), ModelType::Tiny);
+    }
+
+    #[test]
+    fn test_decoding_strategy_variants() {
+        let greedy = DecodingStrategy::Greedy;
+        assert!(matches!(greedy, DecodingStrategy::Greedy));
+
+        let sampling = DecodingStrategy::Sampling {
+            temperature: 0.5,
+            top_k: Some(40),
+            top_p: Some(0.9),
+        };
+        if let DecodingStrategy::Sampling { temperature, top_k, top_p } = sampling {
+            assert!((temperature - 0.5).abs() < f32::EPSILON);
+            assert_eq!(top_k, Some(40));
+            assert_eq!(top_p, Some(0.9));
+        }
+    }
+
+    #[test]
+    fn test_task_variants_eq() {
+        assert_eq!(Task::Transcribe, Task::Transcribe);
+        assert_ne!(Task::Transcribe, Task::Translate);
+    }
+
+    #[test]
+    fn test_model_type_all_variants() {
+        let variants = vec![
+            ModelType::Tiny,
+            ModelType::TinyEn,
+            ModelType::Base,
+            ModelType::BaseEn,
+            ModelType::Small,
+            ModelType::SmallEn,
+            ModelType::Medium,
+            ModelType::MediumEn,
+            ModelType::Large,
+            ModelType::LargeV1,
+            ModelType::LargeV2,
+            ModelType::LargeV3,
+        ];
+
+        for variant in variants {
+            let debug_str = format!("{variant:?}");
+            assert!(!debug_str.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_vad_speech_segment_empty_text() {
+        let segment = VadSpeechSegment {
+            start: 0.0,
+            end: 1.0,
+            text: String::new(),
+            tokens: vec![],
+        };
+
+        assert!(!segment.has_text());
+        assert!((segment.duration() - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_transcription_result_empty() {
+        let result = TranscriptionResult {
+            text: String::new(),
+            language: "en".to_string(),
+            segments: vec![],
+        };
+
+        assert!(result.text.is_empty());
+        assert!(result.segments.is_empty());
+    }
+
+    #[test]
+    fn test_batch_transcription_result_iter_coverage() {
+        let results = vec![
+            TranscriptionResult {
+                text: "First".to_string(),
+                language: "en".to_string(),
+                segments: vec![],
+            },
+            TranscriptionResult {
+                text: "Second".to_string(),
+                language: "en".to_string(),
+                segments: vec![],
+            },
+        ];
+
+        let batch = BatchTranscriptionResult {
+            results,
+            total_duration_secs: 1.0,
+        };
+
+        let mut count = 0;
+        for result in batch.iter() {
+            count += 1;
+            assert!(!result.text.is_empty());
+        }
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_whisper_clone() {
+        let whisper = WhisperApr::tiny();
+        let cloned = whisper.clone();
+
+        assert_eq!(whisper.model_type(), cloned.model_type());
+        assert_eq!(whisper.memory_size(), cloned.memory_size());
+    }
+
+    #[test]
+    fn test_vad_transcription_result_first_last_segment() {
+        let result = VadTranscriptionResult {
+            text: "hello world".to_string(),
+            language: "en".to_string(),
+            segments: vec![
+                VadSpeechSegment {
+                    start: 0.0,
+                    end: 1.0,
+                    text: "hello".to_string(),
+                    tokens: vec![1],
+                },
+                VadSpeechSegment {
+                    start: 1.5,
+                    end: 2.5,
+                    text: "world".to_string(),
+                    tokens: vec![2],
+                },
+            ],
+            speech_segments: vec![(0.0, 1.0), (1.5, 2.5)],
+            total_duration_secs: 3.0,
+            speech_duration_secs: 2.0,
+        };
+
+        let first = result.first_segment().expect("first segment");
+        assert_eq!(first.text, "hello");
+
+        let last = result.last_segment().expect("last segment");
+        assert_eq!(last.text, "world");
+    }
+
+    #[test]
+    fn test_vad_transcription_result_iter_segments() {
+        let result = VadTranscriptionResult {
+            text: "test".to_string(),
+            language: "en".to_string(),
+            segments: vec![
+                VadSpeechSegment {
+                    start: 0.0,
+                    end: 1.0,
+                    text: "a".to_string(),
+                    tokens: vec![1],
+                },
+                VadSpeechSegment {
+                    start: 1.0,
+                    end: 2.0,
+                    text: "b".to_string(),
+                    tokens: vec![2],
+                },
+            ],
+            speech_segments: vec![(0.0, 1.0), (1.0, 2.0)],
+            total_duration_secs: 2.0,
+            speech_duration_secs: 2.0,
+        };
+
+        let mut count = 0;
+        for segment in result.iter() {
+            count += 1;
+            assert!(segment.has_text());
+        }
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_partial_transcription_result_methods() {
+        let result = PartialTranscriptionResult {
+            text: "hello".to_string(),
+            language: "en".to_string(),
+            is_final: false,
+            confidence: 0.85,
+            duration_secs: 2.0,
+            processing_time_secs: 0.5,
+        };
+
+        assert!(result.has_text());
+        assert!((result.real_time_factor() - 0.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_partial_transcription_result_zero_duration() {
+        let result = PartialTranscriptionResult {
+            text: "".to_string(),
+            language: "en".to_string(),
+            is_final: true,
+            confidence: 0.0,
+            duration_secs: 0.0,
+            processing_time_secs: 0.1,
+        };
+
+        assert!(!result.has_text());
+        assert!((result.real_time_factor() - 0.0).abs() < f32::EPSILON);
     }
 }

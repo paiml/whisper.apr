@@ -287,10 +287,10 @@ impl EmbeddingExtractor {
         }
 
         // Resample if needed (assume 16kHz target)
-        let samples = if sample_rate != 16000 {
-            self.resample(audio, sample_rate, 16000)
-        } else {
+        let samples = if sample_rate == 16000 {
             audio.to_vec()
+        } else {
+            self.resample(audio, sample_rate, 16000)
         };
 
         // Extract MFCC features
@@ -335,7 +335,7 @@ impl EmbeddingExtractor {
                 .iter()
                 .enumerate()
                 .map(|(i, &s)| {
-                    let window = 0.54 - 0.46 * (2.0 * std::f32::consts::PI * i as f32 / (FRAME_LENGTH - 1) as f32).cos();
+                    let window = 0.46f32.mul_add(-(2.0 * std::f32::consts::PI * i as f32 / (FRAME_LENGTH - 1) as f32).cos(), 0.54);
                     s * window
                 })
                 .collect();
@@ -365,7 +365,9 @@ impl EmbeddingExtractor {
     }
 
     /// Compute power spectrum using simple DFT (WASM-friendly)
+    #[allow(clippy::needless_range_loop)]
     fn compute_power_spectrum(&self, frame: &[f32]) -> Vec<f32> {
+        let _ = self; // Method for consistency
         let n = frame.len();
         let mut power = vec![0.0f32; n / 2 + 1];
 
@@ -380,7 +382,7 @@ impl EmbeddingExtractor {
                 imag += sample * angle.sin();
             }
 
-            power[k] = real * real + imag * imag;
+            power[k] = real.mul_add(real, imag * imag);
         }
 
         power
@@ -483,6 +485,7 @@ impl EmbeddingExtractor {
 
     /// Simple resampling (linear interpolation)
     fn resample(&self, audio: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+        let _ = self; // Method for consistency
         if from_rate == to_rate {
             return audio.to_vec();
         }
@@ -497,7 +500,7 @@ impl EmbeddingExtractor {
             let idx1 = (idx0 + 1).min(audio.len() - 1);
             let frac = src_idx - idx0 as f64;
 
-            let sample = audio[idx0] * (1.0 - frac as f32) + audio[idx1] * frac as f32;
+            let sample = audio[idx0].mul_add(1.0 - frac as f32, audio[idx1] * frac as f32);
             resampled.push(sample);
         }
 
@@ -511,7 +514,7 @@ impl EmbeddingExtractor {
         for k in 0..num_mfcc {
             let mut row = Vec::with_capacity(num_filters);
             for n in 0..num_filters {
-                let val = (std::f32::consts::PI * k as f32 * (2.0 * n as f32 + 1.0)
+                let val = (std::f32::consts::PI * k as f32 * 2.0f32.mul_add(n as f32, 1.0)
                     / (2.0 * num_filters as f32))
                     .cos();
                 row.push(val);

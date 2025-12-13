@@ -298,7 +298,7 @@ impl SpectralClustering {
         min_clusters: usize,
     ) -> usize {
         let n = affinity.len();
-        let max_k = max_clusters.unwrap_or(n.min(10));
+        let max_k = max_clusters.unwrap_or_else(|| n.min(10));
 
         if n <= min_clusters {
             return min_clusters.min(n);
@@ -499,7 +499,7 @@ impl SpectralClustering {
         }
 
         let unique_labels: Vec<usize> = {
-            let mut v: Vec<usize> = labels.iter().copied().collect();
+            let mut v: Vec<usize> = labels.to_vec();
             v.sort_unstable();
             v.dedup();
             v

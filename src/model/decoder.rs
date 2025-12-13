@@ -816,7 +816,7 @@ impl DecoderBlock {
 /// Transformer decoder for text generation
 ///
 /// Implements autoregressive text generation from encoder features.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Decoder {
     /// Number of layers
     n_layers: usize,
@@ -1066,6 +1066,7 @@ impl Decoder {
     ///
     /// # Returns
     /// Logits over vocabulary for the new token (n_vocab)
+    #[allow(clippy::needless_range_loop)]
     pub fn forward_one(
         &self,
         token: u32,
@@ -1242,8 +1243,7 @@ impl Decoder {
                 .iter()
                 .enumerate()
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(idx, _)| idx as u32)
-                .unwrap_or(eos_token);
+                .map_or(eos_token, |(idx, _)| idx as u32);
 
             tokens.push(next_token);
 
@@ -1347,7 +1347,7 @@ impl Decoder {
 
         for (idx, (&token, encoder_out)) in tokens.iter().zip(encoder_outputs.iter()).enumerate() {
             let item_cache = cache.get_cache_mut(idx).ok_or_else(|| {
-                WhisperError::Model(format!("cache index {} out of bounds", idx))
+                WhisperError::Model(format!("cache index {idx} out of bounds"))
             })?;
 
             let item_logits = self.forward_one(token, encoder_out, item_cache)?;
@@ -1394,7 +1394,7 @@ impl Decoder {
         // Prime the caches with initial tokens
         for (idx, tokens) in initial_tokens.iter().enumerate() {
             let item_cache = cache.get_cache_mut(idx).ok_or_else(|| {
-                WhisperError::Model(format!("cache index {} out of bounds", idx))
+                WhisperError::Model(format!("cache index {idx} out of bounds"))
             })?;
 
             for &token in tokens {
@@ -1428,8 +1428,7 @@ impl Decoder {
                     .iter()
                     .enumerate()
                     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                    .map(|(i, _)| i as u32)
-                    .unwrap_or(eos_token);
+                    .map_or(eos_token, |(i, _)| i as u32);
 
                 sequences[idx].push(next_token);
 
@@ -1444,6 +1443,7 @@ impl Decoder {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

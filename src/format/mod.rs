@@ -674,8 +674,7 @@ pub fn estimate_model_memory_mb(header: &AprHeader) -> u32 {
     let bytes_per_param = match header.quantization {
         Quantization::F32 => 4,
         Quantization::F16 => 2,
-        Quantization::Int8 => 1,
-        Quantization::Int4 => 1, // Actually 0.5, but we round up
+        Quantization::Int8 | Quantization::Int4 => 1, // Int4 is actually 0.5, but we round up
     };
 
     // Int4 is actually 0.5 bytes, so divide by 2 for that case

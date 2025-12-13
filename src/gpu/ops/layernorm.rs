@@ -204,6 +204,7 @@ pub struct GpuLayerNorm {
 
 impl GpuLayerNorm {
     /// Create a new layer norm operation
+    #[allow(clippy::items_after_statements)]
     pub fn new(config: LayerNormConfig) -> GpuResult<Self> {
         config.validate()?;
 
@@ -260,6 +261,7 @@ impl GpuLayerNorm {
 
     /// Generate WGSL shader for this operation
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn generate_shader(&self) -> String {
         let hidden_size = self.config.hidden_size;
         let workgroup_size = self.config.workgroup_size.min(hidden_size);
@@ -267,7 +269,7 @@ impl GpuLayerNorm {
         let is_rms = matches!(self.config.mode, LayerNormMode::RmsNorm);
 
         let compute_variance = if is_rms {
-            r#"
+            r"
     // Compute mean of squares (RMS norm)
     var local_sq_sum: f32 = 0.0;
     for (var i = tid; i < hidden_size; i = i + WORKGROUP_SIZE) {
@@ -287,9 +289,9 @@ impl GpuLayerNorm {
 
     let variance = partial_sum[0] / f32(hidden_size);
     let inv_std = 1.0 / sqrt(variance + params.epsilon);
-    let mean: f32 = 0.0;  // RMS norm doesn't center"#
+    let mean: f32 = 0.0;  // RMS norm doesn't center"
         } else {
-            r#"
+            r"
     // Compute mean
     var local_sum: f32 = 0.0;
     for (var i = tid; i < hidden_size; i = i + WORKGROUP_SIZE) {
@@ -327,7 +329,7 @@ impl GpuLayerNorm {
     }
 
     let variance = partial_sum[0] / f32(hidden_size);
-    let inv_std = 1.0 / sqrt(variance + params.epsilon);"#
+    let inv_std = 1.0 / sqrt(variance + params.epsilon);"
         };
 
         let normalize_expr = if self.config.use_scale && self.config.use_bias {
@@ -341,7 +343,7 @@ impl GpuLayerNorm {
         };
 
         format!(
-            r#"// {mode} shader
+            r"// {mode} shader
 // Batch: {batch}, Hidden: {hidden}
 // Epsilon: {eps}
 
@@ -379,7 +381,7 @@ fn main(
         {normalize_expr}
     }}
 }}
-"#,
+",
             mode = self.config.mode.description(),
             batch = self.config.batch_size,
             hidden = hidden_size,
@@ -392,7 +394,8 @@ fn main(
 }
 
 /// WGSL shader source for simple layer normalization
-pub const LAYERNORM_SHADER_SIMPLE: &str = r#"
+#[allow(dead_code)]
+pub const LAYERNORM_SHADER_SIMPLE: &str = r"
 struct Params {
     batch_size: u32,
     hidden_size: u32,
@@ -437,7 +440,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         output[row_offset + i] = gamma[i] * normalized + beta[i];
     }
 }
-"#;
+";
 
 #[cfg(test)]
 mod tests {

@@ -146,6 +146,7 @@ impl TokenAlignment {
     }
 
     /// Set attention weights
+    #[must_use]
     pub fn with_attention_weights(mut self, weights: Vec<f32>) -> Self {
         self.attention_weights = weights;
         self
@@ -171,8 +172,8 @@ impl WordAlignment {
     /// Create new word alignment
     #[must_use]
     pub fn new(word: String, tokens: Vec<TokenAlignment>) -> Self {
-        let start_time = tokens.first().map(|t| t.start_time).unwrap_or(0.0);
-        let end_time = tokens.last().map(|t| t.end_time).unwrap_or(0.0);
+        let start_time = tokens.first().map_or(0.0, |t| t.start_time);
+        let end_time = tokens.last().map_or(0.0, |t| t.end_time);
         let confidence = if tokens.is_empty() {
             0.0
         } else {
@@ -276,6 +277,7 @@ impl CrossAttentionAlignment {
     }
 
     /// Average attention weights across layers and heads
+    #[allow(clippy::unnecessary_wraps)]
     fn average_attention(
         &self,
         attention_weights: &[Vec<Vec<Vec<f32>>>],
@@ -327,12 +329,12 @@ impl CrossAttentionAlignment {
 
     /// Find peak attention frame
     fn find_peak(&self, attention: &[f32]) -> (usize, f32) {
+        let _ = self; // Method for consistency
         attention
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(idx, &val)| (idx, val))
-            .unwrap_or((0, 0.0))
+            .map_or((0, 0.0), |(idx, &val)| (idx, val))
     }
 
     /// Compute alignment confidence
@@ -359,7 +361,7 @@ impl CrossAttentionAlignment {
         let locality = local_sum / sum;
 
         // Combined confidence
-        (concentration * 0.5 + locality * 0.5).min(1.0)
+        concentration.mul_add(0.5, locality * 0.5).min(1.0)
     }
 }
 
@@ -416,6 +418,7 @@ impl WordTimestampExtractor {
         alignments: &[TokenAlignment],
         token_texts: &[String],
     ) -> Vec<WordAlignment> {
+        let _ = self; // Method for consistency
         let mut words = Vec::new();
         let mut current_word = String::new();
         let mut current_tokens: Vec<TokenAlignment> = Vec::new();
@@ -434,7 +437,7 @@ impl WordTimestampExtractor {
                 current_tokens.clear();
             }
 
-            current_word.push_str(text.trim_start_matches(|c| c == ' ' || c == '▁'));
+            current_word.push_str(text.trim_start_matches([' ', '▁']));
             current_tokens.push(alignment.clone());
         }
 

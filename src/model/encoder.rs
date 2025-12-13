@@ -180,7 +180,7 @@ impl ConvFrontend {
         // First conv: same length (stride 1, padding 1)
         let after_conv1 = input_len;
         // Second conv: halved (stride 2)
-        (after_conv1 + 2 * 1 - 3) / 2 + 1
+        (after_conv1 + 2 - 3) / 2 + 1
     }
 }
 
@@ -350,7 +350,7 @@ impl EncoderBlock {
 }
 
 /// Transformer encoder for audio features
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Encoder {
     /// Number of layers
     n_layers: usize,

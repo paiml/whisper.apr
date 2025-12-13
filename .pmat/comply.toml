@@ -12,14 +12,15 @@ phase4_complete = true
 phase5_complete = true
 
 [metrics]
-total_tickets = 100
-completed_tickets = 100
-completion_rate = 100.0
+total_tickets = 105
+completed_tickets = 103
+completion_rate = 98.1
 test_count = 1567
 line_coverage = 95.19
 property_tests = 19
 source_loc = 35000
 wasm_binary_kb = 668
+phase6_complete = false
 
 # v1.1 Roadmap: Extended Model Support
 # - medium and large model support
@@ -792,3 +793,57 @@ status = "complete"
 sprint = "sprint_41_42"
 files = ["src/wasm/vocabulary.rs"]
 tdd_phase = "green"
+
+# =============================================================================
+# v2.1 Production Demos (Phase 6)
+# =============================================================================
+
+[sprints.sprint_43_44]
+name = "Demo GREEN Phase & Probar Integration"
+status = "complete"
+tickets = ["WAPR-180", "WAPR-181", "WAPR-182"]
+deliverable = "Complete demo implementations with probar pixel testing"
+completion_date = "2025-12-13"
+
+[sprints.sprint_45_46]
+name = "Production Deployment & Verification"
+status = "pending"
+tickets = ["WAPR-183", "WAPR-184"]
+deliverable = "Deploy to production with full GUI/pixel test coverage"
+
+# v2.1 Tickets - Demo GREEN Phase
+
+[tickets.WAPR-180]
+description = "Complete GREEN phase for all 4 demos (realtime-transcription, upload-transcription, realtime-translation, upload-translation)"
+status = "complete"
+sprint = "sprint_43_44"
+files = ["demos/realtime-transcription/src/lib.rs", "demos/upload-transcription/src/lib.rs", "demos/realtime-translation/src/lib.rs", "demos/upload-translation/src/lib.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-181]
+description = "Add probar pixel testing suite (SSIM, PSNR, CIEDE2000 visual regression)"
+status = "complete"
+sprint = "sprint_43_44"
+files = ["demos/tests/pixel_tests.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-182]
+description = "Configure deployment packaging (build scripts for WASM packaging)"
+status = "complete"
+sprint = "sprint_43_44"
+files = ["demos/Makefile"]
+tdd_phase = "green"
+
+[tickets.WAPR-183]
+description = "Add probar GUI coverage tests (100% button, state, error path coverage)"
+status = "pending"
+sprint = "sprint_45_46"
+files = ["demos/tests/gui_coverage.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-184]
+description = "Production deployment and post-deploy verification"
+status = "pending"
+sprint = "sprint_45_46"
+files = ["demos/tests/e2e_production.rs"]
+tdd_phase = "pending"

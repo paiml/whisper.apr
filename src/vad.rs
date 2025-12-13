@@ -350,10 +350,8 @@ impl SilenceDetector {
     /// Get current silence duration (0 if not in silence)
     #[must_use]
     pub fn current_silence_duration(&self) -> f32 {
-        match self.silence_start {
-            Some(start) => self.current_time() - start,
-            None => 0.0,
-        }
+        self.silence_start
+            .map_or(0.0, |start| self.current_time() - start)
     }
 
     /// Reset detector state
@@ -377,7 +375,7 @@ impl SilenceDetector {
         }
 
         let threshold = if self.config.adaptive {
-            self.noise_floor * 2.0 + self.config.silence_threshold
+            self.noise_floor.mul_add(2.0, self.config.silence_threshold)
         } else {
             self.config.silence_threshold
         };
