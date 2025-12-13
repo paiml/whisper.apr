@@ -28,6 +28,7 @@ mod capabilities;
 mod detect;
 mod device;
 mod error;
+pub mod ops;
 mod pipeline;
 
 pub use buffer::{GpuBuffer, GpuBufferUsage};
