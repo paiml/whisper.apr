@@ -121,6 +121,7 @@ pub enum ShaderSourceType {
 
 impl ShaderModule {
     /// Create a new shader module
+    #[allow(clippy::items_after_statements)]
     pub fn new(descriptor: ShaderModuleDescriptor) -> GpuResult<Self> {
         descriptor.validate()?;
 
@@ -294,6 +295,7 @@ pub struct BindGroupLayout {
 
 impl BindGroupLayout {
     /// Create a new bind group layout
+    #[allow(clippy::items_after_statements)]
     pub fn new(descriptor: BindGroupLayoutDescriptor) -> GpuResult<Self> {
         descriptor.validate()?;
 
@@ -390,6 +392,7 @@ pub struct ComputePipeline {
 
 impl ComputePipeline {
     /// Create a new compute pipeline
+    #[allow(clippy::items_after_statements)]
     pub fn new(descriptor: ComputePipelineDescriptor) -> GpuResult<Self> {
         descriptor.validate()?;
 
@@ -521,7 +524,7 @@ impl ComputeDispatch {
     /// Create a 1D dispatch for N elements
     #[must_use]
     pub fn for_elements(pipeline_id: u64, elements: u32) -> Self {
-        let workgroups = (elements + DEFAULT_WORKGROUP_SIZE - 1) / DEFAULT_WORKGROUP_SIZE;
+        let workgroups = elements.div_ceil(DEFAULT_WORKGROUP_SIZE);
         Self {
             pipeline_id,
             workgroups: WorkgroupDimensions::new_1d(workgroups),
@@ -676,6 +679,7 @@ pub struct BindGroup {
 
 impl BindGroup {
     /// Create a new bind group
+    #[allow(clippy::items_after_statements)]
     pub fn new(descriptor: BindGroupDescriptor) -> GpuResult<Self> {
         descriptor.validate()?;
 

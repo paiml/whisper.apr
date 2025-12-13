@@ -4,7 +4,7 @@
 //! based on workload characteristics and available hardware.
 
 use super::traits::{BackendCapabilities, BackendType, ComputeOp};
-use crate::gpu::{detect_gpu, DetectionOptions, GpuCapabilities};
+use crate::gpu::{detect_gpu, DetectionOptions};
 
 /// Backend selection strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,17 +291,20 @@ impl BackendSelector {
     /// Get a summary of available backends
     #[must_use]
     pub fn summary(&self) -> String {
+        use std::fmt::Write;
         let mut s = format!("Backend Selector ({})\n", self.config.strategy.description());
-        s.push_str(&format!(
-            "  SIMD: parallelism={}, score={:.1}\n",
+        let _ = writeln!(
+            s,
+            "  SIMD: parallelism={}, score={:.1}",
             self.simd_caps.max_parallelism, self.simd_caps.performance_score
-        ));
+        );
 
         if let Some(gpu) = &self.gpu_caps {
-            s.push_str(&format!(
-                "  GPU: parallelism={}, score={:.1}, f16={}\n",
+            let _ = writeln!(
+                s,
+                "  GPU: parallelism={}, score={:.1}, f16={}",
                 gpu.max_parallelism, gpu.performance_score, gpu.supports_f16
-            ));
+            );
         } else {
             s.push_str("  GPU: not available\n");
         }
@@ -507,5 +510,70 @@ mod tests {
         let s = selection.to_string();
         assert!(s.contains("GPU"));
         assert!(s.contains("performance"));
+    }
+
+    // =========================================================================
+    // Additional Coverage Tests (WAPR-QA)
+    // =========================================================================
+
+    #[test]
+    fn test_selection_strategy_threshold_description() {
+        let strategy = SelectionStrategy::threshold(1_000_000);
+        assert_eq!(strategy.description(), "threshold-based");
+    }
+
+    #[test]
+    fn test_selector_config_prefer_gpu() {
+        let config = SelectorConfig::prefer_gpu();
+        assert_eq!(config.strategy, SelectionStrategy::PreferGpu);
+    }
+
+    #[test]
+    fn test_selector_config_prefer_simd() {
+        let config = SelectorConfig::prefer_simd();
+        assert_eq!(config.strategy, SelectionStrategy::PreferSimd);
+    }
+
+    #[test]
+    fn test_backend_selector_config_accessor() {
+        let selector = BackendSelector::default_config();
+        let config = selector.config();
+        assert_eq!(config.strategy, SelectionStrategy::Automatic);
+    }
+
+    #[test]
+    fn test_backend_selector_gpu_capabilities() {
+        let selector = BackendSelector::default_config();
+        // GPU may or may not be available, just check it doesn't panic
+        let _ = selector.gpu_capabilities();
+    }
+
+    #[test]
+    fn test_backend_selector_select_prefer_gpu_no_gpu() {
+        let selector = BackendSelector::new(SelectorConfig::prefer_gpu());
+        let op = MatMulOp::new(64, 128, 64);
+        let selection = selector.select(&op);
+        // Since GPU is likely not available in tests, should fall back
+        assert!(!selection.reason.is_empty());
+    }
+
+    #[test]
+    fn test_backend_selector_select_large_workload() {
+        let selector = BackendSelector::new(
+            SelectorConfig::default().with_gpu_threshold(100)
+        );
+        let op = MatMulOp::new(128, 256, 128); // Large workload
+        let selection = selector.select(&op);
+        // Just verify selection is made
+        assert!(!selection.reason.is_empty());
+    }
+
+    #[test]
+    fn test_backend_selection_backend_type() {
+        let gpu_selection = BackendSelection::gpu("test");
+        assert_eq!(gpu_selection.backend, BackendType::Gpu);
+
+        let simd_selection = BackendSelection::simd("test");
+        assert_eq!(simd_selection.backend, BackendType::Simd);
     }
 }

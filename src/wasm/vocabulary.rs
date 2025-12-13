@@ -1103,4 +1103,130 @@ mod tests {
         assert!((config.get_priority_multiplier() - 3.0).abs() < f32::EPSILON);
         assert!((config.get_max_boost() - 10.0).abs() < f32::EPSILON);
     }
+
+    // ============================================================
+    // Additional Coverage Tests
+    // ============================================================
+
+    #[test]
+    fn test_hotword_config_wasm_default_trait() {
+        let config = HotwordConfigWasm::default();
+        assert!((config.get_default_bias() - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_domain_adapter_wasm_technical() {
+        let adapter = DomainAdapterWasm::technical();
+        assert!(matches!(adapter.get_domain_type(), DomainTypeWasm::Technical));
+    }
+
+    #[test]
+    fn test_domain_adapter_wasm_financial() {
+        let adapter = DomainAdapterWasm::financial();
+        assert!(matches!(adapter.get_domain_type(), DomainTypeWasm::Financial));
+    }
+
+    #[test]
+    fn test_domain_adapter_wasm_scientific() {
+        let adapter = DomainAdapterWasm::scientific();
+        assert!(matches!(adapter.get_domain_type(), DomainTypeWasm::Scientific));
+    }
+
+    #[test]
+    fn test_domain_adapter_wasm_clear() {
+        let mut adapter = DomainAdapterWasm::custom();
+        adapter.add_term("test", &[100], 1.0);
+        assert_eq!(adapter.length(), 1);
+        adapter.clear();
+        assert_eq!(adapter.length(), 0);
+    }
+
+    #[test]
+    fn test_domain_type_wasm_variants() {
+        let variants = vec![
+            DomainTypeWasm::Medical,
+            DomainTypeWasm::Legal,
+            DomainTypeWasm::Technical,
+            DomainTypeWasm::Financial,
+            DomainTypeWasm::Scientific,
+            DomainTypeWasm::Custom,
+        ];
+        for variant in variants {
+            let debug_str = format!("{variant:?}");
+            assert!(!debug_str.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_vocabulary_trie_wasm_clear() {
+        let mut trie = VocabularyTrieWasm::new();
+        trie.insert(&[100], "test", 1.0);
+        assert_eq!(trie.length(), 1);
+        trie.clear();
+        assert!(trie.is_empty());
+    }
+
+    #[test]
+    fn test_trie_search_result_wasm_empty() {
+        let result = TrieSearchResult {
+            continuations: vec![],
+            is_complete: false,
+            text: None,
+            depth: 0,
+            matching_entries: 0,
+        };
+
+        let wasm_result: TrieSearchResultWasm = result.into();
+        assert!(!wasm_result.has_matches());
+        assert!(!wasm_result.is_complete());
+        assert!(wasm_result.text().is_none());
+    }
+
+    #[test]
+    fn test_vocabulary_customizer_wasm_domain_adapter() {
+        let mut customizer = VocabularyCustomizerWasm::new();
+        let adapter = DomainAdapterWasm::medical();
+        customizer.set_domain_adapter(adapter);
+        assert!(customizer.has_domain_adapter());
+    }
+
+    #[test]
+    fn test_vocabulary_customizer_wasm_vocabulary_trie() {
+        let mut customizer = VocabularyCustomizerWasm::new();
+        let trie = VocabularyTrieWasm::new();
+        customizer.set_vocabulary_trie(trie);
+        assert!(customizer.has_vocabulary_trie());
+    }
+
+    #[test]
+    fn test_hotword_booster_wasm_with_config() {
+        let config = HotwordConfigWasm::new();
+        let booster = HotwordBoosterWasm::with_config(&config);
+        assert!(booster.is_empty());
+    }
+
+    #[test]
+    fn test_domain_adapter_wasm_new_with_type() {
+        let adapter = DomainAdapterWasm::new(DomainTypeWasm::Medical);
+        assert!(matches!(adapter.get_domain_type(), DomainTypeWasm::Medical));
+    }
+
+    #[test]
+    fn test_hotword_booster_wasm_add_default() {
+        let mut booster = HotwordBoosterWasm::new();
+        booster.add_hotword_default("Claude", &[1, 2, 3]);
+        assert_eq!(booster.length(), 1);
+    }
+
+    #[test]
+    fn test_hotword_booster_wasm_get_completion() {
+        let mut booster = HotwordBoosterWasm::new();
+        booster.add_hotword("test", &[100, 101, 102], 5.0);
+
+        let tokens = booster.get_completion_tokens(&[100]);
+        let biases = booster.get_completion_biases(&[100]);
+
+        // May or may not have completions depending on internal state
+        assert_eq!(tokens.len(), biases.len());
+    }
 }

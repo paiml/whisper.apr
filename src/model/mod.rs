@@ -180,6 +180,7 @@ impl ModelConfig {
 
     /// Parameters in a self-attention block
     fn attention_block_params(&self, d_model: usize) -> usize {
+        let _ = self; // Method for consistency with other estimation methods
         // Self-attention: Q, K, V, O projections
         let attn = d_model * d_model * 4 + d_model * 4;
         // FFN: up projection, down projection
@@ -191,6 +192,7 @@ impl ModelConfig {
 
     /// Parameters for cross-attention
     fn cross_attention_params(&self, d_text: usize, d_audio: usize) -> usize {
+        let _ = self; // Method for consistency with other estimation methods
         // Cross-attention Q from text, K/V from audio
         let attn = d_text * d_text + d_audio * d_text * 2 + d_text * d_text + d_text * 4;
         // Layer norm
@@ -279,7 +281,7 @@ impl ModelConfig {
     #[must_use]
     pub fn recommended_wasm_pages(&self) -> u32 {
         let bytes = self.peak_memory_bytes();
-        let pages = (bytes + 65535) / 65536; // Round up
+        let pages = bytes.div_ceil(65536); // Round up
         let pages = pages.max(256); // Minimum 16MB
         pages as u32
     }

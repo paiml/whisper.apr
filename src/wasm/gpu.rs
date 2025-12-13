@@ -57,8 +57,9 @@ impl From<GpuBackend> for GpuBackendWasm {
             GpuBackend::Vulkan => Self::Vulkan,
             GpuBackend::Metal => Self::Metal,
             GpuBackend::Dx12 => Self::Dx12,
+            GpuBackend::Dx11 => Self::Gl, // Map Dx11 to Gl slot for WASM
+            GpuBackend::OpenGl => Self::Gl,
             GpuBackend::BrowserWebGpu => Self::BrowserWebGpu,
-            GpuBackend::Gl => Self::Gl,
             GpuBackend::None => Self::None,
         }
     }
@@ -71,7 +72,7 @@ impl From<GpuBackendWasm> for GpuBackend {
             GpuBackendWasm::Metal => Self::Metal,
             GpuBackendWasm::Dx12 => Self::Dx12,
             GpuBackendWasm::BrowserWebGpu => Self::BrowserWebGpu,
-            GpuBackendWasm::Gl => Self::Gl,
+            GpuBackendWasm::Gl => Self::OpenGl,
             GpuBackendWasm::None => Self::None,
         }
     }
@@ -259,9 +260,9 @@ impl From<GpuCapabilities> for GpuCapabilitiesWasm {
     fn from(caps: GpuCapabilities) -> Self {
         Self {
             backend: caps.backend.into(),
-            device_name: caps.device_name,
-            vendor_name: caps.vendor_name,
-            driver_info: caps.driver_info,
+            device_name: caps.name,
+            vendor_name: caps.vendor,
+            driver_info: String::new(), // Not available in native GpuCapabilities
             supports_f16: caps.supports_f16,
             supports_timestamp_query: caps.supports_timestamp_query,
             limits: caps.limits.into(),
@@ -303,7 +304,7 @@ impl GpuDetectionWasm {
             } else {
                 None
             },
-            error_message: result.error,
+            error_message: None, // GpuDetectionResult doesn't have an error field
         }
     }
 
@@ -917,6 +918,7 @@ mod tests {
             max_compute_workgroup_size_z: 64,
             max_compute_invocations_per_workgroup: 256,
             max_compute_workgroups_per_dimension: 65535,
+            max_bind_groups: 4,
         };
 
         let wasm: GpuLimitsWasm = native.into();
@@ -1235,5 +1237,158 @@ mod tests {
         assert_eq!(caps.vendor_name(), "Test Vendor");
         assert!(caps.supports_f16());
         assert!(caps.summary().contains("Test GPU"));
+    }
+
+    // =========================================================================
+    // Additional Coverage Tests
+    // =========================================================================
+
+    #[test]
+    fn test_gpu_limits_wasm_fields() {
+        let limits = GpuLimitsWasm {
+            max_buffer_size: 1024,
+            max_storage_buffer_binding_size: 512,
+            max_uniform_buffer_binding_size: 256,
+            max_compute_workgroup_size_x: 128,
+            max_compute_workgroup_size_y: 128,
+            max_compute_workgroup_size_z: 64,
+            max_compute_invocations_per_workgroup: 256,
+            max_compute_workgroups_per_dimension: 65535,
+        };
+
+        assert_eq!(limits.max_buffer_size, 1024);
+        assert_eq!(limits.max_storage_buffer_binding_size, 512);
+        assert_eq!(limits.max_uniform_buffer_binding_size, 256);
+        assert_eq!(limits.max_compute_workgroup_size_x, 128);
+        assert_eq!(limits.max_compute_workgroup_size_y, 128);
+        assert_eq!(limits.max_compute_workgroup_size_z, 64);
+        assert_eq!(limits.max_compute_invocations_per_workgroup, 256);
+        assert_eq!(limits.max_compute_workgroups_per_dimension, 65535);
+    }
+
+    #[test]
+    fn test_gpu_capabilities_wasm_all_backends() {
+        let backends = vec![
+            GpuBackendWasm::Vulkan,
+            GpuBackendWasm::Metal,
+            GpuBackendWasm::Dx12,
+            GpuBackendWasm::Gl,
+            GpuBackendWasm::BrowserWebGpu,
+            GpuBackendWasm::None,
+        ];
+
+        for backend in backends {
+            let caps = GpuCapabilitiesWasm {
+                backend,
+                device_name: "Test".to_string(),
+                vendor_name: "Vendor".to_string(),
+                driver_info: "1.0".to_string(),
+                supports_f16: false,
+                supports_timestamp_query: false,
+                limits: GpuLimitsWasm {
+                    max_buffer_size: 1024,
+                    max_storage_buffer_binding_size: 512,
+                    max_uniform_buffer_binding_size: 256,
+                    max_compute_workgroup_size_x: 64,
+                    max_compute_workgroup_size_y: 64,
+                    max_compute_workgroup_size_z: 64,
+                    max_compute_invocations_per_workgroup: 256,
+                    max_compute_workgroups_per_dimension: 65535,
+                },
+            };
+
+            let name = caps.backend_name();
+            assert!(!name.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_detection_options_wasm_timeout() {
+        let mut options = DetectionOptionsWasm::new();
+        options.set_timeout_ms(5000);
+        options.set_prefer_high_performance(true);
+        options.set_require_f16(true);
+
+        assert!(options.prefer_high_performance);
+        assert!(options.require_f16);
+    }
+
+    #[test]
+    fn test_backend_selector_wasm_with_config() {
+        let config = SelectorConfigWasm::new();
+        let selector = BackendSelectorWasm::new(config);
+
+        // Just verify creation succeeded
+        let simd_score = selector.simd_performance_score();
+        assert!(simd_score >= 0.0);
+    }
+
+    #[test]
+    fn test_recommended_backend_for_model_all_sizes() {
+        let sizes = vec!["tiny", "base", "small", "medium", "large"];
+
+        for size in sizes {
+            let rec = recommended_backend_for_model(size);
+            assert!(!rec.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_recommended_backend_for_model_unknown() {
+        // Unknown models default to tiny parameters (39M), so SIMD is recommended
+        let rec = recommended_backend_for_model("unknown");
+        assert!(rec.contains("SIMD"));
+    }
+
+    #[test]
+    fn test_gpu_backend_wasm_dx12_and_none_conversion() {
+        use super::GpuBackend;
+        // Test Dx12 to GpuBackendWasm conversion
+        let wasm: GpuBackendWasm = GpuBackend::Dx12.into();
+        assert_eq!(wasm, GpuBackendWasm::Dx12);
+
+        // Test Dx11 maps to Gl
+        let wasm2: GpuBackendWasm = GpuBackend::Dx11.into();
+        assert_eq!(wasm2, GpuBackendWasm::Gl);
+
+        // Test None conversion
+        let wasm3: GpuBackendWasm = GpuBackend::None.into();
+        assert_eq!(wasm3, GpuBackendWasm::None);
+    }
+
+    #[test]
+    fn test_gpu_backend_wasm_to_native_extra() {
+        use super::GpuBackend;
+        // Test Dx12 from wasm back to native
+        assert_eq!(GpuBackend::from(GpuBackendWasm::Dx12), GpuBackend::Dx12);
+        // Test Gl maps to OpenGl
+        assert_eq!(GpuBackend::from(GpuBackendWasm::Gl), GpuBackend::OpenGl);
+        // Test BrowserWebGpu
+        assert_eq!(
+            GpuBackend::from(GpuBackendWasm::BrowserWebGpu),
+            GpuBackend::BrowserWebGpu
+        );
+        // Test None
+        assert_eq!(GpuBackend::from(GpuBackendWasm::None), GpuBackend::None);
+    }
+
+    #[test]
+    fn test_gpu_limits_wasm_getters() {
+        let limits = GpuLimitsWasm {
+            max_buffer_size: 1024 * 1024,
+            max_storage_buffer_binding_size: 512,
+            max_uniform_buffer_binding_size: 256,
+            max_compute_workgroup_size_x: 128,
+            max_compute_workgroup_size_y: 64,
+            max_compute_workgroup_size_z: 32,
+            max_compute_invocations_per_workgroup: 512,
+            max_compute_workgroups_per_dimension: 65535,
+        };
+
+        // Test all getter methods
+        assert_eq!(limits.max_compute_workgroup_size_y(), 64);
+        assert_eq!(limits.max_compute_workgroup_size_z(), 32);
+        assert_eq!(limits.max_compute_invocations_per_workgroup(), 512);
+        assert_eq!(limits.max_compute_workgroups_per_dimension(), 65535);
     }
 }

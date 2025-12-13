@@ -311,6 +311,7 @@ impl MelFilterbank {
     }
 
     /// Scalar mel filterbank application (fallback)
+    #[allow(clippy::needless_range_loop)]
     fn apply_filterbank_scalar(&self, power_spec: &[f32]) -> Vec<f32> {
         let mut mel_energies = vec![0.0_f32; self.n_mels];
 

@@ -143,6 +143,7 @@ impl GpuDevice {
     }
 
     /// Detect GPU capabilities without creating a device
+    #[allow(clippy::unnecessary_wraps)]
     fn detect_capabilities() -> GpuResult<GpuCapabilities> {
         // In non-webgpu builds, return unavailable
         #[cfg(not(feature = "webgpu"))]

@@ -1352,8 +1352,11 @@ impl LowLatencyConfigWasm {
         self.inner.input_sample_rate = rate;
         self
     }
+}
 
+impl LowLatencyConfigWasm {
     /// Convert to StreamingConfig for internal use
+    #[must_use]
     pub fn into_streaming_config(self) -> StreamingConfig {
         self.inner
     }
@@ -1746,6 +1749,7 @@ impl StreamingSessionWasm {
             enable_vad: config.enable_vad,
             vad_threshold: config.vad_threshold,
             min_speech_duration_ms: 300,
+            latency_mode: crate::audio::LatencyMode::Standard,
         };
         let mut processor = StreamingProcessor::new(streaming_config);
         processor.set_partial_threshold(config.partial_threshold);
@@ -2201,5 +2205,347 @@ mod streaming_tests {
     fn test_expected_latency_for_chunk_ms() {
         let latency = expected_latency_for_chunk_ms(500);
         assert!((latency - 550.0).abs() < 1.0); // 500 + 50ms overhead
+    }
+
+    // =========================================================================
+    // WhisperAprWasm Tests
+    // =========================================================================
+
+    #[test]
+    fn test_whisper_wasm_tiny() {
+        let whisper = WhisperAprWasm::tiny();
+        assert_eq!(whisper.model_type(), "Tiny");
+        assert!(whisper.memory_size() > 0);
+    }
+
+    #[test]
+    fn test_whisper_wasm_base() {
+        let whisper = WhisperAprWasm::base();
+        assert_eq!(whisper.model_type(), "Base");
+        assert!(whisper.memory_size() > 0);
+    }
+
+    #[test]
+    fn test_whisper_wasm_new_tiny() {
+        let whisper = WhisperAprWasm::new("tiny").expect("should create tiny model");
+        assert_eq!(whisper.model_type(), "Tiny");
+    }
+
+    #[test]
+    fn test_whisper_wasm_new_base() {
+        let whisper = WhisperAprWasm::new("base").expect("should create base model");
+        assert_eq!(whisper.model_type(), "Base");
+    }
+
+    #[test]
+    fn test_whisper_wasm_new_small() {
+        let whisper = WhisperAprWasm::new("small").expect("should create small model");
+        assert_eq!(whisper.model_type(), "Small");
+    }
+
+    #[test]
+    fn test_whisper_wasm_new_medium() {
+        let whisper = WhisperAprWasm::new("medium").expect("should create medium model");
+        assert_eq!(whisper.model_type(), "Medium");
+    }
+
+    #[test]
+    fn test_whisper_wasm_new_large() {
+        let whisper = WhisperAprWasm::new("large").expect("should create large model");
+        assert_eq!(whisper.model_type(), "Large");
+    }
+
+    // Note: test_whisper_wasm_new_invalid removed because JsValue error handling
+    // doesn't work in non-WASM test context
+
+    #[test]
+    fn test_whisper_wasm_memory_methods() {
+        let whisper = WhisperAprWasm::tiny();
+
+        let weights_mb = whisper.weights_memory_mb();
+        assert!(weights_mb > 0.0);
+
+        let peak_mb = whisper.peak_memory_mb();
+        assert!(peak_mb >= weights_mb);
+
+        let wasm_pages = whisper.recommended_wasm_pages();
+        assert!(wasm_pages > 0);
+
+        let param_count = whisper.parameter_count();
+        assert!(param_count > 0);
+
+        let vocab_size = whisper.vocab_size();
+        assert!(vocab_size > 0);
+    }
+
+    #[test]
+    fn test_whisper_wasm_resample_passthrough() {
+        let whisper = WhisperAprWasm::tiny();
+        let audio: Vec<f32> = vec![0.1, 0.2, 0.3, 0.4];
+
+        // 16kHz to 16kHz should passthrough
+        let result = whisper.resample(&audio, 16000).expect("should passthrough");
+        assert_eq!(result.len(), audio.len());
+    }
+
+    #[test]
+    fn test_whisper_wasm_resample_downsample() {
+        let whisper = WhisperAprWasm::tiny();
+        // Generate some audio at 48kHz
+        let audio: Vec<f32> = (0..4800).map(|i| (i as f32 / 4800.0 * 2.0 * std::f32::consts::PI).sin() * 0.5).collect();
+
+        let result = whisper.resample(&audio, 48000).expect("should resample");
+        // Downsampling 48kHz to 16kHz should reduce samples by factor of 3
+        assert!(result.len() < audio.len());
+    }
+
+    // =========================================================================
+    // StreamingConfigWasm Additional Tests
+    // =========================================================================
+
+    #[test]
+    fn test_streaming_config_into_native() {
+        let mut config = StreamingConfigWasm::new();
+        config.set_chunk_duration(25.0);
+        config.set_chunk_overlap(2.0);
+        config.set_partial_threshold(4.0);
+        config.set_enable_vad(false);
+        config.set_vad_threshold(0.5);
+
+        let native: StreamingConfig = config.into();
+        // Verify the config was converted (we can't easily inspect all fields but the conversion should work)
+        assert!(native.chunk_duration > 0.0);
+    }
+
+    #[test]
+    fn test_streaming_config_getters() {
+        let mut config = StreamingConfigWasm::new();
+        config.set_input_sample_rate(48000);
+        config.set_chunk_duration(25.0);
+        config.set_partial_threshold(5.0);
+
+        assert_eq!(config.input_sample_rate(), 48000);
+        assert!((config.chunk_duration() - 25.0).abs() < f32::EPSILON);
+        assert!((config.partial_threshold() - 5.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_streaming_config_default() {
+        let config = StreamingConfigWasm::default();
+        assert_eq!(config.input_sample_rate(), 44100);
+        assert!((config.chunk_duration() - 30.0).abs() < f32::EPSILON);
+    }
+
+    // =========================================================================
+    // PartialTranscriptionResultWasm Additional Tests
+    // =========================================================================
+
+    #[test]
+    fn test_partial_result_empty() {
+        let native = PartialTranscriptionResult {
+            text: String::new(),
+            language: "en".to_string(),
+            is_final: false,
+            confidence: 0.0,
+            duration_secs: 0.0,
+            processing_time_secs: 0.0,
+        };
+
+        let wasm: PartialTranscriptionResultWasm = native.into();
+        assert!(wasm.text().is_empty());
+        assert_eq!(wasm.language(), "en");
+        assert!(!wasm.is_final());
+        assert!(!wasm.has_text());
+    }
+
+    #[test]
+    fn test_partial_result_with_text() {
+        let native = PartialTranscriptionResult {
+            text: "Final text".to_string(),
+            language: "es".to_string(),
+            is_final: true,
+            confidence: 0.95,
+            duration_secs: 5.0,
+            processing_time_secs: 1.0,
+        };
+
+        let wasm: PartialTranscriptionResultWasm = native.into();
+        assert_eq!(wasm.text(), "Final text");
+        assert_eq!(wasm.language(), "es");
+        assert!(wasm.is_final());
+        assert!(wasm.has_text());
+        assert!((wasm.confidence() - 0.95).abs() < f32::EPSILON);
+        assert!((wasm.duration_secs() - 5.0).abs() < f32::EPSILON);
+        assert!((wasm.processing_time_secs() - 1.0).abs() < f32::EPSILON);
+    }
+
+    // =========================================================================
+    // Model Memory Info Extended Tests
+    // =========================================================================
+
+    #[test]
+    fn test_model_memory_info_small() {
+        let info = ModelMemoryInfo::for_model("small");
+        assert!(info.is_some());
+        let info = info.expect("small model info");
+        assert_eq!(info.model_type(), "small");
+        assert!(info.weights_mb() > 0.0);
+    }
+
+    #[test]
+    fn test_model_memory_info_medium() {
+        let info = ModelMemoryInfo::for_model("medium");
+        assert!(info.is_some());
+        let info = info.expect("medium model info");
+        assert_eq!(info.model_type(), "medium");
+        assert!(info.weights_mb() > 0.0);
+    }
+
+    #[test]
+    fn test_model_memory_info_large() {
+        let info = ModelMemoryInfo::for_model("large");
+        assert!(info.is_some());
+        let info = info.expect("large model info");
+        assert_eq!(info.model_type(), "large");
+        assert!(info.weights_mb() > 0.0);
+    }
+
+    #[test]
+    fn test_model_memory_info_hierarchy() {
+        let tiny = ModelMemoryInfo::for_model("tiny").expect("tiny");
+        let base = ModelMemoryInfo::for_model("base").expect("base");
+        let small = ModelMemoryInfo::for_model("small").expect("small");
+
+        // Each larger model should have more parameters
+        assert!(base.parameters() > tiny.parameters());
+        assert!(small.parameters() > base.parameters());
+    }
+
+    // =========================================================================
+    // StreamingEventWasm From Implementation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_streaming_event_wasm_speech_end() {
+        use crate::audio::StreamingEvent;
+        let event: StreamingEventWasm = StreamingEvent::SpeechEnd.into();
+        assert_eq!(event.event_type(), StreamingEventTypeWasm::SpeechEnd);
+    }
+
+    #[test]
+    fn test_streaming_event_wasm_chunk_ready() {
+        use crate::audio::StreamingEvent;
+        let event: StreamingEventWasm = StreamingEvent::ChunkReady { duration_secs: 10.0 }.into();
+        assert_eq!(event.event_type(), StreamingEventTypeWasm::ChunkReady);
+        assert!((event.duration_secs().unwrap_or(0.0) - 10.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_streaming_event_wasm_processing_started() {
+        use crate::audio::StreamingEvent;
+        let event: StreamingEventWasm = StreamingEvent::ProcessingStarted.into();
+        assert_eq!(event.event_type(), StreamingEventTypeWasm::ProcessingStarted);
+    }
+
+    #[test]
+    fn test_streaming_event_wasm_processing_completed() {
+        use crate::audio::StreamingEvent;
+        let event: StreamingEventWasm = StreamingEvent::ProcessingCompleted.into();
+        assert_eq!(event.event_type(), StreamingEventTypeWasm::ProcessingCompleted);
+    }
+
+    #[test]
+    fn test_streaming_event_wasm_reset() {
+        use crate::audio::StreamingEvent;
+        let event: StreamingEventWasm = StreamingEvent::Reset.into();
+        assert_eq!(event.event_type(), StreamingEventTypeWasm::Reset);
+    }
+
+    // =========================================================================
+    // ProcessorStateWasm From Implementation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_processor_state_wasm_partial_result_ready() {
+        use crate::audio::ProcessorState;
+        let state: ProcessorStateWasm = ProcessorState::PartialResultReady.into();
+        assert_eq!(state, ProcessorStateWasm::PartialResultReady);
+    }
+
+    #[test]
+    fn test_processor_state_wasm_processing() {
+        use crate::audio::ProcessorState;
+        let state: ProcessorStateWasm = ProcessorState::Processing.into();
+        assert_eq!(state, ProcessorStateWasm::Processing);
+    }
+
+    #[test]
+    fn test_processor_state_wasm_error() {
+        use crate::audio::ProcessorState;
+        let state: ProcessorStateWasm = ProcessorState::Error.into();
+        assert_eq!(state, ProcessorStateWasm::Error);
+    }
+
+    // =========================================================================
+    // WhisperAprWasm Config Getter Tests
+    // =========================================================================
+
+    #[test]
+    fn test_whisper_apr_wasm_can_run_with_memory() {
+        let whisper = WhisperAprWasm::tiny();
+        // Tiny model should be able to run with 512MB
+        assert!(whisper.can_run_with_memory(512));
+        // Should not be able to run with 10MB
+        assert!(!whisper.can_run_with_memory(10));
+    }
+
+    #[test]
+    fn test_whisper_apr_wasm_memory_summary() {
+        let whisper = WhisperAprWasm::tiny();
+        let summary = whisper.memory_summary();
+        assert!(!summary.is_empty());
+        assert!(summary.contains("MB"));
+    }
+
+    #[test]
+    fn test_whisper_apr_wasm_parameter_count() {
+        let whisper = WhisperAprWasm::tiny();
+        let params = whisper.parameter_count();
+        // Tiny model has ~39M params
+        assert!(params > 30_000_000);
+    }
+
+    #[test]
+    fn test_whisper_apr_wasm_vocab_size() {
+        let whisper = WhisperAprWasm::tiny();
+        let vocab = whisper.vocab_size();
+        // Whisper has 51865 tokens
+        assert_eq!(vocab, 51865);
+    }
+
+    #[test]
+    fn test_whisper_apr_wasm_context_lengths() {
+        let whisper = WhisperAprWasm::tiny();
+        assert!(whisper.audio_context_length() > 0);
+        assert!(whisper.text_context_length() > 0);
+    }
+
+    #[test]
+    fn test_whisper_apr_wasm_layer_counts() {
+        let whisper = WhisperAprWasm::tiny();
+        assert!(whisper.encoder_layer_count() > 0);
+        assert!(whisper.decoder_layer_count() > 0);
+    }
+
+    #[test]
+    fn test_model_memory_info_peak_mb() {
+        let info = ModelMemoryInfo::for_model("tiny").expect("tiny model");
+        assert!(info.peak_mb() > info.weights_mb());
+    }
+
+    #[test]
+    fn test_model_memory_info_wasm_pages() {
+        let info = ModelMemoryInfo::for_model("tiny").expect("tiny model");
+        assert!(info.wasm_pages() > 0);
     }
 }

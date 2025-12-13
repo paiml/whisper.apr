@@ -5,6 +5,7 @@ members = [
     "upload-transcription",
     "realtime-translation",
     "upload-translation",
+    "tests",
 ]
 
 [workspace.package]

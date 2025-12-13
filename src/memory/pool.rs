@@ -97,6 +97,10 @@ impl PooledBuffer {
     }
 
     /// Set the logical length (must be <= capacity)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `len` exceeds capacity.
     pub fn set_len(&mut self, len: usize) {
         assert!(len <= self.capacity(), "length exceeds capacity");
         self.len = len;
@@ -123,6 +127,10 @@ impl PooledBuffer {
     }
 
     /// Copy data from a slice
+    ///
+    /// # Panics
+    ///
+    /// Panics if source slice is larger than capacity.
     pub fn copy_from_slice(&mut self, src: &[f32]) {
         assert!(src.len() <= self.capacity(), "source too large");
         self.data[..src.len()].copy_from_slice(src);

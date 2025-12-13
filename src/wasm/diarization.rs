@@ -141,9 +141,12 @@ impl Default for DiarizationConfigWasm {
 
 impl From<DiarizationConfigWasm> for DiarizationConfig {
     fn from(wasm: DiarizationConfigWasm) -> Self {
-        DiarizationConfig::default()
-            .with_max_speakers(wasm.max_speakers)
-            .with_min_segment_duration(wasm.min_segment_duration)
+        let mut config = DiarizationConfig::default()
+            .with_min_segment_duration(wasm.min_segment_duration);
+        if let Some(max) = wasm.max_speakers {
+            config = config.with_max_speakers(max);
+        }
+        config
     }
 }
 
@@ -812,7 +815,7 @@ mod tests {
         assert!(meeting.contains("forAccuracy"));
 
         let call = get_diarization_recommendation("call");
-        assert!(meeting.contains("speakers"));
+        assert!(call.contains("speakers"));
 
         let realtime = get_diarization_recommendation("realtime");
         assert!(realtime.contains("forRealtime"));
@@ -837,5 +840,575 @@ mod tests {
     #[test]
     fn test_turn_detector_wasm_new() {
         let _detector = TurnDetectorWasm::new();
+    }
+
+    // =========================================================================
+    // Additional Coverage Tests (WAPR-QA)
+    // =========================================================================
+
+    #[test]
+    fn test_diarization_config_wasm_embedding_dim() {
+        let mut config = DiarizationConfigWasm::new();
+        config.set_embedding_dim(128);
+        assert_eq!(config.embedding_dim, 128);
+    }
+
+    #[test]
+    fn test_diarization_config_wasm_clustering_threshold() {
+        let mut config = DiarizationConfigWasm::new();
+        config.set_clustering_threshold(0.7);
+        assert!((config.clustering_threshold - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_diarization_config_wasm_default_trait() {
+        let config = DiarizationConfigWasm::default();
+        assert!(config.max_speakers.is_none());
+    }
+
+    #[test]
+    fn test_diarization_config_wasm_to_native() {
+        let mut wasm_config = DiarizationConfigWasm::new();
+        wasm_config.set_max_speakers(Some(3));
+        wasm_config.set_min_segment_duration(0.5);
+
+        let native: DiarizationConfig = wasm_config.into();
+        assert_eq!(native.max_speakers, Some(3));
+        assert!((native.min_segment_duration - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_speaker_embedding_wasm_getters() {
+        let emb = SpeakerEmbeddingWasm {
+            vector: vec![0.5, 0.5, 0.0],
+            speaker_id: 2,
+            confidence: 0.95,
+        };
+
+        assert_eq!(emb.speaker_id(), 2);
+        assert!((emb.confidence() - 0.95).abs() < f32::EPSILON);
+        assert_eq!(emb.vector.len(), 3);
+    }
+
+    #[test]
+    fn test_speaker_embedding_wasm_vector_access() {
+        let emb = SpeakerEmbeddingWasm {
+            vector: vec![1.0, 2.0, 3.0],
+            speaker_id: 0,
+            confidence: 1.0,
+        };
+
+        let vec = emb.vector();
+        assert_eq!(vec.len(), 3);
+        assert!((vec[0] - 1.0).abs() < f32::EPSILON);
+        assert!((vec[2] - 3.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_speaker_embedding_wasm_cosine_similarity_same() {
+        let emb1 = SpeakerEmbeddingWasm {
+            vector: vec![1.0, 0.0, 0.0],
+            speaker_id: 0,
+            confidence: 1.0,
+        };
+        let emb2 = SpeakerEmbeddingWasm {
+            vector: vec![1.0, 0.0, 0.0],
+            speaker_id: 1,
+            confidence: 1.0,
+        };
+
+        // Identical vectors should have similarity 1.0
+        let similarity = emb1.cosine_similarity(&emb2);
+        assert!((similarity - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_speaker_embedding_wasm_cosine_similarity_orthogonal() {
+        let emb1 = SpeakerEmbeddingWasm {
+            vector: vec![1.0, 0.0, 0.0],
+            speaker_id: 0,
+            confidence: 1.0,
+        };
+        let emb2 = SpeakerEmbeddingWasm {
+            vector: vec![0.0, 1.0, 0.0],
+            speaker_id: 1,
+            confidence: 1.0,
+        };
+
+        // Orthogonal vectors should have similarity 0.0
+        let similarity = emb1.cosine_similarity(&emb2);
+        assert!((similarity - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_getters() {
+        let result = DiarizationResultWasm {
+            segments: vec![
+                SpeakerSegmentWasm {
+                    speaker_id: 0,
+                    start: 0.0,
+                    end: 1.0,
+                    confidence: 0.9,
+                },
+                SpeakerSegmentWasm {
+                    speaker_id: 1,
+                    start: 1.0,
+                    end: 2.0,
+                    confidence: 0.85,
+                },
+            ],
+            speaker_embeddings: vec![],
+            speaker_count: 2,
+            total_duration: 2.0,
+        };
+
+        assert_eq!(result.speaker_count(), 2);
+        assert_eq!(result.segment_count(), 2);
+        assert!((result.total_duration() - 2.0).abs() < f32::EPSILON);
+        assert!(result.segment_count() > 0);
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_empty() {
+        let result = DiarizationResultWasm {
+            segments: vec![],
+            speaker_embeddings: vec![],
+            speaker_count: 0,
+            total_duration: 0.0,
+        };
+
+        assert_eq!(result.segment_count(), 0);
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_get_segment() {
+        let result = DiarizationResultWasm {
+            segments: vec![
+                SpeakerSegmentWasm {
+                    speaker_id: 0,
+                    start: 0.0,
+                    end: 1.0,
+                    confidence: 0.9,
+                },
+            ],
+            speaker_embeddings: vec![],
+            speaker_count: 1,
+            total_duration: 1.0,
+        };
+
+        let seg = result.get_segment(0);
+        assert!(seg.is_some());
+        let seg = seg.expect("should have segment");
+        assert_eq!(seg.speaker_id(), 0);
+
+        assert!(result.get_segment(1).is_none());
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_segments_for_speaker() {
+        let result = DiarizationResultWasm {
+            segments: vec![
+                SpeakerSegmentWasm {
+                    speaker_id: 0,
+                    start: 0.0,
+                    end: 1.0,
+                    confidence: 0.9,
+                },
+                SpeakerSegmentWasm {
+                    speaker_id: 1,
+                    start: 1.0,
+                    end: 2.0,
+                    confidence: 0.85,
+                },
+                SpeakerSegmentWasm {
+                    speaker_id: 0,
+                    start: 2.0,
+                    end: 3.0,
+                    confidence: 0.88,
+                },
+            ],
+            speaker_embeddings: vec![],
+            speaker_count: 2,
+            total_duration: 3.0,
+        };
+
+        let speaker0_segs = result.get_segments_for_speaker(0);
+        assert_eq!(speaker0_segs.len(), 2);
+
+        let speaker1_segs = result.get_segments_for_speaker(1);
+        assert_eq!(speaker1_segs.len(), 1);
+
+        let speaker2_segs = result.get_segments_for_speaker(2);
+        assert!(speaker2_segs.is_empty());
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_speaking_time_no_speaker() {
+        let result = DiarizationResultWasm {
+            segments: vec![],
+            speaker_embeddings: vec![],
+            speaker_count: 0,
+            total_duration: 1.0,
+        };
+
+        assert!((result.get_speaking_time(0) - 0.0).abs() < f32::EPSILON);
+        assert!((result.get_speaking_percentage(0) - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_get_diarization_recommendation_all_cases() {
+        let meeting = get_diarization_recommendation("meeting");
+        assert!(meeting.contains("forAccuracy"));
+
+        let conference = get_diarization_recommendation("conference");
+        assert!(conference.contains("forAccuracy"));
+
+        let interview = get_diarization_recommendation("interview");
+        assert!(interview.contains("forAccuracy"));
+
+        let podcast = get_diarization_recommendation("podcast");
+        assert!(podcast.contains("4 speakers"));
+
+        let dialogue = get_diarization_recommendation("dialogue");
+        assert!(dialogue.contains("4 speakers"));
+
+        let conversation = get_diarization_recommendation("conversation");
+        assert!(conversation.contains("4 speakers"));
+
+        let call = get_diarization_recommendation("call");
+        assert!(call.contains("2 speakers"));
+
+        let phone = get_diarization_recommendation("phone");
+        assert!(phone.contains("2 speakers"));
+
+        let telephony = get_diarization_recommendation("telephony");
+        assert!(telephony.contains("2 speakers"));
+
+        let realtime = get_diarization_recommendation("realtime");
+        assert!(realtime.contains("forRealtime"));
+
+        let live = get_diarization_recommendation("live");
+        assert!(live.contains("forRealtime"));
+
+        let streaming = get_diarization_recommendation("streaming");
+        assert!(streaming.contains("forRealtime"));
+
+        let unknown = get_diarization_recommendation("unknown_case");
+        assert!(unknown.contains("Unknown use case"));
+    }
+
+    #[test]
+    fn test_embedding_extractor_wasm_default() {
+        let extractor = EmbeddingExtractorWasm::default();
+        // Just verify it's created successfully
+        drop(extractor);
+    }
+
+    #[test]
+    fn test_turn_detector_wasm_default() {
+        let detector = TurnDetectorWasm::default();
+        // Just verify it's created successfully
+        drop(detector);
+    }
+
+    // ============================================================
+    // Additional Coverage Tests
+    // ============================================================
+
+    #[test]
+    fn test_speaker_segment_wasm_duration() {
+        let segment = SpeakerSegmentWasm {
+            speaker_id: 0,
+            start: 0.0,
+            end: 2.5,
+            confidence: 0.8,
+        };
+
+        assert!((segment.duration() - 2.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_speaker_embedding_wasm_vector() {
+        let embedding = SpeakerEmbeddingWasm {
+            speaker_id: 0,
+            vector: vec![0.1; 256],
+            confidence: 0.9,
+        };
+
+        assert_eq!(embedding.vector().len(), 256);
+    }
+
+    #[test]
+    fn test_diarization_config_wasm_all_setters() {
+        let mut config = DiarizationConfigWasm::new();
+
+        // Test all setters
+        config.set_min_segment_duration(0.5);
+        config.set_max_speakers(Some(10));
+        config.set_embedding_dim(128);
+        config.set_clustering_threshold(0.6);
+
+        // Test getters
+        assert!((config.min_segment_duration() - 0.5).abs() < f32::EPSILON);
+        assert_eq!(config.max_speakers(), Some(10));
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_total_duration() {
+        let result = DiarizationResultWasm {
+            segments: vec![],
+            speaker_embeddings: vec![],
+            speaker_count: 2,
+            total_duration: 10.5,
+        };
+
+        assert!((result.total_duration() - 10.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_speaker_count() {
+        let result = DiarizationResultWasm {
+            segments: vec![],
+            speaker_embeddings: vec![],
+            speaker_count: 5,
+            total_duration: 60.0,
+        };
+
+        assert_eq!(result.speaker_count(), 5);
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_get_segment_out_of_bounds() {
+        let result = DiarizationResultWasm {
+            segments: vec![],
+            speaker_embeddings: vec![],
+            speaker_count: 0,
+            total_duration: 1.0,
+        };
+
+        assert!(result.get_segment(0).is_none());
+        assert!(result.get_segment(100).is_none());
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_get_speaker_embedding_out_of_bounds() {
+        let result = DiarizationResultWasm {
+            segments: vec![],
+            speaker_embeddings: vec![],
+            speaker_count: 0,
+            total_duration: 1.0,
+        };
+
+        assert!(result.get_speaker_embedding(0).is_none());
+        assert!(result.get_speaker_embedding(10).is_none());
+    }
+
+    // =========================================================================
+    // Additional Coverage Tests
+    // =========================================================================
+
+    #[test]
+    fn test_diarizer_wasm_for_realtime() {
+        let diarizer = DiarizerWasm::for_realtime();
+        assert!(std::mem::size_of_val(&diarizer) > 0);
+    }
+
+    #[test]
+    fn test_diarizer_wasm_for_accuracy() {
+        let diarizer = DiarizerWasm::for_accuracy();
+        assert!(std::mem::size_of_val(&diarizer) > 0);
+    }
+
+    #[test]
+    fn test_diarizer_wasm_default() {
+        let diarizer = DiarizerWasm::default();
+        assert!(std::mem::size_of_val(&diarizer) > 0);
+    }
+
+    #[test]
+    fn test_embedding_extractor_wasm_new_method() {
+        let extractor = EmbeddingExtractorWasm::new();
+        assert!(std::mem::size_of_val(&extractor) > 0);
+    }
+
+    #[test]
+    fn test_turn_detector_wasm_new_method() {
+        let detector = TurnDetectorWasm::new();
+        assert!(std::mem::size_of_val(&detector) > 0);
+    }
+
+    #[test]
+    fn test_speaker_segment_wasm_from_native() {
+        let native = SpeakerSegment::new(1, 0.5, 1.5, 0.9);
+        let wasm: SpeakerSegmentWasm = native.into();
+        assert!((wasm.start() - 0.5).abs() < f32::EPSILON);
+        assert!((wasm.end() - 1.5).abs() < f32::EPSILON);
+        assert_eq!(wasm.speaker_id(), 1);
+    }
+
+    #[test]
+    fn test_speaker_embedding_wasm_from_native() {
+        let native = SpeakerEmbedding::new(vec![0.1, 0.2, 0.3], 2);
+        let wasm: SpeakerEmbeddingWasm = native.into();
+        assert_eq!(wasm.speaker_id(), 2);
+        assert_eq!(wasm.vector().len(), 3);
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_segment_count() {
+        let result = DiarizationResultWasm {
+            segments: vec![
+                SpeakerSegmentWasm {
+                    speaker_id: 0,
+                    start: 0.0,
+                    end: 1.0,
+                    confidence: 1.0,
+                },
+            ],
+            speaker_embeddings: vec![],
+            speaker_count: 1,
+            total_duration: 1.0,
+        };
+        assert_eq!(result.segment_count(), 1);
+    }
+
+    #[test]
+    fn test_speaker_embedding_wasm_dim() {
+        let emb = SpeakerEmbeddingWasm {
+            vector: vec![1.0, 2.0, 3.0, 4.0],
+            speaker_id: 0,
+            confidence: 0.9,
+        };
+        assert_eq!(emb.dim(), 4);
+    }
+
+    #[test]
+    fn test_speaker_embedding_wasm_cosine_similarity_mismatched_dims() {
+        let emb1 = SpeakerEmbeddingWasm {
+            vector: vec![1.0, 2.0, 3.0],
+            speaker_id: 0,
+            confidence: 0.9,
+        };
+        let emb2 = SpeakerEmbeddingWasm {
+            vector: vec![1.0, 2.0],
+            speaker_id: 1,
+            confidence: 0.9,
+        };
+        assert_eq!(emb1.cosine_similarity(&emb2), 0.0);
+    }
+
+    #[test]
+    fn test_speaker_embedding_wasm_cosine_similarity_zero_norm() {
+        let emb1 = SpeakerEmbeddingWasm {
+            vector: vec![0.0, 0.0, 0.0],
+            speaker_id: 0,
+            confidence: 0.9,
+        };
+        let emb2 = SpeakerEmbeddingWasm {
+            vector: vec![1.0, 2.0, 3.0],
+            speaker_id: 1,
+            confidence: 0.9,
+        };
+        assert_eq!(emb1.cosine_similarity(&emb2), 0.0);
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_get_speaking_percentage_zero_duration() {
+        let result = DiarizationResultWasm {
+            segments: vec![],
+            speaker_embeddings: vec![],
+            speaker_count: 0,
+            total_duration: 0.0,
+        };
+        assert_eq!(result.get_speaking_percentage(0), 0.0);
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_segment_starts() {
+        let result = DiarizationResultWasm {
+            segments: vec![
+                SpeakerSegmentWasm { speaker_id: 0, start: 0.0, end: 1.0, confidence: 1.0 },
+                SpeakerSegmentWasm { speaker_id: 1, start: 1.0, end: 2.5, confidence: 0.9 },
+            ],
+            speaker_embeddings: vec![],
+            speaker_count: 2,
+            total_duration: 2.5,
+        };
+        let starts = result.segment_starts();
+        assert_eq!(starts.len(), 2);
+        assert!((starts[0] - 0.0).abs() < f32::EPSILON);
+        assert!((starts[1] - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_segment_ends() {
+        let result = DiarizationResultWasm {
+            segments: vec![
+                SpeakerSegmentWasm { speaker_id: 0, start: 0.0, end: 1.0, confidence: 1.0 },
+                SpeakerSegmentWasm { speaker_id: 1, start: 1.0, end: 2.5, confidence: 0.9 },
+            ],
+            speaker_embeddings: vec![],
+            speaker_count: 2,
+            total_duration: 2.5,
+        };
+        let ends = result.segment_ends();
+        assert_eq!(ends.len(), 2);
+        assert!((ends[0] - 1.0).abs() < f32::EPSILON);
+        assert!((ends[1] - 2.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_segment_speaker_ids() {
+        let result = DiarizationResultWasm {
+            segments: vec![
+                SpeakerSegmentWasm { speaker_id: 0, start: 0.0, end: 1.0, confidence: 1.0 },
+                SpeakerSegmentWasm { speaker_id: 1, start: 1.0, end: 2.0, confidence: 0.9 },
+                SpeakerSegmentWasm { speaker_id: 0, start: 2.0, end: 3.0, confidence: 0.8 },
+            ],
+            speaker_embeddings: vec![],
+            speaker_count: 2,
+            total_duration: 3.0,
+        };
+        let ids = result.segment_speaker_ids();
+        assert_eq!(ids, vec![0, 1, 0]);
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_turn_count_empty() {
+        let result = DiarizationResultWasm {
+            segments: vec![],
+            speaker_embeddings: vec![],
+            speaker_count: 0,
+            total_duration: 0.0,
+        };
+        assert_eq!(result.turn_count(), 0);
+    }
+
+    #[test]
+    fn test_diarization_result_wasm_turn_count_with_turns() {
+        let result = DiarizationResultWasm {
+            segments: vec![
+                SpeakerSegmentWasm { speaker_id: 0, start: 0.0, end: 1.0, confidence: 1.0 },
+                SpeakerSegmentWasm { speaker_id: 1, start: 1.0, end: 2.0, confidence: 0.9 },
+                SpeakerSegmentWasm { speaker_id: 0, start: 2.0, end: 3.0, confidence: 0.8 },
+            ],
+            speaker_embeddings: vec![],
+            speaker_count: 2,
+            total_duration: 3.0,
+        };
+        // Two speaker changes: 0->1, 1->0
+        assert_eq!(result.turn_count(), 2);
+    }
+
+    #[test]
+    fn test_embedding_extractor_wasm_default_trait() {
+        let extractor = EmbeddingExtractorWasm::default();
+        assert!(std::mem::size_of_val(&extractor) > 0);
+    }
+
+    #[test]
+    fn test_turn_detector_wasm_default_trait() {
+        let detector = TurnDetectorWasm::default();
+        assert!(std::mem::size_of_val(&detector) > 0);
     }
 }

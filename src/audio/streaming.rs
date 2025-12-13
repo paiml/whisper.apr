@@ -238,6 +238,13 @@ impl StreamingConfig {
         matches!(self.latency_mode, LatencyMode::LowLatency | LatencyMode::UltraLow)
     }
 
+    /// Enable VAD (Voice Activity Detection)
+    #[must_use]
+    pub fn with_vad(mut self) -> Self {
+        self.enable_vad = true;
+        self
+    }
+
     /// Disable VAD (process all audio regardless of speech)
     #[must_use]
     pub fn without_vad(mut self) -> Self {
@@ -386,10 +393,10 @@ impl StreamingProcessor {
         let input_buffer =
             RingBuffer::for_duration(config.buffer_duration, config.input_sample_rate);
 
-        let resampler = if config.input_sample_rate != config.output_sample_rate {
-            SincResampler::new(config.input_sample_rate, config.output_sample_rate).ok()
-        } else {
+        let resampler = if config.input_sample_rate == config.output_sample_rate {
             None
+        } else {
+            SincResampler::new(config.input_sample_rate, config.output_sample_rate).ok()
         };
 
         let vad_config = VadConfig {
@@ -792,15 +799,10 @@ impl StreamingProcessor {
                     self.emit_event(StreamingEvent::ChunkReady { duration_secs: duration });
                 }
             }
-            ProcessorState::ChunkReady => {
-                // Waiting for chunk to be consumed
-            }
-            ProcessorState::Processing => {
-                // Waiting for processing to complete
-                // Audio is being buffered in input_buffer during this time
-            }
-            ProcessorState::Error => {
-                // Waiting for error recovery
+            ProcessorState::ChunkReady
+            | ProcessorState::Processing
+            | ProcessorState::Error => {
+                // Waiting for chunk to be consumed / processing to complete / error recovery
             }
         }
 
@@ -817,6 +819,7 @@ impl StreamingProcessor {
 
     /// Get maximum silence frames before ending chunk
     fn max_silence_frames(&self) -> u32 {
+        let _ = self; // Used for consistency with min_speech_frames
         // 1 second of silence
         let frame_duration_ms = 30;
         1000 / frame_duration_ms

@@ -181,6 +181,7 @@ pub struct GpuSoftmax {
 
 impl GpuSoftmax {
     /// Create a new softmax operation
+    #[allow(clippy::items_after_statements)]
     pub fn new(config: SoftmaxConfig) -> GpuResult<Self> {
         config.validate()?;
 
@@ -239,7 +240,7 @@ impl GpuSoftmax {
         let is_log = self.config.log_softmax;
 
         format!(
-            r#"// Softmax shader ({log}softmax along {dim})
+            r"// Softmax shader ({log}softmax along {dim})
 // Rows: {rows}, Cols: {cols}
 // Temperature: {temp}
 
@@ -319,7 +320,7 @@ fn main(
         {output_expr}
     }}
 }}
-"#,
+",
             log = if is_log { "log-" } else { "" },
             dim = self.config.dimension.axis_description(),
             rows = self.config.rows,
@@ -336,7 +337,8 @@ fn main(
 }
 
 /// WGSL shader source for simple row-wise softmax
-pub const SOFTMAX_SHADER_SIMPLE: &str = r#"
+#[allow(dead_code)]
+pub const SOFTMAX_SHADER_SIMPLE: &str = r"
 struct Params {
     rows: u32,
     cols: u32,
@@ -376,7 +378,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         output[row_offset + i] = output[row_offset + i] / sum;
     }
 }
-"#;
+";
 
 #[cfg(test)]
 mod tests {

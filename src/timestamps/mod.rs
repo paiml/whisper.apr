@@ -40,7 +40,6 @@ pub use segment::{
     MAX_TIMESTAMP_TOKENS, TIMESTAMP_RESOLUTION,
 };
 
-use crate::error::WhisperResult;
 
 /// Word with timestamp and confidence score
 #[derive(Debug, Clone)]
@@ -88,6 +87,7 @@ impl WordWithTimestamp {
     }
 
     /// Set token indices
+    #[must_use]
     pub fn with_token_indices(mut self, indices: Vec<usize>) -> Self {
         self.token_indices = indices;
         self

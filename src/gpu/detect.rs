@@ -3,7 +3,6 @@
 //! Provides high-level API for detecting GPU capabilities and selecting backends.
 
 use super::capabilities::{GpuBackend, GpuCapabilities, GpuLimits};
-use super::error::{GpuError, GpuResult};
 
 /// GPU detection result
 #[derive(Debug, Clone)]
@@ -490,8 +489,7 @@ pub fn should_use_gpu(caps: &GpuCapabilities, workload_elements: usize) -> GpuRe
     if workload_elements < GPU_THRESHOLD {
         return GpuRecommendation::CpuPreferred {
             reason: format!(
-                "Workload size ({} elements) is small; CPU may be faster due to GPU overhead",
-                workload_elements
+                "Workload size ({workload_elements} elements) is small; CPU may be faster due to GPU overhead"
             ),
         };
     }
@@ -546,8 +544,8 @@ impl GpuRecommendation {
     #[must_use]
     pub fn speedup(&self) -> Option<f32> {
         match self {
-            Self::GpuRecommended { speedup_estimate } => Some(*speedup_estimate),
-            Self::GpuStronglyRecommended { speedup_estimate } => Some(*speedup_estimate),
+            Self::GpuRecommended { speedup_estimate }
+            | Self::GpuStronglyRecommended { speedup_estimate } => Some(*speedup_estimate),
             _ => None,
         }
     }

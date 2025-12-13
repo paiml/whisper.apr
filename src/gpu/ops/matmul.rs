@@ -119,8 +119,8 @@ impl MatMulDimensions {
     #[must_use]
     pub fn workgroups(&self, tile: TileSize) -> (u32, u32) {
         let dim = tile.dimension();
-        let x = (self.n + dim - 1) / dim;
-        let y = (self.m + dim - 1) / dim;
+        let x = self.n.div_ceil(dim);
+        let y = self.m.div_ceil(dim);
         (x, y)
     }
 
@@ -214,6 +214,7 @@ impl MatMulConfig {
 
     /// Check if this is a simple matmul (no transpose, alpha=1, beta=0)
     #[must_use]
+    #[allow(clippy::float_cmp)]
     pub fn is_simple(&self) -> bool {
         !self.transpose_a && !self.transpose_b && self.alpha == 1.0 && self.beta == 0.0
     }
@@ -234,6 +235,7 @@ pub struct GpuMatMul {
 
 impl GpuMatMul {
     /// Create a new matrix multiplication operation
+    #[allow(clippy::items_after_statements)]
     pub fn new(dimensions: MatMulDimensions, config: MatMulConfig) -> GpuResult<Self> {
         dimensions.validate()?;
 
@@ -302,10 +304,10 @@ impl GpuMatMul {
     #[must_use]
     pub fn generate_shader(&self) -> String {
         let tile = self.config.tile_size.dimension();
-        let workgroup_size = self.config.tile_size.workgroup_size();
+        let _workgroup_size = self.config.tile_size.workgroup_size();
 
         format!(
-            r#"// Matrix multiplication shader
+            r"// Matrix multiplication shader
 // Dimensions: {}x{} @ {}x{} = {}x{}
 // Tile size: {}x{}
 
@@ -371,7 +373,7 @@ fn main(
         C[idx] = dims.alpha * sum + dims.beta * C[idx];
     }}
 }}
-"#,
+",
             self.dimensions.m,
             self.dimensions.k,
             self.dimensions.k,
@@ -387,7 +389,8 @@ fn main(
 }
 
 /// WGSL shader source for simple matrix multiplication
-pub const MATMUL_SHADER_SIMPLE: &str = r#"
+#[allow(dead_code)]
+pub const MATMUL_SHADER_SIMPLE: &str = r"
 struct Dimensions {
     M: u32,
     K: u32,
@@ -416,7 +419,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     C[row * dims.N + col] = sum;
 }
-"#;
+";
 
 #[cfg(test)]
 mod tests {
