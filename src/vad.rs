@@ -65,6 +65,12 @@ impl Default for VadConfig {
 }
 
 impl VadConfig {
+    /// Create a new VAD configuration with default values
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Create config for low-latency streaming (10ms frames)
     #[must_use]
     pub fn low_latency() -> Self {
@@ -87,10 +93,65 @@ impl VadConfig {
         }
     }
 
+    /// Set energy threshold (builder pattern)
+    #[must_use]
+    pub fn with_energy_threshold(mut self, threshold: f32) -> Self {
+        self.energy_threshold = threshold;
+        self
+    }
+
+    /// Set ZCR threshold (builder pattern)
+    #[must_use]
+    pub fn with_zcr_threshold(mut self, threshold: f32) -> Self {
+        self.zcr_threshold = threshold;
+        self
+    }
+
+    /// Set frame size in samples (builder pattern)
+    #[must_use]
+    pub fn with_frame_size(mut self, size: usize) -> Self {
+        self.frame_size = size;
+        self
+    }
+
+    /// Set minimum speech frames (builder pattern)
+    #[must_use]
+    pub fn with_min_speech_frames(mut self, frames: usize) -> Self {
+        self.min_speech_frames = frames;
+        self
+    }
+
+    /// Set minimum silence frames (builder pattern)
+    #[must_use]
+    pub fn with_min_silence_frames(mut self, frames: usize) -> Self {
+        self.min_silence_frames = frames;
+        self
+    }
+
+    /// Set sample rate (builder pattern)
+    #[must_use]
+    pub fn with_sample_rate(mut self, rate: u32) -> Self {
+        self.sample_rate = rate;
+        self
+    }
+
+    /// Set smoothing factor (builder pattern)
+    #[must_use]
+    pub fn with_smoothing(mut self, smoothing: f32) -> Self {
+        self.smoothing = smoothing;
+        self
+    }
+
     /// Get frame duration in seconds
     #[must_use]
     pub fn frame_duration(&self) -> f32 {
         self.frame_size as f32 / self.sample_rate as f32
+    }
+
+    /// Get frame duration in milliseconds
+    #[must_use]
+    pub fn frame_duration_ms(&self) -> f32 {
+        self.frame_duration() * 1000.0
     }
 }
 
@@ -134,6 +195,307 @@ impl SpeechSegment {
     #[must_use]
     pub fn duration(&self) -> f32 {
         self.end - self.start
+    }
+}
+
+/// Silence detection configuration (WAPR-092)
+#[derive(Debug, Clone)]
+pub struct SilenceConfig {
+    /// Minimum silence duration in seconds to consider as a break (default: 0.3)
+    pub min_silence_duration: f32,
+    /// Maximum silence duration before forcing segment end (default: 2.0)
+    pub max_silence_duration: f32,
+    /// Energy threshold below which audio is considered silence (default: 0.001)
+    pub silence_threshold: f32,
+    /// Whether to use adaptive silence detection (default: true)
+    pub adaptive: bool,
+    /// Adaptation rate for noise floor (default: 0.01)
+    pub adaptation_rate: f32,
+}
+
+impl Default for SilenceConfig {
+    fn default() -> Self {
+        Self {
+            min_silence_duration: 0.3,
+            max_silence_duration: 2.0,
+            silence_threshold: 0.001,
+            adaptive: true,
+            adaptation_rate: 0.01,
+        }
+    }
+}
+
+impl SilenceConfig {
+    /// Create a new silence configuration
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set minimum silence duration (builder pattern)
+    #[must_use]
+    pub fn with_min_silence_duration(mut self, duration: f32) -> Self {
+        self.min_silence_duration = duration;
+        self
+    }
+
+    /// Set maximum silence duration (builder pattern)
+    #[must_use]
+    pub fn with_max_silence_duration(mut self, duration: f32) -> Self {
+        self.max_silence_duration = duration;
+        self
+    }
+
+    /// Set silence threshold (builder pattern)
+    #[must_use]
+    pub fn with_silence_threshold(mut self, threshold: f32) -> Self {
+        self.silence_threshold = threshold;
+        self
+    }
+
+    /// Enable/disable adaptive detection (builder pattern)
+    #[must_use]
+    pub fn with_adaptive(mut self, adaptive: bool) -> Self {
+        self.adaptive = adaptive;
+        self
+    }
+
+    /// Set adaptation rate (builder pattern)
+    #[must_use]
+    pub fn with_adaptation_rate(mut self, rate: f32) -> Self {
+        self.adaptation_rate = rate;
+        self
+    }
+}
+
+/// Detected silence segment (WAPR-092)
+#[derive(Debug, Clone)]
+pub struct SilenceSegment {
+    /// Start time in seconds
+    pub start: f32,
+    /// End time in seconds
+    pub end: f32,
+    /// Average energy during silence (noise floor)
+    pub noise_floor: f32,
+}
+
+impl SilenceSegment {
+    /// Duration of the silence in seconds
+    #[must_use]
+    pub fn duration(&self) -> f32 {
+        self.end - self.start
+    }
+
+    /// Check if this is a long silence (potential utterance boundary)
+    #[must_use]
+    pub fn is_utterance_boundary(&self, config: &SilenceConfig) -> bool {
+        self.duration() >= config.min_silence_duration
+    }
+}
+
+/// Silence detector with adaptive thresholds (WAPR-092)
+#[derive(Debug, Clone)]
+pub struct SilenceDetector {
+    config: SilenceConfig,
+    /// Adaptive noise floor estimate
+    noise_floor: f32,
+    /// Current silence start time (None if not in silence)
+    silence_start: Option<f32>,
+    /// Sample rate for time calculations
+    sample_rate: u32,
+    /// Total samples processed
+    samples_processed: usize,
+    /// Recent energy history for adaptation
+    energy_history: Vec<f32>,
+}
+
+impl SilenceDetector {
+    /// Create a new silence detector
+    #[must_use]
+    pub fn new(config: SilenceConfig, sample_rate: u32) -> Self {
+        Self {
+            config,
+            noise_floor: 0.001,
+            silence_start: None,
+            sample_rate,
+            samples_processed: 0,
+            energy_history: Vec::with_capacity(100),
+        }
+    }
+
+    /// Create with default config
+    #[must_use]
+    pub fn with_sample_rate(sample_rate: u32) -> Self {
+        Self::new(SilenceConfig::default(), sample_rate)
+    }
+
+    /// Get current noise floor estimate
+    #[must_use]
+    pub fn noise_floor(&self) -> f32 {
+        self.noise_floor
+    }
+
+    /// Get current configuration
+    #[must_use]
+    pub fn config(&self) -> &SilenceConfig {
+        &self.config
+    }
+
+    /// Check if currently in silence
+    #[must_use]
+    pub fn is_silence(&self) -> bool {
+        self.silence_start.is_some()
+    }
+
+    /// Get current silence duration (0 if not in silence)
+    #[must_use]
+    pub fn current_silence_duration(&self) -> f32 {
+        match self.silence_start {
+            Some(start) => self.current_time() - start,
+            None => 0.0,
+        }
+    }
+
+    /// Reset detector state
+    pub fn reset(&mut self) {
+        self.noise_floor = 0.001;
+        self.silence_start = None;
+        self.samples_processed = 0;
+        self.energy_history.clear();
+    }
+
+    /// Process a frame and detect silence
+    ///
+    /// Returns Some(SilenceSegment) when a silence period ends, None otherwise
+    pub fn process_frame(&mut self, frame: &[f32]) -> Option<SilenceSegment> {
+        let energy = Self::compute_energy(frame);
+        let current_time = self.current_time();
+
+        // Update adaptive threshold
+        if self.config.adaptive {
+            self.update_noise_floor(energy);
+        }
+
+        let threshold = if self.config.adaptive {
+            self.noise_floor * 2.0 + self.config.silence_threshold
+        } else {
+            self.config.silence_threshold
+        };
+
+        let is_silence = energy < threshold;
+        self.samples_processed += frame.len();
+
+        match (self.silence_start, is_silence) {
+            (None, true) => {
+                // Starting silence
+                self.silence_start = Some(current_time);
+                None
+            }
+            (Some(start), false) => {
+                // Ending silence
+                self.silence_start = None;
+                let segment = SilenceSegment {
+                    start,
+                    end: current_time,
+                    noise_floor: self.noise_floor,
+                };
+                // Only return if silence was long enough
+                if segment.duration() >= self.config.min_silence_duration {
+                    Some(segment)
+                } else {
+                    None
+                }
+            }
+            (Some(start), true) => {
+                // Continuing silence - check for max duration
+                let duration = current_time - start;
+                if duration >= self.config.max_silence_duration {
+                    // Force end the silence segment
+                    self.silence_start = Some(current_time);
+                    Some(SilenceSegment {
+                        start,
+                        end: current_time,
+                        noise_floor: self.noise_floor,
+                    })
+                } else {
+                    None
+                }
+            }
+            (None, false) => {
+                // Continuing non-silence
+                None
+            }
+        }
+    }
+
+    /// Detect all silence segments in audio
+    #[must_use]
+    pub fn detect(&mut self, audio: &[f32], frame_size: usize) -> Vec<SilenceSegment> {
+        self.reset();
+        let mut segments = Vec::new();
+
+        for frame in audio.chunks(frame_size) {
+            if frame.len() < frame_size / 2 {
+                break;
+            }
+            if let Some(segment) = self.process_frame(frame) {
+                segments.push(segment);
+            }
+        }
+
+        // Handle ongoing silence at end
+        if let Some(start) = self.silence_start {
+            let end = self.current_time();
+            if end - start >= self.config.min_silence_duration {
+                segments.push(SilenceSegment {
+                    start,
+                    end,
+                    noise_floor: self.noise_floor,
+                });
+            }
+        }
+
+        segments
+    }
+
+    /// Compute frame energy (RMS)
+    fn compute_energy(frame: &[f32]) -> f32 {
+        if frame.is_empty() {
+            return 0.0;
+        }
+        let sum: f32 = frame.iter().map(|x| x * x).sum();
+        (sum / frame.len() as f32).sqrt()
+    }
+
+    /// Update adaptive noise floor
+    fn update_noise_floor(&mut self, energy: f32) {
+        self.energy_history.push(energy);
+        if self.energy_history.len() > 100 {
+            self.energy_history.remove(0);
+        }
+
+        // Use lower percentile of recent energy as noise floor
+        if self.energy_history.len() >= 10 {
+            let mut sorted = self.energy_history.clone();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+            let percentile_idx = sorted.len() / 10;
+            let estimated_floor = sorted[percentile_idx];
+
+            self.noise_floor +=
+                self.config.adaptation_rate * (estimated_floor - self.noise_floor);
+        }
+    }
+
+    /// Get current time in seconds
+    fn current_time(&self) -> f32 {
+        self.samples_processed as f32 / self.sample_rate as f32
+    }
+}
+
+impl Default for SilenceDetector {
+    fn default() -> Self {
+        Self::with_sample_rate(16000)
     }
 }
 
@@ -483,6 +845,76 @@ mod tests {
         assert!((config.frame_duration() - 0.03).abs() < 0.001); // 30ms
     }
 
+    #[test]
+    fn test_vad_config_new() {
+        let config = VadConfig::new();
+        assert_eq!(config.sample_rate, 16000);
+    }
+
+    #[test]
+    fn test_vad_config_frame_duration_ms() {
+        let config = VadConfig::default();
+        assert!((config.frame_duration_ms() - 30.0).abs() < 0.1); // 30ms
+    }
+
+    #[test]
+    fn test_vad_config_builder_energy_threshold() {
+        let config = VadConfig::new().with_energy_threshold(3.0);
+        assert!((config.energy_threshold - 3.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_vad_config_builder_zcr_threshold() {
+        let config = VadConfig::new().with_zcr_threshold(0.5);
+        assert!((config.zcr_threshold - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_vad_config_builder_frame_size() {
+        let config = VadConfig::new().with_frame_size(320);
+        assert_eq!(config.frame_size, 320);
+    }
+
+    #[test]
+    fn test_vad_config_builder_min_speech_frames() {
+        let config = VadConfig::new().with_min_speech_frames(5);
+        assert_eq!(config.min_speech_frames, 5);
+    }
+
+    #[test]
+    fn test_vad_config_builder_min_silence_frames() {
+        let config = VadConfig::new().with_min_silence_frames(15);
+        assert_eq!(config.min_silence_frames, 15);
+    }
+
+    #[test]
+    fn test_vad_config_builder_sample_rate() {
+        let config = VadConfig::new().with_sample_rate(48000);
+        assert_eq!(config.sample_rate, 48000);
+    }
+
+    #[test]
+    fn test_vad_config_builder_smoothing() {
+        let config = VadConfig::new().with_smoothing(0.9);
+        assert!((config.smoothing - 0.9).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_vad_config_builder_chained() {
+        let config = VadConfig::new()
+            .with_energy_threshold(2.5)
+            .with_zcr_threshold(0.4)
+            .with_frame_size(320)
+            .with_min_speech_frames(4)
+            .with_min_silence_frames(12);
+
+        assert!((config.energy_threshold - 2.5).abs() < f32::EPSILON);
+        assert!((config.zcr_threshold - 0.4).abs() < f32::EPSILON);
+        assert_eq!(config.frame_size, 320);
+        assert_eq!(config.min_speech_frames, 4);
+        assert_eq!(config.min_silence_frames, 12);
+    }
+
     // =========================================================================
     // SpeechSegment Tests
     // =========================================================================
@@ -726,5 +1158,262 @@ mod tests {
         let vad = VoiceActivityDetector::default();
         assert!((vad.sample_to_time(16000) - 1.0).abs() < f32::EPSILON);
         assert!((vad.sample_to_time(8000) - 0.5).abs() < f32::EPSILON);
+    }
+
+    // =========================================================================
+    // Silence Detection Tests (WAPR-092)
+    // =========================================================================
+
+    #[test]
+    fn test_silence_config_default() {
+        let config = SilenceConfig::default();
+        assert!((config.min_silence_duration - 0.3).abs() < f32::EPSILON);
+        assert!((config.max_silence_duration - 2.0).abs() < f32::EPSILON);
+        assert!((config.silence_threshold - 0.001).abs() < f32::EPSILON);
+        assert!(config.adaptive);
+    }
+
+    #[test]
+    fn test_silence_config_new() {
+        let config = SilenceConfig::new();
+        assert!((config.min_silence_duration - 0.3).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_silence_config_builder_min_duration() {
+        let config = SilenceConfig::new().with_min_silence_duration(0.5);
+        assert!((config.min_silence_duration - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_silence_config_builder_max_duration() {
+        let config = SilenceConfig::new().with_max_silence_duration(3.0);
+        assert!((config.max_silence_duration - 3.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_silence_config_builder_threshold() {
+        let config = SilenceConfig::new().with_silence_threshold(0.005);
+        assert!((config.silence_threshold - 0.005).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_silence_config_builder_adaptive() {
+        let config = SilenceConfig::new().with_adaptive(false);
+        assert!(!config.adaptive);
+    }
+
+    #[test]
+    fn test_silence_config_builder_adaptation_rate() {
+        let config = SilenceConfig::new().with_adaptation_rate(0.05);
+        assert!((config.adaptation_rate - 0.05).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_silence_config_builder_chained() {
+        let config = SilenceConfig::new()
+            .with_min_silence_duration(0.4)
+            .with_max_silence_duration(2.5)
+            .with_silence_threshold(0.002)
+            .with_adaptive(false);
+
+        assert!((config.min_silence_duration - 0.4).abs() < f32::EPSILON);
+        assert!((config.max_silence_duration - 2.5).abs() < f32::EPSILON);
+        assert!((config.silence_threshold - 0.002).abs() < f32::EPSILON);
+        assert!(!config.adaptive);
+    }
+
+    #[test]
+    fn test_silence_segment_duration() {
+        let segment = SilenceSegment {
+            start: 1.0,
+            end: 2.5,
+            noise_floor: 0.001,
+        };
+        assert!((segment.duration() - 1.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_silence_segment_is_utterance_boundary() {
+        let config = SilenceConfig::new().with_min_silence_duration(0.5);
+        let short_silence = SilenceSegment {
+            start: 0.0,
+            end: 0.3,
+            noise_floor: 0.001,
+        };
+        let long_silence = SilenceSegment {
+            start: 0.0,
+            end: 0.7,
+            noise_floor: 0.001,
+        };
+
+        assert!(!short_silence.is_utterance_boundary(&config));
+        assert!(long_silence.is_utterance_boundary(&config));
+    }
+
+    #[test]
+    fn test_silence_detector_new() {
+        let detector = SilenceDetector::new(SilenceConfig::default(), 16000);
+        assert!(!detector.is_silence());
+        assert!((detector.noise_floor() - 0.001).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_silence_detector_with_sample_rate() {
+        let detector = SilenceDetector::with_sample_rate(48000);
+        assert_eq!(detector.sample_rate, 48000);
+    }
+
+    #[test]
+    fn test_silence_detector_default() {
+        let detector = SilenceDetector::default();
+        assert_eq!(detector.sample_rate, 16000);
+    }
+
+    #[test]
+    fn test_silence_detector_reset() {
+        let mut detector = SilenceDetector::default();
+        detector.noise_floor = 0.1;
+        detector.silence_start = Some(1.0);
+        detector.samples_processed = 16000;
+
+        detector.reset();
+
+        assert!((detector.noise_floor() - 0.001).abs() < f32::EPSILON);
+        assert!(!detector.is_silence());
+        assert!(detector.energy_history.is_empty());
+    }
+
+    #[test]
+    fn test_silence_detector_current_silence_duration() {
+        let detector = SilenceDetector::default();
+        assert!((detector.current_silence_duration() - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_silence_detector_process_silence() {
+        let config = SilenceConfig::new()
+            .with_adaptive(false)
+            .with_min_silence_duration(0.1);
+        let mut detector = SilenceDetector::new(config, 16000);
+
+        // Process silence frames (each 480 samples = 30ms)
+        let silence = vec![0.0; 480];
+
+        // First few frames - building up silence
+        for _ in 0..4 {
+            // ~120ms
+            let _ = detector.process_frame(&silence);
+        }
+
+        // Should be in silence state
+        assert!(detector.is_silence());
+    }
+
+    #[test]
+    fn test_silence_detector_detect_single_segment() {
+        let config = SilenceConfig::new()
+            .with_adaptive(false)
+            .with_min_silence_duration(0.1)
+            .with_silence_threshold(0.01);
+        let mut detector = SilenceDetector::new(config, 16000);
+
+        // Create: loud + silence + loud
+        let mut audio = Vec::new();
+        audio.extend(vec![0.5; 1600]); // 100ms loud
+        audio.extend(vec![0.0; 3200]); // 200ms silence
+        audio.extend(vec![0.5; 1600]); // 100ms loud
+
+        let segments = detector.detect(&audio, 480);
+
+        // Should detect the silence segment
+        assert!(!segments.is_empty(), "Should detect silence segment");
+    }
+
+    #[test]
+    fn test_silence_detector_detect_all_silence() {
+        let config = SilenceConfig::new()
+            .with_adaptive(false)
+            .with_min_silence_duration(0.1);
+        let mut detector = SilenceDetector::new(config, 16000);
+
+        let silence = vec![0.0; 8000]; // 500ms of silence
+        let segments = detector.detect(&silence, 480);
+
+        // Should detect at least one silence segment at end
+        assert!(!segments.is_empty());
+    }
+
+    #[test]
+    fn test_silence_detector_no_silence_in_loud() {
+        let config = SilenceConfig::new()
+            .with_adaptive(false)
+            .with_silence_threshold(0.001);
+        let mut detector = SilenceDetector::new(config, 16000);
+
+        // All loud audio
+        let loud = vec![0.5; 8000];
+        let segments = detector.detect(&loud, 480);
+
+        // Should detect no silence
+        assert!(segments.is_empty());
+    }
+
+    #[test]
+    fn test_silence_detector_short_silence_filtered() {
+        let config = SilenceConfig::new()
+            .with_adaptive(false)
+            .with_min_silence_duration(0.5) // Long minimum
+            .with_silence_threshold(0.01);
+        let mut detector = SilenceDetector::new(config, 16000);
+
+        // Create: loud + short silence + loud
+        let mut audio = Vec::new();
+        audio.extend(vec![0.5; 1600]); // loud
+        audio.extend(vec![0.0; 1600]); // 100ms silence (too short)
+        audio.extend(vec![0.5; 1600]); // loud
+
+        let segments = detector.detect(&audio, 480);
+
+        // Should filter out the short silence
+        assert!(segments.is_empty());
+    }
+
+    #[test]
+    fn test_silence_detector_adaptive_threshold() {
+        let config = SilenceConfig::new()
+            .with_adaptive(true)
+            .with_adaptation_rate(0.1);
+        let mut detector = SilenceDetector::new(config, 16000);
+
+        // Process many frames to let it adapt
+        let low_noise = vec![0.001; 480];
+        for _ in 0..20 {
+            let _ = detector.process_frame(&low_noise);
+        }
+
+        // Noise floor should have adapted
+        assert!(detector.noise_floor() > 0.0);
+    }
+
+    #[test]
+    fn test_silence_detector_max_duration_split() {
+        let config = SilenceConfig::new()
+            .with_adaptive(false)
+            .with_min_silence_duration(0.1)
+            .with_max_silence_duration(0.2) // Very short max
+            .with_silence_threshold(0.01);
+        let mut detector = SilenceDetector::new(config, 16000);
+
+        // Long silence that exceeds max duration
+        let silence = vec![0.0; 16000]; // 1 second
+        let segments = detector.detect(&silence, 480);
+
+        // Should split into multiple segments due to max duration
+        assert!(
+            segments.len() >= 2,
+            "Should split long silence, got {} segments",
+            segments.len()
+        );
     }
 }
