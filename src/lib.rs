@@ -47,6 +47,9 @@ pub mod timestamps;
 pub mod tokenizer;
 pub mod vad;
 
+/// Speaker diarization module (who spoke when)
+pub mod diarization;
+
 /// WebGPU compute backend for accelerated inference
 pub mod gpu;
 

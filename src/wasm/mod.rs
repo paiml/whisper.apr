@@ -38,10 +38,15 @@
 //! ```
 
 mod capabilities;
+mod diarization;
 mod gpu;
 mod worker;
 
 pub use capabilities::{Capabilities, ExecutionMode};
+pub use diarization::{
+    get_diarization_recommendation, DiarizationConfigWasm, DiarizationResultWasm, DiarizerWasm,
+    EmbeddingExtractorWasm, SpeakerEmbeddingWasm, SpeakerSegmentWasm, TurnDetectorWasm,
+};
 pub use gpu::{
     estimate_mat_mul_flops, estimate_mat_mul_memory, is_gpu_worthwhile,
     recommended_backend_for_model, BackendSelectionWasm, BackendSelectorWasm, BackendTypeWasm,

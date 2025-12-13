@@ -4,17 +4,18 @@
 
 [project]
 name = "whisper-apr"
-version = "1.3.0"
+version = "2.0.0-dev"
 spec_file = "docs/specifications/whisper.apr-wasm-first-spec.md"
 methodology = "EXTREME_TDD"
 quality_framework = "Toyota_Way"
 phase4_complete = true
+phase5_in_progress = true
 
 [metrics]
-total_tickets = 88
-completed_tickets = 88
-completion_rate = 100.0
-test_count = 1291
+total_tickets = 100
+completed_tickets = 92
+completion_rate = 92.0
+test_count = 1376
 line_coverage = 95.19
 property_tests = 19
 source_loc = 35000
@@ -676,3 +677,116 @@ status = "complete"
 sprint = "sprint_35_36"
 files = ["src/wasm/gpu.rs"]
 tdd_phase = "green"
+
+# =============================================================================
+# v2.0 Advanced Features (Phase 5)
+# =============================================================================
+
+[sprints.sprint_37_38]
+name = "Speaker Diarization Foundation"
+status = "complete"
+tickets = ["WAPR-150", "WAPR-151", "WAPR-152", "WAPR-153"]
+deliverable = "Speaker embedding extraction and clustering"
+completion_date = "2025-12-13"
+
+[sprints.sprint_39_40]
+name = "Improved Word-Level Timestamps"
+status = "pending"
+tickets = ["WAPR-160", "WAPR-161", "WAPR-162", "WAPR-163"]
+deliverable = "Cross-attention based word alignment with confidence scores"
+
+[sprints.sprint_41_42]
+name = "Custom Vocabulary Fine-Tuning"
+status = "pending"
+tickets = ["WAPR-170", "WAPR-171", "WAPR-172", "WAPR-173"]
+deliverable = "Hotword boosting and domain-specific vocabulary adaptation"
+
+# v2.0 Tickets - Speaker Diarization
+
+[tickets.WAPR-150]
+description = "Speaker embedding model (d-vector extraction)"
+status = "complete"
+sprint = "sprint_37_38"
+files = ["src/diarization/mod.rs", "src/diarization/embedding.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-151]
+description = "Speaker clustering algorithm (spectral/k-means)"
+status = "complete"
+sprint = "sprint_37_38"
+files = ["src/diarization/clustering.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-152]
+description = "Speaker turn detection and segmentation"
+status = "complete"
+sprint = "sprint_37_38"
+files = ["src/diarization/segmentation.rs"]
+tdd_phase = "green"
+
+[tickets.WAPR-153]
+description = "Diarization WASM API"
+status = "complete"
+sprint = "sprint_37_38"
+files = ["src/wasm/diarization.rs"]
+tdd_phase = "green"
+
+# v2.0 Tickets - Word-Level Timestamps
+
+[tickets.WAPR-160]
+description = "Cross-attention alignment extraction"
+status = "pending"
+sprint = "sprint_39_40"
+files = ["src/timestamps/alignment.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-161]
+description = "Word boundary detection with confidence"
+status = "pending"
+sprint = "sprint_39_40"
+files = ["src/timestamps/boundaries.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-162]
+description = "Timestamp interpolation for sub-word tokens"
+status = "pending"
+sprint = "sprint_39_40"
+files = ["src/timestamps/interpolation.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-163]
+description = "Word timestamps WASM API"
+status = "pending"
+sprint = "sprint_39_40"
+files = ["src/wasm/timestamps.rs"]
+tdd_phase = "pending"
+
+# v2.0 Tickets - Custom Vocabulary
+
+[tickets.WAPR-170]
+description = "Hotword boosting via logit biasing"
+status = "pending"
+sprint = "sprint_41_42"
+files = ["src/vocabulary/hotwords.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-171]
+description = "Custom vocabulary trie structure"
+status = "pending"
+sprint = "sprint_41_42"
+files = ["src/vocabulary/trie.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-172]
+description = "Domain vocabulary adapter"
+status = "pending"
+sprint = "sprint_41_42"
+files = ["src/vocabulary/adapter.rs"]
+tdd_phase = "pending"
+
+[tickets.WAPR-173]
+description = "Vocabulary WASM API"
+status = "pending"
+sprint = "sprint_41_42"
+files = ["src/wasm/vocabulary.rs"]
+tdd_phase = "pending"
