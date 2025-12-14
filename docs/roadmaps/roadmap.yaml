@@ -28,17 +28,62 @@ roadmap:
   github_issue: 2
   item_type: task
   title: 'WAPR-181: Phase 2 - Model Loading in Worker'
-  status: inprogress
+  status: completed
   priority: medium
   assigned_to: null
   created: 2025-12-14T07:51:50.918643122+00:00
-  updated: 2025-12-14T07:51:50.918643122+00:00
+  updated: 2025-12-14T08:00:53.565381348+00:00
   spec: null
   acceptance_criteria:
   - Transfer model bytes to worker (37MB in < 2s)
   - Load model in worker thread
   - Report loading progress (10+ updates)
   - Handle load failures with error display
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - enhancement
+  notes: null
+- id: GH-4
+  github_issue: 4
+  item_type: task
+  title: 'WAPR-183: Phase 4 - Robustness & Testing'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-14T07:55:28.473633184+00:00
+  updated: 2025-12-14T07:59:50.483108177+00:00
+  spec: null
+  acceptance_criteria:
+  - Queue management (max 3 chunks)
+  - Chunk dropping with logging
+  - Error recovery (restart after failure)
+  - Memory stability (no growth over 100 chunks)
+  - Probar GUI tests
+  - Pixel regression tests
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - enhancement
+  notes: null
+- id: GH-5
+  github_issue: 5
+  item_type: task
+  title: 'WAPR-184: Probar GUI & Pixel Regression Tests'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-14T08:01:27.148235337+00:00
+  updated: 2025-12-14T08:01:27.148235337+00:00
+  spec: null
+  acceptance_criteria:
+  - Write Probar GUI tests for all UI states (idle, recording, processing, error)
+  - Add pixel regression tests with golden images
+  - Test queue overflow UI feedback
+  - Test error recovery UI flow
+  - Memory stability test (no growth over 100 chunks)
   phases: []
   subtasks: []
   estimated_effort: null
