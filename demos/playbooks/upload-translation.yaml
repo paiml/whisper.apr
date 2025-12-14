@@ -1,0 +1,147 @@
+# Upload Translation Demo - State Machine Playbook
+# Prevents "whack-a-mole" regressions in file translation flow
+#
+# Run: probar playbook demos/playbooks/upload-translation.yaml --validate
+
+version: "1.0"
+name: "Upload Translation State Machine"
+description: "WAPR-DEMO-004: Validates file upload translation UI flow"
+
+machine:
+  id: "upload_translation"
+  initial: "initializing"
+
+  states:
+    initializing:
+      id: "initializing"
+
+    loading_model:
+      id: "loading_model"
+
+    idle:
+      id: "idle"
+      invariants:
+        - description: "Upload zone active"
+          condition: "has_element('.upload-zone')"
+        - description: "Language selector visible"
+          condition: "has_element('#source-language')"
+
+    file_selected:
+      id: "file_selected"
+      invariants:
+        - description: "Translate button enabled"
+          condition: "can_translate()"
+
+    translating:
+      id: "translating"
+      invariants:
+        - description: "Progress visible"
+          condition: "has_element('.progress')"
+
+    complete:
+      id: "complete"
+      final_state: true
+      invariants:
+        - description: "Translation displayed"
+          condition: "has_element('#translation')"
+        - description: "Export options visible"
+          condition: "has_element('.export-buttons')"
+
+    error:
+      id: "error"
+
+  transitions:
+    - id: "init_to_loading"
+      from: "initializing"
+      to: "loading_model"
+      event: "wasm_ready"
+
+    - id: "loading_to_idle"
+      from: "loading_model"
+      to: "idle"
+      event: "model_loaded"
+
+    - id: "idle_to_selected"
+      from: "idle"
+      to: "file_selected"
+      event: "file_dropped"
+
+    - id: "selected_to_translating"
+      from: "file_selected"
+      to: "translating"
+      event: "translate_clicked"
+
+    - id: "translating_to_complete"
+      from: "translating"
+      to: "complete"
+      event: "done"
+
+    - id: "selected_to_idle"
+      from: "file_selected"
+      to: "idle"
+      event: "clear"
+
+    - id: "translating_to_idle"
+      from: "translating"
+      to: "idle"
+      event: "cancel"
+
+    - id: "complete_to_idle"
+      from: "complete"
+      to: "idle"
+      event: "new_file"
+
+    - id: "loading_to_error"
+      from: "loading_model"
+      to: "error"
+      event: "load_failed"
+
+    - id: "selected_to_error"
+      from: "file_selected"
+      to: "error"
+      event: "invalid_file"
+
+    - id: "translating_to_error"
+      from: "translating"
+      to: "error"
+      event: "translation_failed"
+
+    - id: "error_to_idle"
+      from: "error"
+      to: "idle"
+      event: "retry"
+
+  forbidden:
+    - from: "idle"
+      to: "translating"
+      reason: "Cannot translate without file"
+
+    - from: "idle"
+      to: "complete"
+      reason: "Cannot complete without translating"
+
+    - from: "initializing"
+      to: "file_selected"
+      reason: "Model must load first"
+
+    - from: "translating"
+      to: "file_selected"
+      reason: "Cannot change file while translating"
+
+    - from: "error"
+      to: "translating"
+      reason: "Must recover from error first"
+
+    - from: "error"
+      to: "complete"
+      reason: "Cannot complete from error"
+
+performance:
+  max_duration_ms: 120000
+  max_memory_mb: 500
+
+assertions:
+  path:
+    must_visit: ["idle", "file_selected", "translating", "complete"]
+    must_not_visit: ["error"]
+    ends_at: "complete"

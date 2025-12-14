@@ -7,7 +7,8 @@
 # - State Coverage: 100%
 # - Error Path Coverage: ≥95%
 
-.PHONY: all build test coverage tier1 tier2 tier3 clean help
+.PHONY: all build test coverage tier1 tier2 tier3 clean help \
+	playbook-validate playbook-mutate playbook-diagrams playbook-test playbook-quick
 
 # Default target
 all: build test
@@ -144,6 +145,7 @@ tier1:
 tier2: tier1
 	@echo "📝 Tier 2: Pre-commit validation..."
 	@cargo test --workspace --lib
+	@make playbook-validate
 	@echo "✅ Tier 2 passed"
 
 ## Tier 3: Pre-push (1-5 min) - Full validation
@@ -161,6 +163,46 @@ tier4: tier3
 	@make a11y
 	@cargo mutants --workspace --no-times
 	@echo "✅ Tier 4 passed"
+
+# ============================================================================
+# Playbook State Machine Testing (Prevents Whack-a-Mole Bugs)
+# ============================================================================
+
+## Validate all playbooks (state machine verification)
+playbook-validate:
+	@echo "🎭 Validating state machine playbooks..."
+	@for pb in playbooks/*.yaml; do \
+		echo "  Validating $$pb..."; \
+		probar playbook $$pb --validate || exit 1; \
+	done
+	@echo "✅ All playbooks valid"
+
+## Run mutation testing on playbooks (M1-M5 falsification)
+playbook-mutate:
+	@echo "🧬 Running playbook mutation testing..."
+	@for pb in playbooks/*.yaml; do \
+		echo "  Mutating $$pb..."; \
+		probar playbook $$pb --mutate; \
+	done
+
+## Export state diagrams as SVG
+playbook-diagrams:
+	@echo "📊 Generating state diagrams..."
+	@mkdir -p target/playbook-diagrams
+	@for pb in playbooks/*.yaml; do \
+		name=$$(basename $$pb .yaml); \
+		echo "  Exporting $$name.svg..."; \
+		probar playbook $$pb --export svg --export-output target/playbook-diagrams/$$name.svg; \
+	done
+	@echo "✅ Diagrams exported to target/playbook-diagrams/"
+
+## Run full playbook test suite
+playbook-test: playbook-validate playbook-mutate
+	@echo "✅ Playbook testing complete"
+
+## Quick playbook check (validation only, for CI)
+playbook-quick:
+	@probar playbook playbooks/*.yaml --validate --format json
 
 # ============================================================================
 # Browser E2E Tests (via probar BrowserController)
@@ -259,9 +301,16 @@ help:
 	@echo "  make test-browser - Run browser E2E tests"
 	@echo "  make coverage     - Generate unified coverage report"
 	@echo ""
+	@echo "Playbook Testing (Prevents Whack-a-Mole Bugs):"
+	@echo "  make playbook-validate  - Validate state machine playbooks"
+	@echo "  make playbook-mutate    - Run M1-M5 mutation testing"
+	@echo "  make playbook-diagrams  - Export state diagrams as SVG"
+	@echo "  make playbook-test      - Full playbook test suite"
+	@echo "  make playbook-quick     - Quick validation (for CI)"
+	@echo ""
 	@echo "Quality Gates:"
 	@echo "  make tier1        - Fast feedback (<1s)"
-	@echo "  make tier2        - Pre-commit (<5s)"
+	@echo "  make tier2        - Pre-commit (<5s, includes playbook)"
 	@echo "  make tier3        - Pre-push (1-5 min)"
 	@echo "  make tier4        - CI/CD (5-60 min)"
 	@echo ""
