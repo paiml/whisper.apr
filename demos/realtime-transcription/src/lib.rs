@@ -795,14 +795,25 @@ fn handle_transcription_chunk(
             let session_id = SESSION_ID.with(|s| s.borrow().clone());
             let mut bridge_mut = bridge.borrow_mut();
 
-            // Show processing status
-            demo.borrow_mut()
-                .on_partial_result(&format!("🔄 Processing {chunk_duration:.1}s chunk..."));
+            // Check queue status and show appropriate message
+            let queue_stats = bridge_mut.stats().clone();
+            if bridge_mut.would_overflow() {
+                demo.borrow_mut()
+                    .on_partial_result(&format!("⚠️ Queue full ({}/3) - oldest chunk dropped", queue_stats.queue_depth));
+            } else {
+                demo.borrow_mut()
+                    .on_partial_result(&format!("🔄 Processing {chunk_duration:.1}s chunk ({}/3 queued)...", queue_stats.queue_depth));
+            }
 
             // Send to worker - this returns immediately (non-blocking!)
+            // Queue management handles overflow automatically
             match bridge_mut.transcribe(&chunk, &session_id, &[], false) {
-                Ok(chunk_id) => {
-                    info!(chunk_id, "Chunk sent to worker");
+                Ok(Some(chunk_id)) => {
+                    info!(chunk_id, queue_depth = queue_stats.queue_depth + 1, "Chunk sent to worker");
+                }
+                Ok(None) => {
+                    // This shouldn't happen with current implementation (we always send)
+                    warn!("Chunk was not sent");
                 }
                 Err(e) => {
                     warn!(error = ?e, "Failed to send chunk to worker");

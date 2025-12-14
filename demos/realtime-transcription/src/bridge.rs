@@ -87,11 +87,34 @@ pub enum WorkerResult {
 /// Callback type for worker results
 pub type ResultCallback = Rc<RefCell<dyn FnMut(WorkerResult)>>;
 
+/// Maximum number of pending chunks before dropping (per spec Section 3.2)
+pub const MAX_QUEUE_DEPTH: usize = 3;
+
 /// Pending request tracking
 struct PendingRequest {
     chunk_id: u32,
     sent_at: f64,
 }
+
+/// Queue statistics for monitoring
+#[derive(Debug, Clone, Default)]
+pub struct QueueStats {
+    /// Total chunks sent to worker
+    pub chunks_sent: u64,
+    /// Total chunks dropped due to queue overflow
+    pub chunks_dropped: u64,
+    /// Total chunks completed successfully
+    pub chunks_completed: u64,
+    /// Total errors received
+    pub errors: u64,
+    /// Average round-trip latency in ms
+    pub avg_latency_ms: f64,
+    /// Current queue depth
+    pub queue_depth: usize,
+}
+
+/// Maximum consecutive errors before worker is considered unhealthy
+pub const MAX_CONSECUTIVE_ERRORS: u32 = 3;
 
 /// Bridge for communicating with the transcription worker
 pub struct WorkerBridge {
@@ -100,6 +123,12 @@ pub struct WorkerBridge {
     next_chunk_id: u32,
     result_callback: Option<ResultCallback>,
     ready: bool,
+    stats: QueueStats,
+    latency_samples: Vec<f64>,
+    /// Consecutive error count for health checking
+    consecutive_errors: u32,
+    /// Whether the worker has encountered a fatal error
+    fatal_error: bool,
     _on_message: Closure<dyn Fn(MessageEvent)>,
     _on_error: Closure<dyn Fn(web_sys::ErrorEvent)>,
 }
@@ -157,6 +186,10 @@ import init, {{ worker_entry }} from '{}';
             next_chunk_id: 0,
             result_callback: None,
             ready: false,
+            stats: QueueStats::default(),
+            latency_samples: Vec::with_capacity(100),
+            consecutive_errors: 0,
+            fatal_error: false,
             // Placeholders - will be replaced below
             _on_message: Closure::wrap(Box::new(|_: MessageEvent| {}) as Box<dyn Fn(MessageEvent)>),
             _on_error: Closure::wrap(
@@ -248,8 +281,25 @@ import init, {{ worker_entry }} from '{}';
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0);
 
-                // Remove from pending
-                bridge.borrow_mut().pending.remove(&chunk_id);
+                // Calculate latency and update stats
+                {
+                    let mut bridge_mut = bridge.borrow_mut();
+                    if let Some(pending) = bridge_mut.pending.remove(&chunk_id) {
+                        let latency = js_sys::Date::now() - pending.sent_at;
+                        bridge_mut.latency_samples.push(latency);
+                        // Keep only last 100 samples
+                        if bridge_mut.latency_samples.len() > 100 {
+                            bridge_mut.latency_samples.remove(0);
+                        }
+                        // Update average latency
+                        let sum: f64 = bridge_mut.latency_samples.iter().sum();
+                        bridge_mut.stats.avg_latency_ms = sum / bridge_mut.latency_samples.len() as f64;
+                    }
+                    bridge_mut.stats.chunks_completed += 1;
+                    bridge_mut.stats.queue_depth = bridge_mut.pending.len();
+                    // Reset consecutive errors on success (error recovery)
+                    bridge_mut.consecutive_errors = 0;
+                }
 
                 WorkerResult::Transcription {
                     session_id: String::new(),
@@ -285,9 +335,23 @@ import init, {{ worker_entry }} from '{}';
 
                 warn!(message = %message, chunk_id = ?chunk_id, "Worker error");
 
-                // Remove from pending if chunk_id present
-                if let Some(id) = chunk_id {
-                    bridge.borrow_mut().pending.remove(&id);
+                // Remove from pending and update error stats
+                {
+                    let mut bridge_mut = bridge.borrow_mut();
+                    if let Some(id) = chunk_id {
+                        bridge_mut.pending.remove(&id);
+                    }
+                    bridge_mut.stats.errors += 1;
+                    bridge_mut.stats.queue_depth = bridge_mut.pending.len();
+                    // Track consecutive errors for health checking
+                    bridge_mut.consecutive_errors += 1;
+                    if bridge_mut.consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                        error!(
+                            consecutive = bridge_mut.consecutive_errors,
+                            "Worker unhealthy - too many consecutive errors"
+                        );
+                        bridge_mut.fatal_error = true;
+                    }
                 }
 
                 WorkerResult::Error {
@@ -344,7 +408,13 @@ import init, {{ worker_entry }} from '{}';
 
     /// Send audio chunk for transcription
     ///
-    /// Returns the chunk_id for tracking.
+    /// Returns Ok(Some(chunk_id)) if sent, Ok(None) if dropped due to queue overflow.
+    ///
+    /// # Queue Management (WAPR-SPEC-010 Section 3.2)
+    ///
+    /// If the pending queue exceeds MAX_QUEUE_DEPTH (3), the oldest chunk is dropped
+    /// and the new chunk is queued. This implements backpressure to prevent unbounded
+    /// memory growth during slow transcription.
     ///
     /// # Errors
     ///
@@ -355,7 +425,21 @@ import init, {{ worker_entry }} from '{}';
         session_id: &str,
         prompt_tokens: &[u32],
         is_final: bool,
-    ) -> Result<u32, JsValue> {
+    ) -> Result<Option<u32>, JsValue> {
+        // Check queue depth and drop oldest if needed
+        if self.pending.len() >= MAX_QUEUE_DEPTH {
+            // Find and remove oldest pending request
+            if let Some(oldest_id) = self.pending.keys().min().copied() {
+                warn!(
+                    dropped_chunk_id = oldest_id,
+                    queue_depth = self.pending.len(),
+                    "Queue overflow - dropping oldest chunk"
+                );
+                self.pending.remove(&oldest_id);
+                self.stats.chunks_dropped += 1;
+            }
+        }
+
         let chunk_id = self.next_chunk_id;
         self.next_chunk_id = self.next_chunk_id.wrapping_add(1);
 
@@ -363,6 +447,7 @@ import init, {{ worker_entry }} from '{}';
             chunk_id,
             audio_samples = audio.len(),
             session_id,
+            queue_depth = self.pending.len(),
             "Sending audio to worker"
         );
 
@@ -392,7 +477,51 @@ import init, {{ worker_entry }} from '{}';
             },
         );
 
-        Ok(chunk_id)
+        // Update stats
+        self.stats.chunks_sent += 1;
+        self.stats.queue_depth = self.pending.len();
+
+        Ok(Some(chunk_id))
+    }
+
+    /// Check if queue would overflow with another chunk
+    #[must_use]
+    pub fn would_overflow(&self) -> bool {
+        self.pending.len() >= MAX_QUEUE_DEPTH
+    }
+
+    /// Get current queue statistics
+    #[must_use]
+    pub fn stats(&self) -> &QueueStats {
+        &self.stats
+    }
+
+    /// Check if the worker is healthy
+    ///
+    /// Returns false if the worker has encountered too many consecutive errors
+    /// or has a fatal error condition.
+    #[must_use]
+    pub fn is_healthy(&self) -> bool {
+        !self.fatal_error && self.consecutive_errors < MAX_CONSECUTIVE_ERRORS
+    }
+
+    /// Check if the worker needs to be restarted
+    #[must_use]
+    pub fn needs_restart(&self) -> bool {
+        self.fatal_error
+    }
+
+    /// Get consecutive error count
+    #[must_use]
+    pub fn consecutive_errors(&self) -> u32 {
+        self.consecutive_errors
+    }
+
+    /// Reset error state (call after successful restart)
+    pub fn reset_error_state(&mut self) {
+        self.consecutive_errors = 0;
+        self.fatal_error = false;
+        info!("Worker error state reset");
     }
 
     /// Send ping to measure round-trip latency
@@ -512,6 +641,134 @@ mod tests {
             assert!((rtf - 0.5).abs() < f64::EPSILON);
         } else {
             panic!("Expected Transcription variant");
+        }
+    }
+
+    // =========================================================================
+    // Queue Management Tests (WAPR-SPEC-010 Section 3.2)
+    // =========================================================================
+
+    #[test]
+    fn test_max_queue_depth_is_three() {
+        // Per spec: "Bounded Queues: Drop oldest chunks if queue exceeds N (backpressure)"
+        // N = 3 per Section 3.2
+        assert_eq!(MAX_QUEUE_DEPTH, 3);
+    }
+
+    #[test]
+    fn test_queue_stats_default() {
+        let stats = QueueStats::default();
+        assert_eq!(stats.chunks_sent, 0);
+        assert_eq!(stats.chunks_dropped, 0);
+        assert_eq!(stats.chunks_completed, 0);
+        assert_eq!(stats.errors, 0);
+        assert!((stats.avg_latency_ms - 0.0).abs() < f64::EPSILON);
+        assert_eq!(stats.queue_depth, 0);
+    }
+
+    #[test]
+    fn test_queue_stats_debug() {
+        let stats = QueueStats {
+            chunks_sent: 10,
+            chunks_dropped: 2,
+            chunks_completed: 8,
+            errors: 1,
+            avg_latency_ms: 150.5,
+            queue_depth: 2,
+        };
+        let debug_str = format!("{:?}", stats);
+        assert!(debug_str.contains("chunks_sent: 10"));
+        assert!(debug_str.contains("chunks_dropped: 2"));
+    }
+
+    #[test]
+    fn test_queue_stats_clone() {
+        let stats = QueueStats {
+            chunks_sent: 5,
+            chunks_dropped: 1,
+            chunks_completed: 4,
+            errors: 0,
+            avg_latency_ms: 100.0,
+            queue_depth: 1,
+        };
+        let cloned = stats.clone();
+        assert_eq!(cloned.chunks_sent, stats.chunks_sent);
+        assert_eq!(cloned.chunks_dropped, stats.chunks_dropped);
+    }
+
+    #[test]
+    fn test_worker_result_metrics_variant() {
+        let result = WorkerResult::Metrics {
+            queue_depth: 2,
+            avg_latency_ms: 125.5,
+        };
+        if let WorkerResult::Metrics { queue_depth, avg_latency_ms } = result {
+            assert_eq!(queue_depth, 2);
+            assert!((avg_latency_ms - 125.5).abs() < f64::EPSILON);
+        } else {
+            panic!("Expected Metrics variant");
+        }
+    }
+
+    #[test]
+    fn test_worker_result_pong_variant() {
+        let result = WorkerResult::Pong {
+            timestamp: 1000.0,
+            worker_time: 1005.0,
+        };
+        if let WorkerResult::Pong { timestamp, worker_time } = result {
+            assert!((timestamp - 1000.0).abs() < f64::EPSILON);
+            assert!((worker_time - 1005.0).abs() < f64::EPSILON);
+        } else {
+            panic!("Expected Pong variant");
+        }
+    }
+
+    // =========================================================================
+    // Error Recovery Tests (WAPR-SPEC-010 Section 4.4)
+    // =========================================================================
+
+    #[test]
+    fn test_max_consecutive_errors_is_three() {
+        // Per spec: Worker should be considered unhealthy after 3 consecutive errors
+        assert_eq!(MAX_CONSECUTIVE_ERRORS, 3);
+    }
+
+    #[test]
+    fn test_worker_result_model_loaded() {
+        let result = WorkerResult::ModelLoaded {
+            size_mb: 37.5,
+            load_time_ms: 1500.0,
+        };
+        if let WorkerResult::ModelLoaded { size_mb, load_time_ms } = result {
+            assert!((size_mb - 37.5).abs() < f64::EPSILON);
+            assert!((load_time_ms - 1500.0).abs() < f64::EPSILON);
+        } else {
+            panic!("Expected ModelLoaded variant");
+        }
+    }
+
+    #[test]
+    fn test_worker_result_session_started() {
+        let result = WorkerResult::SessionStarted {
+            session_id: "test_session".to_string(),
+        };
+        if let WorkerResult::SessionStarted { session_id } = result {
+            assert_eq!(session_id, "test_session");
+        } else {
+            panic!("Expected SessionStarted variant");
+        }
+    }
+
+    #[test]
+    fn test_worker_result_session_ended() {
+        let result = WorkerResult::SessionEnded {
+            session_id: "test_session".to_string(),
+        };
+        if let WorkerResult::SessionEnded { session_id } = result {
+            assert_eq!(session_id, "test_session");
+        } else {
+            panic!("Expected SessionEnded variant");
         }
     }
 }
