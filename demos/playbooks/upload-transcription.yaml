@@ -1,0 +1,207 @@
+# Upload Transcription Demo - State Machine Playbook
+# Prevents "whack-a-mole" regressions by validating file upload flow
+#
+# Run: probar playbook demos/playbooks/upload-transcription.yaml --validate
+
+version: "1.0"
+name: "Upload Transcription State Machine"
+description: "WAPR-DEMO-002: Validates file upload transcription UI flow"
+
+machine:
+  id: "upload_transcription"
+  initial: "initializing"
+
+  states:
+    initializing:
+      id: "initializing"
+      invariants:
+        - description: "Upload disabled during init"
+          condition: "!can_upload()"
+
+    loading_model:
+      id: "loading_model"
+      invariants:
+        - description: "Progress bar visible"
+          condition: "has_element('.progress-bar')"
+
+    idle:
+      id: "idle"
+      invariants:
+        - description: "Upload zone active"
+          condition: "has_element('.upload-zone')"
+        - description: "No file selected"
+          condition: "selected_file().is_none()"
+
+    file_selected:
+      id: "file_selected"
+      invariants:
+        - description: "File name displayed"
+          condition: "has_element('.file-name')"
+        - description: "Transcribe button enabled"
+          condition: "can_transcribe()"
+
+    transcribing:
+      id: "transcribing"
+      invariants:
+        - description: "Progress indicator visible"
+          condition: "has_element('.transcription-progress')"
+        - description: "Cancel button available"
+          condition: "can_cancel()"
+
+    complete:
+      id: "complete"
+      final_state: true
+      invariants:
+        - description: "Transcript displayed"
+          condition: "has_element('#transcript')"
+        - description: "Download buttons visible"
+          condition: "has_element('.download-buttons')"
+
+    error:
+      id: "error"
+      invariants:
+        - description: "Error message visible"
+          condition: "has_element('.error-message')"
+
+  transitions:
+    # Happy path
+    - id: "init_to_loading"
+      from: "initializing"
+      to: "loading_model"
+      event: "wasm_ready"
+
+    - id: "loading_to_idle"
+      from: "loading_model"
+      to: "idle"
+      event: "model_loaded"
+
+    - id: "idle_to_selected"
+      from: "idle"
+      to: "file_selected"
+      event: "file_dropped"
+
+    - id: "selected_to_transcribing"
+      from: "file_selected"
+      to: "transcribing"
+      event: "transcribe_clicked"
+
+    - id: "transcribing_to_complete"
+      from: "transcribing"
+      to: "complete"
+      event: "transcription_done"
+
+    # Cancel/clear paths
+    - id: "selected_to_idle"
+      from: "file_selected"
+      to: "idle"
+      event: "clear_clicked"
+
+    - id: "transcribing_to_idle"
+      from: "transcribing"
+      to: "idle"
+      event: "cancel_clicked"
+
+    - id: "complete_to_idle"
+      from: "complete"
+      to: "idle"
+      event: "new_file_clicked"
+
+    # Error paths
+    - id: "loading_to_error"
+      from: "loading_model"
+      to: "error"
+      event: "model_load_failed"
+
+    - id: "selected_to_error"
+      from: "file_selected"
+      to: "error"
+      event: "invalid_file"
+
+    - id: "transcribing_to_error"
+      from: "transcribing"
+      to: "error"
+      event: "transcription_failed"
+
+    # Recovery
+    - id: "error_to_idle"
+      from: "error"
+      to: "idle"
+      event: "try_again"
+
+  forbidden:
+    - from: "idle"
+      to: "transcribing"
+      reason: "Cannot transcribe without selecting a file"
+
+    - from: "idle"
+      to: "complete"
+      reason: "Cannot complete without transcribing"
+
+    - from: "initializing"
+      to: "file_selected"
+      reason: "Cannot select file before WASM loaded"
+
+    - from: "transcribing"
+      to: "file_selected"
+      reason: "Cannot change file while transcribing"
+
+    - from: "error"
+      to: "transcribing"
+      reason: "Cannot transcribe from error state"
+
+    - from: "error"
+      to: "complete"
+      reason: "Cannot complete from error state"
+
+performance:
+  max_duration_ms: 60000
+  max_memory_mb: 500
+
+playbook:
+  setup:
+    - type: navigate
+      url: "http://localhost:8080/upload-transcription.html"
+    - type: wait
+      selector: "#app"
+
+  steps:
+    - name: "Wait for model"
+      transitions: ["init_to_loading", "loading_to_idle"]
+      timeout_ms: 15000
+
+    - name: "Select file"
+      transitions: ["idle_to_selected"]
+      timeout_ms: 2000
+
+    - name: "Start transcription"
+      transitions: ["selected_to_transcribing"]
+      timeout_ms: 1000
+
+    - name: "Complete transcription"
+      transitions: ["transcribing_to_complete"]
+      timeout_ms: 30000
+      capture:
+        - var: "transcript"
+          from: "#transcript"
+        - var: "duration_ms"
+          from: "#processing-time"
+
+  teardown:
+    - type: screenshot
+      path: "./target/playbook-screenshots/upload-final.png"
+      ignore_errors: true
+
+assertions:
+  path:
+    must_visit: ["idle", "file_selected", "transcribing", "complete"]
+    must_not_visit: ["error"]
+    ends_at: "complete"
+
+  output:
+    - var: "transcript"
+      not_empty: true
+
+  complexity:
+    operation: "file_transcription"
+    expected: "linear"
+    tolerance: 0.2

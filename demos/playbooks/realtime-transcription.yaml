@@ -1,0 +1,201 @@
+# Realtime Transcription Demo - State Machine Playbook
+# Prevents "whack-a-mole" regressions by validating state transitions
+#
+# Run: probar playbook demos/playbooks/realtime-transcription.yaml --validate
+
+version: "1.0"
+name: "Realtime Transcription State Machine"
+description: "WAPR-DEMO-001: Validates microphone transcription UI flow"
+
+machine:
+  id: "realtime_transcription"
+  initial: "initializing"
+
+  states:
+    initializing:
+      id: "initializing"
+      invariants:
+        - description: "Start button disabled during init"
+          condition: "!can_start_recording()"
+        - description: "Stop button disabled during init"
+          condition: "!can_stop_recording()"
+
+    loading_model:
+      id: "loading_model"
+      invariants:
+        - description: "Loading indicator visible"
+          condition: "has_element('.loading-spinner')"
+
+    idle:
+      id: "idle"
+      invariants:
+        - description: "Start button enabled"
+          condition: "can_start_recording()"
+        - description: "Stop button disabled"
+          condition: "!can_stop_recording()"
+
+    requesting_permission:
+      id: "requesting_permission"
+      invariants:
+        - description: "Permission dialog shown"
+          condition: "permission_dialog_visible()"
+
+    recording:
+      id: "recording"
+      invariants:
+        - description: "Stop button enabled"
+          condition: "can_stop_recording()"
+        - description: "Start button disabled"
+          condition: "!can_start_recording()"
+        - description: "Recording indicator visible"
+          condition: "has_element('.recording-indicator')"
+
+    processing:
+      id: "processing"
+      invariants:
+        - description: "Processing indicator visible"
+          condition: "has_element('.processing')"
+
+    error:
+      id: "error"
+      invariants:
+        - description: "Error message visible"
+          condition: "error_message().is_some()"
+
+  transitions:
+    # Happy path: Init -> Load -> Idle -> Request -> Record -> Process -> Idle
+    - id: "init_to_loading"
+      from: "initializing"
+      to: "loading_model"
+      event: "wasm_ready"
+
+    - id: "loading_to_idle"
+      from: "loading_model"
+      to: "idle"
+      event: "model_loaded"
+
+    - id: "idle_to_requesting"
+      from: "idle"
+      to: "requesting_permission"
+      event: "start_clicked"
+
+    - id: "requesting_to_recording"
+      from: "requesting_permission"
+      to: "recording"
+      event: "permission_granted"
+
+    - id: "recording_to_processing"
+      from: "recording"
+      to: "processing"
+      event: "stop_clicked"
+
+    - id: "processing_to_idle"
+      from: "processing"
+      to: "idle"
+      event: "processing_complete"
+
+    # Error paths
+    - id: "requesting_to_error"
+      from: "requesting_permission"
+      to: "error"
+      event: "permission_denied"
+
+    - id: "loading_to_error"
+      from: "loading_model"
+      to: "error"
+      event: "model_load_failed"
+
+    - id: "init_to_error"
+      from: "initializing"
+      to: "error"
+      event: "wasm_load_failed"
+
+    - id: "recording_to_error"
+      from: "recording"
+      to: "error"
+      event: "audio_error"
+
+    # Recovery paths
+    - id: "error_to_idle"
+      from: "error"
+      to: "idle"
+      event: "dismiss_error"
+
+    - id: "error_to_loading"
+      from: "error"
+      to: "loading_model"
+      event: "retry_load"
+
+  # CRITICAL: Forbidden transitions that would indicate bugs
+  forbidden:
+    - from: "idle"
+      to: "recording"
+      reason: "Cannot skip permission request - would cause audio errors"
+
+    - from: "processing"
+      to: "recording"
+      reason: "Cannot start recording while processing - would lose data"
+
+    - from: "error"
+      to: "recording"
+      reason: "Cannot record from error state - must recover first"
+
+    - from: "error"
+      to: "processing"
+      reason: "Cannot process from error state - invalid flow"
+
+    - from: "initializing"
+      to: "recording"
+      reason: "Cannot record before WASM initialized"
+
+    - from: "initializing"
+      to: "idle"
+      reason: "Cannot skip model loading"
+
+performance:
+  max_duration_ms: 10000
+  max_memory_mb: 200
+
+playbook:
+  setup:
+    - type: navigate
+      url: "http://localhost:8080/realtime-transcription.html"
+    - type: wait
+      selector: "#app"
+      timeout_ms: 5000
+
+  steps:
+    - name: "Wait for initialization"
+      transitions: ["init_to_loading", "loading_to_idle"]
+      timeout_ms: 10000
+
+    - name: "Start recording"
+      transitions: ["idle_to_requesting", "requesting_to_recording"]
+      timeout_ms: 5000
+
+    - name: "Stop and process"
+      transitions: ["recording_to_processing", "processing_to_idle"]
+      timeout_ms: 5000
+      capture:
+        - var: "transcript"
+          from: "#transcript-output"
+
+  teardown:
+    - type: screenshot
+      path: "./target/playbook-screenshots/realtime-final.png"
+      ignore_errors: true
+
+assertions:
+  path:
+    must_visit: ["initializing", "idle", "recording"]
+    must_not_visit: ["error"]
+    ends_at: "idle"
+
+  output:
+    - var: "transcript"
+      not_empty: false  # May be empty for short tests
+
+  complexity:
+    operation: "transcription"
+    expected: "linear"
+    tolerance: 0.15
