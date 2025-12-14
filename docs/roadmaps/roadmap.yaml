@@ -1,0 +1,47 @@
+roadmap_version: '1.0'
+github_enabled: true
+github_repo: paiml/whisper.apr
+roadmap:
+- id: GH-1
+  github_issue: 1
+  item_type: task
+  title: 'WAPR-180: Phase 1 - Async Worker Foundation'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-14T07:47:06.741716586+00:00
+  updated: 2025-12-14T07:51:38.418352754+00:00
+  spec: null
+  acceptance_criteria:
+  - Create `WorkerBridge::new()` - Worker initializes within 500ms
+  - Implement message protocol with session management
+  - Add worker error handling - All errors propagate to main
+  - Export `worker_entry` - Function exists in WASM
+  - Wire bridge into main thread
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - enhancement
+  notes: null
+- id: GH-2
+  github_issue: 2
+  item_type: task
+  title: 'WAPR-181: Phase 2 - Model Loading in Worker'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2025-12-14T07:51:50.918643122+00:00
+  updated: 2025-12-14T07:51:50.918643122+00:00
+  spec: null
+  acceptance_criteria:
+  - Transfer model bytes to worker (37MB in < 2s)
+  - Load model in worker thread
+  - Report loading progress (10+ updates)
+  - Handle load failures with error display
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - enhancement
+  notes: null
