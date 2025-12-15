@@ -45,6 +45,8 @@ pub mod progress;
 pub mod simd;
 pub mod timestamps;
 pub mod tokenizer;
+#[macro_use]
+pub mod trace;
 pub mod vad;
 
 /// Speaker diarization module (who spoke when)
@@ -56,11 +58,41 @@ pub mod gpu;
 /// Backend abstraction and automatic selection
 pub mod backend;
 
-/// Custom vocabulary fine-tuning and hotword boosting
+/// Vocabulary and hotword customization
 pub mod vocabulary;
+
+/// Benchmark infrastructure for multi-backend comparison
+pub mod benchmark;
+
+/// Re-exports world-class production inference primitives from realizar.
+///
+/// Provides: Flash Attention, Sliding Window Attention,
+/// FusedLayerNormLinear, KVCache, PagedKvCache,
+/// Q4_K, Q5_K, Q6_K quantization with fused ops.
+#[cfg(feature = "realizar-inference")]
+pub mod realizar_inference {
+    pub use realizar::layers::{
+        Attention, FeedForward, FusedLayerNormLinear, KVCache, LayerNorm, Linear,
+        MultiHeadAttention, SlidingWindowAttention,
+    };
+
+    pub use realizar::paged_kv::{PagedCacheError, PagedKvCache, SeqId};
+
+    pub use realizar::quantize::{
+        dequantize_q4_k, dequantize_q5_k, dequantize_q6_k, dequantize_q8_0, fused_q4k_dot_simd,
+        fused_q4k_parallel_matvec, fused_q5k_dot_simd, fused_q5k_parallel_matvec,
+        fused_q6k_dot_simd, fused_q6k_parallel_matvec, Q4_KBlock, Q5_KBlock, Q6_KBlock, Q8_0Block,
+    };
+
+    pub use realizar::tensor::Tensor;
+}
 
 #[cfg(feature = "wasm")]
 pub mod wasm;
+
+/// CLI module for native command-line interface
+#[cfg(feature = "cli")]
+pub mod cli;
 
 pub use error::{WhisperError, WhisperResult};
 
@@ -159,7 +191,8 @@ impl Default for TranscribeOptions {
 }
 
 /// A timestamped segment of transcription
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "cli", derive(serde::Serialize, serde::Deserialize))]
 pub struct Segment {
     /// Start time in seconds
     pub start: f32,
@@ -172,7 +205,8 @@ pub struct Segment {
 }
 
 /// Result of transcription
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "cli", derive(serde::Serialize, serde::Deserialize))]
 pub struct TranscriptionResult {
     /// Full transcribed text
     pub text: String,
@@ -256,6 +290,8 @@ pub struct WhisperApr {
     mel_filters: audio::MelFilterbank,
     /// Resampler for non-16kHz audio
     resampler: Option<audio::SincResampler>,
+    /// Whether trained weights have been loaded
+    weights_loaded: bool,
 }
 
 impl WhisperApr {
@@ -278,6 +314,7 @@ impl WhisperApr {
             tokenizer,
             mel_filters,
             resampler: None,
+            weights_loaded: false,
         }
     }
 
@@ -373,13 +410,14 @@ impl WhisperApr {
     }
 
     /// Compute mel spectrogram from audio
-    fn compute_mel(&self, audio: &[f32]) -> WhisperResult<Vec<f32>> {
+    pub fn compute_mel(&self, audio: &[f32]) -> WhisperResult<Vec<f32>> {
         self.mel_filters.compute(audio, audio::HOP_LENGTH)
     }
 
-    /// Encode audio features
-    fn encode(&self, mel: &[f32]) -> WhisperResult<Vec<f32>> {
-        self.encoder.forward(mel)
+    /// Encode audio features (mel spectrogram -> encoder features)
+    pub fn encode(&self, mel: &[f32]) -> WhisperResult<Vec<f32>> {
+        // Use forward_mel to process raw mel spectrogram through conv frontend first
+        self.encoder.forward_mel(mel)
     }
 
     /// Get initial tokens for decoding
@@ -451,36 +489,71 @@ impl WhisperApr {
     }
 
     /// Decode tokens from audio features
+    ///
+    /// Uses KV cache for O(n) incremental decoding instead of O(n²) full recomputation.
     fn decode(
         &self,
         audio_features: &[f32],
         initial_tokens: &[u32],
         options: &TranscribeOptions,
     ) -> WhisperResult<Vec<u32>> {
-        // Create logits function that runs decoder
+        use std::cell::RefCell;
+
         let n_vocab = self.config.n_vocab as usize;
         let max_tokens = self.config.n_text_ctx as usize;
+        let d_model = self.config.n_text_state as usize;
+        let n_layers = self.config.n_text_layer as usize;
+
+        // Create KV cache for incremental decoding (O(n) instead of O(n²))
+        // DecoderKVCache::new(n_layers, d_model, max_len)
+        let cache = RefCell::new(model::DecoderKVCache::new(n_layers, d_model, max_tokens));
+        let processed_count = RefCell::new(0usize);
 
         let logits_fn = |tokens: &[u32]| -> WhisperResult<Vec<f32>> {
-            // Run decoder forward pass - returns logits (seq_len * n_vocab)
-            let all_logits = self.decoder.forward(tokens, audio_features)?;
+            use tokenizer::special_tokens;
 
-            // Extract last token's logits
             let seq_len = tokens.len();
-            let last_start = (seq_len - 1) * n_vocab;
+            let already_processed = *processed_count.borrow();
 
-            // Ensure we have correct vocabulary size
-            if all_logits.len() >= last_start + n_vocab {
-                Ok(all_logits[last_start..last_start + n_vocab].to_vec())
-            } else {
-                // Pad with -inf if needed (shouldn't happen with correct model)
-                let mut padded = vec![f32::NEG_INFINITY; n_vocab];
-                let available = all_logits.len().saturating_sub(last_start);
-                if available > 0 {
-                    padded[..available].copy_from_slice(&all_logits[last_start..]);
-                }
-                Ok(padded)
+            // Process only the tokens we haven't seen yet
+            let mut logits = vec![f32::NEG_INFINITY; n_vocab];
+
+            for &token in tokens.iter().take(seq_len).skip(already_processed) {
+                logits =
+                    self.decoder
+                        .forward_one(token, audio_features, &mut cache.borrow_mut())?;
             }
+
+            *processed_count.borrow_mut() = seq_len;
+
+            // Suppress special tokens (matching whisper.cpp behavior)
+            // These tokens should never be generated during decoding
+            logits[special_tokens::SOT as usize] = f32::NEG_INFINITY;
+            logits[special_tokens::NO_SPEECH as usize] = f32::NEG_INFINITY;
+            logits[special_tokens::TRANSLATE as usize] = f32::NEG_INFINITY;
+            logits[special_tokens::TRANSCRIBE as usize] = f32::NEG_INFINITY;
+            logits[special_tokens::PREV as usize] = f32::NEG_INFINITY;
+            logits[special_tokens::SPEAKER_TURN as usize] = f32::NEG_INFINITY;
+            logits[special_tokens::NO_TIMESTAMPS as usize] = f32::NEG_INFINITY;
+
+            // Suppress all language tokens (50258 to 50357)
+            for i in special_tokens::LANG_BASE..special_tokens::TRANSLATE {
+                logits[i as usize] = f32::NEG_INFINITY;
+            }
+
+            // Suppress timestamps if word_timestamps is disabled (default)
+            // When word_timestamps is false, we use NO_TIMESTAMPS token and suppress all timestamp tokens
+            if !options.word_timestamps {
+                for logit in logits
+                    .iter_mut()
+                    .take(n_vocab)
+                    .skip(special_tokens::TIMESTAMP_BASE as usize)
+                {
+                    *logit = f32::NEG_INFINITY;
+                }
+            }
+
+            Ok(logits)
         };
 
         // Choose decoding strategy
@@ -551,6 +624,15 @@ impl WhisperApr {
             }
         };
         params * 4 // 4 bytes per f32 parameter
+    }
+
+    /// Check if model has trained weights loaded
+    ///
+    /// Returns true if weights have been loaded via `load_from_apr`,
+    /// false if using default/uninitialized weights from `from_config`.
+    #[must_use]
+    pub fn has_weights(&self) -> bool {
+        self.weights_loaded
     }
 
     /// Load model weights from .apr file bytes
@@ -626,7 +708,11 @@ impl WhisperApr {
 
         // Phase 4: Loading vocabulary
         callback(&tracker.to_progress());
-        let tokenizer = tokenizer::BpeTokenizer::with_base_tokens();
+        // Load vocab from APR if available, otherwise fall back to base tokens
+        let tokenizer = reader.read_vocabulary().map_or_else(
+            tokenizer::BpeTokenizer::with_base_tokens,
+            tokenizer::BpeTokenizer::from_vocabulary,
+        );
         tracker.next_phase();
 
         // Phase 5: Initializing
@@ -643,6 +729,7 @@ impl WhisperApr {
             tokenizer,
             mel_filters,
             resampler: None,
+            weights_loaded: true,
         })
     }
 
@@ -662,7 +749,7 @@ impl WhisperApr {
             target[..len].copy_from_slice(&pe[..len]);
         }
 
-        // Load encoder block weights
+        // Load encoder block weights (HuggingFace naming: encoder.layers.N.*)
         for layer_idx in 0..n_layers {
             let progress = layer_idx as f32 / n_layers as f32;
             tracker.update_phase_progress(progress);
@@ -670,37 +757,37 @@ impl WhisperApr {
 
             let block = &mut encoder.blocks_mut()[layer_idx];
 
-            // Layer norm 1
+            // Self-attention layer norm (before attention)
             Self::load_layer_norm_weights(
                 reader,
-                &format!("encoder.blocks.{layer_idx}.attn_ln"),
+                &format!("encoder.layers.{layer_idx}.self_attn_layer_norm"),
                 &mut block.ln1,
             );
 
             // Self-attention
             Self::load_attention_weights(
                 reader,
-                &format!("encoder.blocks.{layer_idx}.attn"),
+                &format!("encoder.layers.{layer_idx}.self_attn"),
                 &mut block.self_attn,
             );
 
-            // Layer norm 2
+            // Final layer norm (before FFN)
             Self::load_layer_norm_weights(
                 reader,
-                &format!("encoder.blocks.{layer_idx}.mlp_ln"),
+                &format!("encoder.layers.{layer_idx}.final_layer_norm"),
                 &mut block.ln2,
             );
 
             // Feed-forward network
             Self::load_ffn_weights(
                 reader,
-                &format!("encoder.blocks.{layer_idx}.mlp"),
+                &format!("encoder.layers.{layer_idx}"),
                 &mut block.ffn,
             );
         }
 
-        // Load final layer norm
-        Self::load_layer_norm_weights(reader, "encoder.ln_post", encoder.ln_post_mut());
+        // Load encoder final layer norm
+        Self::load_layer_norm_weights(reader, "encoder.layer_norm", encoder.ln_post_mut());
     }
 
     /// Load decoder weights from .apr reader
@@ -737,48 +824,51 @@ impl WhisperApr {
             // Layer norm 1 (before self-attention)
             Self::load_layer_norm_weights(
                 reader,
-                &format!("decoder.blocks.{layer_idx}.attn_ln"),
+                &format!("decoder.layers.{layer_idx}.self_attn_layer_norm"),
                 &mut block.ln1,
             );
 
             // Self-attention
             Self::load_attention_weights(
                 reader,
-                &format!("decoder.blocks.{layer_idx}.attn"),
+                &format!("decoder.layers.{layer_idx}.self_attn"),
                 &mut block.self_attn,
             );
 
             // Layer norm 2 (before cross-attention)
             Self::load_layer_norm_weights(
                 reader,
-                &format!("decoder.blocks.{layer_idx}.cross_attn_ln"),
+                &format!("decoder.layers.{layer_idx}.encoder_attn_layer_norm"),
                 &mut block.ln2,
             );
 
             // Cross-attention
             Self::load_attention_weights(
                 reader,
-                &format!("decoder.blocks.{layer_idx}.cross_attn"),
+                &format!("decoder.layers.{layer_idx}.encoder_attn"),
                 &mut block.cross_attn,
             );
 
             // Layer norm 3 (before FFN)
             Self::load_layer_norm_weights(
                 reader,
-                &format!("decoder.blocks.{layer_idx}.mlp_ln"),
+                &format!("decoder.layers.{layer_idx}.final_layer_norm"),
                 &mut block.ln3,
             );
 
             // Feed-forward network
             Self::load_ffn_weights(
                 reader,
-                &format!("decoder.blocks.{layer_idx}.mlp"),
+                &format!("decoder.layers.{layer_idx}"),
                 &mut block.ffn,
             );
         }
 
         // Load final layer norm
-        Self::load_layer_norm_weights(reader, "decoder.ln", decoder.ln_post_mut());
+        Self::load_layer_norm_weights(reader, "decoder.layer_norm", decoder.ln_post_mut());
+
+        // Finalize decoder - recompute cached transpose for token embeddings
+        decoder.finalize_weights();
     }
 
     /// Load layer norm weights
@@ -797,39 +887,51 @@ impl WhisperApr {
         }
     }
 
-    /// Load attention weights
+    /// Load attention weights (HuggingFace naming: q_proj, k_proj, v_proj, out_proj)
     fn load_attention_weights(
         reader: &format::AprReader,
         prefix: &str,
         attn: &mut model::MultiHeadAttention,
     ) {
-        // Load query, key, value projections
-        if let Ok(q_weight) = reader.load_tensor(&format!("{prefix}.query.weight")) {
+        // Load query, key, value projections - weights and biases
+        if let Ok(q_weight) = reader.load_tensor(&format!("{prefix}.q_proj.weight")) {
             attn.set_query_weight(&q_weight);
         }
-        if let Ok(k_weight) = reader.load_tensor(&format!("{prefix}.key.weight")) {
+        if let Ok(q_bias) = reader.load_tensor(&format!("{prefix}.q_proj.bias")) {
+            attn.set_query_bias(&q_bias);
+        }
+        if let Ok(k_weight) = reader.load_tensor(&format!("{prefix}.k_proj.weight")) {
             attn.set_key_weight(&k_weight);
         }
-        if let Ok(v_weight) = reader.load_tensor(&format!("{prefix}.value.weight")) {
+        if let Ok(k_bias) = reader.load_tensor(&format!("{prefix}.k_proj.bias")) {
+            attn.set_key_bias(&k_bias);
+        }
+        if let Ok(v_weight) = reader.load_tensor(&format!("{prefix}.v_proj.weight")) {
             attn.set_value_weight(&v_weight);
         }
-        if let Ok(out_weight) = reader.load_tensor(&format!("{prefix}.out.weight")) {
+        if let Ok(v_bias) = reader.load_tensor(&format!("{prefix}.v_proj.bias")) {
+            attn.set_value_bias(&v_bias);
+        }
+        if let Ok(out_weight) = reader.load_tensor(&format!("{prefix}.out_proj.weight")) {
             attn.set_out_weight(&out_weight);
+        }
+        if let Ok(out_bias) = reader.load_tensor(&format!("{prefix}.out_proj.bias")) {
+            attn.set_out_bias(&out_bias);
         }
     }
 
-    /// Load feed-forward network weights
+    /// Load feed-forward network weights (HuggingFace naming: fc1, fc2)
     fn load_ffn_weights(reader: &format::AprReader, prefix: &str, ffn: &mut model::FeedForward) {
-        if let Ok(fc1_weight) = reader.load_tensor(&format!("{prefix}.0.weight")) {
+        if let Ok(fc1_weight) = reader.load_tensor(&format!("{prefix}.fc1.weight")) {
             ffn.fc1.set_weight(&fc1_weight);
         }
-        if let Ok(fc1_bias) = reader.load_tensor(&format!("{prefix}.0.bias")) {
+        if let Ok(fc1_bias) = reader.load_tensor(&format!("{prefix}.fc1.bias")) {
             ffn.fc1.set_bias(&fc1_bias);
         }
-        if let Ok(fc2_weight) = reader.load_tensor(&format!("{prefix}.2.weight")) {
+        if let Ok(fc2_weight) = reader.load_tensor(&format!("{prefix}.fc2.weight")) {
             ffn.fc2.set_weight(&fc2_weight);
         }
-        if let Ok(fc2_bias) = reader.load_tensor(&format!("{prefix}.2.bias")) {
+        if let Ok(fc2_bias) = reader.load_tensor(&format!("{prefix}.fc2.bias")) {
             ffn.fc2.set_bias(&fc2_bias);
         }
     }
@@ -1486,11 +1588,9 @@ impl StreamingSession<'_> {
         // Check for partial result
         if self.processor.has_partial() {
             if let Some(partial_audio) = self.processor.get_partial() {
-                let result = self.whisper.transcribe_partial(
-                    &partial_audio,
-                    self.options.clone(),
-                    false,
-                )?;
+                let result =
+                    self.whisper
+                        .transcribe_partial(&partial_audio, self.options.clone(), false)?;
 
                 // Deduplicate (don't return same text twice)
                 if result.text != self.last_partial_text {
@@ -1528,11 +1628,14 @@ impl StreamingSession<'_> {
     /// # Errors
     /// Returns error if no chunk is ready or transcription fails
     pub fn finalize(&mut self) -> WhisperResult<PartialTranscriptionResult> {
-        let chunk = self.processor.get_chunk().ok_or_else(|| {
-            WhisperError::Audio("no chunk ready for finalization".into())
-        })?;
+        let chunk = self
+            .processor
+            .get_chunk()
+            .ok_or_else(|| WhisperError::Audio("no chunk ready for finalization".into()))?;
 
-        let result = self.whisper.transcribe_partial(&chunk, self.options.clone(), true)?;
+        let result = self
+            .whisper
+            .transcribe_partial(&chunk, self.options.clone(), true)?;
         self.last_partial_text.clear();
 
         Ok(result)
@@ -1547,7 +1650,9 @@ impl StreamingSession<'_> {
     /// Returns error if transcription fails
     pub fn flush(&mut self) -> WhisperResult<Option<PartialTranscriptionResult>> {
         if let Some(chunk) = self.processor.flush() {
-            let result = self.whisper.transcribe_partial(&chunk, self.options.clone(), true)?;
+            let result = self
+                .whisper
+                .transcribe_partial(&chunk, self.options.clone(), true)?;
             self.last_partial_text.clear();
             Ok(Some(result))
         } else {
@@ -2126,8 +2231,14 @@ mod tests {
         assert_eq!(result.num_segments(), 2);
         assert!(result.first_segment().is_some());
         assert!(result.last_segment().is_some());
-        assert_eq!(result.first_segment().map(|s| &s.text), Some(&"hello".to_string()));
-        assert_eq!(result.last_segment().map(|s| &s.text), Some(&"world".to_string()));
+        assert_eq!(
+            result.first_segment().map(|s| &s.text),
+            Some(&"hello".to_string())
+        );
+        assert_eq!(
+            result.last_segment().map(|s| &s.text),
+            Some(&"world".to_string())
+        );
     }
 
     #[test]
@@ -2857,10 +2968,7 @@ mod tests {
 
     #[test]
     fn test_create_audio_batch() {
-        let segments = vec![
-            vec![0.1_f32, 0.2, 0.3],
-            vec![0.4_f32, 0.5],
-        ];
+        let segments = vec![vec![0.1_f32, 0.2, 0.3], vec![0.4_f32, 0.5]];
 
         let batch = WhisperApr::create_audio_batch(&segments);
         assert_eq!(batch.len(), 2);
@@ -3023,6 +3131,36 @@ mod tests {
     }
 
     #[test]
+    fn test_encode_3_second_chunk() {
+        // This is what the realtime demo sends - 3 seconds of audio at 16kHz
+        // Test that mel spectrogram can be encoded without "input size mismatch" error
+        let whisper = WhisperApr::tiny();
+        let audio = vec![0.0; 48000]; // 3 seconds at 16kHz
+
+        // Compute mel spectrogram
+        let mel = whisper
+            .compute_mel(&audio)
+            .expect("mel computation should succeed");
+
+        // Encode should succeed without "input size mismatch" error
+        let result = whisper.encode(&mel);
+        assert!(
+            result.is_ok(),
+            "encode should succeed for 3s audio mel: {:?}",
+            result.err()
+        );
+
+        // Verify output dimensions - should be (output_frames x d_model)
+        let encoded = result.expect("encode should succeed");
+        let d_model = whisper.config().n_text_state as usize; // 384 for tiny
+        assert_eq!(
+            encoded.len() % d_model,
+            0,
+            "encoded output should be multiple of d_model"
+        );
+    }
+
+    #[test]
     fn test_create_streaming_session() {
         let whisper = WhisperApr::tiny();
         let session = whisper.create_streaming_session(TranscribeOptions::default(), 44100);
@@ -3086,7 +3224,9 @@ mod tests {
 
         let events = session.drain_events();
         assert!(!events.is_empty());
-        assert!(events.iter().any(|e| matches!(e, audio::StreamingEvent::Reset)));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, audio::StreamingEvent::Reset)));
     }
 
     #[test]
@@ -3242,7 +3382,12 @@ mod tests {
             top_k: Some(40),
             top_p: Some(0.9),
         };
-        if let DecodingStrategy::Sampling { temperature, top_k, top_p } = sampling {
+        if let DecodingStrategy::Sampling {
+            temperature,
+            top_k,
+            top_p,
+        } = sampling
+        {
             assert!((temperature - 0.5).abs() < f32::EPSILON);
             assert_eq!(top_k, Some(40));
             assert_eq!(top_p, Some(0.9));
@@ -3431,5 +3576,82 @@ mod tests {
 
         assert!(!result.has_text());
         assert!((result.real_time_factor() - 0.0).abs() < f32::EPSILON);
+    }
+
+    // =========================================================================
+    // Full E2E Integration Test with Real Model (SIMD-optimized path)
+    // =========================================================================
+
+    #[test]
+    #[ignore] // Run with: cargo test test_e2e_transcribe_with_int8_model -- --ignored
+    fn test_e2e_transcribe_with_int8_model() {
+        // Load the real int8 quantized model
+        let model_path = std::path::Path::new("models/whisper-tiny-int8.apr");
+        if !model_path.exists() {
+            eprintln!(
+                "Skipping E2E test: model file not found at {:?}",
+                model_path
+            );
+            return;
+        }
+
+        let model_data = std::fs::read(model_path).expect("Failed to read model file");
+        eprintln!("Loaded model: {} bytes", model_data.len());
+
+        let whisper = WhisperApr::load_from_apr(&model_data).expect("Failed to load model");
+        eprintln!("Model loaded: {:?}", whisper.model_type());
+
+        // Generate 3 seconds of test audio (silence with a bit of noise)
+        // This exercises the full pipeline without needing real speech
+        let sample_rate = 16000;
+        let duration_secs = 3.0;
+        let num_samples = (sample_rate as f32 * duration_secs) as usize;
+
+        // Generate low-amplitude noise (simulates silence/background)
+        let audio: Vec<f32> = (0..num_samples)
+            .map(|i| {
+                // Very low amplitude noise
+                let noise = ((i as f32 * 0.1).sin() * 0.001) + ((i as f32 * 0.37).cos() * 0.001);
+                noise
+            })
+            .collect();
+
+        eprintln!("Generated {} samples of test audio", audio.len());
+
+        // Run transcription - this exercises the SIMD-optimized path:
+        // - Mel spectrogram computation
+        // - Encoder forward (uses SIMD)
+        // - Decoder forward with SIMD matmul in project_to_vocab
+        // - Quantized linear layers with SIMD matmul
+        let start = std::time::Instant::now();
+        let result = whisper.transcribe(&audio, TranscribeOptions::default());
+        let elapsed = start.elapsed();
+
+        eprintln!("Transcription completed in {:?}", elapsed);
+
+        match result {
+            Ok(transcription) => {
+                eprintln!("Result: '{}'", transcription.text);
+                eprintln!("Language: {}", transcription.language);
+                eprintln!("Segments: {}", transcription.segments.len());
+
+                // For silence, we expect empty or very short text
+                // The main goal is verifying the pipeline doesn't crash
+                assert!(
+                    transcription.text.len() < 100,
+                    "Unexpected long transcription for silence"
+                );
+            }
+            Err(e) => {
+                panic!("Transcription failed: {e:?}");
+            }
+        }
+
+        // Verify reasonable performance (should be faster than real-time with SIMD)
+        let rtf = elapsed.as_secs_f32() / duration_secs;
+        eprintln!("Real-time factor: {rtf:.2}x");
+
+        // With SIMD optimization, RTF should be reasonable (< 50x for debug build)
+        assert!(rtf < 50.0, "RTF {rtf} is too slow, SIMD may not be working");
     }
 }

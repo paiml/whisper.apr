@@ -15,19 +15,30 @@ categories = ["multimedia::audio", "wasm", "science"]
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["std"]
+default = ["std", "simd", "realizar-inference"]
 std = []
 wasm = ["wasm-bindgen", "js-sys", "web-sys", "console_error_panic_hook"]
 webgpu = ["wgpu"]
 simd = []
+parallel = ["rayon", "wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
+converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs"]
+cli = ["clap", "serde", "serde_json", "tracing-subscriber"]
+benchmark-tui = ["ratatui", "crossterm"]
+# Use realizar's world-class inference primitives (attention, quantization, caching)
+realizar-inference = ["dep:realizar"]
 
 [dependencies]
 # Core dependencies
 thiserror = "2"
 
 # SIMD acceleration (trueno integration)
-trueno = "0.8"
+# TODO: Switch back to crates.io after publishing trueno 0.8.5
+trueno = { path = "../trueno" }
+
+# Inference primitives from realizar (shared attention, quantization, caching)
+# This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
+realizar = { path = "../realizar", optional = true, default-features = false }
 
 # FFT for mel spectrogram computation
 rustfft = "6.2"
@@ -49,11 +60,34 @@ tracing = { version = "0.1", optional = true }
 # Optional: WebGPU compute backend
 wgpu = { version = "23", optional = true }
 
+# Optional: Parallel execution with Web Workers
+rayon = { version = "1.10", optional = true }
+wasm-bindgen-rayon = { version = "1.2", optional = true }
+
+# Optional: Converter dependencies
+reqwest = { version = "0.12", features = ["json", "stream"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+indicatif = { version = "0.17", optional = true }
+safetensors = { version = "0.4", optional = true }
+dirs = { version = "5", optional = true }
+
+# Optional: CLI dependencies
+clap = { version = "4", features = ["derive"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+# Optional: TUI benchmark dependencies
+ratatui = { version = "0.29", optional = true }
+crossterm = { version = "0.28", optional = true }
+
 [dev-dependencies]
 proptest = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
 # WASM testing with Probar (Playwright-compatible testing framework)
 jugar-probar = { version = "0.2", default-features = false }
+# Tempfile for CLI tests
+tempfile = "3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
@@ -63,11 +97,11 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
-opt-level = "z"
+opt-level = 3  # Use full optimization for native (was "z" for size - killed SIMD!)
 
 [profile.release-wasm]
 inherits = "release"
-opt-level = "z"
+opt-level = "z"  # Size optimization only for WASM builds
 
 [[bench]]
 name = "inference"
@@ -80,6 +114,22 @@ harness = false
 [[bench]]
 name = "streaming_latency"
 harness = false
+
+[[bench]]
+name = "pipeline"
+harness = false
+
+[[bench]]
+name = "format_comparison"
+harness = false
+
+[[bench]]
+name = "cli_benchmarks"
+harness = false
+
+[[example]]
+name = "format_comparison"
+path = "examples/format_comparison.rs"
 
 [[example]]
 name = "basic_transcription"
@@ -100,6 +150,30 @@ path = "examples/language_detection.rs"
 [[example]]
 name = "simd_operations"
 path = "examples/simd_operations.rs"
+
+[[example]]
+name = "benchmark_pipeline"
+path = "examples/benchmark_pipeline.rs"
+
+[[example]]
+name = "benchmark_tui"
+path = "examples/benchmark_tui.rs"
+required-features = ["benchmark-tui"]
+
+[[example]]
+name = "cli_usage"
+path = "examples/cli_usage.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "whisper-convert"
+path = "tools/convert.rs"
+required-features = ["converter"]
+
+[[bin]]
+name = "whisper-apr-cli"
+path = "src/bin/whisper-apr-cli.rs"
+required-features = ["cli"]
 
 [lints.rust]
 unsafe_code = "warn"
@@ -127,3 +201,10 @@ derivable_impls = "allow"         # Some manual impls are intentional
 doc_markdown = "allow"            # Will be fixed incrementally
 redundant_closure_for_method_calls = "allow"  # Readability preference
 needless_pass_by_value = "allow"  # Sometimes intentional for clarity
+# Cargo lints
+multiple_crate_versions = "allow"  # Transitive deps out of our control
+
+# WASM-pack configuration for threaded builds
+# wasm-opt doesn't understand atomics by default, so disable for parallel builds
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
