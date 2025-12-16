@@ -36,6 +36,9 @@ cargo clippy -- -D warnings
 cargo fmt
 cargo fmt --check                   # Verify formatting
 
+# Bash script linting (REQUIRED for all .sh files)
+bashrs lint scripts/               # Use bashrs, NOT shellcheck
+
 # Run benchmarks
 cargo bench --bench inference
 ```
@@ -159,6 +162,169 @@ tracing = [...]    # Performance tracing via renacer
 | small | ≤4.0x      | ≤800MB      |
 
 RTF = Real-Time Factor (processing time / audio duration)
+
+## Coverage and Testing Tools
+
+**REQUIRED:** Use ONLY the Makefile targets for coverage:
+```bash
+# Run coverage (uses cargo-llvm-cov + cargo-nextest)
+make coverage
+
+# Coverage summary only
+make coverage-summary
+
+# Open HTML report
+make coverage-open
+```
+
+**PROHIBITED tools - DO NOT install or use:**
+- `cargo-tarpaulin` - Not compatible with WASM workflow
+- Any coverage tool not in the Makefile
+
+**Note:** llvm-cov doesn't generate profraw for `wasm32-unknown-unknown` targets. Coverage is measured on native test runs only. Browser integration tests are validated separately via probar.
+
+## Debugging and Testing - MANDATORY TOOLING
+
+**CRITICAL: NO AD-HOC DEBUGGING ("whack-a-mole")**
+
+When debugging issues, you MUST use the proper tooling:
+
+### For Browser/WASM Issues - Use Probar
+
+```bash
+# Run GUI tests
+cd demos && probar test -v
+
+# Run specific test
+probar test test_name
+
+# Browser E2E testing
+cargo test --package whisper-apr-demo-tests
+
+# Pixel regression tests
+probar coverage
+```
+
+**PROHIBITED debugging approaches:**
+- Adding `console.log` / `info!()` statements and rebuilding
+- Manual browser testing without probar tests
+- Using `grep` to search for issues instead of probar's test framework
+
+### For Performance/Tracing - Use Renacer
+
+The `tracing` feature integrates with renacer for instrumentation:
+```bash
+# Trace execution (native)
+renacer -s -- cargo test test_name
+
+# Browser tracing is automatic via tracing_wasm
+# Check browser console for structured logs with spans
+```
+
+### For Quality Issues - Use PMAT
+
+```bash
+# Track work
+pmat work start WAPR-XXX
+pmat work continue WAPR-XXX
+pmat work complete WAPR-XXX
+
+# Quality gates
+pmat quality-gate
+
+# Root cause analysis (Toyota Way)
+pmat five-whys "description of issue"
+```
+
+### Test-First Debugging Flow
+
+1. **Write a failing probar test** that reproduces the issue
+2. **Run the test** to confirm it fails
+3. **Fix the code** until the test passes
+4. **Verify** with full test suite: `probar test && make test-fast`
+
+**NEVER** fix bugs without a test that would have caught them.
+
+## Shell Script Policy
+
+**CRITICAL: All shell scripts MUST be validated by bashrs**
+
+Shell scripts are written in Rust using bashrs (Rash) and transpiled to shell. This ensures:
+- Type safety and compile-time error checking
+- Deterministic, reproducible behavior
+- Formal verification capability
+
+**Workflow:**
+```bash
+# Write script in Rust (scripts/foo.rs)
+# Transpile to shell
+bashrs build scripts/foo.rs -o scripts/foo.sh
+
+# Verify shell matches source
+bashrs verify scripts/foo.rs scripts/foo.sh
+
+# Check for compatibility issues
+bashrs check scripts/foo.rs
+```
+
+**PROHIBITED - DO NOT USE:**
+- Hand-written `.sh` files without bashrs source
+- Shell scripts not validated by `bashrs verify`
+- Bash-specific features not supported by bashrs
+
+**Enforcement:**
+```bash
+# Lint all scripts in CI
+for rs in scripts/*.rs; do
+  bashrs check "$rs" || exit 1
+done
+```
+
+## Python Usage Policy
+
+**CRITICAL: uv-only transient execution**
+
+Python packages are used ONLY via `uv run` for single-shot transient execution. No persistent package installation is permitted.
+
+**ALLOWED:**
+```bash
+# Single-shot script execution with inline dependencies
+uv run --with openai-whisper scripts/ground_truth.py
+
+# Transient tool execution
+uvx ruff check .
+```
+
+**PROHIBITED - DO NOT USE:**
+- `pip install` - No persistent package installation
+- `pip3 install` - No persistent package installation
+- `conda install` - No conda environments
+- `python -m venv` - No virtual environments
+- Any persistent Python environment
+
+**Rationale:** Transient execution ensures reproducibility, avoids dependency conflicts, and keeps the system clean. All Python dependencies are declared inline in scripts or via `--with` flags.
+
+## Ground Truth Validation
+
+For ASR accuracy validation, compare against reference implementations:
+
+```bash
+# 3-column comparison: whisper.apr vs whisper.cpp vs HuggingFace
+./scripts/ground_truth_compare.sh demos/test-audio/test-speech-1.5s.wav
+
+# whisper.cpp (C++ reference - GPU accelerated)
+/home/noah/.local/bin/main -m /home/noah/src/whisper.cpp/models/ggml-tiny.bin -f audio.wav
+
+# HuggingFace (Python reference - via uv)
+uv run scripts/hf_transcribe.py audio.wav
+```
+
+**Full Specification:** `docs/specifications/ground-truth-whisper-apr-cpp-hugging-face.md`
+- 100-point falsification checklist
+- Toyota Way framework (Genchi Genbutsu, Five Whys, Jidoka, Kaizen)
+- APR format vs custom code analysis
+- 10 peer-reviewed citations
+- Probar/TUI/renacer integration
 
 ## Ticket Prefix
 
