@@ -245,7 +245,8 @@ impl GpuGelu {
         let workgroup_size = self.config.workgroup_size;
 
         let gelu_function = match self.config.approximation {
-            GeluApproximation::Exact => r"
+            GeluApproximation::Exact => {
+                r"
 // Exact GELU: x * 0.5 * (1 + erf(x / sqrt(2)))
 // We approximate erf using a polynomial
 fn gelu(x: f32) -> f32 {
@@ -258,8 +259,10 @@ fn gelu(x: f32) -> f32 {
     let erf_approx = sign(a) * (1.0 - 1.0 / (1.0 + 0.278393 * abs(a) + 0.230389 * a2 + 0.000972 * a3 + 0.078108 * a2 * a2));
 
     return x * 0.5 * (1.0 + erf_approx);
-}",
-            GeluApproximation::Tanh => r"
+}"
+            }
+            GeluApproximation::Tanh => {
+                r"
 // Tanh approximation (most common in transformers)
 // x * 0.5 * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
 fn gelu(x: f32) -> f32 {
@@ -267,15 +270,18 @@ fn gelu(x: f32) -> f32 {
     let coeff = 0.044715;
     let inner = sqrt_2_over_pi * (x + coeff * x * x * x);
     return x * 0.5 * (1.0 + tanh(inner));
-}",
-            GeluApproximation::Sigmoid => r"
+}"
+            }
+            GeluApproximation::Sigmoid => {
+                r"
 // Sigmoid approximation (fastest)
 // x * sigmoid(1.702 * x)
 fn gelu(x: f32) -> f32 {
     let sigmoid_input = 1.702 * x;
     let sigmoid_val = 1.0 / (1.0 + exp(-sigmoid_input));
     return x * sigmoid_val;
-}",
+}"
+            }
         };
 
         let output_binding = if self.config.inplace {
@@ -415,8 +421,12 @@ mod tests {
     #[test]
     fn test_gelu_approximation_speed() {
         // Sigmoid should be fastest
-        assert!(GeluApproximation::Sigmoid.relative_speed() > GeluApproximation::Tanh.relative_speed());
-        assert!(GeluApproximation::Tanh.relative_speed() > GeluApproximation::Exact.relative_speed());
+        assert!(
+            GeluApproximation::Sigmoid.relative_speed() > GeluApproximation::Tanh.relative_speed()
+        );
+        assert!(
+            GeluApproximation::Tanh.relative_speed() > GeluApproximation::Exact.relative_speed()
+        );
     }
 
     #[test]
@@ -456,16 +466,28 @@ mod tests {
 
     #[test]
     fn test_gelu_config_approximation_builders() {
-        assert_eq!(GeluConfig::new(1024).exact().approximation, GeluApproximation::Exact);
-        assert_eq!(GeluConfig::new(1024).tanh().approximation, GeluApproximation::Tanh);
-        assert_eq!(GeluConfig::new(1024).sigmoid().approximation, GeluApproximation::Sigmoid);
+        assert_eq!(
+            GeluConfig::new(1024).exact().approximation,
+            GeluApproximation::Exact
+        );
+        assert_eq!(
+            GeluConfig::new(1024).tanh().approximation,
+            GeluApproximation::Tanh
+        );
+        assert_eq!(
+            GeluConfig::new(1024).sigmoid().approximation,
+            GeluApproximation::Sigmoid
+        );
     }
 
     #[test]
     fn test_gelu_config_validate() {
         assert!(GeluConfig::new(1024).validate().is_ok());
         assert!(GeluConfig::new(0).validate().is_err());
-        assert!(GeluConfig::new(1024).with_workgroup_size(100).validate().is_err());
+        assert!(GeluConfig::new(1024)
+            .with_workgroup_size(100)
+            .validate()
+            .is_err());
     }
 
     #[test]
@@ -507,8 +529,8 @@ mod tests {
 
     #[test]
     fn test_gpu_gelu_workgroups() {
-        let gelu = GpuGelu::new(GeluConfig::new(1000).with_workgroup_size(256))
-            .expect("Should create");
+        let gelu =
+            GpuGelu::new(GeluConfig::new(1000).with_workgroup_size(256)).expect("Should create");
         let (x, y, z) = gelu.workgroups();
         assert_eq!(x, 4);
         assert_eq!(y, 1);

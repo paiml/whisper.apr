@@ -30,8 +30,7 @@ pub mod trie;
 
 pub use adapter::{DomainAdapter, DomainConfig, DomainTerm, DomainType};
 pub use hotwords::{Hotword, HotwordBooster, HotwordConfig};
-pub use trie::{TrieNode, VocabularyTrie, TrieSearchResult};
-
+pub use trie::{TrieNode, TrieSearchResult, VocabularyTrie};
 
 /// Combined vocabulary customization for inference
 #[derive(Debug, Clone)]

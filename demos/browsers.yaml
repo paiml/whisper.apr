@@ -1,0 +1,103 @@
+# Browser Test Matrix for Whisper.apr
+# Cross-browser WASM testing configuration
+
+version: "1.0"
+name: whisper-apr-browser-matrix
+
+browsers:
+  chrome:
+    enabled: true
+    versions:
+      - "stable"
+      - "beta"
+    features:
+      - wasm_simd
+      - wasm_threads
+      - shared_array_buffer
+      - web_audio
+    headless: true
+    flags:
+      - "--enable-features=WebAssemblySimd"
+      - "--enable-features=SharedArrayBuffer"
+
+  firefox:
+    enabled: true
+    versions:
+      - "stable"
+      - "developer"
+    features:
+      - wasm_simd
+      - wasm_threads
+      - shared_array_buffer
+      - web_audio
+    headless: true
+    preferences:
+      javascript.options.wasm_simd: true
+      javascript.options.wasm_threads: true
+
+  safari:
+    enabled: true
+    versions:
+      - "stable"
+    features:
+      - wasm_simd
+      - web_audio
+    # Note: Safari has limited SharedArrayBuffer support
+    headless: false
+
+  edge:
+    enabled: true
+    versions:
+      - "stable"
+    features:
+      - wasm_simd
+      - wasm_threads
+      - shared_array_buffer
+      - web_audio
+    headless: true
+
+mobile:
+  chrome_android:
+    enabled: true
+    device: "Pixel 5"
+    features:
+      - wasm_simd
+      - web_audio
+
+  safari_ios:
+    enabled: true
+    device: "iPhone 14"
+    features:
+      - wasm_simd
+      - web_audio
+
+test_matrix:
+  - browser: chrome
+    viewport: {width: 1920, height: 1080}
+    tests: ["unit", "integration", "e2e"]
+
+  - browser: firefox
+    viewport: {width: 1920, height: 1080}
+    tests: ["unit", "integration", "e2e"]
+
+  - browser: safari
+    viewport: {width: 1920, height: 1080}
+    tests: ["unit", "integration"]
+
+  - browser: chrome_android
+    viewport: {width: 412, height: 915}
+    tests: ["unit", "smoke"]
+
+  - browser: safari_ios
+    viewport: {width: 390, height: 844}
+    tests: ["unit", "smoke"]
+
+capabilities:
+  required:
+    - wasm
+    - web_audio_api
+    - media_devices
+  optional:
+    - wasm_simd
+    - wasm_threads
+    - shared_array_buffer

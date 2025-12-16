@@ -538,8 +538,7 @@ mod tests {
     #[test]
     fn test_gpu_matmul_new() {
         let dims = MatMulDimensions::new(64, 128, 64);
-        let matmul = GpuMatMul::new(dims, MatMulConfig::default())
-            .expect("Should create matmul");
+        let matmul = GpuMatMul::new(dims, MatMulConfig::default()).expect("Should create matmul");
         assert!(matmul.id() > 0);
         assert!(!matmul.is_executed());
     }

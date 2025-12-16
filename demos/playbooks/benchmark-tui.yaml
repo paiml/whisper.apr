@@ -1,0 +1,218 @@
+# Whisper Pipeline Benchmark TUI - State Machine Playbook
+# EXTREME TDD: Specification written FIRST, tests derive from this
+#
+# Run: probar playbook demos/playbooks/benchmark-tui.yaml --validate
+#
+# This playbook defines the TUI state machine for step-by-step
+# performance visualization of the Whisper transcription pipeline.
+
+version: "1.0"
+name: "Whisper Pipeline Benchmark TUI"
+description: "WAPR-BENCH-TUI: Step-by-step performance visualization"
+
+machine:
+  id: "benchmark_pipeline"
+  initial: "idle"
+
+  states:
+    idle:
+      id: "idle"
+      invariants:
+        - description: "Start button enabled"
+          condition: "can_start()"
+        - description: "All progress bars at 0%"
+          condition: "all_progress_zero()"
+        - description: "Status shows ready"
+          condition: "status_contains('Press [s] to start')"
+
+    running:
+      id: "running"
+      invariants:
+        - description: "Cannot start while running"
+          condition: "!can_start()"
+        - description: "Can pause"
+          condition: "can_pause()"
+
+    step_b_load:
+      id: "step_b_load"
+      invariants:
+        - description: "Step B highlighted"
+          condition: "current_step() == 'B'"
+        - description: "Status shows loading"
+          condition: "status_contains('Loading')"
+
+    step_c_parse:
+      id: "step_c_parse"
+      invariants:
+        - description: "Step C highlighted"
+          condition: "current_step() == 'C'"
+
+    step_d_resample:
+      id: "step_d_resample"
+      invariants:
+        - description: "Step D highlighted"
+          condition: "current_step() == 'D'"
+
+    step_f_mel:
+      id: "step_f_mel"
+      invariants:
+        - description: "Step F highlighted"
+          condition: "current_step() == 'F'"
+
+    step_g_encode:
+      id: "step_g_encode"
+      invariants:
+        - description: "Step G highlighted"
+          condition: "current_step() == 'G'"
+        - description: "Encoder progress visible"
+          condition: "step_progress('G') >= 0"
+
+    step_h_decode:
+      id: "step_h_decode"
+      invariants:
+        - description: "Step H highlighted"
+          condition: "current_step() == 'H'"
+        - description: "Token counter visible"
+          condition: "tokens_generated() >= 0"
+
+    completed:
+      id: "completed"
+      invariants:
+        - description: "All steps complete"
+          condition: "all_steps_complete()"
+        - description: "RTF calculated"
+          condition: "rtf() > 0"
+        - description: "Can reset"
+          condition: "can_reset()"
+
+    paused:
+      id: "paused"
+      invariants:
+        - description: "Can resume"
+          condition: "can_resume()"
+        - description: "Progress frozen"
+          condition: "progress_frozen()"
+
+    error:
+      id: "error"
+      invariants:
+        - description: "Error message visible"
+          condition: "has_error()"
+
+  transitions:
+    - id: "start"
+      from: "idle"
+      to: "step_b_load"
+      event: "start_pressed"
+
+    - id: "b_to_c"
+      from: "step_b_load"
+      to: "step_c_parse"
+      event: "step_complete"
+      guard: "current_step() == 'B'"
+
+    - id: "c_to_d"
+      from: "step_c_parse"
+      to: "step_d_resample"
+      event: "step_complete"
+      guard: "current_step() == 'C'"
+
+    - id: "d_to_f"
+      from: "step_d_resample"
+      to: "step_f_mel"
+      event: "step_complete"
+      guard: "current_step() == 'D'"
+
+    - id: "f_to_g"
+      from: "step_f_mel"
+      to: "step_g_encode"
+      event: "step_complete"
+      guard: "current_step() == 'F'"
+
+    - id: "g_to_h"
+      from: "step_g_encode"
+      to: "step_h_decode"
+      event: "step_complete"
+      guard: "current_step() == 'G'"
+
+    - id: "h_to_complete"
+      from: "step_h_decode"
+      to: "completed"
+      event: "step_complete"
+      guard: "current_step() == 'H'"
+
+    - id: "pause"
+      from: "*"
+      to: "paused"
+      event: "pause_pressed"
+      guard: "is_running()"
+
+    - id: "resume"
+      from: "paused"
+      to: "running"
+      event: "resume_pressed"
+
+    - id: "reset"
+      from: "completed"
+      to: "idle"
+      event: "reset_pressed"
+
+    - id: "reset_from_error"
+      from: "error"
+      to: "idle"
+      event: "reset_pressed"
+
+    - id: "error_transition"
+      from: "*"
+      to: "error"
+      event: "error_occurred"
+
+  forbidden:
+    - from: "idle"
+      to: "step_h_decode"
+      reason: "Cannot skip to decode without running pipeline"
+
+    - from: "completed"
+      to: "step_b_load"
+      reason: "Must reset before restarting"
+
+    - from: "step_h_decode"
+      to: "step_f_mel"
+      reason: "Cannot go backwards in pipeline"
+
+# Performance budgets (in milliseconds)
+performance:
+  max_duration_ms: 5000
+  max_memory_mb: 200
+
+  step_budgets:
+    step_b_load: 50
+    step_c_parse: 10
+    step_d_resample: 100
+    step_f_mel: 50
+    step_g_encode: 500
+    step_h_decode: 2000
+
+  rtf_target: 2.0
+  rtf_critical: 4.0
+
+# Performance assertions
+performance_assertions:
+  - name: "total_time"
+    condition: "total_time_ms() <= 3000"
+    critical: "total_time_ms() <= 5000"
+    failure_reason: "Pipeline exceeded time budget"
+
+  - name: "rtf"
+    condition: "rtf() <= 2.0"
+    critical: "rtf() <= 4.0"
+    failure_reason: "Real-time factor too high"
+
+  - name: "memory"
+    condition: "peak_memory_mb() <= 150"
+    critical: "peak_memory_mb() <= 200"
+    failure_reason: "Memory exceeded budget"
+
+  - name: "decoder_dominance"
+    condition: "step_percentage('H') >= 50"
+    failure_reason: "Decoder should dominate runtime per Amdahl's Law"

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Whisper.apr - Real-time Transcription</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+        }
+        h1 {
+            color: #00d9ff;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #888;
+            margin-bottom: 30px;
+        }
+        #status_indicator {
+            background: #16213e;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #00d9ff;
+        }
+        #status_indicator.loading { border-left-color: #ffa500; }
+        #status_indicator.recording { border-left-color: #00ff88; }
+        #status_indicator.error { border-left-color: #ff4444; }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+        #recording_duration {
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 18px;
+            color: #00d9ff;
+            margin-left: 15px;
+        }
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        #start_recording {
+            background: #00d9ff;
+            color: #1a1a2e;
+        }
+        #start_recording:hover:not(:disabled) {
+            background: #00b8d9;
+        }
+        #stop_recording {
+            background: #ff4444;
+            color: white;
+        }
+        #stop_recording:hover:not(:disabled) {
+            background: #cc3333;
+        }
+        #transcript_display {
+            background: #16213e;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 200px;
+            white-space: pre-wrap;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        #partial_transcript {
+            color: #888;
+            font-size: 13px;
+            margin-top: 10px;
+            padding: 10px;
+            background: #0f0f23;
+            border-radius: 4px;
+            min-height: 40px;
+        }
+        #waveform_container {
+            height: 60px;
+            background: #0f0f23;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #444;
+        }
+        .info {
+            margin-top: 30px;
+            padding: 15px;
+            background: #0f3460;
+            border-radius: 8px;
+            font-size: 13px;
+        }
+        .info code {
+            background: #1a1a2e;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        #compatibility_warning {
+            display: none;
+            background: #ff4444;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        #compatibility_warning.visible {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <h1>Whisper.apr</h1>
+    <p class="subtitle">Real-time Speech Recognition in the Browser</p>
+
+    <div id="compatibility_warning">
+        Your browser doesn't support required features (MediaDevices, AudioWorklet).
+        Please use a modern browser like Chrome, Firefox, or Edge.
+    </div>
+
+    <div id="status_indicator">Initializing...</div>
+
+    <div id="waveform_container">Audio waveform</div>
+
+    <div class="controls">
+        <button id="start_recording" disabled>Start Recording</button>
+        <button id="stop_recording" disabled>Stop Recording</button>
+        <span id="recording_duration">0:00</span>
+    </div>
+
+    <div id="transcript_display">Transcription will appear here...</div>
+    <div id="partial_transcript"></div>
+
+    <div class="info">
+        <strong>How it works:</strong><br>
+        1. Click "Start Recording" to begin capturing audio<br>
+        2. Speak into your microphone<br>
+        3. Audio is processed in chunks and transcribed using Whisper<br>
+        4. Model: <code>whisper-tiny-int8</code> (37 MB, quantized)
+    </div>
+
+    <script type="module">
+        import init from './pkg/whisper_apr_demo_realtime_transcription.js';
+
+        async function run() {
+            try {
+                console.log('Loading WASM module...');
+                await init();
+                console.log('WASM module initialized - demo auto-started');
+            } catch (e) {
+                console.error('Failed to initialize WASM:', e);
+                document.getElementById('status_indicator').textContent = 'Error: ' + e.message;
+                document.getElementById('status_indicator').className = 'error';
+            }
+        }
+
+        run();
+    </script>
+</body>
+</html>

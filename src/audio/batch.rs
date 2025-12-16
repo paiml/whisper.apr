@@ -114,7 +114,8 @@ impl BatchMelResult {
             for frame in 0..frames {
                 for mel_idx in 0..n_mels {
                     let src_idx = frame * n_mels + mel_idx;
-                    let dst_idx = batch_idx * n_mels * self.max_frames + mel_idx * self.max_frames + frame;
+                    let dst_idx =
+                        batch_idx * n_mels * self.max_frames + mel_idx * self.max_frames + frame;
                     if src_idx < mel.len() {
                         tensor[dst_idx] = mel[src_idx];
                     }
@@ -344,7 +345,9 @@ mod tests {
         let preprocessor = BatchPreprocessor::with_default_config();
         let batch = AudioBatch::with_default_config();
 
-        let result = preprocessor.process_batch(&batch).expect("process empty batch");
+        let result = preprocessor
+            .process_batch(&batch)
+            .expect("process empty batch");
         assert!(result.is_empty());
         assert_eq!(result.max_frames, 0);
     }
@@ -373,7 +376,9 @@ mod tests {
         batch.add_segment((0..16000).map(|i| (i as f32 * 0.001).sin()).collect());
         batch.add_segment((0..4000).map(|i| (i as f32 * 0.001).sin()).collect());
 
-        let result = preprocessor.process_batch(&batch).expect("process multiple");
+        let result = preprocessor
+            .process_batch(&batch)
+            .expect("process multiple");
         assert_eq!(result.batch_size(), 3);
         assert_eq!(result.frame_counts.len(), 3);
 

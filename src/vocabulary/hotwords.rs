@@ -216,11 +216,8 @@ impl HotwordBooster {
         let first_token = tokens[0];
         let hotword_idx = self.hotwords.len();
 
-        self.hotwords.push(Hotword::new(
-            text.to_string(),
-            tokens,
-            clamped_bias,
-        ));
+        self.hotwords
+            .push(Hotword::new(text.to_string(), tokens, clamped_bias));
 
         self.first_token_map
             .entry(first_token)
@@ -314,7 +311,10 @@ impl HotwordBooster {
         biases
             .into_iter()
             .map(|(token, bias)| {
-                (token, bias.clamp(-self.config.max_bias, self.config.max_bias))
+                (
+                    token,
+                    bias.clamp(-self.config.max_bias, self.config.max_bias),
+                )
             })
             .collect()
     }

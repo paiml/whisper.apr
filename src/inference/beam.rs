@@ -152,12 +152,24 @@ impl BeamSearchDecoder {
         let mut hypotheses = vec![Hypothesis::new(initial_tokens.to_vec(), 0.0)];
         let mut completed: Vec<Hypothesis> = Vec::new();
 
-        for _ in 0..self.max_tokens {
+        // Loop until all hypotheses reach max_tokens (total length, not new tokens)
+        loop {
+            // Check if shortest hypothesis has reached max_tokens
+            let min_len = hypotheses
+                .iter()
+                .map(|h| h.tokens.len())
+                .min()
+                .unwrap_or(self.max_tokens);
+            if min_len >= self.max_tokens {
+                break;
+            }
+
             let mut all_candidates: Vec<Hypothesis> = Vec::new();
 
             // Expand each hypothesis
             for hyp in &hypotheses {
-                if hyp.is_complete {
+                if hyp.is_complete || hyp.tokens.len() >= self.max_tokens {
+                    // Don't expand hypotheses at max length
                     continue;
                 }
 
@@ -298,11 +310,22 @@ impl BeamSearchDecoder {
         let mut hypotheses = vec![Hypothesis::new(initial_tokens.to_vec(), 0.0)];
         let mut completed: Vec<Hypothesis> = Vec::new();
 
-        for _ in 0..self.max_tokens {
+        // Loop until all hypotheses reach max_tokens (total length, not new tokens)
+        loop {
+            // Check if shortest hypothesis has reached max_tokens
+            let min_len = hypotheses
+                .iter()
+                .map(|h| h.tokens.len())
+                .min()
+                .unwrap_or(self.max_tokens);
+            if min_len >= self.max_tokens {
+                break;
+            }
+
             let mut all_candidates: Vec<Hypothesis> = Vec::new();
 
             for hyp in &hypotheses {
-                if hyp.is_complete {
+                if hyp.is_complete || hyp.tokens.len() >= self.max_tokens {
                     continue;
                 }
 
@@ -624,5 +647,179 @@ mod tests {
             .decode_nbest(logits_fn, &[], 3)
             .expect("decode_nbest should succeed");
         assert!(!results.is_empty());
+    }
+
+    // =========================================================================
+    // EXTREME TDD: Token Limit Invariant Tests
+    // =========================================================================
+
+    #[test]
+    fn test_beam_decode_total_tokens_never_exceeds_max() {
+        // BUG: beam search loop runs `for _ in 0..max_tokens` generating
+        // up to max_tokens NEW tokens, ignoring initial_tokens length.
+        // This violates the invariant: output.len() <= max_tokens
+        let decoder = BeamSearchDecoder::new(2, 10); // beam=2, max=10
+
+        // Mock logits that never returns EOT
+        let logits_fn = |_tokens: &[u32]| -> WhisperResult<Vec<f32>> {
+            let mut logits = vec![0.0_f32; 51865];
+            logits[100] = 10.0; // Always pick token 100
+            logits[101] = 9.0; // Second choice
+            Ok(logits)
+        };
+
+        // Start with 5 initial tokens
+        let initial = vec![1, 2, 3, 4, 5];
+        let result = decoder
+            .decode(logits_fn, &initial)
+            .expect("decode should succeed");
+
+        // INVARIANT: total tokens must never exceed max_tokens
+        assert!(
+            result.len() <= decoder.max_tokens(),
+            "beam search: total tokens {} exceeds max_tokens {}",
+            result.len(),
+            decoder.max_tokens()
+        );
+    }
+
+    // =========================================================================
+    // EXTREME TDD: O(n) Complexity Assertions
+    // =========================================================================
+
+    #[test]
+    fn test_beam_decode_is_on_not_on2() {
+        // Performance test: decoding N tokens should take O(N) time, not O(N²)
+        // We measure by counting logits_fn calls - should be O(N), not O(N²)
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let call_count = AtomicUsize::new(0);
+
+        let decoder = BeamSearchDecoder::new(1, 50); // beam=1 for predictable calls
+        let eot = special_tokens::EOT;
+
+        let logits_fn = |tokens: &[u32]| -> WhisperResult<Vec<f32>> {
+            call_count.fetch_add(1, Ordering::SeqCst);
+            let mut logits = vec![-10.0_f32; 51865];
+            // Return EOT after 20 tokens
+            if tokens.len() >= 20 {
+                logits[eot as usize] = 10.0;
+            } else {
+                logits[100] = 10.0;
+            }
+            Ok(logits)
+        };
+
+        let result = decoder
+            .decode(logits_fn, &[special_tokens::SOT])
+            .expect("decode should succeed");
+
+        let calls = call_count.load(Ordering::SeqCst);
+        let tokens_generated = result.len() - 1; // minus initial SOT
+
+        // O(n) means calls should be roughly equal to tokens_generated
+        // O(n²) would mean calls ≈ tokens_generated² / 2
+        // Allow 2x overhead for beam search bookkeeping
+        let max_allowed_calls = tokens_generated * 3;
+
+        assert!(
+            calls <= max_allowed_calls,
+            "O(n²) detected: {} calls for {} tokens (max allowed: {}). \
+             Expected O(n) complexity.",
+            calls,
+            tokens_generated,
+            max_allowed_calls
+        );
+    }
+
+    // =========================================================================
+    // EXTREME TDD: Property-Based Tests for Beam Search
+    // =========================================================================
+
+    #[test]
+    fn property_beam_output_length_bounded_by_max_tokens() {
+        // Property: For any initial_tokens and max_tokens,
+        // output.len() <= max_tokens
+        for max_tokens in [5, 10, 20, 50] {
+            for initial_len in [0, 1, 3, max_tokens / 2, max_tokens - 1, max_tokens] {
+                let decoder = BeamSearchDecoder::new(2, max_tokens);
+
+                let logits_fn = |_: &[u32]| -> WhisperResult<Vec<f32>> {
+                    let mut logits = vec![0.0_f32; 51865];
+                    logits[100] = 10.0;
+                    logits[101] = 9.0;
+                    Ok(logits)
+                };
+
+                let initial: Vec<u32> = (0..initial_len).map(|i| i as u32).collect();
+                let result = decoder
+                    .decode(logits_fn, &initial)
+                    .expect("decode should succeed");
+
+                assert!(
+                    result.len() <= max_tokens,
+                    "Property violated: output.len()={} > max_tokens={} (initial_len={})",
+                    result.len(),
+                    max_tokens,
+                    initial_len
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn property_beam_initial_tokens_preserved() {
+        // Property: output[0..initial.len()] == initial (prefix preserved)
+        let decoder = BeamSearchDecoder::new(2, 100);
+        let eot = special_tokens::EOT;
+
+        for initial_len in [1, 3, 5, 10] {
+            let logits_fn = |_: &[u32]| -> WhisperResult<Vec<f32>> {
+                let mut logits = vec![0.0_f32; 51865];
+                logits[eot as usize] = 10.0;
+                Ok(logits)
+            };
+
+            let initial: Vec<u32> = (100..100 + initial_len).collect();
+            let result = decoder
+                .decode(logits_fn, &initial)
+                .expect("decode should succeed");
+
+            assert_eq!(
+                &result[..initial.len()],
+                &initial[..],
+                "Property violated: initial tokens not preserved (initial_len={})",
+                initial_len
+            );
+        }
+    }
+
+    #[test]
+    fn property_beam_nbest_all_bounded() {
+        // Property: All N-best results respect max_tokens limit
+        let decoder = BeamSearchDecoder::new(3, 15);
+
+        let logits_fn = |_: &[u32]| -> WhisperResult<Vec<f32>> {
+            let mut logits = vec![0.0_f32; 51865];
+            logits[100] = 10.0;
+            logits[101] = 9.5;
+            logits[102] = 9.0;
+            Ok(logits)
+        };
+
+        let initial = vec![1, 2, 3, 4, 5]; // 5 initial tokens
+        let results = decoder
+            .decode_nbest(logits_fn, &initial, 3)
+            .expect("decode_nbest should succeed");
+
+        for (i, result) in results.iter().enumerate() {
+            assert!(
+                result.len() <= decoder.max_tokens(),
+                "N-best[{}]: output.len()={} > max_tokens={}",
+                i,
+                result.len(),
+                decoder.max_tokens()
+            );
+        }
     }
 }

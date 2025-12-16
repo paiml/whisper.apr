@@ -267,7 +267,32 @@ The `.apr` (Aprender) format is optimized for streaming and browser deployment:
 
 ## Performance
 
-### Benchmarks (whisper-tiny on 30s audio)
+### Model Format Comparison
+
+The `.apr` format is optimized for WASM delivery. Benchmark results for Whisper Tiny:
+
+| Format | Size | Compression | WASM Ready |
+|--------|------|-------------|------------|
+| SafeTensors | 145 MB | baseline | ❌ Too large |
+| GGML | 75 MB | 52% | ⚠️ Moderate |
+| APR-f32 | 145 MB | 100% | ❌ Too large |
+| **APR-int8** | **37 MB** | **25%** | ✅ Excellent |
+
+### Loading Performance
+
+| Metric | APR-f32 | APR-int8 | Improvement |
+|--------|---------|----------|-------------|
+| File Read | 87ms | 21ms | **4x faster** |
+| Parse | 73ms | 19ms | **4x faster** |
+| Model Load | 490ms | 416ms | 15% faster |
+| First Token | ~280ms | ~280ms | Same quality |
+
+Run the benchmark yourself:
+```bash
+cargo run --example format_comparison --release
+```
+
+### Runtime Benchmarks (whisper-tiny on 30s audio)
 
 | Platform | Time | Memory | RTF |
 |----------|------|--------|-----|

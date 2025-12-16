@@ -26,7 +26,7 @@
 use wasm_bindgen::prelude::*;
 
 use crate::vocabulary::{
-    DomainAdapter, DomainConfig, DomainTerm, DomainType, Hotword, HotwordBooster, HotwordConfig,
+    DomainAdapter, DomainConfig, DomainType, HotwordBooster, HotwordConfig,
     TrieSearchResult, VocabularyCustomizer, VocabularyTrie,
 };
 
@@ -205,13 +205,15 @@ impl HotwordBoosterWasm {
     /// Add a hotword with tokens and bias
     #[wasm_bindgen(js_name = addHotword)]
     pub fn add_hotword(&mut self, text: &str, tokens: &[u32], bias: f32) {
-        self.inner.add_hotword_with_tokens(text, tokens.to_vec(), bias);
+        self.inner
+            .add_hotword_with_tokens(text, tokens.to_vec(), bias);
     }
 
     /// Add hotword with default bias
     #[wasm_bindgen(js_name = addHotwordDefault)]
     pub fn add_hotword_default(&mut self, text: &str, tokens: &[u32]) {
-        self.inner.add_hotword_with_tokens_default(text, tokens.to_vec());
+        self.inner
+            .add_hotword_with_tokens_default(text, tokens.to_vec());
     }
 
     /// Apply bias to logits in place
@@ -449,12 +451,19 @@ impl Default for VocabularyTrieWasm {
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy)]
 pub enum DomainTypeWasm {
+    /// General purpose vocabulary
     General = 0,
+    /// Medical terminology domain
     Medical = 1,
+    /// Legal terminology domain
     Legal = 2,
+    /// Technical/engineering domain
     Technical = 3,
+    /// Financial/business domain
     Financial = 4,
+    /// Scientific terminology domain
     Scientific = 5,
+    /// Custom user-defined domain
     Custom = 6,
 }
 
@@ -687,13 +696,15 @@ impl DomainAdapterWasm {
     /// Add term with tokens
     #[wasm_bindgen(js_name = addTerm)]
     pub fn add_term(&mut self, text: &str, tokens: &[u32], boost: f32) {
-        self.inner.add_term_with_tokens(text, tokens.to_vec(), boost);
+        self.inner
+            .add_term_with_tokens(text, tokens.to_vec(), boost);
     }
 
     /// Add term with default boost
     #[wasm_bindgen(js_name = addTermDefault)]
     pub fn add_term_default(&mut self, text: &str, tokens: &[u32]) {
-        self.inner.add_term_with_tokens_default(text, tokens.to_vec());
+        self.inner
+            .add_term_with_tokens_default(text, tokens.to_vec());
     }
 
     /// Add priority term
@@ -955,10 +966,7 @@ mod tests {
     #[test]
     fn test_domain_adapter_wasm_factory() {
         let medical = DomainAdapterWasm::medical();
-        assert!(matches!(
-            medical.get_domain_type(),
-            DomainTypeWasm::Medical
-        ));
+        assert!(matches!(medical.get_domain_type(), DomainTypeWasm::Medical));
 
         let legal = DomainAdapterWasm::legal();
         assert!(matches!(legal.get_domain_type(), DomainTypeWasm::Legal));
@@ -1117,19 +1125,28 @@ mod tests {
     #[test]
     fn test_domain_adapter_wasm_technical() {
         let adapter = DomainAdapterWasm::technical();
-        assert!(matches!(adapter.get_domain_type(), DomainTypeWasm::Technical));
+        assert!(matches!(
+            adapter.get_domain_type(),
+            DomainTypeWasm::Technical
+        ));
     }
 
     #[test]
     fn test_domain_adapter_wasm_financial() {
         let adapter = DomainAdapterWasm::financial();
-        assert!(matches!(adapter.get_domain_type(), DomainTypeWasm::Financial));
+        assert!(matches!(
+            adapter.get_domain_type(),
+            DomainTypeWasm::Financial
+        ));
     }
 
     #[test]
     fn test_domain_adapter_wasm_scientific() {
         let adapter = DomainAdapterWasm::scientific();
-        assert!(matches!(adapter.get_domain_type(), DomainTypeWasm::Scientific));
+        assert!(matches!(
+            adapter.get_domain_type(),
+            DomainTypeWasm::Scientific
+        ));
     }
 
     #[test]

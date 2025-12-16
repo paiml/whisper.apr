@@ -1,0 +1,98 @@
+{
+  "test_name": "whisper-apr-load-test",
+  "timestamp": "2024-12-14T16:00:00Z",
+  "duration_seconds": 300,
+  "total_requests": 15000,
+  "successful_requests": 14985,
+  "failed_requests": 15,
+  "scenarios": [
+    {
+      "name": "realtime-transcription-load",
+      "requests": 10000,
+      "errors": 10,
+      "latency": {
+        "min_ms": 45,
+        "max_ms": 890,
+        "mean_ms": 120,
+        "median_ms": 95,
+        "p50_ms": 95,
+        "p75_ms": 150,
+        "p90_ms": 220,
+        "p95_ms": 310,
+        "p99_ms": 480,
+        "stddev_ms": 85
+      },
+      "throughput": {
+        "mean_rps": 166.7,
+        "max_rps": 245,
+        "min_rps": 90
+      }
+    },
+    {
+      "name": "model-loading-stress",
+      "requests": 2000,
+      "errors": 3,
+      "latency": {
+        "min_ms": 200,
+        "max_ms": 1500,
+        "mean_ms": 450,
+        "median_ms": 380,
+        "p50_ms": 380,
+        "p75_ms": 550,
+        "p90_ms": 780,
+        "p95_ms": 950,
+        "p99_ms": 1200,
+        "stddev_ms": 220
+      }
+    },
+    {
+      "name": "batch-transcription",
+      "requests": 3000,
+      "errors": 2,
+      "latency": {
+        "min_ms": 500,
+        "max_ms": 3500,
+        "mean_ms": 1200,
+        "median_ms": 1100,
+        "p50_ms": 1100,
+        "p75_ms": 1500,
+        "p90_ms": 2000,
+        "p95_ms": 2500,
+        "p99_ms": 3200,
+        "stddev_ms": 450
+      }
+    }
+  ],
+  "resource_usage": {
+    "cpu_mean_percent": 65,
+    "cpu_max_percent": 92,
+    "memory_mean_mb": 120,
+    "memory_max_mb": 145,
+    "wasm_heap_mean_mb": 85,
+    "wasm_heap_max_mb": 110
+  },
+  "sla_results": {
+    "realtime-p95": {"passed": true, "value": 310},
+    "realtime-p99": {"passed": true, "value": 480},
+    "min-throughput": {"passed": true, "value": 166.7},
+    "error-rate": {"passed": true, "value": 0.001},
+    "apdex": {"passed": true, "value": 0.87}
+  },
+  "statistical_analysis": {
+    "variance_decomposition": {
+      "total_variance": 7225,
+      "components": [
+        {"source": "network", "variance": 2890, "percentage": 40},
+        {"source": "wasm_execution", "variance": 2167, "percentage": 30},
+        {"source": "model_inference", "variance": 1445, "percentage": 20},
+        {"source": "audio_processing", "variance": 723, "percentage": 10}
+      ]
+    },
+    "knee_point": {
+      "users": 75,
+      "throughput_rps": 220,
+      "recommended_capacity": 60
+    },
+    "coefficient_of_variation": 0.71
+  }
+}

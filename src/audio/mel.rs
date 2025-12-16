@@ -16,6 +16,7 @@
 //! - Mel scale: Stevens, Volkmann, & Newman (1937)
 
 use crate::error::{WhisperError, WhisperResult};
+use crate::format::MelFilterbankData;
 use rustfft::{num_complex::Complex, FftPlanner};
 use std::f32::consts::PI;
 
@@ -40,7 +41,11 @@ pub struct MelFilterbank {
 }
 
 impl MelFilterbank {
-    /// Create a new mel filterbank
+    /// Create a new mel filterbank by computing filters from scratch
+    ///
+    /// NOTE: For Whisper models, prefer `from_filters()` with the pre-computed
+    /// filterbank from the model file, which matches OpenAI's slaney-normalized
+    /// filterbank exactly.
     ///
     /// # Arguments
     /// * `n_mels` - Number of mel channels (typically 80 for Whisper)
@@ -71,6 +76,66 @@ impl MelFilterbank {
             n_freqs,
             window,
         }
+    }
+
+    /// Create a mel filterbank from pre-computed filter weights
+    ///
+    /// This is the preferred method for Whisper models, as it uses the exact
+    /// filterbank from the model file (matching OpenAI's slaney-normalized
+    /// librosa filterbank).
+    ///
+    /// # Arguments
+    /// * `filters` - Pre-computed filterbank matrix (n_mels x n_freqs) in row-major order
+    /// * `n_mels` - Number of mel channels (80 for Whisper)
+    /// * `n_fft` - FFT size (400 for Whisper)
+    /// * `sample_rate` - Audio sample rate (16000 for Whisper)
+    ///
+    /// # Panics
+    /// Panics if filter dimensions don't match n_mels * n_freqs
+    #[must_use]
+    pub fn from_filters(filters: Vec<f32>, n_mels: usize, n_fft: usize, sample_rate: u32) -> Self {
+        let n_freqs = n_fft / 2 + 1;
+        assert_eq!(
+            filters.len(),
+            n_mels * n_freqs,
+            "filterbank size mismatch: expected {} x {} = {}, got {}",
+            n_mels,
+            n_freqs,
+            n_mels * n_freqs,
+            filters.len()
+        );
+
+        let window = Self::hann_window(n_fft);
+
+        Self {
+            n_mels,
+            n_fft,
+            sample_rate,
+            filters,
+            n_freqs,
+            window,
+        }
+    }
+
+    /// Create a mel filterbank from .apr model metadata
+    ///
+    /// Uses the pre-computed slaney-normalized filterbank embedded in the .apr file
+    /// for exact numerical match with OpenAI's Whisper implementation.
+    ///
+    /// # Arguments
+    /// * `data` - Filterbank data from .apr file
+    /// * `sample_rate` - Audio sample rate (16000 for Whisper)
+    ///
+    /// # Panics
+    /// Panics if filterbank dimensions are invalid
+    #[must_use]
+    pub fn from_apr_data(data: MelFilterbankData, sample_rate: u32) -> Self {
+        let n_mels = data.n_mels as usize;
+        let n_freqs = data.n_freqs as usize;
+        // n_fft = 2 * (n_freqs - 1) = 2 * (201 - 1) = 400 for Whisper
+        let n_fft = 2 * (n_freqs - 1);
+
+        Self::from_filters(data.data, n_mels, n_fft, sample_rate)
     }
 
     /// Compute the mel filterbank matrix
@@ -164,7 +229,10 @@ impl MelFilterbank {
     ///
     /// # Errors
     /// Returns error if audio processing fails
+    #[allow(clippy::no_effect_underscore_binding)]
     pub fn compute(&self, audio: &[f32], hop_length: usize) -> WhisperResult<Vec<f32>> {
+        let _span = crate::trace_enter!("step_f_mel");
+
         if audio.is_empty() {
             return Ok(Vec::new());
         }
@@ -225,9 +293,16 @@ impl MelFilterbank {
                 }
 
                 // Apply log compression with floor to avoid log(0)
-                let log_mel = (mel_energy.max(1e-10)).ln();
-                mel_spec[mel_idx * n_frames + frame_idx] = log_mel;
+                let log_mel = (mel_energy.max(1e-10)).log10();
+                mel_spec[frame_idx * self.n_mels + mel_idx] = log_mel;
             }
+        }
+
+        // Apply Whisper normalization
+        let max_val = mel_spec.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        for x in &mut mel_spec {
+            *x = (*x).max(max_val - 8.0);
+            *x = (*x + 4.0) / 4.0;
         }
 
         Ok(mel_spec)
@@ -250,7 +325,7 @@ impl MelFilterbank {
         let std = variance.sqrt().max(1e-10);
 
         // Normalize
-        for x in mel_spec.iter_mut() {
+        for x in mel_spec {
             *x = (*x - mean) / std;
         }
     }
@@ -277,6 +352,12 @@ impl MelFilterbank {
     #[must_use]
     pub const fn n_freqs(&self) -> usize {
         self.n_freqs
+    }
+
+    /// Get the filterbank matrix (n_mels x n_freqs) in row-major order
+    #[must_use]
+    pub fn filters(&self) -> &[f32] {
+        &self.filters
     }
 
     /// SIMD-optimized mel filterbank application
@@ -344,7 +425,7 @@ impl MelFilterbank {
 
         // Normalize in place
         let inv_std = 1.0 / std;
-        for x in mel_spec.iter_mut() {
+        for x in mel_spec {
             *x = (*x - mean) * inv_std;
         }
     }
@@ -352,7 +433,10 @@ impl MelFilterbank {
     /// Compute mel spectrogram with SIMD optimization
     ///
     /// Uses SIMD-accelerated filterbank application for faster processing.
+    #[allow(clippy::no_effect_underscore_binding)]
     pub fn compute_simd(&self, audio: &[f32], hop_length: usize) -> WhisperResult<Vec<f32>> {
+        let _span = crate::trace_enter!("step_f_mel_simd");
+
         if audio.is_empty() {
             return Ok(Vec::new());
         }
@@ -410,9 +494,16 @@ impl MelFilterbank {
 
             // Apply log compression and store
             for (mel_idx, &energy) in mel_energies.iter().enumerate() {
-                let log_mel = (energy.max(1e-10)).ln();
-                mel_spec[mel_idx * n_frames + frame_idx] = log_mel;
+                let log_mel = (energy.max(1e-10)).log10();
+                mel_spec[frame_idx * self.n_mels + mel_idx] = log_mel;
             }
+        }
+
+        // Apply Whisper normalization
+        let max_val = mel_spec.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        for x in &mut mel_spec {
+            *x = (*x).max(max_val - 8.0);
+            *x = (*x + 4.0) / 4.0;
         }
 
         Ok(mel_spec)
@@ -955,11 +1046,12 @@ mod tests {
         let result = mel.compute(&audio, 160).expect("compute should succeed");
 
         // Average energy per mel band across all frames
+        // Data layout is [frame][mel], so index as: result[frame * 80 + mel_idx]
         let n_frames = result.len() / 80;
         let mut avg_energy = vec![0.0_f32; 80];
         for frame in 0..n_frames {
             for mel_idx in 0..80 {
-                avg_energy[mel_idx] += result[mel_idx * n_frames + frame];
+                avg_energy[mel_idx] += result[frame * 80 + mel_idx];
             }
         }
         for e in &mut avg_energy {
@@ -997,11 +1089,12 @@ mod tests {
         let result = mel.compute(&audio, 160).expect("compute should succeed");
 
         // Average energy per mel band
+        // Data layout is [frame][mel], so index as: result[frame * 80 + mel_idx]
         let n_frames = result.len() / 80;
         let mut avg_energy = vec![0.0_f32; 80];
         for frame in 0..n_frames {
             for mel_idx in 0..80 {
-                avg_energy[mel_idx] += result[mel_idx * n_frames + frame];
+                avg_energy[mel_idx] += result[frame * 80 + mel_idx];
             }
         }
         for e in &mut avg_energy {

@@ -27,9 +27,11 @@
 use wasm_bindgen::prelude::*;
 
 use crate::timestamps::{
-    alignment::{AlignmentConfig, CrossAttentionAlignment, TokenAlignment, WordAlignment},
+    alignment::{AlignmentConfig, CrossAttentionAlignment, WordAlignment},
     boundaries::{BoundaryConfig, BoundaryDetector, WordBoundary},
-    interpolation::{InterpolationConfig, InterpolationMethod, TimestampInterpolator, TokenTimestamp},
+    interpolation::{
+        InterpolationConfig, TimestampInterpolator, TokenTimestamp,
+    },
     WordTimestampResult, WordWithTimestamp,
 };
 
@@ -437,8 +439,12 @@ impl From<WordBoundary> for WordBoundaryWasm {
 /// WASM bindings for word timestamp extraction
 #[wasm_bindgen]
 pub struct WordTimestampExtractorWasm {
+    /// Cross-attention alignment for timestamp extraction (reserved for attention-based method)
+    #[allow(dead_code)]
     alignment: CrossAttentionAlignment,
     interpolator: TimestampInterpolator,
+    /// Boundary detector for word segmentation (reserved for boundary-aware method)
+    #[allow(dead_code)]
     boundary_detector: BoundaryDetector,
 }
 

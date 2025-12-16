@@ -171,6 +171,47 @@ pub fn argmax(a: &[f32]) -> usize {
     va.argmax().unwrap_or(0)
 }
 
+/// Alias for max() - find maximum element in slice
+///
+/// Provided for Flash Attention compatibility.
+#[must_use]
+#[inline]
+pub fn max_element(a: &[f32]) -> f32 {
+    max(a)
+}
+
+/// In-place scalar multiplication: a[i] *= s for all i
+///
+/// More efficient than `scale()` when the result replaces the input.
+pub fn scale_inplace(a: &mut [f32], s: f32) {
+    // SIMD-friendly loop that auto-vectorizes well
+    for x in a.iter_mut() {
+        *x *= s;
+    }
+}
+
+/// AXPY operation: y[i] += a * x[i] for all i
+///
+/// Computes y = y + a*x in-place. This is a fundamental BLAS Level 1 operation.
+/// Used extensively in attention accumulation.
+pub fn axpy(a: f32, x: &[f32], y: &mut [f32]) {
+    debug_assert_eq!(x.len(), y.len(), "axpy requires equal lengths");
+
+    // SIMD-friendly loop
+    for (yi, &xi) in y.iter_mut().zip(x.iter()) {
+        *yi += a * xi;
+    }
+}
+
+/// In-place vector addition: y[i] += x[i] for all i
+pub fn add_inplace(x: &[f32], y: &mut [f32]) {
+    debug_assert_eq!(x.len(), y.len(), "add_inplace requires equal lengths");
+
+    for (yi, &xi) in y.iter_mut().zip(x.iter()) {
+        *yi += xi;
+    }
+}
+
 // ============================================================================
 // Matrix Operations
 // ============================================================================
@@ -184,6 +225,8 @@ pub fn matmul(a: &[f32], b: &[f32], rows: usize, inner: usize, cols: usize) -> V
     debug_assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
     debug_assert_eq!(b.len(), inner * cols, "B dimensions mismatch");
 
+    // Note: from_vec copies the data. For hot paths like vocab projection,
+    // consider using trueno::Matrix directly to avoid this wrapper's overhead.
     let Ok(ma) = Matrix::from_vec(rows, inner, a.to_vec()) else {
         return vec![0.0; rows * cols];
     };
@@ -192,6 +235,45 @@ pub fn matmul(a: &[f32], b: &[f32], rows: usize, inner: usize, cols: usize) -> V
     };
     ma.matmul(&mb)
         .map_or_else(|_| vec![0.0; rows * cols], |mc| mc.as_slice().to_vec())
+}
+
+/// SIMD-accelerated matrix multiplication (zero-copy variant)
+///
+/// Takes ownership of input vectors to avoid allocation overhead.
+/// Use this when you have owned Vecs and won't need them after.
+///
+/// Computes C = A @ B where A is (rows x inner) and B is (inner x cols)
+#[must_use]
+#[allow(clippy::many_single_char_names)]
+pub fn matmul_owned(a: Vec<f32>, b: Vec<f32>, rows: usize, inner: usize, cols: usize) -> Vec<f32> {
+    debug_assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
+    debug_assert_eq!(b.len(), inner * cols, "B dimensions mismatch");
+
+    let Ok(ma) = Matrix::from_vec(rows, inner, a) else {
+        return vec![0.0; rows * cols];
+    };
+    let Ok(mb) = Matrix::from_vec(inner, cols, b) else {
+        return vec![0.0; rows * cols];
+    };
+    ma.matmul(&mb)
+        .map_or_else(|_| vec![0.0; rows * cols], |mc| mc.as_slice().to_vec())
+}
+
+/// SIMD-accelerated matrix multiplication with pre-constructed Matrix
+///
+/// Use this when B is constant (like weight matrices) to avoid repeated
+/// conversions. A is still converted from slice.
+#[must_use]
+#[allow(clippy::many_single_char_names)]
+pub fn matmul_with_matrix(a: &[f32], b: &Matrix<f32>, rows: usize, inner: usize) -> Vec<f32> {
+    debug_assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
+    debug_assert_eq!(b.rows(), inner, "B rows mismatch inner dimension");
+
+    let Ok(ma) = Matrix::from_vec(rows, inner, a.to_vec()) else {
+        return vec![0.0; rows * b.cols()];
+    };
+    ma.matmul(b)
+        .map_or_else(|_| vec![0.0; rows * b.cols()], |mc| mc.as_slice().to_vec())
 }
 
 /// SIMD-accelerated matrix-vector multiplication
@@ -370,41 +452,94 @@ pub fn scaled_dot_product_attention(
     key: &[f32],
     value: &[f32],
     seq_len: usize,
-    d_model: usize,
+    d_head: usize,
     mask: Option<&[f32]>,
 ) -> Vec<f32> {
-    let scale = 1.0 / (d_model as f32).sqrt();
+    // WAPR-BENCH-002: Use optimized path for incremental decode (seq_len=1)
+    // This is the hot path during token generation
+    if seq_len == 1 {
+        return scaled_dot_product_attention_single(query, key, value, d_head, mask);
+    }
 
-    // Q @ K^T
-    let key_t = transpose(key, seq_len, d_model);
-    let mut scores = matmul(query, &key_t, seq_len, d_model, seq_len);
+    // Compute kv_len from key dimensions (for cross-attention support)
+    let kv_len = key.len() / d_head;
+    let scale = 1.0 / (d_head as f32).sqrt();
+
+    // Q @ K^T: (seq_len x d_head) @ (d_head x kv_len) = (seq_len x kv_len)
+    let key_t = transpose(key, kv_len, d_head);
+    let mut scores = matmul(query, &key_t, seq_len, d_head, kv_len);
 
     // Scale
     for s in &mut scores {
         *s *= scale;
     }
 
-    // Apply mask (add large negative values to masked positions)
+    // Apply mask by adding mask values to scores
+    // Mask values: 0.0 for positions to attend to, NEG_INFINITY for masked positions
     if let Some(m) = mask {
-        debug_assert_eq!(m.len(), seq_len * seq_len, "mask dimensions mismatch");
+        debug_assert_eq!(m.len(), seq_len * kv_len, "mask dimensions mismatch");
         for (i, &mask_val) in m.iter().enumerate() {
-            if mask_val == 0.0 {
-                scores[i] = f32::NEG_INFINITY;
-            }
+            scores[i] += mask_val;
         }
     }
 
     // Row-wise softmax
     let mut weights = Vec::with_capacity(scores.len());
     for i in 0..seq_len {
-        let start = i * seq_len;
-        let end = start + seq_len;
+        let start = i * kv_len;
+        let end = start + kv_len;
         let row_softmax = softmax(&scores[start..end]);
         weights.extend(row_softmax);
     }
 
-    // Weights @ V
-    matmul(&weights, value, seq_len, seq_len, d_model)
+    // Weights @ V: (seq_len x kv_len) @ (kv_len x d_head) = (seq_len x d_head)
+    matmul(&weights, value, seq_len, kv_len, d_head)
+}
+
+/// Optimized attention for single query (seq_len=1)
+///
+/// WAPR-BENCH-002: This is the hot path for incremental decoding.
+/// Reduces allocations by using dot products instead of matmul for single-row operations.
+#[must_use]
+fn scaled_dot_product_attention_single(
+    query: &[f32],
+    key: &[f32],
+    value: &[f32],
+    d_head: usize,
+    mask: Option<&[f32]>,
+) -> Vec<f32> {
+    let kv_len = key.len() / d_head;
+    let scale = 1.0 / (d_head as f32).sqrt();
+
+    // For seq_len=1, Q @ K^T reduces to dot products
+    // Instead of transpose + matmul, compute scores directly
+    let mut scores = Vec::with_capacity(kv_len);
+    for pos in 0..kv_len {
+        let k_start = pos * d_head;
+        let score = dot(query, &key[k_start..k_start + d_head]) * scale;
+        scores.push(score);
+    }
+
+    // Apply mask if present
+    if let Some(m) = mask {
+        for (i, &mask_val) in m.iter().take(kv_len).enumerate() {
+            scores[i] += mask_val;
+        }
+    }
+
+    // Softmax (single row - reuse scores buffer)
+    let weights = softmax(&scores);
+
+    // Weights @ V: for single query, this is weighted sum of value vectors
+    let mut output = vec![0.0_f32; d_head];
+    for (pos, &weight) in weights.iter().enumerate() {
+        let v_start = pos * d_head;
+        for d in 0..d_head {
+            output[d] += weight * value[v_start + d];
+        }
+    }
+
+    output
 }
 
 // ============================================================================

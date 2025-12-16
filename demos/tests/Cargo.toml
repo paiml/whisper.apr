@@ -7,13 +7,27 @@ license.workspace = true
 repository.workspace = true
 description = "Probar GUI and pixel testing suite for whisper.apr demos"
 
+[features]
+default = ["simd"]
+simd = []  # Reflects actual SIMD backend usage in whisper-apr
+
 [dependencies]
 probar.workspace = true
+tokio.workspace = true
 image = "0.24"
 futures = "0.3"
+ratatui = "0.29"
 
 [dev-dependencies]
 proptest.workspace = true
+
+[[example]]
+name = "coverage_pattern"
+path = "examples/coverage_pattern.rs"
+
+[[example]]
+name = "uat_browser"
+path = "examples/uat_browser.rs"
 
 [lints]
 workspace = true

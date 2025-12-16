@@ -3,6 +3,10 @@
 //! Pure Rust WASM demo for real-time speech-to-text transcription.
 //! Zero JavaScript - all browser APIs accessed via `web-sys`.
 //!
+//! Note: `#![allow(dead_code)]` is used because WASM exports are called from
+//! JavaScript, not Rust. Static analysis incorrectly flags them as "dead".
+#![allow(dead_code)]
+//!
 //! # Architecture (WAPR-SPEC-010)
 //!
 //! ```text
@@ -550,6 +554,7 @@ fn spawn_model_loading(
 
         // Step 1: Create worker bridge
         // The WASM module URL - wasm-pack generates this structure
+        // Use relative path from demos/ directory structure
         let wasm_url = "/realtime-transcription/pkg/whisper_apr_demo_realtime_transcription.js";
 
         let bridge = match bridge::WorkerBridge::new(wasm_url) {
@@ -1131,15 +1136,26 @@ fn setup_all_listeners(
 /// # Errors
 ///
 /// Returns an error if the DOM is not available (no window or document).
+/// In Worker context, this function returns early since Workers don't have DOM.
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
+
+    // Detect Worker context - Workers don't have window, only self (DedicatedWorkerGlobalScope)
+    // In Worker context, skip main thread initialization - worker_entry() handles Worker setup
+    let window = match web_sys::window() {
+        Some(w) => w,
+        None => {
+            // We're in a Worker context - skip main thread init
+            // Worker will call worker_entry() separately
+            return Ok(());
+        }
+    };
+
     tracing_wasm::set_as_global_default();
     let _span =
         info_span!("realtime_transcription_demo", version = env!("CARGO_PKG_VERSION")).entered();
     info!("Initializing Real-time Transcription Demo");
-
-    let window = web_sys::window().ok_or("No window")?;
     let document = window.document().ok_or("No document")?;
 
     let compat = check_browser_compatibility();
@@ -1150,8 +1166,10 @@ pub fn start() -> Result<(), JsValue> {
         "Browser compatibility check"
     );
     if !compat.is_supported() {
+        // Warn but don't block - model can still load for testing/fallback scenarios
+        warn!("Browser may not fully support all features");
         handle_unsupported_browser(&document);
-        return Ok(());
+        // Continue to load model anyway - allows E2E testing and graceful degradation
     }
 
     let demo = Rc::new(RefCell::new(RealtimeTranscriptionDemo::new()));
@@ -1339,6 +1357,188 @@ fn setup_keyboard_shortcuts(
     document.add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref())?;
     closure.forget();
     Ok(())
+}
+
+// ============================================================================
+// Test Hooks (for E2E testing with probar)
+// ============================================================================
+
+/// Inject test audio directly into the pipeline
+///
+/// This bypasses browser audio APIs for reliable E2E testing in headless Chrome.
+/// The audio should be 16kHz mono float32 samples.
+///
+/// # Arguments
+///
+/// * `samples` - Audio samples at 16kHz (Whisper's native rate)
+///
+/// # Returns
+///
+/// True if samples were injected, false if pipeline not initialized.
+#[wasm_bindgen]
+pub fn inject_test_audio(samples: &[f32]) -> bool {
+    AUDIO_PIPELINE.with(|p| {
+        if let Some(pipeline_rc) = p.borrow_mut().as_mut() {
+            let mut pipeline = pipeline_rc.borrow_mut();
+            // Push samples directly - these are already at 16kHz
+            pipeline.push_samples(samples);
+            pipeline.process();
+            let has_chunk = pipeline.has_chunk();
+            info!(
+                samples = samples.len(),
+                has_chunk,
+                "Test audio injected"
+            );
+            true
+        } else {
+            warn!("Cannot inject test audio - pipeline not initialized");
+            false
+        }
+    })
+}
+
+/// Initialize the audio pipeline for testing
+///
+/// This creates the pipeline without requiring microphone permission.
+///
+/// # Returns
+///
+/// True if pipeline was initialized.
+#[wasm_bindgen]
+pub fn init_test_pipeline(sample_rate: u32) -> bool {
+    let pipeline = Rc::new(RefCell::new(AudioPipeline::new(sample_rate)));
+    AUDIO_PIPELINE.with(|p| *p.borrow_mut() = Some(pipeline));
+    info!(sample_rate, "Test pipeline initialized");
+    true
+}
+
+/// Process a test chunk if available
+///
+/// This triggers the transcription flow for any pending chunks.
+/// Returns true if a chunk was sent to the worker.
+#[wasm_bindgen]
+pub fn process_test_chunk() -> bool {
+    let chunk_sent = AUDIO_PIPELINE.with(|p| {
+        if let Some(pipeline_rc) = p.borrow().as_ref() {
+            let mut pipeline = pipeline_rc.borrow_mut();
+            if !pipeline.has_chunk() {
+                return false;
+            }
+
+            let Some(chunk) = pipeline.get_chunk() else {
+                return false;
+            };
+
+            let chunk_duration = chunk.len() as f32 / 16000.0;
+            info!(
+                chunk_duration,
+                chunk_samples = chunk.len(),
+                "Test chunk ready - sending to worker"
+            );
+
+            // Send to worker
+            WORKER_BRIDGE.with(|wb| {
+                if let Some(bridge) = wb.borrow().as_ref() {
+                    let session_id = SESSION_ID.with(|s| s.borrow().clone());
+                    let mut bridge_mut = bridge.borrow_mut();
+                    match bridge_mut.transcribe(&chunk, &session_id, &[], false) {
+                        Ok(Some(chunk_id)) => {
+                            info!(chunk_id, "Test chunk sent to worker");
+                            true
+                        }
+                        Ok(None) => {
+                            warn!("Test chunk not sent (queue full?)");
+                            false
+                        }
+                        Err(e) => {
+                            warn!(error = ?e, "Failed to send test chunk");
+                            false
+                        }
+                    }
+                } else {
+                    warn!("Worker bridge not available");
+                    false
+                }
+            })
+        } else {
+            false
+        }
+    });
+    chunk_sent
+}
+
+/// Get current transcription text from the demo
+#[wasm_bindgen]
+pub fn get_transcript() -> String {
+    DEMO.with(|d| {
+        if let Some(demo) = d.borrow().as_ref() {
+            demo.borrow().transcript()
+        } else {
+            String::new()
+        }
+    })
+}
+
+/// Check if the worker bridge is ready
+#[wasm_bindgen]
+pub fn is_worker_ready() -> bool {
+    WORKER_BRIDGE.with(|wb| {
+        if let Some(bridge) = wb.borrow().as_ref() {
+            bridge.borrow().is_ready()
+        } else {
+            false
+        }
+    })
+}
+
+/// Get diagnostic information about the transcription pipeline
+#[wasm_bindgen]
+pub fn get_pipeline_diagnostics() -> String {
+    let mut diagnostics = Vec::new();
+
+    // Check demo state
+    DEMO.with(|d| {
+        if let Some(demo) = d.borrow().as_ref() {
+            let demo = demo.borrow();
+            diagnostics.push(format!("demo_state: {}", demo.state_string()));
+            diagnostics.push(format!("model_loaded: {}", demo.is_model_loaded()));
+            diagnostics.push(format!("transcript_len: {}", demo.transcript().len()));
+            diagnostics.push(format!("chunks_captured: {}", demo.chunks_captured));
+        } else {
+            diagnostics.push("demo: not initialized".to_string());
+        }
+    });
+
+    // Check worker bridge
+    WORKER_BRIDGE.with(|wb| {
+        if let Some(bridge) = wb.borrow().as_ref() {
+            let bridge = bridge.borrow();
+            diagnostics.push(format!("worker_ready: {}", bridge.is_ready()));
+            diagnostics.push(format!("worker_healthy: {}", bridge.is_healthy()));
+            let stats = bridge.stats();
+            diagnostics.push(format!("chunks_sent: {}", stats.chunks_sent));
+            diagnostics.push(format!("chunks_completed: {}", stats.chunks_completed));
+            diagnostics.push(format!("errors: {}", stats.errors));
+            diagnostics.push(format!("queue_depth: {}", stats.queue_depth));
+            diagnostics.push(format!("processing_started: {}", stats.processing_started));
+            diagnostics.push(format!("pending_count: {}", bridge.pending_count()));
+        } else {
+            diagnostics.push("worker_bridge: not initialized".to_string());
+        }
+    });
+
+    // Check audio pipeline
+    AUDIO_PIPELINE.with(|p| {
+        if let Some(pipeline_rc) = p.borrow().as_ref() {
+            let pipeline = pipeline_rc.borrow();
+            diagnostics.push(format!("pipeline_has_chunk: {}", pipeline.has_chunk()));
+            diagnostics.push(format!("pipeline_sample_rate: {}", pipeline.sample_rate()));
+        } else {
+            diagnostics.push("audio_pipeline: not initialized".to_string());
+        }
+    });
+
+    diagnostics.join("; ")
 }
 
 // ============================================================================

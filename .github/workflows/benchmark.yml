@@ -1,0 +1,193 @@
+# Benchmark CI Workflow for whisper.apr
+# Reference: docs/specifications/benchmark-whisper-steps-a-z.md
+#
+# Triggers:
+#   - Manual (workflow_dispatch)
+#   - PR changes to src/**, benches/**, Cargo.toml
+#   - Weekly scheduled (Sundays 2 AM UTC)
+
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for running benchmarks'
+        required: false
+        default: 'Manual benchmark run'
+
+  pull_request:
+    paths:
+      - 'src/**/*.rs'
+      - 'benches/**/*.rs'
+      - 'examples/**/*.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+  schedule:
+    - cron: '0 2 * * 0'  # Every Sunday at 2 AM UTC
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Run Pipeline Benchmarks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Download test models
+        run: |
+          mkdir -p models
+          # Check if models exist in cache, otherwise download
+          if [ ! -f models/whisper-tiny-int8.apr ]; then
+            echo "Note: Model files not in cache. Pipeline benchmarks will be skipped."
+            echo "To enable full benchmarks, add model files to the repository or cache."
+          fi
+
+      - name: Run preprocessing benchmarks (Steps B-F)
+        run: |
+          echo "=== Running Preprocessing Benchmarks ==="
+          cargo bench --bench pipeline -- step_b step_c step_f 2>&1 | tee bench-preprocessing.txt
+        continue-on-error: true
+
+      - name: Run format comparison benchmark
+        run: |
+          echo "=== Running Format Comparison ==="
+          cargo bench --bench format_comparison 2>&1 | tee bench-format.txt
+        continue-on-error: true
+
+      - name: Run format comparison example
+        run: |
+          echo "=== Running Format Comparison Example ==="
+          cargo run --release --example format_comparison 2>&1 | tee format-comparison-output.txt
+        continue-on-error: true
+
+      - name: Generate benchmark summary
+        if: always()
+        run: |
+          cat > benchmark-summary.md << 'EOF'
+          # Whisper.apr Benchmark Results
+
+          **Date:** $(date -u)
+          **Branch:** ${{ github.ref_name }}
+          **Commit:** ${{ github.sha }}
+          EOF
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "**Trigger:** Manual (${{ github.event.inputs.reason }})" >> benchmark-summary.md
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "**Trigger:** Pull Request #${{ github.event.pull_request.number }}" >> benchmark-summary.md
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "**Trigger:** Weekly Schedule" >> benchmark-summary.md
+          fi
+
+          cat >> benchmark-summary.md << 'EOF'
+
+          ## Pipeline Steps Benchmarked
+
+          | Step | Description | Status |
+          |------|-------------|--------|
+          | B | WAV file load | See results |
+          | C | PCM parse | See results |
+          | F | Mel spectrogram | See results |
+          | G | Encoder forward | Requires model |
+          | H | Decoder forward | Requires model |
+
+          ## Format Comparison
+
+          See `format-comparison-output.txt` for detailed results.
+
+          ## Performance Targets (WAPR-BENCH-001)
+
+          | Component | Target | Status |
+          |-----------|--------|--------|
+          | Mel (1.5s) | <10ms | ⏳ |
+          | Encoder | <500ms | ⏳ |
+          | Decoder/token | <100ms | ⏳ |
+          | First Token | <800ms | ⏳ |
+          | RTF (1.5s) | <2.0x | ⏳ |
+
+          ## Notes
+
+          - Full encoder/decoder benchmarks require model files
+          - Run `make golden-traces` locally for baseline capture
+          - Reference: `docs/specifications/benchmark-whisper-steps-a-z.md`
+          EOF
+
+          cat benchmark-summary.md
+
+      - name: Upload criterion results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-results-${{ github.sha }}
+          path: target/criterion/
+          retention-days: 90
+
+      - name: Upload benchmark outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-output-${{ github.sha }}
+          path: |
+            bench-*.txt
+            format-comparison-output.txt
+            benchmark-summary.md
+          retention-days: 30
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let summary = '';
+            try {
+              summary = fs.readFileSync('benchmark-summary.md', 'utf8');
+            } catch (e) {
+              summary = 'Benchmark summary not available.';
+            }
+
+            let formatOutput = '';
+            try {
+              formatOutput = fs.readFileSync('format-comparison-output.txt', 'utf8');
+              // Truncate if too long
+              if (formatOutput.length > 3000) {
+                formatOutput = formatOutput.substring(0, 3000) + '\n... (truncated)';
+              }
+            } catch (e) {
+              formatOutput = 'Format comparison output not available.';
+            }
+
+            const body = `## 📊 Benchmark Results
+
+            ${summary}
+
+            <details>
+            <summary>Format Comparison Output</summary>
+
+            \`\`\`
+            ${formatOutput}
+            \`\`\`
+
+            </details>
+
+            ---
+            *Benchmarks completed on commit ${context.sha.substring(0, 7)}*`;
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.name,
+              body: body
+            });

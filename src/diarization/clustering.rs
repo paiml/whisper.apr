@@ -338,7 +338,11 @@ impl SpectralClustering {
     }
 
     /// Perform spectral clustering
-    fn spectral_cluster(&self, affinity: &[Vec<f32>], num_clusters: usize) -> WhisperResult<Vec<usize>> {
+    fn spectral_cluster(
+        &self,
+        affinity: &[Vec<f32>],
+        num_clusters: usize,
+    ) -> WhisperResult<Vec<usize>> {
         let n = affinity.len();
 
         if num_clusters >= n {
@@ -409,11 +413,8 @@ impl SpectralClustering {
                 }
 
                 for d in 0..dim {
-                    centroid[d] = members
-                        .iter()
-                        .map(|&i| affinity[i][d])
-                        .sum::<f32>()
-                        / members.len() as f32;
+                    centroid[d] =
+                        members.iter().map(|&i| affinity[i][d]).sum::<f32>() / members.len() as f32;
                 }
             }
 
@@ -460,8 +461,7 @@ impl SpectralClustering {
             let cohesion = self.compute_cluster_cohesion(&member_embeddings, &centroid);
 
             clusters.push(
-                SpeakerCluster::new(cluster_id, member_indices, centroid)
-                    .with_cohesion(cohesion),
+                SpeakerCluster::new(cluster_id, member_indices, centroid).with_cohesion(cohesion),
             );
         }
 

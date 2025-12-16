@@ -40,6 +40,7 @@
 mod capabilities;
 mod diarization;
 mod gpu;
+mod threading;
 mod timestamps;
 mod vocabulary;
 mod worker;
@@ -48,6 +49,18 @@ pub use capabilities::{Capabilities, ExecutionMode};
 pub use diarization::{
     get_diarization_recommendation, DiarizationConfigWasm, DiarizationResultWasm, DiarizerWasm,
     EmbeddingExtractorWasm, SpeakerEmbeddingWasm, SpeakerSegmentWasm, TurnDetectorWasm,
+};
+pub use gpu::{
+    estimate_mat_mul_flops, estimate_mat_mul_memory, is_gpu_worthwhile,
+    recommended_backend_for_model, BackendSelectionWasm, BackendSelectorWasm, BackendTypeWasm,
+    DetectionOptionsWasm, GpuBackendWasm, GpuCapabilitiesWasm, GpuDetectionWasm, GpuLimitsWasm,
+    SelectionStrategyWasm, SelectorConfigWasm,
+};
+#[cfg(feature = "parallel")]
+pub use threading::init_thread_pool;
+pub use threading::{
+    get_threading_mode, get_threading_mode_name, is_threaded_available, optimal_thread_count,
+    parallel_map, parallel_matmul, parallel_reduce, ThreadingMode,
 };
 pub use timestamps::{
     get_word_timestamp_recommendation, AlignmentConfigWasm, TimestampInterpolatorWasm,
@@ -58,12 +71,6 @@ pub use vocabulary::{
     DomainAdapterWasm, DomainConfigWasm, DomainTermWasm, DomainTypeWasm, HotwordBoosterWasm,
     HotwordConfigWasm, HotwordWasm, TrieSearchResultWasm, VocabularyCustomizerWasm,
     VocabularyTrieWasm,
-};
-pub use gpu::{
-    estimate_mat_mul_flops, estimate_mat_mul_memory, is_gpu_worthwhile,
-    recommended_backend_for_model, BackendSelectionWasm, BackendSelectorWasm, BackendTypeWasm,
-    DetectionOptionsWasm, GpuBackendWasm, GpuCapabilitiesWasm, GpuDetectionWasm, GpuLimitsWasm,
-    SelectionStrategyWasm, SelectorConfigWasm,
 };
 pub use worker::{ProgressPhase, WorkerConfig, WorkerMessageType, WorkerProgress, WorkerState};
 
@@ -363,6 +370,29 @@ impl WhisperAprWasm {
         Self {
             inner: WhisperApr::base(),
         }
+    }
+
+    /// Load model from .apr file bytes
+    ///
+    /// # Arguments
+    /// * `data` - Raw .apr file bytes as Uint8Array
+    ///
+    /// # Returns
+    /// Whisper model instance with loaded weights
+    ///
+    /// # Errors
+    /// Returns error if .apr file is invalid
+    #[wasm_bindgen(js_name = fromAprBytes)]
+    pub fn from_apr_bytes(data: &[u8]) -> Result<WhisperAprWasm, JsValue> {
+        let inner =
+            WhisperApr::load_from_apr(data).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    /// Check if model has trained weights loaded
+    #[wasm_bindgen(js_name = hasWeights)]
+    pub fn has_weights(&self) -> bool {
+        self.inner.has_weights()
     }
 
     /// Get the model type as string
@@ -1443,14 +1473,14 @@ pub fn get_latency_recommendation(use_case: &str) -> String {
             "Use low-latency mode (500ms chunks) for real-time applications.".to_string()
         }
         "voice-assistant" | "assistant" | "dictation" | "voice" => {
-            "Use ultra-low latency mode (250ms chunks) for voice assistants and dictation.".to_string()
+            "Use ultra-low latency mode (250ms chunks) for voice assistants and dictation."
+                .to_string()
         }
         "subtitles" | "captions" | "live-captions" => {
             "Use low-latency mode (500ms chunks) for live captioning.".to_string()
         }
-        _ => {
-            "Unknown use case. Available options: batch, realtime, voice-assistant, subtitles.".to_string()
-        }
+        _ => "Unknown use case. Available options: batch, realtime, voice-assistant, subtitles."
+            .to_string(),
     }
 }
 
@@ -1545,13 +1575,21 @@ impl From<PartialTranscriptionResult> for PartialTranscriptionResultWasm {
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamingEventTypeWasm {
+    /// Speech has started (VAD detected voice)
     SpeechStart,
+    /// Speech has ended (silence detected)
     SpeechEnd,
+    /// Partial transcription result ready
     PartialReady,
+    /// Complete chunk ready for final transcription
     ChunkReady,
+    /// Started processing a chunk
     ProcessingStarted,
+    /// Finished processing a chunk
     ProcessingCompleted,
+    /// Error occurred during processing
     Error,
+    /// Session has been reset
     Reset,
 }
 
@@ -1672,11 +1710,17 @@ impl From<StreamingEvent> for StreamingEventWasm {
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessorStateWasm {
+    /// Waiting for speech to begin
     WaitingForSpeech,
+    /// Accumulating speech audio
     AccumulatingSpeech,
+    /// Partial transcription result ready
     PartialResultReady,
+    /// Complete chunk ready for processing
     ChunkReady,
+    /// Currently processing audio
     Processing,
+    /// Error state
     Error,
 }
 
@@ -1736,10 +1780,7 @@ pub struct StreamingSessionWasm {
 impl StreamingSessionWasm {
     /// Create a new streaming session
     #[wasm_bindgen(constructor)]
-    pub fn new(
-        whisper: &WhisperAprWasm,
-        config: StreamingConfigWasm,
-    ) -> Self {
+    pub fn new(whisper: &WhisperAprWasm, config: StreamingConfigWasm) -> Self {
         let streaming_config = StreamingConfig {
             input_sample_rate: config.input_sample_rate,
             output_sample_rate: 16000,
@@ -1777,11 +1818,10 @@ impl StreamingSessionWasm {
         // Check for partial result
         if self.processor.has_partial() {
             if let Some(partial_audio) = self.processor.get_partial() {
-                if let Ok(result) = self.whisper.transcribe_partial(
-                    &partial_audio,
-                    self.options.clone(),
-                    false,
-                ) {
+                if let Ok(result) =
+                    self.whisper
+                        .transcribe_partial(&partial_audio, self.options.clone(), false)
+                {
                     // Deduplicate
                     if result.text != self.last_partial_text {
                         self.last_partial_text = result.text.clone();
@@ -1839,11 +1879,14 @@ impl StreamingSessionWasm {
     /// Finalize and get the transcription result for the current chunk
     #[wasm_bindgen]
     pub fn finalize(&mut self) -> Result<PartialTranscriptionResultWasm, JsValue> {
-        let chunk = self.processor.get_chunk().ok_or_else(|| {
-            JsValue::from_str("no chunk ready for finalization")
-        })?;
+        let chunk = self
+            .processor
+            .get_chunk()
+            .ok_or_else(|| JsValue::from_str("no chunk ready for finalization"))?;
 
-        let result = self.whisper.transcribe_partial(&chunk, self.options.clone(), true)
+        let result = self
+            .whisper
+            .transcribe_partial(&chunk, self.options.clone(), true)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         self.last_partial_text.clear();
@@ -1854,7 +1897,10 @@ impl StreamingSessionWasm {
     #[wasm_bindgen]
     pub fn flush(&mut self) -> Option<PartialTranscriptionResultWasm> {
         if let Some(chunk) = self.processor.flush() {
-            if let Ok(result) = self.whisper.transcribe_partial(&chunk, self.options.clone(), true) {
+            if let Ok(result) = self
+                .whisper
+                .transcribe_partial(&chunk, self.options.clone(), true)
+            {
                 self.last_partial_text.clear();
                 return Some(result.into());
             }
@@ -2292,7 +2338,9 @@ mod streaming_tests {
     fn test_whisper_wasm_resample_downsample() {
         let whisper = WhisperAprWasm::tiny();
         // Generate some audio at 48kHz
-        let audio: Vec<f32> = (0..4800).map(|i| (i as f32 / 4800.0 * 2.0 * std::f32::consts::PI).sin() * 0.5).collect();
+        let audio: Vec<f32> = (0..4800)
+            .map(|i| (i as f32 / 4800.0 * 2.0 * std::f32::consts::PI).sin() * 0.5)
+            .collect();
 
         let result = whisper.resample(&audio, 48000).expect("should resample");
         // Downsampling 48kHz to 16kHz should reduce samples by factor of 3
@@ -2435,7 +2483,10 @@ mod streaming_tests {
     #[test]
     fn test_streaming_event_wasm_chunk_ready() {
         use crate::audio::StreamingEvent;
-        let event: StreamingEventWasm = StreamingEvent::ChunkReady { duration_secs: 10.0 }.into();
+        let event: StreamingEventWasm = StreamingEvent::ChunkReady {
+            duration_secs: 10.0,
+        }
+        .into();
         assert_eq!(event.event_type(), StreamingEventTypeWasm::ChunkReady);
         assert!((event.duration_secs().unwrap_or(0.0) - 10.0).abs() < f32::EPSILON);
     }
@@ -2444,14 +2495,20 @@ mod streaming_tests {
     fn test_streaming_event_wasm_processing_started() {
         use crate::audio::StreamingEvent;
         let event: StreamingEventWasm = StreamingEvent::ProcessingStarted.into();
-        assert_eq!(event.event_type(), StreamingEventTypeWasm::ProcessingStarted);
+        assert_eq!(
+            event.event_type(),
+            StreamingEventTypeWasm::ProcessingStarted
+        );
     }
 
     #[test]
     fn test_streaming_event_wasm_processing_completed() {
         use crate::audio::StreamingEvent;
         let event: StreamingEventWasm = StreamingEvent::ProcessingCompleted.into();
-        assert_eq!(event.event_type(), StreamingEventTypeWasm::ProcessingCompleted);
+        assert_eq!(
+            event.event_type(),
+            StreamingEventTypeWasm::ProcessingCompleted
+        );
     }
 
     #[test]

@@ -82,7 +82,7 @@ impl Default for GpuLimits {
     fn default() -> Self {
         // WebGPU minimum guaranteed limits
         Self {
-            max_buffer_size: 256 * 1024 * 1024, // 256 MB
+            max_buffer_size: 256 * 1024 * 1024,                 // 256 MB
             max_storage_buffer_binding_size: 128 * 1024 * 1024, // 128 MB
             max_compute_workgroup_size_x: 256,
             max_compute_workgroup_size_y: 256,
@@ -100,7 +100,7 @@ impl GpuLimits {
     #[must_use]
     pub fn desktop_high_end() -> Self {
         Self {
-            max_buffer_size: 2 * 1024 * 1024 * 1024, // 2 GB
+            max_buffer_size: 2 * 1024 * 1024 * 1024,             // 2 GB
             max_storage_buffer_binding_size: 1024 * 1024 * 1024, // 1 GB
             max_compute_workgroup_size_x: 1024,
             max_compute_workgroup_size_y: 1024,
@@ -116,7 +116,7 @@ impl GpuLimits {
     #[must_use]
     pub fn mobile() -> Self {
         Self {
-            max_buffer_size: 128 * 1024 * 1024, // 128 MB
+            max_buffer_size: 128 * 1024 * 1024,                // 128 MB
             max_storage_buffer_binding_size: 64 * 1024 * 1024, // 64 MB
             max_compute_workgroup_size_x: 256,
             max_compute_workgroup_size_y: 256,

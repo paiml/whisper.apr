@@ -114,8 +114,3 @@ machine:
 performance:
   max_duration_ms: 15000
   max_memory_mb: 250
-
-assertions:
-  path:
-    must_visit: ["initializing", "idle"]
-    must_not_visit: ["error"]

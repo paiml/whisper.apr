@@ -1,6 +1,10 @@
 //! WAPR-DEMO-002: Audio/Video Upload Transcription Demo
 //!
 //! Pure Rust WASM demo for file-based speech-to-text transcription.
+//!
+//! Note: `#![allow(dead_code)]` is used because WASM exports are called from
+//! JavaScript, not Rust. Static analysis incorrectly flags them as "dead".
+#![allow(dead_code)]
 //! Supports audio files (WAV, MP3, OGG) and video files (MP4, `WebM`).
 //! Zero JavaScript - all browser APIs accessed via `web-sys`.
 //!
@@ -496,6 +500,204 @@ fn format_vtt_timestamp(seconds: f64) -> String {
     format!("{hours:02}:{minutes:02}:{secs:02}.{ms:03}")
 }
 
+// ============================================================================
+// Zero-JS Entry Point - All DOM manipulation in Rust
+// ============================================================================
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use wasm_bindgen::closure::Closure;
+
+thread_local! {
+    static DEMO: RefCell<Option<Rc<RefCell<UploadTranscriptionDemo>>>> = const { RefCell::new(None) };
+}
+
+/// Zero-JS entry point - called automatically when WASM loads
+///
+/// # Errors
+///
+/// Returns an error if the DOM is not available (no window or document).
+#[wasm_bindgen(start)]
+pub fn start() -> Result<(), JsValue> {
+    console_error_panic_hook::set_once();
+
+    let window = web_sys::window().ok_or("No window")?;
+    let document = window.document().ok_or("No document")?;
+
+    let demo = Rc::new(RefCell::new(UploadTranscriptionDemo::new()));
+    DEMO.with(|d| *d.borrow_mut() = Some(demo.clone()));
+
+    update_ui(&document, &demo.borrow())?;
+
+    // Transcribe button
+    setup_button_listener(&document, "transcribe", {
+        let demo = demo.clone();
+        move |doc| {
+            let _ = demo.borrow_mut().start_transcription();
+            let _ = update_ui(doc, &demo.borrow());
+        }
+    })?;
+
+    // Clear button
+    setup_button_listener(&document, "clear", {
+        let demo = demo.clone();
+        move |doc| {
+            demo.borrow_mut().clear();
+            let _ = update_ui(doc, &demo.borrow());
+        }
+    })?;
+
+    // File input change
+    setup_file_input(&document, "file_input", demo.clone())?;
+
+    // Drag and drop
+    setup_drag_drop(&document, "drop_zone", demo)?;
+
+    Ok(())
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn update_ui(document: &web_sys::Document, demo: &UploadTranscriptionDemo) -> Result<(), JsValue> {
+    if let Some(el) = document.get_element_by_id("transcript_display") {
+        el.set_text_content(Some(&demo.transcript_text()));
+    }
+
+    // Update file info display
+    if let Some(el) = document.get_element_by_id("file_info") {
+        if let Some(info) = demo.file_info() {
+            el.set_text_content(Some(&format!(
+                "{} ({})",
+                info.name(),
+                info.size_formatted()
+            )));
+            let _ = el.class_list().add_1("visible");
+        } else {
+            el.set_text_content(None);
+            let _ = el.class_list().remove_1("visible");
+        }
+    }
+
+    // Update transcribe button
+    if let Some(btn) = document.get_element_by_id("transcribe") {
+        if demo.can_transcribe() {
+            let _ = btn.remove_attribute("disabled");
+        } else {
+            let _ = btn.set_attribute("disabled", "true");
+        }
+    }
+
+    // Update download button
+    if let Some(btn) = document.get_element_by_id("download_result") {
+        if demo.can_download() {
+            let _ = btn.remove_attribute("disabled");
+        } else {
+            let _ = btn.set_attribute("disabled", "true");
+        }
+    }
+
+    // Update drop zone class
+    if let Some(zone) = document.get_element_by_id("drop_zone") {
+        if demo.file_info().is_some() {
+            let _ = zone.class_list().add_1("file-selected");
+        } else {
+            let _ = zone.class_list().remove_1("file-selected");
+        }
+    }
+
+    Ok(())
+}
+
+fn setup_button_listener<F>(
+    document: &web_sys::Document,
+    id: &str,
+    handler: F,
+) -> Result<(), JsValue>
+where
+    F: Fn(&web_sys::Document) + 'static,
+{
+    let doc = document.clone();
+    let closure = Closure::wrap(Box::new(move |_: web_sys::Event| {
+        handler(&doc);
+    }) as Box<dyn Fn(_)>);
+
+    if let Some(btn) = document.get_element_by_id(id) {
+        btn.add_event_listener_with_callback("click", closure.as_ref().unchecked_ref())?;
+    }
+    closure.forget();
+    Ok(())
+}
+
+fn setup_file_input(
+    document: &web_sys::Document,
+    id: &str,
+    demo: Rc<RefCell<UploadTranscriptionDemo>>,
+) -> Result<(), JsValue> {
+    let doc = document.clone();
+    let closure = Closure::wrap(Box::new(move |event: web_sys::Event| {
+        if let Some(target) = event.target() {
+            if let Ok(input) = target.dyn_into::<web_sys::HtmlInputElement>() {
+                if let Some(files) = input.files() {
+                    if let Some(file) = files.get(0) {
+                        let name = file.name();
+                        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                        let size = file.size() as u64;
+                        let _ = demo.borrow_mut().on_file_selected(&name, size);
+                        let _ = update_ui(&doc, &demo.borrow());
+                    }
+                }
+            }
+        }
+    }) as Box<dyn Fn(_)>);
+
+    if let Some(input) = document.get_element_by_id(id) {
+        input.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref())?;
+    }
+    closure.forget();
+    Ok(())
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn setup_drag_drop(
+    document: &web_sys::Document,
+    id: &str,
+    demo: Rc<RefCell<UploadTranscriptionDemo>>,
+) -> Result<(), JsValue> {
+    let doc = document.clone();
+
+    // Dragover - prevent default to allow drop
+    let dragover = Closure::wrap(Box::new(move |event: web_sys::DragEvent| {
+        event.prevent_default();
+    }) as Box<dyn Fn(_)>);
+
+    // Drop handler
+    let drop_handler = {
+        let demo = demo.clone();
+        let doc = doc.clone();
+        Closure::wrap(Box::new(move |event: web_sys::DragEvent| {
+            event.prevent_default();
+            if let Some(dt) = event.data_transfer() {
+                if let Some(files) = dt.files() {
+                    if let Some(file) = files.get(0) {
+                        let name = file.name();
+                        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                        let size = file.size() as u64;
+                        let _ = demo.borrow_mut().on_file_selected(&name, size);
+                        let _ = update_ui(&doc, &demo.borrow());
+                    }
+                }
+            }
+        }) as Box<dyn Fn(_)>)
+    };
+
+    if let Some(zone) = document.get_element_by_id(id) {
+        zone.add_event_listener_with_callback("dragover", dragover.as_ref().unchecked_ref())?;
+        zone.add_event_listener_with_callback("drop", drop_handler.as_ref().unchecked_ref())?;
+    }
+    dragover.forget();
+    drop_handler.forget();
+    Ok(())
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -549,5 +751,419 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(demo.state(), DemoState::Error);
         assert!(demo.error_message().unwrap().contains("too large"));
+    }
+
+    // =========================================================================
+    // State Tests
+    // =========================================================================
+
+    #[test]
+    fn test_initial_state_idle() {
+        let demo = UploadTranscriptionDemo::new();
+        assert_eq!(demo.state(), DemoState::Idle);
+    }
+
+    #[test]
+    fn test_state_file_selected() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        assert_eq!(demo.state(), DemoState::FileSelected);
+    }
+
+    #[test]
+    fn test_state_transcribing() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_transcription();
+        assert_eq!(demo.state(), DemoState::Transcribing);
+    }
+
+    #[test]
+    fn test_state_complete() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_transcription();
+        demo.complete();
+        assert_eq!(demo.state(), DemoState::Complete);
+    }
+
+    // =========================================================================
+    // SupportedFormat Tests
+    // =========================================================================
+
+    #[test]
+    fn test_supported_audio_formats() {
+        assert!(SupportedFormat::is_supported("audio.wav"));
+        assert!(SupportedFormat::is_supported("audio.mp3"));
+        assert!(SupportedFormat::is_supported("audio.ogg"));
+        assert!(SupportedFormat::is_supported("audio.flac"));
+        assert!(SupportedFormat::is_supported("audio.m4a"));
+    }
+
+    #[test]
+    fn test_supported_video_formats() {
+        assert!(SupportedFormat::is_supported("video.mp4"));
+        assert!(SupportedFormat::is_supported("video.webm"));
+        assert!(SupportedFormat::is_supported("video.mkv"));
+        assert!(SupportedFormat::is_supported("video.avi"));
+    }
+
+    #[test]
+    fn test_unsupported_formats() {
+        assert!(!SupportedFormat::is_supported("doc.pdf"));
+        assert!(!SupportedFormat::is_supported("image.png"));
+        assert!(!SupportedFormat::is_supported("text.txt"));
+    }
+
+    #[test]
+    fn test_case_insensitive_formats() {
+        assert!(SupportedFormat::is_supported("audio.WAV"));
+        assert!(SupportedFormat::is_supported("video.MP4"));
+        assert!(SupportedFormat::is_supported("audio.WaV"));
+    }
+
+    #[test]
+    fn test_supported_formats_string() {
+        let formats = SupportedFormat::supported_formats_string();
+        assert!(formats.contains("WAV"));
+        assert!(formats.contains("MP4"));
+    }
+
+    // =========================================================================
+    // FileInfo Tests
+    // =========================================================================
+
+    #[test]
+    fn test_file_info_name() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test_audio.wav", 1024 * 1024);
+        let info = demo.file_info().unwrap();
+        assert_eq!(info.name(), "test_audio.wav");
+    }
+
+    #[test]
+    fn test_file_info_size_formatted() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 10 * 1024 * 1024);
+        let info = demo.file_info().unwrap();
+        assert!(info.size_formatted().contains("10.0 MB"));
+    }
+
+    #[test]
+    fn test_file_info_duration_initially_none() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let info = demo.file_info().unwrap();
+        assert!(info.duration_formatted().is_none());
+    }
+
+    #[test]
+    fn test_file_info_duration_set() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        demo.set_file_duration(125.5);
+        let info = demo.file_info().unwrap();
+        assert!(info.duration_formatted().is_some());
+    }
+
+    #[test]
+    fn test_file_info_is_video() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("video.mp4", 1000);
+        let info = demo.file_info().unwrap();
+        assert!(info.is_video());
+    }
+
+    #[test]
+    fn test_file_info_is_not_video() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("audio.wav", 1000);
+        let info = demo.file_info().unwrap();
+        assert!(!info.is_video());
+    }
+
+    // =========================================================================
+    // TranscriptionProgress Tests
+    // =========================================================================
+
+    #[test]
+    fn test_progress_initial() {
+        let demo = UploadTranscriptionDemo::new();
+        let progress = demo.progress();
+        assert_eq!(progress.percent(), 0.0);
+    }
+
+    #[test]
+    fn test_progress_chunk_text() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_transcription();
+        demo.update_progress(1, 50.0, Some(30.0));
+        let progress = demo.progress();
+        assert!(progress.chunk_text().contains("/"));
+    }
+
+    #[test]
+    fn test_progress_estimated_time_seconds() {
+        let progress = TranscriptionProgress {
+            current_chunk: 1,
+            total_chunks: 5,
+            percent_complete: 20.0,
+            estimated_remaining_seconds: Some(45.0),
+        };
+        let estimated = progress.estimated_time().unwrap();
+        assert!(estimated.contains("s remaining"));
+    }
+
+    #[test]
+    fn test_progress_estimated_time_minutes() {
+        let progress = TranscriptionProgress {
+            current_chunk: 1,
+            total_chunks: 5,
+            percent_complete: 20.0,
+            estimated_remaining_seconds: Some(120.0),
+        };
+        let estimated = progress.estimated_time().unwrap();
+        assert!(estimated.contains("m remaining"));
+    }
+
+    #[test]
+    fn test_progress_estimated_time_none() {
+        let progress = TranscriptionProgress::default();
+        assert!(progress.estimated_time().is_none());
+    }
+
+    // =========================================================================
+    // Transcription Tests
+    // =========================================================================
+
+    #[test]
+    fn test_transcript_text_empty_initially() {
+        let demo = UploadTranscriptionDemo::new();
+        assert!(demo.transcript_text().is_empty());
+    }
+
+    #[test]
+    fn test_transcript_text_with_segments() {
+        let mut demo = UploadTranscriptionDemo::new();
+        demo.add_segment(0.0, 2.0, "Hello");
+        demo.add_segment(2.0, 4.0, "World");
+        let text = demo.transcript_text();
+        assert!(text.contains("Hello"));
+        assert!(text.contains("World"));
+    }
+
+    #[test]
+    fn test_segments_count() {
+        let mut demo = UploadTranscriptionDemo::new();
+        assert_eq!(demo.segments_count(), 0);
+        demo.add_segment(0.0, 2.0, "Hello");
+        assert_eq!(demo.segments_count(), 1);
+        demo.add_segment(2.0, 4.0, "World");
+        assert_eq!(demo.segments_count(), 2);
+    }
+
+    // =========================================================================
+    // Button State Tests
+    // =========================================================================
+
+    #[test]
+    fn test_can_transcribe_initial() {
+        let demo = UploadTranscriptionDemo::new();
+        assert!(!demo.can_transcribe());
+    }
+
+    #[test]
+    fn test_can_transcribe_file_selected() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        assert!(demo.can_transcribe());
+    }
+
+    #[test]
+    fn test_can_transcribe_complete() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_transcription();
+        demo.complete();
+        assert!(demo.can_transcribe());
+    }
+
+    #[test]
+    fn test_can_download_initial() {
+        let demo = UploadTranscriptionDemo::new();
+        assert!(!demo.can_download());
+    }
+
+    #[test]
+    fn test_can_download_complete_with_segments() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_transcription();
+        demo.add_segment(0.0, 2.0, "Hello");
+        demo.complete();
+        assert!(demo.can_download());
+    }
+
+    #[test]
+    fn test_can_download_complete_without_segments() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_transcription();
+        demo.complete();
+        assert!(!demo.can_download());
+    }
+
+    // =========================================================================
+    // Cancel Tests
+    // =========================================================================
+
+    #[test]
+    fn test_is_cancelled_initial() {
+        let demo = UploadTranscriptionDemo::new();
+        assert!(!demo.is_cancelled());
+    }
+
+    #[test]
+    fn test_cancel_during_transcription() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_transcription();
+        demo.cancel();
+        assert!(demo.is_cancelled());
+        assert_eq!(demo.state(), DemoState::FileSelected);
+    }
+
+    #[test]
+    fn test_cancel_not_during_transcription() {
+        let mut demo = UploadTranscriptionDemo::new();
+        demo.cancel();
+        assert!(!demo.is_cancelled());
+    }
+
+    // =========================================================================
+    // Export Tests
+    // =========================================================================
+
+    #[test]
+    fn test_export_txt() {
+        let mut demo = UploadTranscriptionDemo::new();
+        demo.add_segment(0.0, 2.0, "Hello");
+        demo.add_segment(2.0, 4.0, "World");
+        let txt = demo.export_txt();
+        assert!(txt.contains("Hello"));
+        assert!(txt.contains("World"));
+    }
+
+    #[test]
+    fn test_export_vtt() {
+        let mut demo = UploadTranscriptionDemo::new();
+        demo.add_segment(0.0, 2.0, "Hello world");
+        let vtt = demo.export_vtt();
+        assert!(vtt.starts_with("WEBVTT"));
+        assert!(vtt.contains("Hello world"));
+    }
+
+    // =========================================================================
+    // Clear Tests
+    // =========================================================================
+
+    #[test]
+    fn test_clear_resets_all() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_transcription();
+        demo.add_segment(0.0, 2.0, "Hello");
+        demo.complete();
+
+        demo.clear();
+
+        assert_eq!(demo.state(), DemoState::Idle);
+        assert!(demo.file_info().is_none());
+        assert_eq!(demo.segments_count(), 0);
+        assert!(!demo.is_cancelled());
+    }
+
+    // =========================================================================
+    // Error Tests
+    // =========================================================================
+
+    #[test]
+    fn test_unsupported_format_error() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("document.pdf", 1000);
+        assert_eq!(demo.state(), DemoState::Error);
+        assert!(demo.error_message().is_some());
+    }
+
+    #[test]
+    fn test_error_message_initially_none() {
+        let demo = UploadTranscriptionDemo::new();
+        assert!(demo.error_message().is_none());
+    }
+
+    // =========================================================================
+    // TranscriptSegment Tests
+    // =========================================================================
+
+    #[test]
+    fn test_segment_timestamp() {
+        let mut demo = UploadTranscriptionDemo::new();
+        demo.add_segment(0.0, 2.5, "Hello");
+        // Access the segment through export
+        let srt = demo.export_srt();
+        assert!(srt.contains("00:00:00,000"));
+        assert!(srt.contains("00:00:02,500"));
+    }
+
+    // =========================================================================
+    // Default Trait Tests
+    // =========================================================================
+
+    #[test]
+    fn test_default_demo() {
+        let demo = UploadTranscriptionDemo::default();
+        assert_eq!(demo.state(), DemoState::Idle);
+    }
+
+    #[test]
+    fn test_default_state() {
+        let state = DemoState::default();
+        assert_eq!(state, DemoState::Idle);
+    }
+
+    // =========================================================================
+    // DemoState Trait Tests
+    // =========================================================================
+
+    #[test]
+    fn test_state_debug() {
+        let state = DemoState::Transcribing;
+        let debug_str = format!("{:?}", state);
+        assert!(debug_str.contains("Transcribing"));
+    }
+
+    #[test]
+    fn test_state_clone() {
+        let state = DemoState::Complete;
+        let cloned = state.clone();
+        assert_eq!(state, cloned);
+    }
+
+    #[test]
+    fn test_state_copy() {
+        let state = DemoState::Error;
+        let copied = state;
+        assert_eq!(state, copied);
+    }
+
+    // =========================================================================
+    // Progress Default Tests
+    // =========================================================================
+
+    #[test]
+    fn test_progress_default() {
+        let progress = TranscriptionProgress::default();
+        assert_eq!(progress.percent(), 0.0);
     }
 }

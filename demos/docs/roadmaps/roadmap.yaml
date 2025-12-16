@@ -1,0 +1,20 @@
+roadmap_version: '1.0'
+github_enabled: true
+github_repo: null
+roadmap:
+- id: WAPR-QA-004
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-QA-004'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2025-12-14T10:21:12.310503706+00:00
+  updated: 2025-12-14T10:21:12.310503706+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null

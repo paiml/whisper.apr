@@ -199,9 +199,10 @@ impl BoundaryDetector {
             let end_alignment = &alignments[end_idx.min(alignments.len() - 1)];
 
             // Create boundary
-            let mut boundary = WordBoundary::new(start_alignment.start_time, end_alignment.end_time)
-                .with_confidence(start_alignment.confidence, end_alignment.confidence)
-                .with_tokens((start_idx..=end_idx.min(alignments.len() - 1)).collect());
+            let mut boundary =
+                WordBoundary::new(start_alignment.start_time, end_alignment.end_time)
+                    .with_confidence(start_alignment.confidence, end_alignment.confidence)
+                    .with_tokens((start_idx..=end_idx.min(alignments.len() - 1)).collect());
 
             // Validate boundary
             boundary = self.validate_boundary(boundary);
@@ -251,9 +252,7 @@ impl BoundaryDetector {
         let end_frame = (boundary.end * frame_rate) as usize;
 
         // Find actual speech onset
-        if let Some(refined_start) =
-            self.find_speech_onset(audio_energy, start_frame, frame_rate)
-        {
+        if let Some(refined_start) = self.find_speech_onset(audio_energy, start_frame, frame_rate) {
             result.start = refined_start;
             result.start_confidence = 0.9;
         }
@@ -490,7 +489,9 @@ mod tests {
     #[test]
     fn test_detect_boundaries_empty() {
         let detector = BoundaryDetector::default();
-        let result = detector.detect_boundaries(&[], &[]).expect("should succeed");
+        let result = detector
+            .detect_boundaries(&[], &[])
+            .expect("should succeed");
         assert!(result.is_empty());
     }
 
@@ -673,8 +674,7 @@ mod tests {
 
     #[test]
     fn test_word_boundary_with_both_confidences() {
-        let boundary = WordBoundary::new(0.0, 1.0)
-            .with_confidence(0.9, 0.8);
+        let boundary = WordBoundary::new(0.0, 1.0).with_confidence(0.9, 0.8);
 
         assert!((boundary.start_confidence - 0.9).abs() < f32::EPSILON);
         assert!((boundary.end_confidence - 0.8).abs() < f32::EPSILON);
@@ -718,7 +718,9 @@ mod tests {
     #[test]
     fn test_detect_boundaries_empty_alignments() {
         let detector = BoundaryDetector::default();
-        let boundaries = detector.detect_boundaries(&[], &[]).expect("should succeed");
+        let boundaries = detector
+            .detect_boundaries(&[], &[])
+            .expect("should succeed");
         assert!(boundaries.is_empty());
     }
 
@@ -727,7 +729,9 @@ mod tests {
         let detector = BoundaryDetector::default();
         let alignments = vec![TokenAlignment::new(0, 100, 30, 0.9)];
         let word_starts = vec![0];
-        let boundaries = detector.detect_boundaries(&alignments, &word_starts).expect("should succeed");
+        let boundaries = detector
+            .detect_boundaries(&alignments, &word_starts)
+            .expect("should succeed");
         assert_eq!(boundaries.len(), 1);
     }
 
@@ -735,15 +739,10 @@ mod tests {
     fn test_refine_with_audio_boundaries() {
         let detector = BoundaryDetector::default();
 
-        let boundaries = vec![
-            WordBoundary::new(0.0, 0.5),
-            WordBoundary::new(0.6, 1.0),
-        ];
+        let boundaries = vec![WordBoundary::new(0.0, 0.5), WordBoundary::new(0.6, 1.0)];
 
         // Create audio energy with some variation
-        let audio_energy: Vec<f32> = (0..100)
-            .map(|i| if i < 50 { 0.5 } else { 0.02 })
-            .collect();
+        let audio_energy: Vec<f32> = (0..100).map(|i| if i < 50 { 0.5 } else { 0.02 }).collect();
 
         let refined = detector
             .refine_with_audio(&boundaries, &audio_energy, 100.0)

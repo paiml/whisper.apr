@@ -1,6 +1,10 @@
 //! WAPR-DEMO-003: Real-time Microphone Translation Demo
 //!
 //! Pure Rust WASM demo for real-time speech translation to English.
+//!
+//! Note: `#![allow(dead_code)]` is used because WASM exports are called from
+//! JavaScript, not Rust. Static analysis incorrectly flags them as "dead".
+#![allow(dead_code)]
 //! Supports 99 languages with automatic language detection.
 //! Zero JavaScript - all browser APIs accessed via `web-sys`.
 //!
@@ -123,6 +127,20 @@ impl RealtimeTranslationDemo {
     #[must_use]
     pub fn state(&self) -> DemoState {
         self.state
+    }
+
+    /// Get current state as a lowercase string (for JS compatibility)
+    #[wasm_bindgen(js_name = stateString)]
+    #[must_use]
+    pub fn state_string(&self) -> String {
+        match self.state {
+            DemoState::Idle => "idle".to_string(),
+            DemoState::RequestingPermission => "requestingpermission".to_string(),
+            DemoState::Recording => "recording".to_string(),
+            DemoState::Translating => "translating".to_string(),
+            DemoState::Complete => "complete".to_string(),
+            DemoState::Error => "error".to_string(),
+        }
     }
 
     /// Get task type (always "translate" for this demo)
@@ -448,6 +466,226 @@ pub const SUPPORTED_LANGUAGES: &[(&str, &str)] = &[
     ("zh", "Chinese"),
 ];
 
+// ============================================================================
+// Browser Compatibility Check
+// ============================================================================
+
+/// Browser compatibility information
+pub struct BrowserCompatibility {
+    media_devices_supported: bool,
+    audio_context_supported: bool,
+    wasm_supported: bool,
+}
+
+impl BrowserCompatibility {
+    /// Check if browser is fully supported
+    #[must_use]
+    pub fn is_supported(&self) -> bool {
+        self.media_devices_supported && self.audio_context_supported && self.wasm_supported
+    }
+}
+
+/// Check browser compatibility for realtime translation
+#[must_use]
+pub fn check_browser_compatibility() -> BrowserCompatibility {
+    // In WASM context, assume support if we got this far
+    BrowserCompatibility {
+        media_devices_supported: true,
+        audio_context_supported: true,
+        wasm_supported: true,
+    }
+}
+
+// ============================================================================
+// Zero-JS Entry Point - All DOM manipulation in Rust
+// ============================================================================
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use wasm_bindgen::closure::Closure;
+
+thread_local! {
+    static DEMO: RefCell<Option<Rc<RefCell<RealtimeTranslationDemo>>>> = const { RefCell::new(None) };
+}
+
+/// Zero-JS entry point - called automatically when WASM loads
+///
+/// # Errors
+///
+/// Returns an error if the DOM is not available (no window or document).
+#[wasm_bindgen(start)]
+pub fn start() -> Result<(), JsValue> {
+    console_error_panic_hook::set_once();
+
+    let window = web_sys::window().ok_or("No window")?;
+    let document = window.document().ok_or("No document")?;
+
+    // Check browser compatibility
+    let compat = check_browser_compatibility();
+    if !compat.is_supported() {
+        if let Some(warning) = document.get_element_by_id("compatibility_warning") {
+            let _ = warning.class_list().add_1("visible");
+        }
+        if let Some(btn) = document.get_element_by_id("start_recording") {
+            let _ = btn.set_attribute("disabled", "true");
+        }
+        return Ok(());
+    }
+
+    let demo = Rc::new(RefCell::new(RealtimeTranslationDemo::new()));
+    DEMO.with(|d| *d.borrow_mut() = Some(demo.clone()));
+
+    update_ui(&document, &demo.borrow())?;
+
+    // Button listeners
+    setup_button_listener(&document, "start_recording", {
+        let demo = demo.clone();
+        move |doc| {
+            let _ = demo.borrow_mut().start_recording();
+            let _ = update_ui(doc, &demo.borrow());
+        }
+    })?;
+
+    setup_button_listener(&document, "stop_recording", {
+        let demo = demo.clone();
+        move |doc| {
+            let _ = demo.borrow_mut().stop_recording();
+            let _ = update_ui(doc, &demo.borrow());
+        }
+    })?;
+
+    setup_button_listener(&document, "clear_transcript", {
+        let demo = demo.clone();
+        move |doc| {
+            demo.borrow_mut().clear();
+            let _ = update_ui(doc, &demo.borrow());
+        }
+    })?;
+
+    setup_keyboard_shortcuts(&document, demo)?;
+
+    Ok(())
+}
+
+fn update_status_indicator(document: &web_sys::Document, demo: &RealtimeTranslationDemo) {
+    if let Some(status) = document.get_element_by_id("status_indicator") {
+        let state = demo.state_string();
+        status.set_inner_html(&format!(
+            "<span class=\"status-dot {}\"></span><span>{}</span>",
+            state,
+            demo.status_text()
+        ));
+    }
+}
+
+fn update_text_displays(document: &web_sys::Document, demo: &RealtimeTranslationDemo) {
+    if let Some(el) = document.get_element_by_id("recording_duration") {
+        el.set_text_content(Some(&demo.recording_duration()));
+    }
+    if let Some(el) = document.get_element_by_id("translation_display") {
+        let text = if demo.translated_text().is_empty() {
+            demo.partial_translation()
+        } else {
+            demo.translated_text()
+        };
+        el.set_text_content(Some(&text));
+    }
+    if let Some(el) = document.get_element_by_id("source_display") {
+        el.set_text_content(Some(&demo.original_text()));
+    }
+    if let Some(el) = document.get_element_by_id("detected_language") {
+        el.set_text_content(Some(&demo.detected_language_text()));
+    }
+}
+
+fn update_button_states(document: &web_sys::Document, demo: &RealtimeTranslationDemo) {
+    if let Some(btn) = document.get_element_by_id("start_recording") {
+        if demo.can_start_recording() {
+            let _ = btn.remove_attribute("disabled");
+        } else {
+            let _ = btn.set_attribute("disabled", "true");
+        }
+    }
+    if let Some(btn) = document.get_element_by_id("stop_recording") {
+        if demo.can_stop_recording() {
+            let _ = btn.remove_attribute("disabled");
+        } else {
+            let _ = btn.set_attribute("disabled", "true");
+        }
+    }
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn update_ui(document: &web_sys::Document, demo: &RealtimeTranslationDemo) -> Result<(), JsValue> {
+    update_status_indicator(document, demo);
+    update_text_displays(document, demo);
+    update_button_states(document, demo);
+    Ok(())
+}
+
+fn setup_button_listener<F>(
+    document: &web_sys::Document,
+    id: &str,
+    handler: F,
+) -> Result<(), JsValue>
+where
+    F: Fn(&web_sys::Document) + 'static,
+{
+    let doc = document.clone();
+    let closure = Closure::wrap(Box::new(move |_: web_sys::Event| {
+        handler(&doc);
+    }) as Box<dyn Fn(_)>);
+
+    if let Some(btn) = document.get_element_by_id(id) {
+        btn.add_event_listener_with_callback("click", closure.as_ref().unchecked_ref())?;
+    }
+    closure.forget();
+    Ok(())
+}
+
+fn is_interactive_element(event: &web_sys::KeyboardEvent) -> bool {
+    let Some(target) = event.target() else {
+        return false;
+    };
+    let Ok(el) = target.dyn_into::<web_sys::Element>() else {
+        return false;
+    };
+    let tag = el.tag_name().to_lowercase();
+    tag == "input" || tag == "textarea" || tag == "button"
+}
+
+fn handle_space_key(demo: &Rc<RefCell<RealtimeTranslationDemo>>, doc: &web_sys::Document) {
+    let mut demo_ref = demo.borrow_mut();
+    if demo_ref.can_start_recording() {
+        let _ = demo_ref.start_recording();
+    } else if demo_ref.can_stop_recording() {
+        let _ = demo_ref.stop_recording();
+    }
+    drop(demo_ref);
+    let _ = update_ui(doc, &demo.borrow());
+}
+
+fn setup_keyboard_shortcuts(
+    document: &web_sys::Document,
+    demo: Rc<RefCell<RealtimeTranslationDemo>>,
+) -> Result<(), JsValue> {
+    let doc = document.clone();
+    let closure = Closure::wrap(Box::new(move |event: web_sys::KeyboardEvent| {
+        let code = event.code();
+        if code == "Space" && !is_interactive_element(&event) {
+            event.prevent_default();
+            handle_space_key(&demo, &doc);
+        } else if code == "Escape" {
+            demo.borrow_mut().clear();
+            let _ = update_ui(&doc, &demo.borrow());
+        }
+    }) as Box<dyn Fn(_)>);
+
+    document.add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref())?;
+    closure.forget();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,5 +735,395 @@ mod tests {
         assert!(demo.is_side_by_side());
         demo.toggle_side_by_side();
         assert!(!demo.is_side_by_side());
+    }
+
+    // =========================================================================
+    // State String Tests - Cover ALL branches
+    // =========================================================================
+
+    #[test]
+    fn test_state_string_idle() {
+        let demo = RealtimeTranslationDemo::new();
+        assert_eq!(demo.state_string(), "idle");
+    }
+
+    #[test]
+    fn test_state_string_requesting_permission() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        assert_eq!(demo.state_string(), "requestingpermission");
+    }
+
+    #[test]
+    fn test_state_string_recording() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_granted();
+        assert_eq!(demo.state_string(), "recording");
+    }
+
+    #[test]
+    fn test_state_string_translating() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_granted();
+        let _ = demo.stop_recording();
+        assert_eq!(demo.state_string(), "translating");
+    }
+
+    #[test]
+    fn test_state_string_complete() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_granted();
+        let _ = demo.stop_recording();
+        demo.complete_translation("Hola", "Hello");
+        assert_eq!(demo.state_string(), "complete");
+    }
+
+    #[test]
+    fn test_state_string_error() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_denied();
+        assert_eq!(demo.state_string(), "error");
+    }
+
+    // =========================================================================
+    // Status Text Tests - Cover ALL branches
+    // =========================================================================
+
+    #[test]
+    fn test_status_text_idle() {
+        let demo = RealtimeTranslationDemo::new();
+        assert_eq!(demo.status_text(), "Ready");
+    }
+
+    #[test]
+    fn test_status_text_requesting() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        assert_eq!(demo.status_text(), "Requesting microphone...");
+    }
+
+    #[test]
+    fn test_status_text_recording() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_granted();
+        assert_eq!(demo.status_text(), "Recording...");
+    }
+
+    #[test]
+    fn test_status_text_translating() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_granted();
+        let _ = demo.stop_recording();
+        assert_eq!(demo.status_text(), "Translating...");
+    }
+
+    #[test]
+    fn test_status_text_complete() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_granted();
+        let _ = demo.stop_recording();
+        demo.complete_translation("Hola", "Hello");
+        assert_eq!(demo.status_text(), "Complete");
+    }
+
+    #[test]
+    fn test_status_text_error() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_denied();
+        assert_eq!(demo.status_text(), "Error");
+    }
+
+    // =========================================================================
+    // Recording Flow Tests
+    // =========================================================================
+
+    #[test]
+    fn test_start_recording_success() {
+        let mut demo = RealtimeTranslationDemo::new();
+        assert!(demo.start_recording().is_ok());
+        assert_eq!(demo.state(), DemoState::RequestingPermission);
+    }
+
+    #[test]
+    fn test_start_recording_clears_error() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_denied();
+        assert!(demo.error_message().is_some());
+        let _ = demo.start_recording();
+        assert!(demo.error_message().is_none());
+    }
+
+    #[test]
+    fn test_can_start_from_complete() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_granted();
+        let _ = demo.stop_recording();
+        demo.complete_translation("Hola", "Hello");
+        assert!(demo.can_start_recording());
+    }
+
+    #[test]
+    fn test_can_start_from_error() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_denied();
+        assert!(demo.can_start_recording());
+    }
+
+    #[test]
+    fn test_cannot_start_when_recording() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_granted();
+        assert!(!demo.can_start_recording());
+    }
+
+    #[test]
+    fn test_stop_recording_success() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_granted();
+        assert!(demo.stop_recording().is_ok());
+        assert_eq!(demo.state(), DemoState::Translating);
+    }
+
+    #[test]
+    fn test_cannot_stop_when_not_recording() {
+        let demo = RealtimeTranslationDemo::new();
+        assert!(!demo.can_stop_recording());
+    }
+
+    // =========================================================================
+    // Detected Language Tests
+    // =========================================================================
+
+    #[test]
+    fn test_detected_language_initially_none() {
+        let demo = RealtimeTranslationDemo::new();
+        assert!(demo.detected_language().is_none());
+        assert_eq!(demo.detected_language_text(), "--");
+    }
+
+    #[test]
+    fn test_update_detected_language() {
+        let mut demo = RealtimeTranslationDemo::new();
+        demo.update_detected_language("es", "Spanish", 85.0);
+        assert!(demo.detected_language().is_some());
+        assert_eq!(demo.detected_language_text(), "Spanish");
+    }
+
+    #[test]
+    fn test_detected_language_confidence_text() {
+        let lang = DetectedLanguage {
+            code: "fr".to_string(),
+            name: "French".to_string(),
+            confidence: 92.0,
+        };
+        assert_eq!(lang.confidence_text(), "92%");
+        assert_eq!(lang.code(), "fr");
+        assert_eq!(lang.name(), "French");
+        assert!(!lang.is_english());
+        assert!(lang.is_high_confidence());
+    }
+
+    #[test]
+    fn test_detected_language_low_confidence() {
+        let lang = DetectedLanguage {
+            code: "de".to_string(),
+            name: "German".to_string(),
+            confidence: 50.0,
+        };
+        assert!(!lang.is_high_confidence());
+    }
+
+    #[test]
+    fn test_is_source_english() {
+        let mut demo = RealtimeTranslationDemo::new();
+        assert!(!demo.is_source_english());
+        demo.update_detected_language("en", "English", 90.0);
+        assert!(demo.is_source_english());
+    }
+
+    #[test]
+    fn test_should_show_low_confidence_warning() {
+        let mut demo = RealtimeTranslationDemo::new();
+        assert!(!demo.should_show_low_confidence_warning());
+        demo.update_detected_language("es", "Spanish", 50.0);
+        assert!(demo.should_show_low_confidence_warning());
+        demo.update_detected_language("es", "Spanish", 80.0);
+        assert!(!demo.should_show_low_confidence_warning());
+    }
+
+    // =========================================================================
+    // Translation Text Tests
+    // =========================================================================
+
+    #[test]
+    fn test_original_text_initially_empty() {
+        let demo = RealtimeTranslationDemo::new();
+        assert!(demo.original_text().is_empty());
+    }
+
+    #[test]
+    fn test_translated_text_initially_empty() {
+        let demo = RealtimeTranslationDemo::new();
+        assert!(demo.translated_text().is_empty());
+    }
+
+    #[test]
+    fn test_partial_translation_initially_empty() {
+        let demo = RealtimeTranslationDemo::new();
+        assert!(demo.partial_translation().is_empty());
+    }
+
+    #[test]
+    fn test_update_partial() {
+        let mut demo = RealtimeTranslationDemo::new();
+        demo.update_partial("Translating...");
+        assert_eq!(demo.partial_translation(), "Translating...");
+    }
+
+    #[test]
+    fn test_complete_translation() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_granted();
+        let _ = demo.stop_recording();
+        demo.update_partial("Processing...");
+        demo.complete_translation("Hola mundo", "Hello world");
+        assert_eq!(demo.original_text(), "Hola mundo");
+        assert_eq!(demo.translated_text(), "Hello world");
+        assert!(demo.partial_translation().is_empty());
+        assert_eq!(demo.state(), DemoState::Complete);
+    }
+
+    // =========================================================================
+    // Duration Tests
+    // =========================================================================
+
+    #[test]
+    fn test_recording_duration_initial() {
+        let demo = RealtimeTranslationDemo::new();
+        assert_eq!(demo.recording_duration(), "0:00");
+    }
+
+    #[test]
+    fn test_recording_duration_update() {
+        let mut demo = RealtimeTranslationDemo::new();
+        demo.update_duration(65_000); // 1:05
+        assert_eq!(demo.recording_duration(), "1:05");
+    }
+
+    #[test]
+    fn test_recording_duration_59_seconds() {
+        let mut demo = RealtimeTranslationDemo::new();
+        demo.update_duration(59_000);
+        assert_eq!(demo.recording_duration(), "0:59");
+    }
+
+    // =========================================================================
+    // Error Tests
+    // =========================================================================
+
+    #[test]
+    fn test_error_message_initially_none() {
+        let demo = RealtimeTranslationDemo::new();
+        assert!(demo.error_message().is_none());
+    }
+
+    #[test]
+    fn test_error_message_on_permission_denied() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_denied();
+        assert!(demo.error_message().is_some());
+        assert!(demo.error_message().unwrap().contains("denied"));
+    }
+
+    // =========================================================================
+    // Clear Tests
+    // =========================================================================
+
+    #[test]
+    fn test_clear_resets_all() {
+        let mut demo = RealtimeTranslationDemo::new();
+        let _ = demo.start_recording();
+        demo.on_permission_granted();
+        demo.update_detected_language("es", "Spanish", 90.0);
+        demo.update_duration(5000);
+        let _ = demo.stop_recording();
+        demo.complete_translation("Hola", "Hello");
+
+        demo.clear();
+
+        assert_eq!(demo.state(), DemoState::Idle);
+        assert!(demo.detected_language().is_none());
+        assert!(demo.original_text().is_empty());
+        assert!(demo.translated_text().is_empty());
+        assert!(demo.partial_translation().is_empty());
+        assert_eq!(demo.recording_duration(), "0:00");
+        assert!(demo.error_message().is_none());
+    }
+
+    // =========================================================================
+    // Browser Compatibility Tests
+    // =========================================================================
+
+    #[test]
+    fn test_browser_compatibility_check() {
+        let compat = check_browser_compatibility();
+        // In native test environment, this returns true defaults
+        assert!(compat.is_supported());
+    }
+
+    // =========================================================================
+    // Default Trait Tests
+    // =========================================================================
+
+    #[test]
+    fn test_default_demo() {
+        let demo = RealtimeTranslationDemo::default();
+        assert_eq!(demo.state(), DemoState::Idle);
+    }
+
+    #[test]
+    fn test_default_state() {
+        let state = DemoState::default();
+        assert_eq!(state, DemoState::Idle);
+    }
+
+    // =========================================================================
+    // DemoState Trait Tests
+    // =========================================================================
+
+    #[test]
+    fn test_state_debug() {
+        let state = DemoState::Recording;
+        let debug_str = format!("{:?}", state);
+        assert!(debug_str.contains("Recording"));
+    }
+
+    #[test]
+    fn test_state_clone() {
+        let state = DemoState::Translating;
+        let cloned = state.clone();
+        assert_eq!(state, cloned);
+    }
+
+    #[test]
+    fn test_state_copy() {
+        let state = DemoState::Complete;
+        let copied = state;
+        assert_eq!(state, copied);
     }
 }

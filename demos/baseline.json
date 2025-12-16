@@ -1,0 +1,47 @@
+{
+  "version": "1.0",
+  "created": "2024-12-14T16:00:00Z",
+  "project": "whisper.apr",
+  "benchmarks": {
+    "tiny_model": {
+      "rtf": 1.8,
+      "memory_mb": 145,
+      "load_time_ms": 450,
+      "first_token_ms": 120,
+      "wer": 0.12
+    },
+    "base_model": {
+      "rtf": 2.2,
+      "memory_mb": 340,
+      "load_time_ms": 850,
+      "first_token_ms": 180,
+      "wer": 0.08
+    }
+  },
+  "latency_targets": {
+    "p50_ms": 100,
+    "p95_ms": 250,
+    "p99_ms": 500
+  },
+  "throughput_targets": {
+    "min_rps": 100,
+    "target_rps": 150
+  },
+  "browser_benchmarks": {
+    "chrome": {
+      "simd_speedup": 3.2,
+      "threads_supported": 8,
+      "wasm_compile_ms": 120
+    },
+    "firefox": {
+      "simd_speedup": 2.8,
+      "threads_supported": 8,
+      "wasm_compile_ms": 150
+    },
+    "safari": {
+      "simd_speedup": 2.5,
+      "threads_supported": 4,
+      "wasm_compile_ms": 180
+    }
+  }
+}

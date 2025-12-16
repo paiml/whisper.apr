@@ -81,7 +81,7 @@ impl SelectorConfig {
         Self {
             strategy: SelectionStrategy::Automatic,
             gpu_options: DetectionOptions::for_inference(),
-            gpu_threshold_flops: 1_000_000, // 1M FLOPs
+            gpu_threshold_flops: 1_000_000,     // 1M FLOPs
             max_gpu_memory: 1024 * 1024 * 1024, // 1 GB
             gpu_dispatch_overhead_us: 50,
         }
@@ -151,7 +151,10 @@ impl BackendSelector {
             Some(BackendCapabilities::gpu(
                 true,
                 gpu_result.capabilities.limits.max_buffer_size,
-                gpu_result.capabilities.limits.max_compute_invocations_per_workgroup,
+                gpu_result
+                    .capabilities
+                    .limits
+                    .max_compute_invocations_per_workgroup,
                 gpu_result.capabilities.supports_f16,
             ))
         } else {
@@ -283,7 +286,11 @@ impl BackendSelector {
         }
 
         let total_flops: u64 = ops.iter().map(|o| o.estimated_flops()).sum();
-        let max_memory: u64 = ops.iter().map(|o| o.memory_requirement() as u64).max().unwrap_or(0);
+        let max_memory: u64 = ops
+            .iter()
+            .map(|o| o.memory_requirement() as u64)
+            .max()
+            .unwrap_or(0);
 
         self.select_automatic(total_flops, max_memory)
     }
@@ -292,7 +299,10 @@ impl BackendSelector {
     #[must_use]
     pub fn summary(&self) -> String {
         use std::fmt::Write;
-        let mut s = format!("Backend Selector ({})\n", self.config.strategy.description());
+        let mut s = format!(
+            "Backend Selector ({})\n",
+            self.config.strategy.description()
+        );
         let _ = writeln!(
             s,
             "  SIMD: parallelism={}, score={:.1}",
@@ -373,14 +383,21 @@ mod tests {
     #[test]
     fn test_selection_strategy_threshold() {
         let strategy = SelectionStrategy::threshold(1_000_000);
-        assert!(matches!(strategy, SelectionStrategy::Threshold { min_flops: 1_000_000 }));
+        assert!(matches!(
+            strategy,
+            SelectionStrategy::Threshold {
+                min_flops: 1_000_000
+            }
+        ));
     }
 
     #[test]
     fn test_selection_strategy_description() {
         assert!(SelectionStrategy::PreferGpu.description().contains("GPU"));
         assert!(SelectionStrategy::PreferSimd.description().contains("SIMD"));
-        assert!(SelectionStrategy::Automatic.description().contains("automatic"));
+        assert!(SelectionStrategy::Automatic
+            .description()
+            .contains("automatic"));
     }
 
     #[test]
@@ -433,9 +450,8 @@ mod tests {
 
     #[test]
     fn test_backend_selector_select_small_workload() {
-        let selector = BackendSelector::new(
-            SelectorConfig::default().with_gpu_threshold(1_000_000_000)
-        );
+        let selector =
+            BackendSelector::new(SelectorConfig::default().with_gpu_threshold(1_000_000_000));
         let op = MatMulOp::new(8, 8, 8); // Very small
         let selection = selector.select(&op);
 
@@ -446,7 +462,7 @@ mod tests {
     #[test]
     fn test_backend_selector_select_threshold() {
         let selector = BackendSelector::new(
-            SelectorConfig::default().with_strategy(SelectionStrategy::threshold(100))
+            SelectorConfig::default().with_strategy(SelectionStrategy::threshold(100)),
         );
 
         // Small operation - below threshold
@@ -559,9 +575,7 @@ mod tests {
 
     #[test]
     fn test_backend_selector_select_large_workload() {
-        let selector = BackendSelector::new(
-            SelectorConfig::default().with_gpu_threshold(100)
-        );
+        let selector = BackendSelector::new(SelectorConfig::default().with_gpu_threshold(100));
         let op = MatMulOp::new(128, 256, 128); // Large workload
         let selection = selector.select(&op);
         // Just verify selection is made

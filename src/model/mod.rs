@@ -7,13 +7,26 @@ mod decoder;
 mod encoder;
 pub mod quantized;
 
-pub use attention::{LinearWeights, MultiHeadAttention};
+pub use attention::{
+    flash_attention, flash_attention_simd, FlashAttentionConfig, LinearWeights, MultiHeadAttention,
+    FLASH_ATTENTION_BLOCK_SIZE, FLASH_ATTENTION_THRESHOLD,
+};
 pub use decoder::{
     BatchDecoderCache, BatchDecoderOutput, Decoder, DecoderBlock, DecoderKVCache, LayerKVCache,
     StreamingCacheStats, StreamingKVCache,
 };
 pub use encoder::{Conv1d, ConvFrontend, Encoder, EncoderBlock, FeedForward, LayerNorm};
 pub use quantized::{QuantizedLinear, QuantizedTensor};
+
+// Conditional exports for realizar-inference feature
+#[cfg(feature = "realizar-inference")]
+pub use encoder::FusedFFN;
+#[cfg(feature = "realizar-inference")]
+pub use quantized::{
+    FullyQuantizedDecoder, FullyQuantizedDecoderBlock, QuantizedDecoder, QuantizedDecoderBlock,
+    QuantizedFeedForward, QuantizedLinearQ4K, QuantizedLinearQ5K, QuantizedLinearQ6K,
+    QuantizedMultiHeadAttention, QuantizedTensorQ4K, QuantizedTensorQ5K, QuantizedTensorQ6K,
+};
 
 use crate::error::WhisperResult;
 use crate::ModelType;
@@ -181,7 +194,7 @@ impl ModelConfig {
     /// Parameters in a self-attention block
     fn attention_block_params(&self, d_model: usize) -> usize {
         let _ = self; // Method for consistency with other estimation methods
-        // Self-attention: Q, K, V, O projections
+                      // Self-attention: Q, K, V, O projections
         let attn = d_model * d_model * 4 + d_model * 4;
         // FFN: up projection, down projection
         let ffn = d_model * d_model * 4 * 2 + d_model * 4 + d_model;
@@ -193,7 +206,7 @@ impl ModelConfig {
     /// Parameters for cross-attention
     fn cross_attention_params(&self, d_text: usize, d_audio: usize) -> usize {
         let _ = self; // Method for consistency with other estimation methods
-        // Cross-attention Q from text, K/V from audio
+                      // Cross-attention Q from text, K/V from audio
         let attn = d_text * d_text + d_audio * d_text * 2 + d_text * d_text + d_text * 4;
         // Layer norm
         let ln = d_text * 2;

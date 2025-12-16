@@ -1,0 +1,91 @@
+# Chaos Engineering Configuration for Whisper.apr
+# PROBAR-SPEC-006 Section K: Simulation Playback
+
+version: "1.0"
+name: whisper-apr-chaos
+
+experiments:
+  - name: network-latency-injection
+    description: Inject 200ms network latency to test timeout handling
+    injection:
+      type: latency
+      target: network
+      latency_ms: 200
+      jitter_ms: 50
+      probability: 0.3
+    duration: 60s
+    assertions:
+      - error_rate < 0.05
+      - p99_latency < 1000
+
+  - name: memory-pressure
+    description: Simulate memory pressure to test graceful degradation
+    injection:
+      type: resource_exhaustion
+      target: memory
+      limit_mb: 100
+    duration: 120s
+    assertions:
+      - no_oom_errors
+      - graceful_degradation
+
+  - name: worker-failure
+    description: Kill web workers to test recovery
+    injection:
+      type: process_kill
+      target: web_worker
+      probability: 0.1
+      interval: 30s
+    duration: 180s
+    assertions:
+      - worker_recovery_time < 5000
+      - no_data_loss
+
+  - name: model-load-failure
+    description: Simulate model loading failures
+    injection:
+      type: error_injection
+      target: model_loader
+      error_type: network_error
+      probability: 0.2
+    duration: 60s
+    assertions:
+      - retry_success_rate > 0.95
+      - user_error_message_shown
+
+  - name: audio-stream-interruption
+    description: Simulate audio stream interruptions
+    injection:
+      type: connection_reset
+      target: audio_input
+      probability: 0.15
+      duration_ms: 500
+    duration: 120s
+    assertions:
+      - stream_recovery_time < 2000
+      - partial_transcription_preserved
+
+fault_injection_schedule:
+  - time: 0s
+    experiment: network-latency-injection
+  - time: 120s
+    experiment: memory-pressure
+  - time: 300s
+    experiment: worker-failure
+
+monte_carlo:
+  iterations: 1000
+  seed: 42
+  parameters:
+    - name: network_latency
+      distribution: lognormal
+      mean: 50
+      stddev: 30
+    - name: processing_time
+      distribution: normal
+      mean: 100
+      stddev: 25
+    - name: error_probability
+      distribution: uniform
+      min: 0.001
+      max: 0.01

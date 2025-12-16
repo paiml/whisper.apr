@@ -29,7 +29,6 @@
 use wasm_bindgen::prelude::*;
 
 use crate::diarization::{
-    clustering::{ClusteringAlgorithm, ClusteringConfig, SpectralClustering},
     embedding::{EmbeddingConfig, EmbeddingExtractor, SpeakerEmbedding},
     segmentation::{SegmentationConfig, SpeakerSegment, TurnDetector},
     DiarizationConfig, DiarizationResult, Diarizer,
@@ -141,8 +140,8 @@ impl Default for DiarizationConfigWasm {
 
 impl From<DiarizationConfigWasm> for DiarizationConfig {
     fn from(wasm: DiarizationConfigWasm) -> Self {
-        let mut config = DiarizationConfig::default()
-            .with_min_segment_duration(wasm.min_segment_duration);
+        let mut config =
+            DiarizationConfig::default().with_min_segment_duration(wasm.min_segment_duration);
         if let Some(max) = wasm.max_speakers {
             config = config.with_max_speakers(max);
         }
@@ -485,7 +484,11 @@ impl DiarizerWasm {
     /// # Returns
     /// Diarization result with speaker-labeled segments
     #[wasm_bindgen]
-    pub fn process(&self, audio: &[f32], sample_rate: u32) -> Result<DiarizationResultWasm, JsValue> {
+    pub fn process(
+        &self,
+        audio: &[f32],
+        sample_rate: u32,
+    ) -> Result<DiarizationResultWasm, JsValue> {
         self.inner
             .process(audio, sample_rate)
             .map(|r| r.into())
@@ -524,7 +527,11 @@ impl EmbeddingExtractorWasm {
     /// # Returns
     /// Speaker embedding vector
     #[wasm_bindgen]
-    pub fn extract(&self, audio: &[f32], sample_rate: u32) -> Result<SpeakerEmbeddingWasm, JsValue> {
+    pub fn extract(
+        &self,
+        audio: &[f32],
+        sample_rate: u32,
+    ) -> Result<SpeakerEmbeddingWasm, JsValue> {
         self.inner
             .extract(audio, sample_rate)
             .map(|e| e.into())
@@ -983,14 +990,12 @@ mod tests {
     #[test]
     fn test_diarization_result_wasm_get_segment() {
         let result = DiarizationResultWasm {
-            segments: vec![
-                SpeakerSegmentWasm {
-                    speaker_id: 0,
-                    start: 0.0,
-                    end: 1.0,
-                    confidence: 0.9,
-                },
-            ],
+            segments: vec![SpeakerSegmentWasm {
+                speaker_id: 0,
+                start: 0.0,
+                end: 1.0,
+                confidence: 0.9,
+            }],
             speaker_embeddings: vec![],
             speaker_count: 1,
             total_duration: 1.0,
@@ -1257,14 +1262,12 @@ mod tests {
     #[test]
     fn test_diarization_result_wasm_segment_count() {
         let result = DiarizationResultWasm {
-            segments: vec![
-                SpeakerSegmentWasm {
-                    speaker_id: 0,
-                    start: 0.0,
-                    end: 1.0,
-                    confidence: 1.0,
-                },
-            ],
+            segments: vec![SpeakerSegmentWasm {
+                speaker_id: 0,
+                start: 0.0,
+                end: 1.0,
+                confidence: 1.0,
+            }],
             speaker_embeddings: vec![],
             speaker_count: 1,
             total_duration: 1.0,
@@ -1327,8 +1330,18 @@ mod tests {
     fn test_diarization_result_wasm_segment_starts() {
         let result = DiarizationResultWasm {
             segments: vec![
-                SpeakerSegmentWasm { speaker_id: 0, start: 0.0, end: 1.0, confidence: 1.0 },
-                SpeakerSegmentWasm { speaker_id: 1, start: 1.0, end: 2.5, confidence: 0.9 },
+                SpeakerSegmentWasm {
+                    speaker_id: 0,
+                    start: 0.0,
+                    end: 1.0,
+                    confidence: 1.0,
+                },
+                SpeakerSegmentWasm {
+                    speaker_id: 1,
+                    start: 1.0,
+                    end: 2.5,
+                    confidence: 0.9,
+                },
             ],
             speaker_embeddings: vec![],
             speaker_count: 2,
@@ -1344,8 +1357,18 @@ mod tests {
     fn test_diarization_result_wasm_segment_ends() {
         let result = DiarizationResultWasm {
             segments: vec![
-                SpeakerSegmentWasm { speaker_id: 0, start: 0.0, end: 1.0, confidence: 1.0 },
-                SpeakerSegmentWasm { speaker_id: 1, start: 1.0, end: 2.5, confidence: 0.9 },
+                SpeakerSegmentWasm {
+                    speaker_id: 0,
+                    start: 0.0,
+                    end: 1.0,
+                    confidence: 1.0,
+                },
+                SpeakerSegmentWasm {
+                    speaker_id: 1,
+                    start: 1.0,
+                    end: 2.5,
+                    confidence: 0.9,
+                },
             ],
             speaker_embeddings: vec![],
             speaker_count: 2,
@@ -1361,9 +1384,24 @@ mod tests {
     fn test_diarization_result_wasm_segment_speaker_ids() {
         let result = DiarizationResultWasm {
             segments: vec![
-                SpeakerSegmentWasm { speaker_id: 0, start: 0.0, end: 1.0, confidence: 1.0 },
-                SpeakerSegmentWasm { speaker_id: 1, start: 1.0, end: 2.0, confidence: 0.9 },
-                SpeakerSegmentWasm { speaker_id: 0, start: 2.0, end: 3.0, confidence: 0.8 },
+                SpeakerSegmentWasm {
+                    speaker_id: 0,
+                    start: 0.0,
+                    end: 1.0,
+                    confidence: 1.0,
+                },
+                SpeakerSegmentWasm {
+                    speaker_id: 1,
+                    start: 1.0,
+                    end: 2.0,
+                    confidence: 0.9,
+                },
+                SpeakerSegmentWasm {
+                    speaker_id: 0,
+                    start: 2.0,
+                    end: 3.0,
+                    confidence: 0.8,
+                },
             ],
             speaker_embeddings: vec![],
             speaker_count: 2,
@@ -1388,9 +1426,24 @@ mod tests {
     fn test_diarization_result_wasm_turn_count_with_turns() {
         let result = DiarizationResultWasm {
             segments: vec![
-                SpeakerSegmentWasm { speaker_id: 0, start: 0.0, end: 1.0, confidence: 1.0 },
-                SpeakerSegmentWasm { speaker_id: 1, start: 1.0, end: 2.0, confidence: 0.9 },
-                SpeakerSegmentWasm { speaker_id: 0, start: 2.0, end: 3.0, confidence: 0.8 },
+                SpeakerSegmentWasm {
+                    speaker_id: 0,
+                    start: 0.0,
+                    end: 1.0,
+                    confidence: 1.0,
+                },
+                SpeakerSegmentWasm {
+                    speaker_id: 1,
+                    start: 1.0,
+                    end: 2.0,
+                    confidence: 0.9,
+                },
+                SpeakerSegmentWasm {
+                    speaker_id: 0,
+                    start: 2.0,
+                    end: 3.0,
+                    confidence: 0.8,
+                },
             ],
             speaker_embeddings: vec![],
             speaker_count: 2,

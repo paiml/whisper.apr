@@ -65,7 +65,7 @@ impl AlignmentConfig {
     #[must_use]
     pub fn for_speed() -> Self {
         Self {
-            layers: vec![3, 4], // Only 2 layers
+            layers: vec![3, 4],            // Only 2 layers
             heads: Some(vec![0, 1, 2, 3]), // Subset of heads
             min_attention: 0.15,
             temperature: 1.0,
@@ -110,12 +110,7 @@ pub struct TokenAlignment {
 impl TokenAlignment {
     /// Create new token alignment
     #[must_use]
-    pub fn new(
-        token_index: usize,
-        token_id: u32,
-        frame_position: usize,
-        confidence: f32,
-    ) -> Self {
+    pub fn new(token_index: usize, token_id: u32, frame_position: usize, confidence: f32) -> Self {
         let start_time = frame_position as f32 / AUDIO_FRAME_RATE;
         Self {
             token_index,
@@ -257,9 +252,8 @@ impl CrossAttentionAlignment {
 
             let confidence = self.compute_confidence(token_attention, peak_frame, peak_value);
 
-            let mut alignment =
-                TokenAlignment::new(token_idx, token_id, peak_frame, confidence)
-                    .with_attention_weights(token_attention.clone());
+            let mut alignment = TokenAlignment::new(token_idx, token_id, peak_frame, confidence)
+                .with_attention_weights(token_attention.clone());
 
             // Set end time based on next token or frame boundary
             if token_idx + 1 < averaged.len() {
@@ -694,11 +688,7 @@ mod tests {
             TokenAlignment::new(2, 102, 20, 0.85),
         ];
 
-        let texts = vec![
-            "hello".to_string(),
-            " world".to_string(),
-            "!".to_string(),
-        ];
+        let texts = vec!["hello".to_string(), " world".to_string(), "!".to_string()];
 
         let words = extractor.group_tokens_into_words(&alignments, &texts);
 

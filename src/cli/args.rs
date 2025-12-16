@@ -69,6 +69,9 @@ pub enum Command {
 
     /// Performance benchmarking
     Benchmark(BenchmarkArgs),
+
+    /// Validate APR model file (25-point QA checklist)
+    Validate(ValidateArgs),
 }
 
 /// Arguments for transcribe command
@@ -81,6 +84,10 @@ pub struct TranscribeArgs {
     /// Model size to use
     #[arg(short, long, default_value = "tiny")]
     pub model: ModelSize,
+
+    /// Path to .apr model file (overrides --model)
+    #[arg(long)]
+    pub model_path: Option<PathBuf>,
 
     /// Source language (ISO 639-1) or 'auto' for detection
     #[arg(short, long, default_value = "auto")]
@@ -284,6 +291,41 @@ pub struct BenchmarkArgs {
     /// Number of iterations
     #[arg(short, long, default_value = "3")]
     pub iterations: usize,
+}
+
+/// Arguments for validate command
+#[derive(Parser, Debug, Clone)]
+pub struct ValidateArgs {
+    /// APR model file to validate
+    pub file: PathBuf,
+
+    /// Quick validation (critical checks only)
+    #[arg(long)]
+    pub quick: bool,
+
+    /// Show detailed report
+    #[arg(short, long)]
+    pub detailed: bool,
+
+    /// Fail if score is below threshold (0-25)
+    #[arg(long, default_value = "23")]
+    pub min_score: u8,
+
+    /// Output format for report
+    #[arg(short, long, default_value = "text")]
+    pub format: ValidateOutputFormat,
+}
+
+/// Output format for validation report
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ValidateOutputFormat {
+    /// Human-readable text
+    #[default]
+    Text,
+    /// JSON format
+    Json,
+    /// Markdown format
+    Markdown,
 }
 
 /// Model size options

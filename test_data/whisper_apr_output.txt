@@ -1,0 +1,105 @@
+=== TRANSCRIBE DEBUG ===
+
+Audio samples: 24017 (1.50s)
+
+Initial tokens: [50257, 50258, 50358, 50362]
+
+=== DECODING WITH SUPPRESSION ===
+
+Step 0: argmax token 9595 (logit 29.1382)
+  Top 5: [(9595, "29.14"), (265, "28.66"), (5799, "28.56"), (29978, "28.16"), (29713, "28.16")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 1: argmax token 9595 (logit 32.0994)
+  Top 5: [(9595, "32.10"), (30051, "29.62"), (220, "28.44"), (87, "27.96"), (1349, "27.94")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 2: argmax token 9595 (logit 31.9541)
+  Top 5: [(9595, "31.95"), (30051, "29.04"), (220, "27.29"), (1349, "27.20"), (22317, "26.84")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 3: argmax token 9595 (logit 31.7259)
+  Top 5: [(9595, "31.73"), (30051, "28.49"), (1349, "26.96"), (23307, "26.64"), (25809, "26.52")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 4: argmax token 9595 (logit 31.8934)
+  Top 5: [(9595, "31.89"), (30051, "28.29"), (1349, "26.79"), (23307, "26.68"), (25809, "26.53")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 5: argmax token 9595 (logit 31.5108)
+  Top 5: [(9595, "31.51"), (30051, "27.69"), (1349, "26.31"), (23307, "26.28"), (25809, "26.25")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 6: argmax token 9595 (logit 31.4493)
+  Top 5: [(9595, "31.45"), (30051, "27.44"), (23307, "26.19"), (25809, "26.15"), (1349, "26.07")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 7: argmax token 9595 (logit 31.3052)
+  Top 5: [(9595, "31.31"), (30051, "27.17"), (23307, "26.02"), (25809, "25.98"), (1349, "25.77")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 8: argmax token 9595 (logit 31.1954)
+  Top 5: [(9595, "31.20"), (30051, "26.97"), (23307, "25.92"), (25809, "25.87"), (1349, "25.56")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 9: argmax token 9595 (logit 31.2866)
+  Top 5: [(9595, "31.29"), (30051, "27.03"), (23307, "25.93"), (25809, "25.83"), (1349, "25.44")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 10: argmax token 9595 (logit 30.8572)
+  Top 5: [(9595, "30.86"), (30051, "26.58"), (23307, "25.57"), (25809, "25.54"), (1349, "25.03")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 11: argmax token 9595 (logit 31.0384)
+  Top 5: [(9595, "31.04"), (30051, "26.70"), (23307, "25.66"), (25809, "25.54"), (1349, "24.99")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 12: argmax token 9595 (logit 30.6342)
+  Top 5: [(9595, "30.63"), (30051, "26.31"), (23307, "25.35"), (25809, "25.33"), (1349, "24.67")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 13: argmax token 9595 (logit 30.5483)
+  Top 5: [(9595, "30.55"), (30051, "26.17"), (23307, "25.28"), (25809, "25.25"), (1349, "24.53")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 14: argmax token 9595 (logit 30.5102)
+  Top 5: [(9595, "30.51"), (30051, "26.09"), (23307, "25.23"), (25809, "25.18"), (1349, "24.41")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 15: argmax token 9595 (logit 30.4435)
+  Top 5: [(9595, "30.44"), (30051, "26.00"), (23307, "25.18"), (25809, "25.11"), (1349, "24.28")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 16: argmax token 9595 (logit 30.4481)
+  Top 5: [(9595, "30.45"), (30051, "26.00"), (23307, "25.19"), (25809, "25.03"), (1349, "24.21")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 17: argmax token 9595 (logit 30.2451)
+  Top 5: [(9595, "30.25"), (30051, "25.78"), (23307, "25.00"), (25809, "24.90"), (1349, "24.00")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 18: argmax token 9595 (logit 30.1535)
+  Top 5: [(9595, "30.15"), (30051, "25.70"), (23307, "24.93"), (25809, "24.82"), (1349, "23.88")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+Step 19: argmax token 9595 (logit 29.9988)
+  Top 5: [(9595, "30.00"), (30051, "25.52"), (23307, "24.77"), (25809, "24.66"), (1349, "23.70")]
+  WARNING: Token 9595 is a BPE merge token (not in base vocabulary)
+
+=== FINAL TOKENS ===
+
+All tokens: [50257, 50258, 50358, 50362, 9595, 9595, 9595, 9595, 9595, 9595, 9595, 9595, 9595, 9595, 9595, 9595, 9595, 9595, 9595, 9595, 9595, 9595, 9595, 9595]
+
+=== TOKENIZER DECODE ===
+
+Vocab size: 51865
+  Token 50257: <SOT>
+  Token 50258: <lang>
+  Token 50358: <transcribe>
+  Token 50362: <notimestamps>
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+  Token 9595: BPE merge (NOT IN BASE VOCAB!)
+
+--- STDERR ---
+   Compiling whisper-apr v0.1.0 (/home/noah/src/whisper.apr)
+    Finished `release` profile [optimized] target(s) in 24.83s
+     Running `target/release/examples/debug_transcribe`

@@ -3,12 +3,13 @@
 //! These tests verify that ALL demos meet the required quality thresholds:
 //! - Button coverage: 100%
 //! - State coverage: 100%
-//! - Error path coverage: ≥95%
-//! - Overall GUI coverage: ≥95%
+//! - Error path coverage: >=95%
+//! - Overall GUI coverage: >=95%
 //! - Accessibility: WCAG AA compliance
 //!
 //! Run with: `cargo test --package whisper-apr-demo-tests quality_gates`
 
+#![allow(dead_code)] // Test scaffolding used only in tests
 
 /// Demo paths for testing
 const DEMO_PATHS: &[(&str, &str)] = &[
@@ -40,7 +41,6 @@ mod thresholds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::probar::{browser, CoverageReport};
 
     #[test]
     fn test_demo_paths_defined() {
@@ -74,86 +74,6 @@ mod tests {
     }
 
     #[test]
-    fn test_coverage_report_meets_thresholds() {
-        // Stub report returns 100% button, 100% state, 95% error, 97% overall
-        let report = CoverageReport {
-            button_cov: 100.0,
-            state_cov: 100.0,
-            error_cov: 95.0,
-            overall_cov: 97.0,
-        };
-
-        assert!(
-            report.button_coverage() >= thresholds::BUTTON_COVERAGE,
-            "Button coverage {:.1}% below threshold {:.1}%",
-            report.button_coverage(),
-            thresholds::BUTTON_COVERAGE
-        );
-
-        assert!(
-            report.state_coverage() >= thresholds::STATE_COVERAGE,
-            "State coverage {:.1}% below threshold {:.1}%",
-            report.state_coverage(),
-            thresholds::STATE_COVERAGE
-        );
-
-        assert!(
-            report.error_path_coverage() >= thresholds::ERROR_COVERAGE,
-            "Error coverage {:.1}% below threshold {:.1}%",
-            report.error_path_coverage(),
-            thresholds::ERROR_COVERAGE
-        );
-
-        assert!(
-            report.overall_coverage() >= thresholds::OVERALL_COVERAGE,
-            "Overall coverage {:.1}% below threshold {:.1}%",
-            report.overall_coverage(),
-            thresholds::OVERALL_COVERAGE
-        );
-    }
-
-    #[test]
-    fn test_browser_page_stub() {
-        // Verify browser stubs work correctly
-        let page = browser::Page;
-
-        // These are no-op stubs but should not panic
-        let _locator = futures::executor::block_on(page.locator("button"));
-        let _content = futures::executor::block_on(page.content());
-    }
-
-    #[test]
-    fn test_browser_element_stub() {
-        let element = browser::Element;
-
-        // Stub element should return default values
-        let text = futures::executor::block_on(element.text_content());
-        assert!(text.is_empty());
-
-        let is_visible = futures::executor::block_on(element.is_visible());
-        assert!(is_visible);
-    }
-
-    #[test]
-    fn test_browser_locator_stub() {
-        let locator = browser::Locator;
-
-        let count = futures::executor::block_on(locator.count());
-        assert_eq!(count, 0);
-
-        let all = futures::executor::block_on(locator.all());
-        assert!(all.is_empty());
-    }
-
-    #[test]
-    fn test_browser_metrics_stub() {
-        let metrics = browser::Metrics;
-
-        let heap_size = metrics.js_heap_size_mb();
-        assert!(heap_size >= 0.0);
-    }
-
-    #[test]
     fn test_viewport_coverage() {
         // Verify all standard viewports are covered
         let viewport_names: Vec<&str> = VIEWPORTS.iter().map(|(name, _, _)| *name).collect();
@@ -178,76 +98,11 @@ mod tests {
     }
 
     #[test]
-    fn test_failing_coverage_report() {
-        // Test detection of failing coverage
-        let failing_report = CoverageReport {
-            button_cov: 80.0,
-            state_cov: 90.0,
-            error_cov: 70.0,
-            overall_cov: 75.0,
-        };
-
-        assert!(failing_report.button_coverage() < thresholds::BUTTON_COVERAGE);
-        assert!(failing_report.state_coverage() < thresholds::STATE_COVERAGE);
-        assert!(failing_report.error_path_coverage() < thresholds::ERROR_COVERAGE);
-        assert!(failing_report.overall_coverage() < thresholds::OVERALL_COVERAGE);
-    }
-
-    #[test]
-    fn test_quality_gate_verdict() {
-        let passing_report = CoverageReport {
-            button_cov: 100.0,
-            state_cov: 100.0,
-            error_cov: 96.0,
-            overall_cov: 98.0,
-        };
-
-        let passes_all = passing_report.button_coverage() >= thresholds::BUTTON_COVERAGE
-            && passing_report.state_coverage() >= thresholds::STATE_COVERAGE
-            && passing_report.error_path_coverage() >= thresholds::ERROR_COVERAGE
-            && passing_report.overall_coverage() >= thresholds::OVERALL_COVERAGE;
-
-        assert!(passes_all, "Quality gate should pass");
-    }
-
-    #[test]
-    fn test_coverage_report_aggregate() {
-        // Test aggregating coverage across multiple demos
-        let reports = vec![
-            CoverageReport {
-                button_cov: 100.0,
-                state_cov: 100.0,
-                error_cov: 95.0,
-                overall_cov: 96.0,
-            },
-            CoverageReport {
-                button_cov: 100.0,
-                state_cov: 100.0,
-                error_cov: 97.0,
-                overall_cov: 98.0,
-            },
-            CoverageReport {
-                button_cov: 100.0,
-                state_cov: 100.0,
-                error_cov: 95.0,
-                overall_cov: 97.0,
-            },
-            CoverageReport {
-                button_cov: 100.0,
-                state_cov: 100.0,
-                error_cov: 96.0,
-                overall_cov: 97.0,
-            },
-        ];
-
-        let total_overall: f64 = reports.iter().map(|r| r.overall_coverage()).sum();
-        let avg_coverage = total_overall / reports.len() as f64;
-
-        assert!(
-            avg_coverage >= thresholds::OVERALL_COVERAGE,
-            "Average coverage {:.1}% should meet threshold {:.1}%",
-            avg_coverage,
-            thresholds::OVERALL_COVERAGE
-        );
+    fn test_ux_coverage_tracker_creation() {
+        // Verify UxCoverageTracker can be created via builder
+        let tracker = probar::UxCoverageBuilder::new()
+            .button("test_button")
+            .build();
+        assert!(!tracker.is_complete());
     }
 }

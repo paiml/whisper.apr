@@ -1,0 +1,79 @@
+version: "1.0"
+name: "Console Transcription Flow Test"
+description: "Verifies the console log sequence for realtime transcription"
+
+machine:
+  id: "console_transcription_flow"
+  initial: "initialized"
+
+  states:
+    initialized:
+      id: "initialized"
+      invariants:
+        - description: "WASM module ready"
+          condition: "wasm_initialized()"
+
+    model_loading:
+      id: "model_loading"
+      invariants:
+        - description: "Fetching model"
+          condition: "is_fetching_model()"
+
+    model_loaded:
+      id: "model_loaded"
+      invariants:
+        - description: "Model ready in worker"
+          condition: "worker_model_ready()"
+        - description: "Vocabulary loaded"
+          condition: "vocab_loaded()"
+
+    recording:
+      id: "recording"
+      invariants:
+        - description: "Microphone active"
+          condition: "microphone_active()"
+
+    processing:
+      id: "processing"
+      invariants:
+        - description: "Worker processing chunk"
+          condition: "worker_processing()"
+
+    completed:
+      id: "completed"
+      invariants:
+        - description: "Text received"
+          condition: "text_received()"
+        - description: "Text is meaningful"
+          condition: "text_is_valid()"
+
+  transitions:
+    - id: "start_load"
+      from: "initialized"
+      to: "model_loading"
+      event: "fetch_model"
+
+    - id: "finish_load"
+      from: "model_loading"
+      to: "model_loaded"
+      event: "model_loaded_event"
+
+    - id: "begin_record"
+      from: "model_loaded"
+      to: "recording"
+      event: "start_recording"
+
+    - id: "send_chunk"
+      from: "recording"
+      to: "processing"
+      event: "chunk_ready"
+
+    - id: "receive_result"
+      from: "processing"
+      to: "completed"
+      event: "transcription_received"
+
+performance:
+  max_duration_ms: 10000
+  first_transcript_latency_ms: 3000
+  rtf_target: 1.5

@@ -80,18 +80,14 @@ fn bench_chunk_processing(c: &mut Criterion) {
         let audio = generate_audio(30.0, 16000);
 
         group.throughput(Throughput::Elements(chunk_samples as u64));
-        group.bench_with_input(
-            BenchmarkId::new("standard", "30s"),
-            &audio,
-            |b, audio| {
-                b.iter(|| {
-                    let mut processor = StreamingProcessor::new(config.clone());
-                    processor.push_audio(audio);
-                    processor.process();
-                    black_box(processor.state())
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("standard", "30s"), &audio, |b, audio| {
+            b.iter(|| {
+                let mut processor = StreamingProcessor::new(config.clone());
+                processor.push_audio(audio);
+                processor.process();
+                black_box(processor.state())
+            });
+        });
     }
 
     // Low-latency mode: 500ms chunks
@@ -160,21 +156,15 @@ fn bench_kv_cache_ops(c: &mut Criterion) {
 
     // Cache creation
     group.bench_function("create_standard", |b| {
-        b.iter(|| {
-            black_box(StreamingKVCache::standard(n_layers, d_model))
-        });
+        b.iter(|| black_box(StreamingKVCache::standard(n_layers, d_model)));
     });
 
     group.bench_function("create_low_latency", |b| {
-        b.iter(|| {
-            black_box(StreamingKVCache::low_latency(n_layers, d_model))
-        });
+        b.iter(|| black_box(StreamingKVCache::low_latency(n_layers, d_model)));
     });
 
     group.bench_function("create_ultra_low", |b| {
-        b.iter(|| {
-            black_box(StreamingKVCache::ultra_low_latency(n_layers, d_model))
-        });
+        b.iter(|| black_box(StreamingKVCache::ultra_low_latency(n_layers, d_model)));
     });
 
     // Cache append (single token)

@@ -498,9 +498,7 @@ mod tests {
 
     #[test]
     fn test_matmul_op_transpose() {
-        let op = MatMulOp::new(64, 128, 64)
-            .transpose_a()
-            .transpose_b();
+        let op = MatMulOp::new(64, 128, 64).transpose_a().transpose_b();
         assert!(op.trans_a);
         assert!(op.trans_b);
     }

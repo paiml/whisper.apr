@@ -15,6 +15,7 @@ whisper-apr.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
+console_error_panic_hook = "0.1"
 web-sys = { workspace = true, features = [
     "File",
     "FileReader",
@@ -27,7 +28,14 @@ web-sys = { workspace = true, features = [
     "HtmlElement",
     "HtmlInputElement",
     "HtmlButtonElement",
+    "HtmlSelectElement",
     "ProgressEvent",
+    "EventTarget",
+    "Event",
+    "DragEvent",
+    "DataTransfer",
+    "FileList",
+    "DomTokenList",
     "console",
 ] }
 

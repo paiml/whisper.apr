@@ -9,4 +9,6 @@ mod pool;
 pub use mmap::{
     MemoryRegion, MmapConfig, MmapHandle, MmapMode, WeightDtype, WeightRegion, WeightType,
 };
-pub use pool::{get_buffer, pool_stats, return_buffer, MemoryPool, PooledBuffer, PoolStats, SizeClass};
+pub use pool::{
+    get_buffer, pool_stats, return_buffer, MemoryPool, PoolStats, PooledBuffer, SizeClass,
+};

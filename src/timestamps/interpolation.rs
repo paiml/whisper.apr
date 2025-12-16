@@ -354,7 +354,10 @@ impl TimestampInterpolator {
             let char_count = text.chars().count().max(1);
             let char_duration = (char_count as f32 / total_chars as f32) * duration;
 
-            let weighted_duration = self.config.char_weight.mul_add(char_duration, self.config.uniform_weight * uniform_duration);
+            let weighted_duration = self
+                .config
+                .char_weight
+                .mul_add(char_duration, self.config.uniform_weight * uniform_duration);
 
             let token_end = (current_time + weighted_duration).min(word_end);
 
@@ -557,7 +560,8 @@ mod tests {
 
     #[test]
     fn test_interpolate_character_proportional() {
-        let interpolator = TimestampInterpolator::new(InterpolationConfig::character_proportional());
+        let interpolator =
+            TimestampInterpolator::new(InterpolationConfig::character_proportional());
         let tokens = vec!["a".to_string(), "abc".to_string()]; // 1 char + 3 chars = 4 total
         let result = interpolator
             .interpolate_word_tokens(0.0, 1.0, &tokens, 0)
@@ -589,11 +593,7 @@ mod tests {
     #[test]
     fn test_interpolate_preserves_continuity() {
         let interpolator = TimestampInterpolator::default();
-        let tokens = vec![
-            "un".to_string(),
-            "break".to_string(),
-            "able".to_string(),
-        ];
+        let tokens = vec!["un".to_string(), "break".to_string(), "able".to_string()];
         let result = interpolator
             .interpolate_word_tokens(0.0, 1.5, &tokens, 0)
             .expect("should succeed");
@@ -619,7 +619,8 @@ mod tests {
 
     #[test]
     fn test_smooth_timestamps_no_smoothing() {
-        let interpolator = TimestampInterpolator::new(InterpolationConfig::default().with_smoothing(0));
+        let interpolator =
+            TimestampInterpolator::new(InterpolationConfig::default().with_smoothing(0));
 
         let mut timestamps = vec![
             TokenTimestamp::interpolated(0, "a".to_string(), 0.0, 0.3, 0.5),
@@ -634,7 +635,8 @@ mod tests {
 
     #[test]
     fn test_smooth_timestamps_fixes_overlap() {
-        let interpolator = TimestampInterpolator::new(InterpolationConfig::default().with_smoothing(3));
+        let interpolator =
+            TimestampInterpolator::new(InterpolationConfig::default().with_smoothing(3));
 
         let mut timestamps = vec![
             TokenTimestamp::interpolated(0, "a".to_string(), 0.0, 0.6, 0.5),

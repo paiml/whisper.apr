@@ -1,0 +1,81 @@
+{
+  "version": "1.0",
+  "name": "happy-path-transcription",
+  "description": "Main user flow for real-time transcription",
+  "created": "2024-12-14T16:00:00Z",
+  "duration_ms": 15000,
+  "events": [
+    {
+      "timestamp_ms": 0,
+      "type": "page_load",
+      "url": "/realtime-transcription.html"
+    },
+    {
+      "timestamp_ms": 500,
+      "type": "model_load_start",
+      "model": "whisper-tiny-int8.apr"
+    },
+    {
+      "timestamp_ms": 1200,
+      "type": "model_load_complete",
+      "memory_mb": 45
+    },
+    {
+      "timestamp_ms": 2000,
+      "type": "click",
+      "selector": "#start-recording",
+      "state": "idle"
+    },
+    {
+      "timestamp_ms": 2100,
+      "type": "permission_request",
+      "permission": "microphone"
+    },
+    {
+      "timestamp_ms": 2500,
+      "type": "permission_granted",
+      "permission": "microphone"
+    },
+    {
+      "timestamp_ms": 3000,
+      "type": "audio_stream_start",
+      "sample_rate": 16000,
+      "channels": 1
+    },
+    {
+      "timestamp_ms": 5000,
+      "type": "transcription_chunk",
+      "text": "Hello, this is a test.",
+      "confidence": 0.95
+    },
+    {
+      "timestamp_ms": 8000,
+      "type": "transcription_chunk",
+      "text": "The quick brown fox jumps over the lazy dog.",
+      "confidence": 0.92
+    },
+    {
+      "timestamp_ms": 12000,
+      "type": "click",
+      "selector": "#stop-recording",
+      "state": "recording"
+    },
+    {
+      "timestamp_ms": 12500,
+      "type": "audio_stream_stop"
+    },
+    {
+      "timestamp_ms": 13000,
+      "type": "transcription_complete",
+      "total_text": "Hello, this is a test. The quick brown fox jumps over the lazy dog.",
+      "duration_ms": 10000,
+      "rtf": 1.5
+    }
+  ],
+  "assertions": [
+    {"type": "state", "expected": "idle", "at_end": true},
+    {"type": "text_contains", "value": "Hello"},
+    {"type": "rtf_under", "value": 2.0},
+    {"type": "no_errors", "value": true}
+  ]
+}

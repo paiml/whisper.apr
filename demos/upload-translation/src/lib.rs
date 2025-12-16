@@ -1,6 +1,10 @@
 //! WAPR-DEMO-004: Audio/Video Upload Translation Demo
 //!
 //! Pure Rust WASM demo for file-based speech translation to English.
+//!
+//! Note: `#![allow(dead_code)]` is used because WASM exports are called from
+//! JavaScript, not Rust. Static analysis incorrectly flags them as "dead".
+#![allow(dead_code)]
 //! Supports audio files (WAV, MP3, OGG) and video files (MP4, `WebM`).
 //! Zero JavaScript - all browser APIs accessed via `web-sys`.
 //!
@@ -485,6 +489,208 @@ fn format_vtt_timestamp(seconds: f64) -> String {
     format!("{hours:02}:{minutes:02}:{secs:02}.{ms:03}")
 }
 
+// ============================================================================
+// Zero-JS Entry Point - All DOM manipulation in Rust
+// ============================================================================
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use wasm_bindgen::closure::Closure;
+
+thread_local! {
+    static DEMO: RefCell<Option<Rc<RefCell<UploadTranslationDemo>>>> = const { RefCell::new(None) };
+}
+
+/// Zero-JS entry point - called automatically when WASM loads
+///
+/// # Errors
+///
+/// Returns an error if the DOM is not available (no window or document).
+#[wasm_bindgen(start)]
+pub fn start() -> Result<(), JsValue> {
+    console_error_panic_hook::set_once();
+
+    let window = web_sys::window().ok_or("No window")?;
+    let document = window.document().ok_or("No document")?;
+
+    let demo = Rc::new(RefCell::new(UploadTranslationDemo::new()));
+    DEMO.with(|d| *d.borrow_mut() = Some(demo.clone()));
+
+    update_ui(&document, &demo.borrow())?;
+
+    // Translate button
+    setup_button_listener(&document, "translate", {
+        let demo = demo.clone();
+        move |doc| {
+            let _ = demo.borrow_mut().start_translation();
+            let _ = update_ui(doc, &demo.borrow());
+        }
+    })?;
+
+    // Clear button
+    setup_button_listener(&document, "clear", {
+        let demo = demo.clone();
+        move |doc| {
+            demo.borrow_mut().clear();
+            let _ = update_ui(doc, &demo.borrow());
+        }
+    })?;
+
+    // File input change
+    setup_file_input(&document, "file_input", demo.clone())?;
+
+    // Drag and drop
+    setup_drag_drop(&document, "drop_zone", demo)?;
+
+    Ok(())
+}
+
+fn update_text_displays(document: &web_sys::Document, demo: &UploadTranslationDemo) {
+    if let Some(el) = document.get_element_by_id("translation_display") {
+        el.set_text_content(Some(&demo.translated_text()));
+    }
+    if let Some(el) = document.get_element_by_id("source_display") {
+        el.set_text_content(Some(&demo.source_text()));
+    }
+}
+
+fn update_file_info(document: &web_sys::Document, demo: &UploadTranslationDemo) {
+    if let Some(el) = document.get_element_by_id("file_info") {
+        if let Some(info) = demo.file_info() {
+            el.set_text_content(Some(&format!("{} ({})", info.name(), info.size_formatted())));
+            let _ = el.class_list().add_1("visible");
+        } else {
+            el.set_text_content(None);
+            let _ = el.class_list().remove_1("visible");
+        }
+    }
+}
+
+fn update_button_states(document: &web_sys::Document, demo: &UploadTranslationDemo) {
+    if let Some(btn) = document.get_element_by_id("translate") {
+        if demo.can_translate() {
+            let _ = btn.remove_attribute("disabled");
+        } else {
+            let _ = btn.set_attribute("disabled", "true");
+        }
+    }
+    if let Some(btn) = document.get_element_by_id("download_result") {
+        if demo.can_download() {
+            let _ = btn.remove_attribute("disabled");
+        } else {
+            let _ = btn.set_attribute("disabled", "true");
+        }
+    }
+}
+
+fn update_drop_zone(document: &web_sys::Document, demo: &UploadTranslationDemo) {
+    if let Some(zone) = document.get_element_by_id("drop_zone") {
+        if demo.file_info().is_some() {
+            let _ = zone.class_list().add_1("file-selected");
+        } else {
+            let _ = zone.class_list().remove_1("file-selected");
+        }
+    }
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn update_ui(document: &web_sys::Document, demo: &UploadTranslationDemo) -> Result<(), JsValue> {
+    update_text_displays(document, demo);
+    update_file_info(document, demo);
+    update_button_states(document, demo);
+    update_drop_zone(document, demo);
+    Ok(())
+}
+
+fn setup_button_listener<F>(
+    document: &web_sys::Document,
+    id: &str,
+    handler: F,
+) -> Result<(), JsValue>
+where
+    F: Fn(&web_sys::Document) + 'static,
+{
+    let doc = document.clone();
+    let closure = Closure::wrap(Box::new(move |_: web_sys::Event| {
+        handler(&doc);
+    }) as Box<dyn Fn(_)>);
+
+    if let Some(btn) = document.get_element_by_id(id) {
+        btn.add_event_listener_with_callback("click", closure.as_ref().unchecked_ref())?;
+    }
+    closure.forget();
+    Ok(())
+}
+
+fn setup_file_input(
+    document: &web_sys::Document,
+    id: &str,
+    demo: Rc<RefCell<UploadTranslationDemo>>,
+) -> Result<(), JsValue> {
+    let doc = document.clone();
+    let closure = Closure::wrap(Box::new(move |event: web_sys::Event| {
+        if let Some(target) = event.target() {
+            if let Ok(input) = target.dyn_into::<web_sys::HtmlInputElement>() {
+                if let Some(files) = input.files() {
+                    if let Some(file) = files.get(0) {
+                        let name = file.name();
+                        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                        let size = file.size() as u64;
+                        let _ = demo.borrow_mut().on_file_selected(&name, size);
+                        let _ = update_ui(&doc, &demo.borrow());
+                    }
+                }
+            }
+        }
+    }) as Box<dyn Fn(_)>);
+
+    if let Some(input) = document.get_element_by_id(id) {
+        input.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref())?;
+    }
+    closure.forget();
+    Ok(())
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn setup_drag_drop(
+    document: &web_sys::Document,
+    id: &str,
+    demo: Rc<RefCell<UploadTranslationDemo>>,
+) -> Result<(), JsValue> {
+    let doc = document.clone();
+
+    let dragover = Closure::wrap(Box::new(move |event: web_sys::DragEvent| {
+        event.prevent_default();
+    }) as Box<dyn Fn(_)>);
+
+    let drop_handler = {
+        let demo = demo.clone();
+        let doc = doc.clone();
+        Closure::wrap(Box::new(move |event: web_sys::DragEvent| {
+            event.prevent_default();
+            if let Some(dt) = event.data_transfer() {
+                if let Some(files) = dt.files() {
+                    if let Some(file) = files.get(0) {
+                        let name = file.name();
+                        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                        let size = file.size() as u64;
+                        let _ = demo.borrow_mut().on_file_selected(&name, size);
+                        let _ = update_ui(&doc, &demo.borrow());
+                    }
+                }
+            }
+        }) as Box<dyn Fn(_)>)
+    };
+
+    if let Some(zone) = document.get_element_by_id(id) {
+        zone.add_event_listener_with_callback("dragover", dragover.as_ref().unchecked_ref())?;
+        zone.add_event_listener_with_callback("drop", drop_handler.as_ref().unchecked_ref())?;
+    }
+    dragover.forget();
+    drop_handler.forget();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -531,5 +737,468 @@ mod tests {
         assert!(!demo.is_bilingual_export());
         demo.toggle_bilingual_export();
         assert!(demo.is_bilingual_export());
+    }
+
+    // =========================================================================
+    // State Tests - Cover ALL states
+    // =========================================================================
+
+    #[test]
+    fn test_state_idle() {
+        let demo = UploadTranslationDemo::new();
+        assert_eq!(demo.state(), DemoState::Idle);
+    }
+
+    #[test]
+    fn test_state_file_selected() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        assert_eq!(demo.state(), DemoState::FileSelected);
+    }
+
+    #[test]
+    fn test_state_detecting_language() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_translation();
+        assert_eq!(demo.state(), DemoState::DetectingLanguage);
+    }
+
+    #[test]
+    fn test_state_translating() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_translation();
+        demo.set_detected_language("es", "Spanish", 90.0);
+        assert_eq!(demo.state(), DemoState::Translating);
+    }
+
+    #[test]
+    fn test_state_complete() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_translation();
+        demo.set_detected_language("es", "Spanish", 90.0);
+        demo.complete();
+        assert_eq!(demo.state(), DemoState::Complete);
+    }
+
+    // =========================================================================
+    // Status Text Tests - Cover ALL branches
+    // =========================================================================
+
+    #[test]
+    fn test_status_text_idle() {
+        let demo = UploadTranslationDemo::new();
+        assert_eq!(demo.status_text(), "Ready");
+    }
+
+    #[test]
+    fn test_status_text_file_selected() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        assert_eq!(demo.status_text(), "File selected");
+    }
+
+    #[test]
+    fn test_status_text_detecting_language() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_translation();
+        assert_eq!(demo.status_text(), "Detecting language...");
+    }
+
+    #[test]
+    fn test_status_text_translating() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_translation();
+        demo.set_detected_language("es", "Spanish", 90.0);
+        assert_eq!(demo.status_text(), "Translating...");
+    }
+
+    #[test]
+    fn test_status_text_complete() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_translation();
+        demo.set_detected_language("es", "Spanish", 90.0);
+        demo.complete();
+        assert_eq!(demo.status_text(), "Complete");
+    }
+
+    #[test]
+    fn test_status_text_error() {
+        let mut demo = UploadTranslationDemo::new();
+        demo.error_message = Some("Test error".to_string());
+        demo.state = DemoState::Error;
+        assert_eq!(demo.status_text(), "Error");
+    }
+
+    // =========================================================================
+    // FileInfo Tests
+    // =========================================================================
+
+    #[test]
+    fn test_file_info_initially_none() {
+        let demo = UploadTranslationDemo::new();
+        assert!(demo.file_info().is_none());
+    }
+
+    #[test]
+    fn test_file_info_name() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test_audio.wav", 1024 * 1024);
+        let info = demo.file_info().unwrap();
+        assert_eq!(info.name(), "test_audio.wav");
+    }
+
+    #[test]
+    fn test_file_info_size_formatted() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 5 * 1024 * 1024);
+        let info = demo.file_info().unwrap();
+        assert!(info.size_formatted().contains("5.0 MB"));
+    }
+
+    #[test]
+    fn test_file_info_duration_initially_none() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let info = demo.file_info().unwrap();
+        assert!(info.duration_formatted().is_none());
+    }
+
+    #[test]
+    fn test_file_info_duration_set() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        demo.set_file_duration(180.0);
+        let info = demo.file_info().unwrap();
+        assert!(info.duration_formatted().is_some());
+    }
+
+    // =========================================================================
+    // Detected Language Tests
+    // =========================================================================
+
+    #[test]
+    fn test_detected_language_initially_none() {
+        let demo = UploadTranslationDemo::new();
+        assert!(demo.detected_language().is_none());
+    }
+
+    #[test]
+    fn test_detected_language_set() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_translation();
+        demo.set_detected_language("fr", "French", 85.0);
+        let lang = demo.detected_language().unwrap();
+        assert_eq!(lang.name(), "French");
+    }
+
+    #[test]
+    fn test_detected_language_is_english() {
+        let lang = DetectedLanguage {
+            code: "en".to_string(),
+            name: "English".to_string(),
+            confidence: 95.0,
+        };
+        assert!(lang.is_english());
+    }
+
+    #[test]
+    fn test_detected_language_not_english() {
+        let lang = DetectedLanguage {
+            code: "es".to_string(),
+            name: "Spanish".to_string(),
+            confidence: 95.0,
+        };
+        assert!(!lang.is_english());
+    }
+
+    #[test]
+    fn test_detected_language_confidence_text() {
+        let lang = DetectedLanguage {
+            code: "ja".to_string(),
+            name: "Japanese".to_string(),
+            confidence: 87.5,
+        };
+        assert_eq!(lang.confidence_text(), "88%");
+    }
+
+    #[test]
+    fn test_is_source_english() {
+        let mut demo = UploadTranslationDemo::new();
+        assert!(!demo.is_source_english());
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_translation();
+        demo.set_detected_language("en", "English", 95.0);
+        assert!(demo.is_source_english());
+    }
+
+    #[test]
+    fn test_language_pair_empty() {
+        let demo = UploadTranslationDemo::new();
+        assert!(demo.language_pair().is_empty());
+    }
+
+    #[test]
+    fn test_language_pair_with_detected() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_translation();
+        demo.set_detected_language("de", "German", 90.0);
+        let pair = demo.language_pair();
+        assert!(pair.contains("German"));
+        assert!(pair.contains("English"));
+    }
+
+    // =========================================================================
+    // Translation Text Tests
+    // =========================================================================
+
+    #[test]
+    fn test_source_text_empty() {
+        let demo = UploadTranslationDemo::new();
+        assert!(demo.source_text().is_empty());
+    }
+
+    #[test]
+    fn test_translated_text_empty() {
+        let demo = UploadTranslationDemo::new();
+        assert!(demo.translated_text().is_empty());
+    }
+
+    #[test]
+    fn test_add_segment() {
+        let mut demo = UploadTranslationDemo::new();
+        demo.add_segment(0.0, 2.0, "Hola", "Hello");
+        assert_eq!(demo.segments_count(), 1);
+        assert!(demo.source_text().contains("Hola"));
+        assert!(demo.translated_text().contains("Hello"));
+    }
+
+    #[test]
+    fn test_segments_count() {
+        let mut demo = UploadTranslationDemo::new();
+        assert_eq!(demo.segments_count(), 0);
+        demo.add_segment(0.0, 2.0, "Hola", "Hello");
+        demo.add_segment(2.0, 4.0, "Mundo", "World");
+        assert_eq!(demo.segments_count(), 2);
+    }
+
+    // =========================================================================
+    // TranslationSegment Tests
+    // =========================================================================
+
+    #[test]
+    fn test_segment_timestamp() {
+        let segment = TranslationSegment {
+            start_seconds: 0.0,
+            end_seconds: 2.5,
+            source_text: "Hola".to_string(),
+            translated_text: "Hello".to_string(),
+        };
+        let ts = segment.timestamp();
+        assert!(ts.contains("["));
+        assert!(ts.contains("]"));
+        assert!(ts.contains(" - "));
+    }
+
+    #[test]
+    fn test_segment_source_text() {
+        let segment = TranslationSegment {
+            start_seconds: 0.0,
+            end_seconds: 2.0,
+            source_text: "Bonjour".to_string(),
+            translated_text: "Hello".to_string(),
+        };
+        assert_eq!(segment.source_text(), "Bonjour");
+    }
+
+    #[test]
+    fn test_segment_translated_text() {
+        let segment = TranslationSegment {
+            start_seconds: 0.0,
+            end_seconds: 2.0,
+            source_text: "Guten Tag".to_string(),
+            translated_text: "Good day".to_string(),
+        };
+        assert_eq!(segment.translated_text(), "Good day");
+    }
+
+    // =========================================================================
+    // Button State Tests
+    // =========================================================================
+
+    #[test]
+    fn test_can_translate_initial() {
+        let demo = UploadTranslationDemo::new();
+        assert!(!demo.can_translate());
+    }
+
+    #[test]
+    fn test_can_translate_file_selected() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        assert!(demo.can_translate());
+    }
+
+    #[test]
+    fn test_can_translate_complete() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_translation();
+        demo.set_detected_language("es", "Spanish", 90.0);
+        demo.complete();
+        assert!(demo.can_translate());
+    }
+
+    #[test]
+    fn test_can_download_initial() {
+        let demo = UploadTranslationDemo::new();
+        assert!(!demo.can_download());
+    }
+
+    #[test]
+    fn test_can_download_complete_with_segments() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_translation();
+        demo.set_detected_language("es", "Spanish", 90.0);
+        demo.add_segment(0.0, 2.0, "Hola", "Hello");
+        demo.complete();
+        assert!(demo.can_download());
+    }
+
+    #[test]
+    fn test_can_download_complete_without_segments() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_translation();
+        demo.set_detected_language("es", "Spanish", 90.0);
+        demo.complete();
+        assert!(!demo.can_download());
+    }
+
+    // =========================================================================
+    // Toggle Tests
+    // =========================================================================
+
+    #[test]
+    fn test_toggle_timestamps() {
+        let mut demo = UploadTranslationDemo::new();
+        assert!(!demo.is_show_timestamps());
+        demo.toggle_timestamps();
+        assert!(demo.is_show_timestamps());
+        demo.toggle_timestamps();
+        assert!(!demo.is_show_timestamps());
+    }
+
+    // =========================================================================
+    // Export Tests
+    // =========================================================================
+
+    #[test]
+    fn test_export_txt() {
+        let mut demo = UploadTranslationDemo::new();
+        demo.add_segment(0.0, 2.0, "Hola", "Hello");
+        demo.add_segment(2.0, 4.0, "Mundo", "World");
+        let txt = demo.export_txt();
+        assert!(txt.contains("Hello"));
+        assert!(txt.contains("World"));
+    }
+
+    #[test]
+    fn test_export_vtt() {
+        let mut demo = UploadTranslationDemo::new();
+        demo.add_segment(0.0, 2.0, "Hola", "Hello");
+        let vtt = demo.export_vtt();
+        assert!(vtt.starts_with("WEBVTT"));
+        assert!(vtt.contains("Hello"));
+    }
+
+    // =========================================================================
+    // Clear Tests
+    // =========================================================================
+
+    #[test]
+    fn test_clear_resets_all() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_translation();
+        demo.set_detected_language("es", "Spanish", 90.0);
+        demo.add_segment(0.0, 2.0, "Hola", "Hello");
+        demo.complete();
+
+        demo.clear();
+
+        assert_eq!(demo.state(), DemoState::Idle);
+        assert!(demo.file_info().is_none());
+        assert!(demo.detected_language().is_none());
+        assert_eq!(demo.segments_count(), 0);
+    }
+
+    // =========================================================================
+    // Error Tests
+    // =========================================================================
+
+    #[test]
+    fn test_error_message_initially_none() {
+        let demo = UploadTranslationDemo::new();
+        assert!(demo.error_message().is_none());
+    }
+
+    // =========================================================================
+    // Default Trait Tests
+    // =========================================================================
+
+    #[test]
+    fn test_default_demo() {
+        let demo = UploadTranslationDemo::default();
+        assert_eq!(demo.state(), DemoState::Idle);
+    }
+
+    #[test]
+    fn test_default_state() {
+        let state = DemoState::default();
+        assert_eq!(state, DemoState::Idle);
+    }
+
+    // =========================================================================
+    // DemoState Trait Tests
+    // =========================================================================
+
+    #[test]
+    fn test_state_debug() {
+        let state = DemoState::Translating;
+        let debug_str = format!("{:?}", state);
+        assert!(debug_str.contains("Translating"));
+    }
+
+    #[test]
+    fn test_state_clone() {
+        let state = DemoState::Complete;
+        let cloned = state.clone();
+        assert_eq!(state, cloned);
+    }
+
+    #[test]
+    fn test_state_copy() {
+        let state = DemoState::Error;
+        let copied = state;
+        assert_eq!(state, copied);
+    }
+
+    // =========================================================================
+    // Helper Function Tests
+    // =========================================================================
+
+    #[test]
+    fn test_format_language_pair_various() {
+        assert_eq!(format_language_pair("French", "English"), "French → English");
+        assert_eq!(format_language_pair("Japanese", "English"), "Japanese → English");
     }
 }

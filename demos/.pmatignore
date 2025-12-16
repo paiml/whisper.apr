@@ -1,0 +1,4 @@
+# Ignore generated files
+www/pkg/**
+target/**
+*.min.js

@@ -222,31 +222,111 @@ fn bench_tokenizer(c: &mut Criterion) {
 
 /// Benchmark attention computation (SIMD comparison)
 fn bench_attention(c: &mut Criterion) {
+    use whisper_apr::model::{
+        flash_attention, flash_attention_simd, FlashAttentionConfig, MultiHeadAttention,
+    };
+
     let mut group = c.benchmark_group("attention");
 
     // Whisper attention dimensions
     // tiny: d_model=384, n_heads=6, head_dim=64
     // base: d_model=512, n_heads=8, head_dim=64
-    for (name, seq_len, d_model) in [
-        ("tiny_short", 100, 384),
-        ("tiny_long", 1500, 384),
-        ("base_short", 100, 512),
-        ("base_long", 1500, 512),
+    for (name, seq_len, d_head) in [
+        ("tiny_short", 100, 64),
+        ("tiny_long", 500, 64),
+        ("base_short", 100, 64),
+        ("base_long", 500, 64),
     ] {
-        let elements = seq_len * d_model;
+        let elements = seq_len * d_head;
         group.throughput(Throughput::Elements(elements as u64));
 
+        // Standard attention (O(n²) memory)
         group.bench_with_input(
-            BenchmarkId::new("forward", name),
-            &(seq_len, d_model),
-            |bencher, &(seq_len, d_model)| {
-                let q = vec![0.0f32; seq_len * d_model];
-                let k = vec![0.0f32; seq_len * d_model];
-                let v = vec![0.0f32; seq_len * d_model];
+            BenchmarkId::new("standard", name),
+            &(seq_len, d_head),
+            |bencher, &(seq_len, d_head)| {
+                let attn = MultiHeadAttention::new(1, d_head);
+                let q = vec![0.1f32; seq_len * d_head];
+                let k = vec![0.1f32; seq_len * d_head];
+                let v = vec![0.1f32; seq_len * d_head];
 
                 bencher.iter(|| {
-                    // Placeholder: actual attention computation
-                    black_box((&q, &k, &v));
+                    let output = attn.scaled_dot_product_attention(&q, &k, &v, None);
+                    black_box(output);
+                });
+            },
+        );
+
+        // Flash Attention scalar (O(n) memory)
+        group.bench_with_input(
+            BenchmarkId::new("flash_scalar", name),
+            &(seq_len, d_head),
+            |bencher, &(seq_len, d_head)| {
+                let q = vec![0.1f32; seq_len * d_head];
+                let k = vec![0.1f32; seq_len * d_head];
+                let v = vec![0.1f32; seq_len * d_head];
+                let config =
+                    FlashAttentionConfig::with_default_block_size(seq_len, seq_len, d_head);
+
+                bencher.iter(|| {
+                    let output = flash_attention(&q, &k, &v, config, None);
+                    black_box(output);
+                });
+            },
+        );
+
+        // Flash Attention SIMD (O(n) memory + SIMD)
+        group.bench_with_input(
+            BenchmarkId::new("flash_simd", name),
+            &(seq_len, d_head),
+            |bencher, &(seq_len, d_head)| {
+                let q = vec![0.1f32; seq_len * d_head];
+                let k = vec![0.1f32; seq_len * d_head];
+                let v = vec![0.1f32; seq_len * d_head];
+                let config =
+                    FlashAttentionConfig::with_default_block_size(seq_len, seq_len, d_head);
+
+                bencher.iter(|| {
+                    let output = flash_attention_simd(&q, &k, &v, config, None);
+                    black_box(output);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Benchmark streaming attention with KV cache
+fn bench_streaming_attention(c: &mut Criterion) {
+    use whisper_apr::model::MultiHeadAttention;
+
+    let mut group = c.benchmark_group("streaming_attention");
+    group.sample_size(50);
+
+    // Test incremental decoding scenarios
+    for (name, cache_len, n_heads, d_model) in [
+        ("tiny_start", 0, 6, 384),
+        ("tiny_mid", 50, 6, 384),
+        ("tiny_full", 200, 6, 384),
+        ("base_start", 0, 8, 512),
+        ("base_mid", 50, 8, 512),
+    ] {
+        let d_head = d_model / n_heads;
+        group.throughput(Throughput::Elements(d_model as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("forward_streaming", name),
+            &(cache_len, n_heads, d_model),
+            |bencher, &(cache_len, n_heads, d_model)| {
+                let attn = MultiHeadAttention::new(n_heads, d_model);
+                let x = vec![0.1f32; d_model]; // Single token
+                let cached_k = vec![0.1f32; cache_len * d_model];
+                let cached_v = vec![0.1f32; cache_len * d_model];
+
+                bencher.iter(|| {
+                    let result = attn.forward_streaming(&x, &cached_k, &cached_v, None);
+                    black_box(result);
                 });
             },
         );
@@ -264,6 +344,7 @@ criterion_group!(
     bench_transcribe_e2e,
     bench_tokenizer,
     bench_attention,
+    bench_streaming_attention,
 );
 
 criterion_main!(benches);
