@@ -37,6 +37,14 @@ impl BpeTokenizer {
         Self { vocab }
     }
 
+    /// Create a tokenizer from a loaded vocabulary
+    ///
+    /// Alias for `new()` for clarity when loading from APR files.
+    #[must_use]
+    pub fn from_vocabulary(vocab: Vocabulary) -> Self {
+        Self::new(vocab)
+    }
+
     /// Create a tokenizer with only base byte tokens (no merges)
     ///
     /// Useful for testing or when no merge rules are available.
@@ -539,10 +547,10 @@ mod tests {
                 ];
 
                 for token in special_tokens {
-                    // Whisper special tokens are in the 50257+ range, verify they're in reasonable bounds
+                    // Whisper special tokens are in the 50256+ range (EOT=50256, SOT=50257, etc.)
                     prop_assert!(
-                        (token as usize) >= 50257 && (token as usize) < 60000,
-                        "special token {} should be in Whisper's special token range (50257-60000)",
+                        (token as usize) >= 50256 && (token as usize) < 60000,
+                        "special token {} should be in Whisper's special token range (50256-60000)",
                         token
                     );
                     // Also verify the base tokenizer has some vocabulary

@@ -1,0 +1,52 @@
+# Load Test Configuration for Whisper.apr Demos
+# PROBAR-SPEC-006 Load Testing
+
+version: "1.0"
+name: whisper-apr-load-test
+
+scenarios:
+  - name: realtime-transcription-load
+    description: Load test for real-time transcription demo
+    stages:
+      - duration: 30s
+        users: 10
+        ramp_up: 5s
+      - duration: 60s
+        users: 50
+        ramp_up: 10s
+      - duration: 30s
+        users: 100
+        ramp_up: 15s
+    requests:
+      - endpoint: /api/transcribe
+        method: POST
+        body_file: test-audio.wav
+        headers:
+          Content-Type: audio/wav
+
+  - name: model-loading-stress
+    description: Stress test for concurrent model loading
+    stages:
+      - duration: 60s
+        users: 20
+        ramp_up: 10s
+    requests:
+      - endpoint: /api/models/whisper-tiny
+        method: GET
+
+  - name: batch-transcription
+    description: Batch processing load test
+    stages:
+      - duration: 120s
+        users: 25
+        ramp_up: 20s
+    requests:
+      - endpoint: /api/batch-transcribe
+        method: POST
+        body_file: batch-manifest.json
+
+thresholds:
+  p95_latency_ms: 500
+  p99_latency_ms: 1000
+  error_rate: 0.01
+  min_throughput_rps: 100

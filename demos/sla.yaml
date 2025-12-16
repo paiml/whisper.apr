@@ -1,0 +1,58 @@
+# SLA Assertions for Whisper.apr
+# PROBAR-SPEC-006 Section I: Statistical Analysis
+
+version: "1.0"
+name: whisper-apr-sla
+
+service_level_objectives:
+  # Latency SLOs
+  - name: realtime-p50
+    metric: latency_p50
+    threshold_ms: 100
+    target: 0.99
+
+  - name: realtime-p95
+    metric: latency_p95
+    threshold_ms: 250
+    target: 0.95
+
+  - name: realtime-p99
+    metric: latency_p99
+    threshold_ms: 500
+    target: 0.90
+
+  # Throughput SLOs
+  - name: min-throughput
+    metric: requests_per_second
+    threshold: 100
+    target: 0.99
+
+  # Error Rate SLOs
+  - name: error-rate
+    metric: error_rate
+    threshold: 0.001
+    target: 0.999
+
+  # Apdex Score
+  - name: user-satisfaction
+    metric: apdex
+    satisfied_threshold_ms: 100
+    tolerating_threshold_ms: 400
+    target: 0.85
+
+assertions:
+  - name: rtf-budget
+    description: Real-time factor must stay under 2.0x
+    condition: rtf < 2.0
+
+  - name: memory-budget
+    description: Peak memory under 150MB for tiny model
+    condition: peak_memory_mb < 150
+
+  - name: no-oom
+    description: Zero out-of-memory errors
+    condition: oom_count == 0
+
+  - name: graceful-degradation
+    description: Error rate stays below 5% even under 3x load
+    condition: error_rate_at_overload < 0.05

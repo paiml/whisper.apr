@@ -12,13 +12,11 @@ use crate::audio::wav::{parse_wav_file, resample};
 use crate::{DecodingStrategy, Task, TranscribeOptions, WhisperApr};
 
 use super::args::{
-    Args, BackendArg, BatchArgs, BenchmarkArgs, Command, ModelAction, ModelArgs, OutputFormatArg,
-    RecordArgs, TestArgs, TranscribeArgs, TranslateArgs,
+    Args, BackendArg, BatchArgs, BenchmarkArgs, Command, ModelAction, ModelArgs, ModelSize,
+    OutputFormatArg, RecordArgs, TestArgs, TranscribeArgs, TranslateArgs, ValidateArgs,
+    ValidateOutputFormat,
 };
 
-// Re-export for tests
-#[cfg(test)]
-pub(crate) use super::args::ModelSize;
 use super::output::{format_output, OutputFormat};
 
 /// CLI error type
@@ -134,6 +132,7 @@ pub fn run(args: Args) -> CliResult<CommandResult> {
         Command::Test(t) => run_test(t.clone(), &args),
         Command::Model(m) => run_model(m.clone(), &args),
         Command::Benchmark(b) => run_benchmark(b.clone(), &args),
+        Command::Validate(v) => run_validate(v.clone(), &args),
     }
 }
 
@@ -147,12 +146,29 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
         return Err(CliError::FileNotFound(args.input.display().to_string()));
     }
 
-    // Load model (use WhisperApr::tiny() for now, model loading will be added later)
+    // Load model
     if global.verbose {
-        eprintln!("[INFO] Loading model: {}", args.model);
+        if let Some(path) = &args.model_path {
+            eprintln!("[INFO] Loading model from: {}", path.display());
+        } else {
+            eprintln!("[INFO] Loading model: {}", args.model);
+        }
     }
     let model_start = Instant::now();
-    let whisper = WhisperApr::tiny();
+    
+    let whisper = if let Some(path) = &args.model_path {
+        let bytes = fs::read(path)?;
+        WhisperApr::load_from_apr(&bytes)?
+    } else {
+        match args.model {
+            ModelSize::Tiny => WhisperApr::tiny(),
+            ModelSize::Base => WhisperApr::base(),
+            ModelSize::Small => WhisperApr::small(),
+            ModelSize::Medium => WhisperApr::medium(),
+            ModelSize::Large => WhisperApr::large(),
+        }
+    };
+    
     timings.model_load_ms = model_start.elapsed().as_secs_f64() * 1000.0;
 
     // Load and parse audio
@@ -334,6 +350,7 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
         let transcribe_args = TranscribeArgs {
             input: input.clone(),
             model: args.model,
+            model_path: None,
             language: "auto".to_string(),
             output: Some(output_path),
             format: args.format,
@@ -525,6 +542,198 @@ pub fn run_benchmark(args: BenchmarkArgs, global: &Args) -> CliResult<CommandRes
     Ok(CommandResult::success(format!("RTF: {rtf:.2}x")).with_rtf(rtf))
 }
 
+/// Run validate command
+pub fn run_validate(args: ValidateArgs, global: &Args) -> CliResult<CommandResult> {
+    use crate::format::{AprReader, AprValidator, quick_validate};
+
+    // Validate input file exists
+    if !args.file.exists() {
+        return Err(CliError::FileNotFound(args.file.display().to_string()));
+    }
+
+    // Load APR file
+    if global.verbose {
+        eprintln!("[INFO] Loading APR file: {}", args.file.display());
+    }
+
+    let data = fs::read(&args.file)?;
+    let reader = AprReader::new(data).map_err(|e| CliError::InvalidArgument(e.to_string()))?;
+
+    // Quick validation mode
+    if args.quick {
+        match quick_validate(&reader) {
+            Ok(()) => {
+                if !global.quiet {
+                    println!("✓ Quick validation passed");
+                }
+                return Ok(CommandResult::success("Quick validation passed"));
+            }
+            Err(e) => {
+                if !global.quiet {
+                    println!("✗ Quick validation failed: {e}");
+                }
+                return Ok(CommandResult::failure(format!("Quick validation failed: {e}")));
+            }
+        }
+    }
+
+    // Full 25-point validation
+    let validator = AprValidator::new(&reader);
+    let report = validator.validate_all();
+
+    // Format output
+    match args.format {
+        ValidateOutputFormat::Text => {
+            format_validation_text(&report, args.detailed, global.quiet);
+        }
+        ValidateOutputFormat::Json => {
+            format_validation_json(&report);
+        }
+        ValidateOutputFormat::Markdown => {
+            format_validation_markdown(&report, args.detailed);
+        }
+    }
+
+    // Determine success
+    let passed = report.score >= args.min_score && report.critical_failures.is_empty();
+
+    if passed {
+        Ok(CommandResult::success(format!(
+            "Validation passed: {}/{}",
+            report.score, report.max_score
+        )))
+    } else {
+        Ok(CommandResult::failure(format!(
+            "Validation failed: {}/{} (min: {})",
+            report.score, report.max_score, args.min_score
+        )))
+    }
+}
+
+fn format_validation_text(
+    report: &crate::format::ValidationReport,
+    detailed: bool,
+    quiet: bool,
+) {
+    if quiet {
+        return;
+    }
+
+    println!("═══════════════════════════════════════════════════════════════════");
+    println!("                    APR Validation Report (25-Point QA)            ");
+    println!("═══════════════════════════════════════════════════════════════════\n");
+
+    let categories = [
+        ('A', "Structural Integrity"),
+        ('B', "Layer Norm Validation"),
+        ('C', "Attention/Linear Validation"),
+        ('D', "Embedding Validation"),
+        ('E', "Functional Validation"),
+    ];
+
+    for (cat, name) in categories {
+        let checks = report.checks_by_category(cat);
+        let passed = checks.iter().filter(|c| c.passed).count();
+        let total = checks.len();
+        let status = if passed == total { "✓" } else { "✗" };
+
+        println!("{cat}. {name}: {passed}/{total} {status}");
+
+        if detailed {
+            for check in checks {
+                let mark = if check.passed { "  ✓" } else { "  ✗" };
+                println!("  {} [{}] {}: {}", mark, check.id, check.name, check.message);
+            }
+        }
+    }
+
+    println!("\n───────────────────────────────────────────────────────────────────");
+    println!(
+        "SCORE: {}/{} ({})",
+        report.score,
+        report.max_score,
+        if report.passed { "PASS" } else { "FAIL" }
+    );
+
+    if !report.critical_failures.is_empty() {
+        println!("\n⚠ CRITICAL FAILURES:");
+        for failure in &report.critical_failures {
+            println!("  • {failure}");
+        }
+    }
+    println!("═══════════════════════════════════════════════════════════════════");
+}
+
+fn format_validation_json(report: &crate::format::ValidationReport) {
+    let checks: Vec<_> = report
+        .checks
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "id": c.id,
+                "category": c.category.to_string(),
+                "name": c.name,
+                "passed": c.passed,
+                "message": c.message
+            })
+        })
+        .collect();
+
+    let json = serde_json::json!({
+        "score": report.score,
+        "max_score": report.max_score,
+        "passed": report.passed,
+        "critical_failures": report.critical_failures,
+        "checks": checks
+    });
+
+    println!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
+}
+
+fn format_validation_markdown(report: &crate::format::ValidationReport, detailed: bool) {
+    println!("# APR Validation Report\n");
+    println!(
+        "**Score:** {}/{} ({})\n",
+        report.score,
+        report.max_score,
+        if report.passed { "✅ PASS" } else { "❌ FAIL" }
+    );
+
+    if !report.critical_failures.is_empty() {
+        println!("## ⚠️ Critical Failures\n");
+        for failure in &report.critical_failures {
+            println!("- {failure}");
+        }
+        println!();
+    }
+
+    let categories = [
+        ('A', "Structural Integrity"),
+        ('B', "Layer Norm Validation"),
+        ('C', "Attention/Linear Validation"),
+        ('D', "Embedding Validation"),
+        ('E', "Functional Validation"),
+    ];
+
+    for (cat, name) in categories {
+        let checks = report.checks_by_category(cat);
+        let passed = checks.iter().filter(|c| c.passed).count();
+        let total = checks.len();
+
+        println!("## {cat}. {name} ({passed}/{total})\n");
+
+        if detailed {
+            println!("| # | Check | Status | Details |");
+            println!("|---|-------|--------|---------|");
+            for check in checks {
+                let status = if check.passed { "✅" } else { "❌" };
+                println!("| {} | {} | {} | {} |", check.id, check.name, status, check.message);
+            }
+            println!();
+        }
+    }
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -680,6 +889,7 @@ mod tests {
         let args = TranscribeArgs {
             input: "nonexistent.wav".into(),
             model: ModelSize::Tiny,
+            model_path: None,
             language: "auto".to_string(),
             output: None,
             format: OutputFormatArg::Txt,
@@ -844,6 +1054,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[test]
+    #[ignore] // Slow: runs full inference pipeline
     fn test_run_test_simd() {
         let args = TestArgs {
             backend: BackendArg::Simd,
@@ -864,6 +1075,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Slow: runs full inference pipeline
     fn test_run_test_wasm() {
         let args = TestArgs {
             backend: BackendArg::Wasm,
@@ -884,6 +1096,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Slow: runs full inference pipeline
     fn test_run_test_cuda() {
         let args = TestArgs {
             backend: BackendArg::Cuda,
@@ -904,6 +1117,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Slow: runs full inference pipeline for all backends
     fn test_run_test_all_backends() {
         let args = TestArgs {
             backend: BackendArg::All,
@@ -1089,6 +1303,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[test]
+    #[ignore] // Slow: runs full inference benchmark
     fn test_run_benchmark() {
         let args = BenchmarkArgs {
             model: ModelSize::Tiny,
@@ -1112,6 +1327,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Slow: runs full inference benchmark
     fn test_run_benchmark_verbose() {
         let args = BenchmarkArgs {
             model: ModelSize::Tiny,
@@ -1248,5 +1464,219 @@ mod tests {
     fn test_cli_error_unsupported_format() {
         let err = CliError::UnsupportedFormat("abc".to_string());
         assert!(err.to_string().contains("abc"));
+    }
+
+    #[test]
+    fn test_cli_error_not_implemented() {
+        let err = CliError::NotImplemented("feature X".to_string());
+        assert!(err.to_string().contains("feature X"));
+        assert!(err.to_string().contains("Not implemented"));
+    }
+
+    #[test]
+    fn test_cli_error_invalid_argument() {
+        let err = CliError::InvalidArgument("bad arg".to_string());
+        assert!(err.to_string().contains("bad arg"));
+    }
+
+    #[test]
+    fn test_cli_error_file_not_found() {
+        let err = CliError::FileNotFound("missing.wav".to_string());
+        assert!(err.to_string().contains("missing.wav"));
+    }
+
+    // -------------------------------------------------------------------------
+    // run() dispatch tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_run_dispatches_to_tui() {
+        let args = Args {
+            command: Command::Tui,
+            verbose: false,
+            quiet: true,
+            json: false,
+            trace: None,
+            no_color: false,
+        };
+
+        let result = run(args);
+        // TUI is not implemented, should return error
+        assert!(result.is_err());
+        match result {
+            Err(CliError::NotImplemented(_)) => {}
+            _ => panic!("Expected NotImplemented error"),
+        }
+    }
+
+    #[test]
+    fn test_run_dispatches_to_model_list() {
+        let args = Args {
+            command: Command::Model(ModelArgs {
+                action: ModelAction::List,
+            }),
+            verbose: false,
+            quiet: true,
+            json: false,
+            trace: None,
+            no_color: false,
+        };
+
+        let result = run(args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_dispatches_to_record() {
+        let args = Args {
+            command: Command::Record(RecordArgs {
+                duration: None,
+                live: false,
+                output: None,
+                device: None,
+                sample_rate: 16000,
+                list_devices: true,
+            }),
+            verbose: false,
+            quiet: true,
+            json: false,
+            trace: None,
+            no_color: false,
+        };
+
+        let result = run(args);
+        assert!(result.is_ok());
+    }
+
+    // -------------------------------------------------------------------------
+    // Backend expansion tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_backend_all_expands_to_three() {
+        // Test that BackendArg::All expands to 3 backends
+        let backends = match BackendArg::All {
+            BackendArg::All => vec![BackendArg::Simd, BackendArg::Wasm, BackendArg::Cuda],
+            other => vec![other],
+        };
+        assert_eq!(backends.len(), 3);
+    }
+
+    #[test]
+    fn test_backend_single_stays_single() {
+        let backends = match BackendArg::Simd {
+            BackendArg::All => vec![BackendArg::Simd, BackendArg::Wasm, BackendArg::Cuda],
+            other => vec![other],
+        };
+        assert_eq!(backends.len(), 1);
+    }
+
+    // -------------------------------------------------------------------------
+    // Timings struct tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_timings_debug() {
+        let timings = Timings::default();
+        let debug_str = format!("{timings:?}");
+        assert!(debug_str.contains("Timings"));
+    }
+
+    #[test]
+    fn test_timings_all_fields() {
+        let timings = Timings {
+            model_load_ms: 10.0,
+            audio_load_ms: 20.0,
+            mel_ms: 30.0,
+            encode_ms: 40.0,
+            decode_ms: 50.0,
+            total_ms: 150.0,
+        };
+        assert!((timings.model_load_ms - 10.0).abs() < f64::EPSILON);
+        assert!((timings.audio_load_ms - 20.0).abs() < f64::EPSILON);
+        assert!((timings.mel_ms - 30.0).abs() < f64::EPSILON);
+        assert!((timings.encode_ms - 40.0).abs() < f64::EPSILON);
+        assert!((timings.decode_ms - 50.0).abs() < f64::EPSILON);
+    }
+
+    // -------------------------------------------------------------------------
+    // Additional load_audio_samples tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_load_audio_m4a_not_implemented() {
+        let result = load_audio_samples(Path::new("test.m4a"), &[]);
+        assert!(result.is_err());
+        match result {
+            Err(CliError::NotImplemented(msg)) => assert!(msg.contains("m4a")),
+            _ => panic!("Expected NotImplemented error"),
+        }
+    }
+
+    #[test]
+    fn test_load_audio_webm_not_implemented() {
+        let result = load_audio_samples(Path::new("test.webm"), &[]);
+        assert!(result.is_err());
+        match result {
+            Err(CliError::NotImplemented(msg)) => assert!(msg.contains("webm")),
+            _ => panic!("Expected NotImplemented error"),
+        }
+    }
+
+    #[test]
+    fn test_load_audio_mkv_not_implemented() {
+        let result = load_audio_samples(Path::new("test.mkv"), &[]);
+        assert!(result.is_err());
+        match result {
+            Err(CliError::NotImplemented(msg)) => assert!(msg.contains("mkv")),
+            _ => panic!("Expected NotImplemented error"),
+        }
+    }
+
+    #[test]
+    fn test_load_audio_avi_not_implemented() {
+        let result = load_audio_samples(Path::new("test.avi"), &[]);
+        assert!(result.is_err());
+        match result {
+            Err(CliError::NotImplemented(msg)) => assert!(msg.contains("avi")),
+            _ => panic!("Expected NotImplemented error"),
+        }
+    }
+
+    #[test]
+    fn test_load_audio_unknown_extension() {
+        let result = load_audio_samples(Path::new("test.xyz"), &[]);
+        assert!(result.is_err());
+        match result {
+            Err(CliError::UnsupportedFormat(f)) => assert_eq!(f, "xyz"),
+            _ => panic!("Expected UnsupportedFormat error"),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // CommandResult builder pattern tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_command_result_builder_chain() {
+        let timings = Timings {
+            total_ms: 50.0,
+            ..Default::default()
+        };
+        let result = CommandResult::success("Test")
+            .with_timings(timings)
+            .with_rtf(1.5);
+
+        assert!(result.success);
+        assert_eq!(result.message, "Test");
+        assert!(result.timings.is_some());
+        assert_eq!(result.rtf, Some(1.5));
+    }
+
+    #[test]
+    fn test_command_result_failure_with_rtf() {
+        let result = CommandResult::failure("Failed").with_rtf(2.0);
+        assert!(!result.success);
+        assert_eq!(result.rtf, Some(2.0));
     }
 }

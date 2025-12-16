@@ -5,6 +5,7 @@ members = [
     "upload-transcription",
     "realtime-translation",
     "upload-translation",
+    "worker-transcription",
     "tests",
 ]
 
@@ -16,8 +17,8 @@ license = "MIT"
 repository = "https://github.com/paiml/whisper.apr"
 
 [workspace.dependencies]
-# Core whisper-apr library
-whisper-apr = { path = ".." }
+# Core whisper-apr library (with tracing for renacer integration)
+whisper-apr = { path = "..", features = ["tracing"] }
 
 # WASM bindings
 wasm-bindgen = "0.2"
@@ -25,9 +26,17 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = "0.3"
 
+# Tracing (renacer-compatible instrumentation)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json"] }
+tracing-wasm = "0.2"
+
 # Testing with Probar (Playwright-compatible, pure Rust)
-# Note: jugar-probar is the crates.io package name
-probar = { package = "jugar-probar", version = "0.2", default-features = false }
+# Using local version with console capture support (Issue #8)
+probar = { package = "jugar-probar", path = "../../probar/crates/probar", default-features = false, features = ["browser", "tui"] }
+
+# Async runtime for browser tests
+tokio = { version = "1", features = ["full"] }
 
 # Property-based testing
 proptest = "1"

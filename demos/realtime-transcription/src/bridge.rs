@@ -111,6 +111,8 @@ pub struct QueueStats {
     pub avg_latency_ms: f64,
     /// Current queue depth
     pub queue_depth: usize,
+    /// Whether processing has started (diagnostic)
+    pub processing_started: bool,
 }
 
 /// Maximum consecutive errors before worker is considered unhealthy
@@ -147,17 +149,32 @@ impl WorkerBridge {
         info!(wasm_url, "Creating WorkerBridge");
         let start_time = js_sys::Date::now();
 
-        // Create worker bootstrap script (minimal JS - only imports)
+        // Get the full origin URL for proper module resolution in worker context
+        let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
+        let location = window.location();
+        let origin = location.origin()?;
+        let full_wasm_url = format!("{}{}", origin, wasm_url);
+
+        // Create worker bootstrap script with error handling
         let worker_script = format!(
             r#"
-import init, {{ worker_entry }} from '{}';
+console.log('[Worker] Bootstrap starting, loading from: {}');
 
 (async () => {{
-    await init();
-    worker_entry();
+    try {{
+        const module = await import('{}');
+        console.log('[Worker] Module imported successfully');
+        await module.default();
+        console.log('[Worker] WASM initialized');
+        module.worker_entry();
+        console.log('[Worker] Entry point called');
+    }} catch (error) {{
+        console.error('[Worker] Bootstrap failed:', error);
+        self.postMessage({{ type: 'error', error: 'Bootstrap failed: ' + error.message }});
+    }}
 }})();
 "#,
-            wasm_url
+            full_wasm_url, full_wasm_url
         );
 
         // Create blob URL for worker
@@ -258,14 +275,35 @@ import init, {{ worker_entry }} from '{}';
                 WorkerResult::Ready
             }
             "model_loaded" => {
-                let data_str = js_sys::Reflect::get(obj, &"data".into())?
-                    .as_string()
-                    .unwrap_or_default();
-                info!(data = %data_str, "Model loaded in worker");
+                let size_mb = js_sys::Reflect::get(obj, &"size_mb".into())
+                    .ok()
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                let load_time_ms = js_sys::Reflect::get(obj, &"load_time_ms".into())
+                    .ok()
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                info!(size_mb, load_time_ms, "Model loaded in worker");
                 WorkerResult::ModelLoaded {
-                    size_mb: 0.0,      // TODO: Parse from data
-                    load_time_ms: 0.0, // TODO: Parse from data
+                    size_mb,
+                    load_time_ms,
                 }
+            }
+            "processing_started" => {
+                let chunk_id = js_sys::Reflect::get(obj, &"chunk_id".into())
+                    .ok()
+                    .and_then(|v| v.as_f64())
+                    .map(|v| v as u32)
+                    .unwrap_or(0);
+                let audio_samples = js_sys::Reflect::get(obj, &"audio_samples".into())
+                    .ok()
+                    .and_then(|v| v.as_f64())
+                    .map(|v| v as usize)
+                    .unwrap_or(0);
+                info!(chunk_id, audio_samples, "Worker started processing chunk");
+                // Mark this in stats for diagnostics
+                bridge.borrow_mut().stats.processing_started = true;
+                return Ok(()); // Don't invoke callback for internal diagnostic messages
             }
             "transcription" => {
                 let text = js_sys::Reflect::get(obj, &"data".into())?
@@ -675,6 +713,7 @@ mod tests {
             errors: 1,
             avg_latency_ms: 150.5,
             queue_depth: 2,
+            processing_started: true,
         };
         let debug_str = format!("{:?}", stats);
         assert!(debug_str.contains("chunks_sent: 10"));
@@ -690,6 +729,7 @@ mod tests {
             errors: 0,
             avg_latency_ms: 100.0,
             queue_depth: 1,
+            processing_started: true,
         };
         let cloned = stats.clone();
         assert_eq!(cloned.chunks_sent, stats.chunks_sent);

@@ -1,0 +1,404 @@
+# Whisper Pipeline State Machine Playbook
+# EXTREME TDD: Specification written FIRST, tests derive from this
+#
+# Run: probar playbook playbooks/whisper-pipeline.yaml --validate
+#
+# This playbook defines the state machine for Whisper ASR pipeline:
+# - Audio preprocessing (resampling, normalization)
+# - Mel spectrogram computation (80-bin filterbank)
+# - Encoder processing (transformer layers)
+# - Decoder generation (autoregressive token output)
+#
+# References:
+# - Radford et al. (2022): Robust Speech Recognition via Large-Scale Weak Supervision
+# - Davis & Mermelstein (1980): Mel frequency cepstral coefficients
+# - Vaswani et al. (2017): Attention Is All You Need
+
+version: "1.0"
+name: "Whisper ASR Pipeline"
+description: "WAPR-TUI-001: Speech-to-text transcription state machine"
+
+machine:
+  id: "whisper_pipeline"
+  initial: "idle"
+
+  states:
+    idle:
+      id: "idle"
+      invariants:
+        - description: "No audio loaded"
+          condition: "audio_samples() == 0"
+        - description: "No mel data"
+          condition: "mel_frames() == 0"
+        - description: "No tokens generated"
+          condition: "tokens_generated() == 0"
+
+    audio_loaded:
+      id: "audio_loaded"
+      invariants:
+        - description: "Audio samples present"
+          condition: "audio_samples() > 0"
+        - description: "Sample rate is 16kHz"
+          condition: "sample_rate() == 16000"
+        - description: "Audio is normalized"
+          condition: "audio_max_amplitude() <= 1.0"
+
+    mel_ready:
+      id: "mel_ready"
+      invariants:
+        - description: "80 mel bins"
+          condition: "mel_bins() == 80"
+        - description: "Mel frames computed"
+          condition: "mel_frames() > 0"
+        - description: "Mel frames <= 3000"
+          condition: "mel_frames() <= 3000"
+
+    encoding:
+      id: "encoding"
+      invariants:
+        - description: "Encoder active"
+          condition: "encoder_active()"
+        - description: "Current layer valid"
+          condition: "current_layer() < total_layers()"
+
+    encoded:
+      id: "encoded"
+      invariants:
+        - description: "Encoder output ready"
+          condition: "encoder_output_ready()"
+        - description: "All layers processed"
+          condition: "current_layer() == total_layers()"
+
+    decoding:
+      id: "decoding"
+      invariants:
+        - description: "Decoder active"
+          condition: "decoder_active()"
+        - description: "Token count growing"
+          condition: "tokens_generated() > 0"
+        - description: "KV cache allocated"
+          condition: "kv_cache_allocated()"
+
+    streaming:
+      id: "streaming"
+      invariants:
+        - description: "Streaming mode active"
+          condition: "streaming_active()"
+        - description: "Partial results available"
+          condition: "has_partial_result()"
+
+    complete:
+      id: "complete"
+      invariants:
+        - description: "Transcription available"
+          condition: "transcription_length() > 0"
+        - description: "End token generated"
+          condition: "has_end_token()"
+        - description: "Valid RTF"
+          condition: "rtf() > 0.0"
+
+    error:
+      id: "error"
+      invariants:
+        - description: "Error message set"
+          condition: "has_error_message()"
+
+  transitions:
+    # Audio loading
+    - id: "load_audio"
+      from: "idle"
+      to: "audio_loaded"
+      event: "audio_received"
+      guard: "audio_samples() > 0"
+
+    - id: "resample_audio"
+      from: "audio_loaded"
+      to: "audio_loaded"
+      event: "resample_complete"
+      guard: "sample_rate() == 16000"
+
+    # Mel computation
+    - id: "compute_mel"
+      from: "audio_loaded"
+      to: "mel_ready"
+      event: "mel_computed"
+      guard: "mel_frames() > 0"
+
+    # Encoding
+    - id: "start_encoding"
+      from: "mel_ready"
+      to: "encoding"
+      event: "encoder_started"
+
+    - id: "encode_layer"
+      from: "encoding"
+      to: "encoding"
+      event: "layer_complete"
+      guard: "current_layer() < total_layers() - 1"
+
+    - id: "finish_encoding"
+      from: "encoding"
+      to: "encoded"
+      event: "encoder_complete"
+      guard: "current_layer() == total_layers() - 1"
+
+    # Decoding
+    - id: "start_decoding"
+      from: "encoded"
+      to: "decoding"
+      event: "decoder_started"
+
+    - id: "generate_token"
+      from: "decoding"
+      to: "decoding"
+      event: "token_generated"
+      guard: "!has_end_token() && tokens_generated() < max_tokens()"
+
+    - id: "enable_streaming"
+      from: "decoding"
+      to: "streaming"
+      event: "streaming_enabled"
+
+    - id: "stream_token"
+      from: "streaming"
+      to: "streaming"
+      event: "token_streamed"
+      guard: "!has_end_token()"
+
+    - id: "complete_transcription"
+      from: "decoding"
+      to: "complete"
+      event: "end_token_generated"
+      guard: "has_end_token()"
+
+    - id: "complete_streaming"
+      from: "streaming"
+      to: "complete"
+      event: "stream_ended"
+      guard: "has_end_token()"
+
+    # Reset and error handling
+    - id: "reset_pipeline"
+      from: "*"
+      to: "idle"
+      event: "reset_requested"
+
+    - id: "handle_error"
+      from: "*"
+      to: "error"
+      event: "error_occurred"
+
+    - id: "recover_from_error"
+      from: "error"
+      to: "idle"
+      event: "error_acknowledged"
+
+  forbidden:
+    - from: "idle"
+      to: "encoding"
+      reason: "Cannot encode without mel spectrogram"
+
+    - from: "idle"
+      to: "decoding"
+      reason: "Cannot decode without encoder output"
+
+    - from: "mel_ready"
+      to: "decoding"
+      reason: "Must encode before decoding"
+
+    - from: "decoding"
+      to: "mel_ready"
+      reason: "Cannot return to mel computation during decoding"
+
+# Model configuration
+model:
+  name: "whisper"
+  sizes:
+    tiny:
+      layers: 4
+      dim: 384
+      heads: 6
+      params: "39M"
+    base:
+      layers: 6
+      dim: 512
+      heads: 8
+      params: "74M"
+    small:
+      layers: 12
+      dim: 768
+      heads: 12
+      params: "244M"
+
+# Audio processing configuration
+audio:
+  sample_rate: 16000
+  n_fft: 400
+  hop_length: 160
+  n_mels: 80
+  chunk_length_secs: 30
+  max_audio_length_secs: 1800
+
+# Performance targets
+performance:
+  rtf_target:
+    tiny: 2.0
+    base: 2.5
+    small: 4.0
+  memory_budget_mb:
+    tiny: 150
+    base: 350
+    small: 800
+
+# Performance assertions
+performance_assertions:
+  - name: "rtf_realtime"
+    condition: "rtf() <= model_rtf_target()"
+    critical: "rtf() <= model_rtf_target() * 2"
+    failure_reason: "Slower than real-time target"
+
+  - name: "memory_budget"
+    condition: "memory_used_mb() <= model_memory_budget()"
+    failure_reason: "Memory budget exceeded"
+
+  - name: "mel_latency"
+    condition: "mel_compute_time_ms() <= 50"
+    failure_reason: "Mel computation too slow"
+
+# Test scenarios
+scenarios:
+  - name: "short_audio_transcription"
+    description: "Transcribe 5 seconds of audio"
+    steps:
+      - action: "load_audio"
+        params: { duration_secs: 5 }
+      - action: "compute_mel"
+      - action: "encode"
+      - action: "decode"
+      - assert: "state == 'complete'"
+      - assert: "transcription_length() > 0"
+      - assert: "rtf() < 2.0"
+
+  - name: "long_audio_transcription"
+    description: "Transcribe 30 seconds of audio"
+    steps:
+      - action: "load_audio"
+        params: { duration_secs: 30 }
+      - action: "compute_mel"
+      - assert: "mel_frames() == 3000"
+      - action: "encode"
+      - action: "decode"
+      - assert: "state == 'complete'"
+
+  - name: "streaming_transcription"
+    description: "Stream tokens during decoding"
+    steps:
+      - action: "load_audio"
+        params: { duration_secs: 10 }
+      - action: "compute_mel"
+      - action: "encode"
+      - action: "start_decode_streaming"
+      - assert: "state == 'streaming'"
+      - action: "wait_for_completion"
+      - assert: "state == 'complete'"
+      - assert: "tokens_streamed() == tokens_generated()"
+
+  - name: "reset_during_decoding"
+    description: "Reset pipeline mid-stream"
+    steps:
+      - action: "load_audio"
+        params: { duration_secs: 5 }
+      - action: "compute_mel"
+      - action: "encode"
+      - action: "start_decode"
+      - action: "reset"
+      - assert: "state == 'idle'"
+      - assert: "audio_samples() == 0"
+
+  - name: "error_recovery"
+    description: "Recover from processing error"
+    steps:
+      - action: "load_audio"
+        params: { duration_secs: 5 }
+      - action: "inject_error"
+        params: { type: "encoder_failure" }
+      - assert: "state == 'error'"
+      - action: "acknowledge_error"
+      - assert: "state == 'idle'"
+
+# TUI Dashboard configuration
+tui:
+  refresh_rate_ms: 100
+
+  panels:
+    - id: "waveform"
+      title: "WAVEFORM"
+      type: "ascii_plot"
+      data_source: "audio_samples"
+
+    - id: "mel"
+      title: "MEL SPECTROGRAM"
+      type: "heatmap"
+      data_source: "mel_data"
+      dimensions: [80, "mel_frames"]
+
+    - id: "encoder"
+      title: "ENCODER"
+      type: "table"
+      columns: ["Layer", "Mean Act.", "Max Act.", "Attn Entropy"]
+
+    - id: "decoder"
+      title: "DECODER"
+      type: "table"
+      columns: ["Idx", "Token ID", "Text", "Log P"]
+
+    - id: "attention"
+      title: "ATTENTION"
+      type: "heatmap"
+      data_source: "cross_attention"
+
+    - id: "transcription"
+      title: "TRANSCRIPTION"
+      type: "text"
+      data_source: "transcription_text"
+
+    - id: "metrics"
+      title: "METRICS"
+      type: "stats"
+      fields: ["rtf", "tokens_per_sec", "memory_mb"]
+
+  keybindings:
+    "1": "panel_waveform"
+    "2": "panel_mel"
+    "3": "panel_encoder"
+    "4": "panel_decoder"
+    "5": "panel_attention"
+    "6": "panel_transcription"
+    "7": "panel_metrics"
+    "?": "panel_help"
+    "q": "quit"
+    "r": "reset"
+    " ": "toggle_pause"
+
+# Renacer tracing spans
+tracing:
+  spans:
+    - name: "whisper.load_audio"
+      level: "info"
+      fields: ["samples", "sample_rate"]
+
+    - name: "whisper.compute_mel"
+      level: "debug"
+      fields: ["n_frames", "duration_ms"]
+
+    - name: "whisper.encode"
+      level: "debug"
+      fields: ["layer", "duration_ms"]
+
+    - name: "whisper.decode_step"
+      level: "trace"
+      fields: ["token_id", "log_prob"]
+
+    - name: "whisper.complete"
+      level: "info"
+      fields: ["transcription_length", "rtf", "total_ms"]

@@ -159,11 +159,15 @@ impl GpuDevice {
     }
 
     /// Check if GPU is available on this system
+    ///
+    /// Currently returns false as WebGPU detection requires async browser APIs.
+    /// GPU availability will be detected at runtime via `detect_gpu()` in detect.rs.
     #[must_use]
     pub fn is_available() -> bool {
         #[cfg(feature = "webgpu")]
         {
-            // TODO: Implement actual detection
+            // WebGPU requires async detection via navigator.gpu in browser context
+            // For synchronous check, return false; use detect_gpu() for actual detection
             false
         }
         #[cfg(not(feature = "webgpu"))]
@@ -227,7 +231,11 @@ impl GpuDevice {
             "GpuDevice: {} ({}) - {}",
             self.capabilities.name,
             self.capabilities.backend,
-            if self.initialized { "Ready" } else { "Not initialized" }
+            if self.initialized {
+                "Ready"
+            } else {
+                "Not initialized"
+            }
         )
     }
 }

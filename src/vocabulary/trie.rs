@@ -35,7 +35,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct TrieNode {
     /// Children nodes indexed by token ID
-    children: HashMap<u32, TrieNode>,
+    children: HashMap<u32, Self>,
     /// Whether this node represents end of a vocabulary entry
     is_terminal: bool,
     /// Boost value if terminal (affects logit biasing)
@@ -251,8 +251,7 @@ impl VocabularyTrie {
     /// Check if a token sequence exists in the trie
     #[must_use]
     pub fn contains(&self, tokens: &[u32]) -> bool {
-        self.get_node(tokens)
-            .is_some_and(|n| n.is_terminal())
+        self.get_node(tokens).is_some_and(|n| n.is_terminal())
     }
 
     /// Check if any entry starts with the given prefix

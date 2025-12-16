@@ -28,8 +28,7 @@ pub mod interpolation;
 mod segment;
 
 pub use alignment::{
-    AlignmentConfig, CrossAttentionAlignment, TokenAlignment, WordAlignment,
-    WordTimestampExtractor,
+    AlignmentConfig, CrossAttentionAlignment, TokenAlignment, WordAlignment, WordTimestampExtractor,
 };
 pub use boundaries::{BoundaryConfig, BoundaryDetector, WordBoundary};
 pub use interpolation::{InterpolationConfig, TimestampInterpolator, TokenTimestamp};
@@ -39,7 +38,6 @@ pub use segment::{
     seconds_to_timestamp_token, split_long_segments, timestamp_to_seconds, MAX_TIMESTAMP_SECONDS,
     MAX_TIMESTAMP_TOKENS, TIMESTAMP_RESOLUTION,
 };
-
 
 /// Word with timestamp and confidence score
 #[derive(Debug, Clone)]

@@ -2,6 +2,23 @@
 # Spec: WASM-First Speech Recognition Engine
 # Pattern: Toyota Way - Jidoka (MEAN mode: warnings = errors)
 
+[exclude]
+# Exclude generated/vendored files from quality gates
+patterns = [
+    "**/book/**",              # mdbook generated files
+    "**/pkg/**",               # wasm-pack generated files
+    "**/target/**",            # build artifacts
+    "**/*.min.js",             # minified JS
+    "**/node_modules/**",      # npm dependencies
+    "**/snippets/**",          # wasm-bindgen generated snippets
+    "**/golden_traces/**",     # reference traces (avoid renacer validate mismatch)
+]
+
+[analysis]
+# Skip external/vendored code
+skip_vendor = true
+skip_generated = true
+
 [thresholds]
 # Hard limits (block commits) - based on specification Section 9
 lint_max_ms = 30_000              # 30s (Tier 1 target: sub-second lint-fast)

@@ -55,10 +55,16 @@ impl fmt::Display for GpuError {
             Self::PipelineError(msg) => write!(f, "Pipeline creation error: {msg}"),
             Self::ComputeError(msg) => write!(f, "Compute operation error: {msg}"),
             Self::InvalidBufferSize { requested, max } => {
-                write!(f, "Invalid buffer size: requested {requested} bytes, max {max}")
+                write!(
+                    f,
+                    "Invalid buffer size: requested {requested} bytes, max {max}"
+                )
             }
             Self::AlignmentError { offset, required } => {
-                write!(f, "Buffer alignment error: offset {offset} not aligned to {required}")
+                write!(
+                    f,
+                    "Buffer alignment error: offset {offset} not aligned to {required}"
+                )
             }
             Self::DeviceLost => write!(f, "GPU device was lost"),
             Self::OutOfMemory => write!(f, "GPU out of memory"),
@@ -103,7 +109,10 @@ impl GpuError {
     /// Check if this is a recoverable error
     #[must_use]
     pub fn is_recoverable(&self) -> bool {
-        !matches!(self, Self::NotAvailable | Self::DeviceLost | Self::OutOfMemory)
+        !matches!(
+            self,
+            Self::NotAvailable | Self::DeviceLost | Self::OutOfMemory
+        )
     }
 
     /// Check if this indicates GPU is unavailable

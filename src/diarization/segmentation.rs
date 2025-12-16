@@ -34,8 +34,8 @@ impl Default for SegmentationConfig {
             min_segment_duration: 0.3,
             energy_threshold: 0.01,
             zcr_threshold: 0.1,
-            frame_size: 400,  // 25ms at 16kHz
-            frame_hop: 160,   // 10ms at 16kHz
+            frame_size: 400, // 25ms at 16kHz
+            frame_hop: 160,  // 10ms at 16kHz
             smoothing_window: 5,
         }
     }
@@ -306,12 +306,12 @@ impl TurnDetector {
             let end = (start + self.config.frame_size).min(audio.len());
 
             let frame = &audio[start..end];
-            let crossings: usize = frame
+            let crossings: f32 = frame
                 .windows(2)
                 .filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0))
-                .count();
+                .count() as f32;
 
-            let rate = crossings as f32 / (end - start - 1).max(1) as f32;
+            let rate = crossings / (end - start - 1).max(1) as f32;
             zcr.push(rate);
         }
 
@@ -398,11 +398,7 @@ impl TurnDetector {
     }
 
     /// Detect potential speaker change points
-    pub fn detect_change_points(
-        &self,
-        audio: &[f32],
-        sample_rate: u32,
-    ) -> WhisperResult<Vec<f32>> {
+    pub fn detect_change_points(&self, audio: &[f32], sample_rate: u32) -> WhisperResult<Vec<f32>> {
         let energy = self.compute_energy(audio);
 
         if energy.len() < 10 {
@@ -619,9 +615,7 @@ mod tests {
         let detector = TurnDetector::new(SegmentationConfig::default());
 
         // Generate 1 second of sine wave (simulated speech)
-        let audio: Vec<f32> = (0..16000)
-            .map(|i| (i as f32 * 0.02).sin() * 0.5)
-            .collect();
+        let audio: Vec<f32> = (0..16000).map(|i| (i as f32 * 0.02).sin() * 0.5).collect();
 
         let result = detector.detect_segments(&audio, 16000);
         assert!(result.is_ok());
@@ -635,9 +629,7 @@ mod tests {
     fn test_turn_detector_compute_energy() {
         let detector = TurnDetector::new(SegmentationConfig::default());
 
-        let audio: Vec<f32> = (0..3200)
-            .map(|i| (i as f32 * 0.01).sin())
-            .collect();
+        let audio: Vec<f32> = (0..3200).map(|i| (i as f32 * 0.01).sin()).collect();
 
         let energy = detector.compute_energy(&audio);
         assert!(!energy.is_empty());
@@ -649,9 +641,7 @@ mod tests {
     fn test_turn_detector_compute_zcr() {
         let detector = TurnDetector::new(SegmentationConfig::default());
 
-        let audio: Vec<f32> = (0..3200)
-            .map(|i| (i as f32 * 0.1).sin())
-            .collect();
+        let audio: Vec<f32> = (0..3200).map(|i| (i as f32 * 0.1).sin()).collect();
 
         let zcr = detector.compute_zcr(&audio);
         assert!(!zcr.is_empty());
@@ -664,7 +654,9 @@ mod tests {
         let detector = TurnDetector::new(SegmentationConfig::default());
 
         // Noisy VAD with isolated spikes
-        let vad = vec![false, false, true, false, false, true, true, true, false, false];
+        let vad = vec![
+            false, false, true, false, false, true, true, true, false, false,
+        ];
 
         let smoothed = detector.smooth_vad(&vad);
         assert_eq!(smoothed.len(), vad.len());

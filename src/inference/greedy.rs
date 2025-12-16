@@ -123,7 +123,8 @@ impl GreedyDecoder {
         let mut tokens = initial_tokens.to_vec();
         let eot = special_tokens::EOT;
 
-        for _ in 0..self.max_tokens {
+        // Loop until we hit max_tokens total (not max_tokens NEW tokens)
+        while tokens.len() < self.max_tokens {
             // Get logits for next token
             let logits = logits_fn(&tokens)?;
 
@@ -420,13 +421,15 @@ mod tests {
             .decode(logits_fn, &[special_tokens::SOT])
             .expect("decode should succeed");
 
-        // Should have: SOT + 5 tokens = 6 tokens (respects max_tokens)
-        assert_eq!(result.len(), 6);
+        // max_tokens=5 means TOTAL tokens, not NEW tokens
+        // With 1 initial token (SOT), we generate 4 more = 5 total
+        assert_eq!(result.len(), 5);
     }
 
     #[test]
     fn test_decode_preserves_initial_tokens() {
-        let decoder = GreedyDecoder::new(2);
+        // Need max_tokens > initial.len() to allow generating at least one token
+        let decoder = GreedyDecoder::new(10);
         let eot = special_tokens::EOT;
 
         let logits_fn = |_tokens: &[u32]| -> WhisperResult<Vec<f32>> {
@@ -440,8 +443,151 @@ mod tests {
             .decode(logits_fn, &initial)
             .expect("decode should succeed");
 
+        // Initial tokens preserved, plus EOT generated
         assert_eq!(result[0], special_tokens::SOT);
         assert_eq!(result[1], special_tokens::LANG_BASE);
         assert_eq!(result[2], eot);
+    }
+
+    #[test]
+    fn test_decode_total_tokens_never_exceeds_max() {
+        // BUG: decode loop runs `for _ in 0..max_tokens` which generates
+        // up to max_tokens NEW tokens, ignoring initial_tokens length.
+        // Total output can be initial_tokens.len() + max_tokens, exceeding limit.
+        //
+        // This test exposes the bug: with 5 initial tokens and max_tokens=10,
+        // we should get at most 10 total tokens, not 15.
+        let decoder = GreedyDecoder::new(10);
+
+        // Mock logits that never returns EOT
+        let logits_fn = |_tokens: &[u32]| -> WhisperResult<Vec<f32>> {
+            let mut logits = vec![0.0_f32; 51865];
+            logits[100] = 10.0; // Always pick token 100
+            Ok(logits)
+        };
+
+        // Start with 5 initial tokens
+        let initial = vec![1, 2, 3, 4, 5];
+        let result = decoder
+            .decode(logits_fn, &initial)
+            .expect("decode should succeed");
+
+        // INVARIANT: total tokens must never exceed max_tokens
+        // Currently this fails: we get 5 + 10 = 15 tokens
+        assert!(
+            result.len() <= decoder.max_tokens(),
+            "total tokens {} exceeds max_tokens {}",
+            result.len(),
+            decoder.max_tokens()
+        );
+    }
+
+    // =========================================================================
+    // EXTREME TDD: O(n) Complexity Assertions
+    // =========================================================================
+
+    #[test]
+    fn test_greedy_decode_is_on_not_on2() {
+        // Performance test: decoding N tokens should take O(N) logits_fn calls
+        // O(n²) would indicate the KV cache fix failed
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let call_count = AtomicUsize::new(0);
+
+        let decoder = GreedyDecoder::new(50);
+        let eot = special_tokens::EOT;
+
+        let logits_fn = |tokens: &[u32]| -> WhisperResult<Vec<f32>> {
+            call_count.fetch_add(1, Ordering::SeqCst);
+            let mut logits = vec![-10.0_f32; 51865];
+            // Return EOT after 20 tokens
+            if tokens.len() >= 20 {
+                logits[eot as usize] = 10.0;
+            } else {
+                logits[100] = 10.0;
+            }
+            Ok(logits)
+        };
+
+        let result = decoder
+            .decode(logits_fn, &[special_tokens::SOT])
+            .expect("decode should succeed");
+
+        let calls = call_count.load(Ordering::SeqCst);
+        let tokens_generated = result.len() - 1; // minus initial SOT
+
+        // O(n) means calls == tokens_generated (exactly one call per token)
+        // Allow small overhead for edge cases
+        let max_allowed_calls = tokens_generated + 2;
+
+        assert!(
+            calls <= max_allowed_calls,
+            "O(n²) detected: {} calls for {} tokens (max allowed: {}). \
+             Greedy decoder should be O(n).",
+            calls,
+            tokens_generated,
+            max_allowed_calls
+        );
+    }
+
+    // =========================================================================
+    // EXTREME TDD: Property-Based Tests
+    // =========================================================================
+
+    #[test]
+    fn property_output_length_bounded_by_max_tokens() {
+        // Property: For any initial_tokens and max_tokens,
+        // output.len() <= max_tokens
+        for max_tokens in [5, 10, 20, 50, 100] {
+            for initial_len in [0, 1, 3, max_tokens / 2, max_tokens - 1, max_tokens] {
+                let decoder = GreedyDecoder::new(max_tokens);
+
+                let logits_fn = |_: &[u32]| -> WhisperResult<Vec<f32>> {
+                    let mut logits = vec![0.0_f32; 51865];
+                    logits[100] = 10.0;
+                    Ok(logits)
+                };
+
+                let initial: Vec<u32> = (0..initial_len).map(|i| i as u32).collect();
+                let result = decoder
+                    .decode(logits_fn, &initial)
+                    .expect("decode should succeed");
+
+                assert!(
+                    result.len() <= max_tokens,
+                    "Property violated: output.len()={} > max_tokens={} (initial_len={})",
+                    result.len(),
+                    max_tokens,
+                    initial_len
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn property_initial_tokens_preserved() {
+        // Property: output[0..initial.len()] == initial (prefix preserved)
+        let decoder = GreedyDecoder::new(100);
+        let eot = special_tokens::EOT;
+
+        for initial_len in [1, 3, 5, 10] {
+            let logits_fn = |_: &[u32]| -> WhisperResult<Vec<f32>> {
+                let mut logits = vec![0.0_f32; 51865];
+                logits[eot as usize] = 10.0;
+                Ok(logits)
+            };
+
+            let initial: Vec<u32> = (100..100 + initial_len).collect();
+            let result = decoder
+                .decode(logits_fn, &initial)
+                .expect("decode should succeed");
+
+            assert_eq!(
+                &result[..initial.len()],
+                &initial[..],
+                "Property violated: initial tokens not preserved (initial_len={})",
+                initial_len
+            );
+        }
     }
 }

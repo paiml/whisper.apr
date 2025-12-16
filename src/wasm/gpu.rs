@@ -24,8 +24,8 @@
 use wasm_bindgen::prelude::*;
 
 use crate::backend::{
-    BackendCapabilities, BackendSelection, BackendSelector, BackendType, MatMulOp, SelectorConfig,
-    SelectionStrategy,
+    BackendSelection, BackendSelector, BackendType, MatMulOp,
+    SelectionStrategy, SelectorConfig,
 };
 use crate::gpu::{detect_gpu, DetectionOptions, GpuBackend, GpuCapabilities, GpuLimits};
 
@@ -801,9 +801,7 @@ impl BackendSelectorWasm {
     /// Get the GPU performance score (if available)
     #[wasm_bindgen(js_name = gpuPerformanceScore)]
     pub fn gpu_performance_score(&self) -> Option<f32> {
-        self.inner
-            .gpu_capabilities()
-            .map(|c| c.performance_score)
+        self.inner.gpu_capabilities().map(|c| c.performance_score)
     }
 }
 
@@ -896,10 +894,7 @@ mod tests {
 
     #[test]
     fn test_gpu_backend_wasm_to_native() {
-        assert_eq!(
-            GpuBackend::from(GpuBackendWasm::Vulkan),
-            GpuBackend::Vulkan
-        );
+        assert_eq!(GpuBackend::from(GpuBackendWasm::Vulkan), GpuBackend::Vulkan);
         assert_eq!(GpuBackend::from(GpuBackendWasm::Metal), GpuBackend::Metal);
     }
 

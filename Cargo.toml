@@ -22,9 +22,10 @@ webgpu = ["wgpu"]
 simd = []
 parallel = ["rayon", "wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
-converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs"]
+converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs", "zip"]
 cli = ["clap", "serde", "serde_json", "tracing-subscriber"]
 benchmark-tui = ["ratatui", "crossterm"]
+tui = ["ratatui", "crossterm"]
 # Use realizar's world-class inference primitives (attention, quantization, caching)
 realizar-inference = ["dep:realizar"]
 
@@ -35,6 +36,9 @@ thiserror = "2"
 # SIMD acceleration (trueno integration)
 # TODO: Switch back to crates.io after publishing trueno 0.8.5
 trueno = { path = "../trueno" }
+
+# Model format (aprender is the canonical .apr format library)
+aprender = { path = "../aprender", default-features = false, features = ["safetensors-compare"] }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
@@ -72,6 +76,7 @@ tokio = { version = "1", features = ["full"], optional = true }
 indicatif = { version = "0.17", optional = true }
 safetensors = { version = "0.4", optional = true }
 dirs = { version = "5", optional = true }
+zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
 
 # Optional: CLI dependencies
 clap = { version = "4", features = ["derive"], optional = true }
@@ -159,6 +164,11 @@ path = "examples/benchmark_pipeline.rs"
 name = "benchmark_tui"
 path = "examples/benchmark_tui.rs"
 required-features = ["benchmark-tui"]
+
+[[example]]
+name = "tui_demo"
+path = "examples/tui_demo.rs"
+required-features = ["tui"]
 
 [[example]]
 name = "cli_usage"

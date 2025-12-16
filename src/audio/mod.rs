@@ -7,21 +7,23 @@ mod mel;
 mod resampler;
 mod ring_buffer;
 mod streaming;
+pub mod wav;
 
-pub use batch::{AudioBatch, BatchMelResult, BatchPreprocessor, split_into_chunks};
+pub use batch::{split_into_chunks, AudioBatch, BatchMelResult, BatchPreprocessor};
 pub use mel::MelFilterbank;
 pub use resampler::{Resampler, SincResampler};
 pub use ring_buffer::RingBuffer;
 pub use streaming::{
     LatencyMode, ProcessorState, ProcessorStats, StreamingConfig, StreamingEvent,
-    StreamingProcessor, DEFAULT_CHUNK_DURATION, DEFAULT_CHUNK_OVERLAP,
-    LOW_LATENCY_BUFFER_DURATION, LOW_LATENCY_CHUNK_DURATION, LOW_LATENCY_CHUNK_OVERLAP,
-    LOW_LATENCY_FRAME_SIZE_MS, LOW_LATENCY_MIN_SPEECH_MS, LOW_LATENCY_PARTIAL_THRESHOLD,
-    MIN_SPEECH_DURATION_MS,
+    StreamingProcessor, DEFAULT_CHUNK_DURATION, DEFAULT_CHUNK_OVERLAP, LOW_LATENCY_BUFFER_DURATION,
+    LOW_LATENCY_CHUNK_DURATION, LOW_LATENCY_CHUNK_OVERLAP, LOW_LATENCY_FRAME_SIZE_MS,
+    LOW_LATENCY_MIN_SPEECH_MS, LOW_LATENCY_PARTIAL_THRESHOLD, MIN_SPEECH_DURATION_MS,
 };
 
 // Re-export VAD types from root module for audio pipeline integration
-pub use crate::vad::{SpeechSegment, StreamingVad, VadConfig, VadEvent, VadState, VoiceActivityDetector};
+pub use crate::vad::{
+    SpeechSegment, StreamingVad, VadConfig, VadEvent, VadState, VoiceActivityDetector,
+};
 
 /// Default FFT size for Whisper (400 samples = 25ms at 16kHz)
 pub const N_FFT: usize = 400;

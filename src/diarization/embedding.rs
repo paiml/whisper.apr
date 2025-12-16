@@ -313,13 +313,11 @@ impl EmbeddingExtractor {
     fn extract_mfcc(&self, audio: &[f32]) -> WhisperResult<Vec<Vec<f32>>> {
         // Need at least one full frame for MFCC extraction
         if audio.len() < FRAME_LENGTH {
-            return Err(WhisperError::Diarization(
-                format!(
-                    "Audio too short for MFCC extraction: {} samples, need at least {}",
-                    audio.len(),
-                    FRAME_LENGTH
-                ),
-            ));
+            return Err(WhisperError::Diarization(format!(
+                "Audio too short for MFCC extraction: {} samples, need at least {}",
+                audio.len(),
+                FRAME_LENGTH
+            )));
         }
 
         let num_frames = (audio.len() - FRAME_LENGTH) / FRAME_SHIFT + 1;
@@ -335,7 +333,10 @@ impl EmbeddingExtractor {
                 .iter()
                 .enumerate()
                 .map(|(i, &s)| {
-                    let window = 0.46f32.mul_add(-(2.0 * std::f32::consts::PI * i as f32 / (FRAME_LENGTH - 1) as f32).cos(), 0.54);
+                    let window = 0.46f32.mul_add(
+                        -(2.0 * std::f32::consts::PI * i as f32 / (FRAME_LENGTH - 1) as f32).cos(),
+                        0.54,
+                    );
                     s * window
                 })
                 .collect();
@@ -350,10 +351,7 @@ impl EmbeddingExtractor {
             let mel_spectrum = self.apply_mel_filterbank(&power_spectrum);
 
             // Apply log
-            let log_mel: Vec<f32> = mel_spectrum
-                .iter()
-                .map(|&x| (x.max(1e-10)).ln())
-                .collect();
+            let log_mel: Vec<f32> = mel_spectrum.iter().map(|&x| (x.max(1e-10)).ln()).collect();
 
             // Apply DCT to get MFCC
             let mfcc = self.apply_dct(&log_mel);
@@ -406,12 +404,7 @@ impl EmbeddingExtractor {
     fn apply_dct(&self, log_mel: &[f32]) -> Vec<f32> {
         self.dct_matrix
             .iter()
-            .map(|row| {
-                row.iter()
-                    .zip(log_mel.iter())
-                    .map(|(&d, &m)| d * m)
-                    .sum()
-            })
+            .map(|row| row.iter().zip(log_mel.iter()).map(|(&d, &m)| d * m).sum())
             .collect()
     }
 
@@ -526,7 +519,11 @@ impl EmbeddingExtractor {
     }
 
     /// Compute mel filterbank
-    fn compute_mel_filterbank(num_filters: usize, fft_size: usize, sample_rate: u32) -> Vec<Vec<f32>> {
+    fn compute_mel_filterbank(
+        num_filters: usize,
+        fft_size: usize,
+        sample_rate: u32,
+    ) -> Vec<Vec<f32>> {
         let low_freq = 0.0;
         let high_freq = sample_rate as f32 / 2.0;
 
@@ -687,7 +684,12 @@ mod tests {
         let emb = SpeakerEmbedding::new(vec![3.0, 4.0], 0);
         let normalized = emb.normalized();
 
-        let norm: f32 = normalized.vector().iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm: f32 = normalized
+            .vector()
+            .iter()
+            .map(|x| x * x)
+            .sum::<f32>()
+            .sqrt();
         assert!((norm - 1.0).abs() < 0.001);
     }
 
@@ -734,8 +736,8 @@ mod tests {
 
     #[test]
     fn test_embedding_extractor_with_model() {
-        let extractor =
-            EmbeddingExtractor::new(EmbeddingConfig::default()).with_model(SpeakerEmbeddingModel::XVector);
+        let extractor = EmbeddingExtractor::new(EmbeddingConfig::default())
+            .with_model(SpeakerEmbeddingModel::XVector);
         // Model is set (internal state)
         assert!(extractor.config().normalize);
     }
@@ -759,9 +761,7 @@ mod tests {
     fn test_embedding_extractor_extract_valid_audio() {
         let extractor = EmbeddingExtractor::new(EmbeddingConfig::default());
         // Generate 1 second of audio at 16kHz
-        let audio: Vec<f32> = (0..16000)
-            .map(|i| (i as f32 * 0.01).sin() * 0.5)
-            .collect();
+        let audio: Vec<f32> = (0..16000).map(|i| (i as f32 * 0.01).sin() * 0.5).collect();
 
         let result = extractor.extract(&audio, 16000);
         assert!(result.is_ok());
@@ -775,9 +775,7 @@ mod tests {
         let config = EmbeddingConfig::default();
         let extractor = EmbeddingExtractor::new(config);
 
-        let audio: Vec<f32> = (0..16000)
-            .map(|i| (i as f32 * 0.01).sin() * 0.5)
-            .collect();
+        let audio: Vec<f32> = (0..16000).map(|i| (i as f32 * 0.01).sin() * 0.5).collect();
 
         let embedding = extractor.extract(&audio, 16000).expect("should succeed");
         let norm: f32 = embedding.vector().iter().map(|x| x * x).sum::<f32>().sqrt();

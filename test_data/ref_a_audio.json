@@ -1,0 +1,17 @@
+{
+  "name": "step_a_audio",
+  "shape": [
+    24000
+  ],
+  "dtype": "float32",
+  "min": -0.198333740234375,
+  "max": 0.2979736328125,
+  "mean": 0.00017776997992768884,
+  "std": 0.06962854415178299,
+  "nonzero": 23980,
+  "file": "golden_traces/step_a_audio.bin",
+  "source": "demos/test-audio/test-speech-1.5s.wav",
+  "sample_rate": 16000,
+  "channels": 1,
+  "duration_sec": 1.5
+}

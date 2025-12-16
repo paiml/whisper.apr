@@ -242,7 +242,7 @@ impl GpuSoftmax {
         format!(
             r"// Softmax shader ({log}softmax along {dim})
 // Rows: {rows}, Cols: {cols}
-// Temperature: {temp}
+// Softmax temperature scaling: {temperature_val}
 
 struct Params {{
     rows: u32,
@@ -325,7 +325,7 @@ fn main(
             dim = self.config.dimension.axis_description(),
             rows = self.config.rows,
             cols = self.config.cols,
-            temp = temperature,
+            temperature_val = temperature,
             wg_size = workgroup_size,
             output_expr = if is_log {
                 "output[row_offset + i] = val - shared_max - log(shared_sum);"
@@ -435,8 +435,14 @@ mod tests {
         assert!(SoftmaxConfig::new(16, 64).validate().is_ok());
         assert!(SoftmaxConfig::new(0, 64).validate().is_err());
         assert!(SoftmaxConfig::new(16, 0).validate().is_err());
-        assert!(SoftmaxConfig::new(16, 64).with_temperature(0.0).validate().is_err());
-        assert!(SoftmaxConfig::new(16, 64).with_workgroup_size(100).validate().is_err());
+        assert!(SoftmaxConfig::new(16, 64)
+            .with_temperature(0.0)
+            .validate()
+            .is_err());
+        assert!(SoftmaxConfig::new(16, 64)
+            .with_workgroup_size(100)
+            .validate()
+            .is_err());
     }
 
     #[test]
@@ -450,8 +456,17 @@ mod tests {
         let config = SoftmaxConfig::new(16, 64);
 
         assert_eq!(config.reduction_size(), 64); // Row
-        assert_eq!(config.clone().along(SoftmaxDimension::Column).reduction_size(), 16);
-        assert_eq!(config.clone().along(SoftmaxDimension::All).reduction_size(), 16 * 64);
+        assert_eq!(
+            config
+                .clone()
+                .along(SoftmaxDimension::Column)
+                .reduction_size(),
+            16
+        );
+        assert_eq!(
+            config.clone().along(SoftmaxDimension::All).reduction_size(),
+            16 * 64
+        );
     }
 
     #[test]
@@ -459,14 +474,22 @@ mod tests {
         let config = SoftmaxConfig::new(16, 64);
 
         assert_eq!(config.num_reductions(), 16); // Row: one per row
-        assert_eq!(config.clone().along(SoftmaxDimension::Column).num_reductions(), 64);
-        assert_eq!(config.clone().along(SoftmaxDimension::All).num_reductions(), 1);
+        assert_eq!(
+            config
+                .clone()
+                .along(SoftmaxDimension::Column)
+                .num_reductions(),
+            64
+        );
+        assert_eq!(
+            config.clone().along(SoftmaxDimension::All).num_reductions(),
+            1
+        );
     }
 
     #[test]
     fn test_gpu_softmax_new() {
-        let softmax = GpuSoftmax::new(SoftmaxConfig::new(16, 64))
-            .expect("Should create softmax");
+        let softmax = GpuSoftmax::new(SoftmaxConfig::new(16, 64)).expect("Should create softmax");
         assert!(softmax.id() > 0);
         assert!(!softmax.is_executed());
     }
@@ -480,16 +503,14 @@ mod tests {
 
     #[test]
     fn test_gpu_softmax_memory_requirement() {
-        let softmax = GpuSoftmax::new(SoftmaxConfig::new(16, 64))
-            .expect("Should create");
+        let softmax = GpuSoftmax::new(SoftmaxConfig::new(16, 64)).expect("Should create");
         // 16 * 64 * 4 bytes * 2 (input + output)
         assert_eq!(softmax.memory_requirement(), 16 * 64 * 4 * 2);
     }
 
     #[test]
     fn test_gpu_softmax_workgroups() {
-        let softmax = GpuSoftmax::new(SoftmaxConfig::new(16, 64))
-            .expect("Should create");
+        let softmax = GpuSoftmax::new(SoftmaxConfig::new(16, 64)).expect("Should create");
         let (x, y, z) = softmax.workgroups();
         assert_eq!(x, 16); // One per row
         assert_eq!(y, 1);
@@ -498,8 +519,7 @@ mod tests {
 
     #[test]
     fn test_gpu_softmax_generate_shader() {
-        let softmax = GpuSoftmax::new(SoftmaxConfig::new(16, 64))
-            .expect("Should create");
+        let softmax = GpuSoftmax::new(SoftmaxConfig::new(16, 64)).expect("Should create");
         let shader = softmax.generate_shader();
 
         assert!(shader.contains("@compute"));
@@ -510,9 +530,8 @@ mod tests {
 
     #[test]
     fn test_gpu_softmax_log_softmax_shader() {
-        let softmax = GpuSoftmax::new(
-            SoftmaxConfig::new(16, 64).log_softmax()
-        ).expect("Should create");
+        let softmax =
+            GpuSoftmax::new(SoftmaxConfig::new(16, 64).log_softmax()).expect("Should create");
         let shader = softmax.generate_shader();
 
         assert!(shader.contains("log-softmax"));

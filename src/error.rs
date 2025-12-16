@@ -73,6 +73,9 @@ mod tests {
     #[test]
     fn test_diarization_error_display() {
         let err = WhisperError::Diarization("speaker identification failed".into());
-        assert_eq!(err.to_string(), "diarization error: speaker identification failed");
+        assert_eq!(
+            err.to_string(),
+            "diarization error: speaker identification failed"
+        );
     }
 }

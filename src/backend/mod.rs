@@ -19,7 +19,7 @@
 mod selector;
 mod traits;
 
-pub use selector::{BackendSelection, BackendSelector, SelectorConfig, SelectionStrategy};
+pub use selector::{BackendSelection, BackendSelector, SelectionStrategy, SelectorConfig};
 pub use traits::{
     BackendCapabilities, BackendType, ComputeOp, GeluOp, LayerNormOp, MatMulOp, SoftmaxOp,
 };

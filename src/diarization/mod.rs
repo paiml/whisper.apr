@@ -31,12 +31,8 @@ pub mod segmentation;
 pub use clustering::{
     ClusteringAlgorithm, ClusteringConfig, ClusteringResult, SpeakerCluster, SpectralClustering,
 };
-pub use embedding::{
-    EmbeddingConfig, EmbeddingExtractor, SpeakerEmbedding, SpeakerEmbeddingModel,
-};
-pub use segmentation::{
-    SegmentationConfig, SpeakerSegment, SpeakerTurn, TurnDetector,
-};
+pub use embedding::{EmbeddingConfig, EmbeddingExtractor, SpeakerEmbedding, SpeakerEmbeddingModel};
+pub use segmentation::{SegmentationConfig, SpeakerSegment, SpeakerTurn, TurnDetector};
 
 use crate::error::{WhisperError, WhisperResult};
 
@@ -254,8 +250,7 @@ impl Diarizer {
         let clustering_result = self.cluster_speakers(&embeddings)?;
 
         // Step 4: Assign speaker labels to segments
-        let labeled_segments =
-            self.assign_speaker_labels(&initial_segments, &clustering_result)?;
+        let labeled_segments = self.assign_speaker_labels(&initial_segments, &clustering_result)?;
 
         // Step 5: Merge consecutive segments from same speaker
         let merged_segments = self.merge_segments(labeled_segments);
@@ -310,7 +305,11 @@ impl Diarizer {
             }
         };
 
-        algorithm.cluster(embeddings, self.config.max_speakers, self.config.min_speakers)
+        algorithm.cluster(
+            embeddings,
+            self.config.max_speakers,
+            self.config.min_speakers,
+        )
     }
 
     /// Assign speaker labels to segments based on clustering
