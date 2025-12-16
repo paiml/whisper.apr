@@ -186,9 +186,14 @@ fn handle_transcribe(obj: &js_sys::Object) {
     let audio_duration = audio.len() as f64 / 16000.0;
     let start_time = js_sys::Date::now();
 
+    // Post acknowledgment immediately to confirm message received
+    post_processing_started(chunk_id, audio.len());
+
     WORKER_MODEL.with(|model_cell| {
         let model = model_cell.borrow();
         if let Some(model) = model.as_ref() {
+            info!(chunk_id, audio_len = audio.len(), "Starting transcription");
+
             // Build transcription options with context
             let options = TranscribeOptions::default();
 
@@ -201,6 +206,44 @@ fn handle_transcribe(obj: &js_sys::Object) {
                 // Note: TranscribeOptions may need to support prompt_tokens
                 // For now we use default options
             }
+
+            info!(chunk_id, "Calling model.transcribe()...");
+
+            // Diagnostic: time each stage
+            let t0 = js_sys::Date::now();
+
+            // Stage 1: Mel spectrogram
+            let mel = match model.compute_mel(&audio) {
+                Ok(m) => {
+                    let t1 = js_sys::Date::now();
+                    info!(chunk_id, mel_len = m.len(), mel_time_ms = t1 - t0, "Mel computed");
+                    m
+                }
+                Err(e) => {
+                    error!(chunk_id, error = %e, "Mel computation failed");
+                    post_error(&format!("Mel failed: {e:?}"), Some(chunk_id));
+                    return;
+                }
+            };
+
+            // Stage 2: Encode
+            let t1 = js_sys::Date::now();
+            let encoded = match model.encode(&mel) {
+                Ok(e) => {
+                    let t2 = js_sys::Date::now();
+                    info!(chunk_id, encoded_len = e.len(), encode_time_ms = t2 - t1, "Encoded");
+                    e
+                }
+                Err(e) => {
+                    error!(chunk_id, error = %e, "Encode failed");
+                    post_error(&format!("Encode failed: {e:?}"), Some(chunk_id));
+                    return;
+                }
+            };
+
+            // Log that we're about to decode (this is likely where it hangs)
+            let t2 = js_sys::Date::now();
+            info!(chunk_id, encoded_features = encoded.len(), "Starting decode...");
 
             match model.transcribe(&audio, options) {
                 Ok(result) => {
@@ -326,6 +369,16 @@ fn post_model_loaded(size_mb: f64, load_time_ms: f64) {
         &"data".into(),
         &format!("Loaded {size_mb:.2}MB in {load_time_ms:.0}ms").into(),
     );
+    let _ = global.post_message(&obj);
+}
+
+/// Post acknowledgment that processing has started (for diagnostic purposes)
+fn post_processing_started(chunk_id: u32, audio_samples: usize) {
+    let global = js_sys::global().unchecked_into::<DedicatedWorkerGlobalScope>();
+    let obj = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&obj, &"type".into(), &"processing_started".into());
+    let _ = js_sys::Reflect::set(&obj, &"chunk_id".into(), &JsValue::from(chunk_id));
+    let _ = js_sys::Reflect::set(&obj, &"audio_samples".into(), &JsValue::from(audio_samples as f64));
     let _ = global.post_message(&obj);
 }
 

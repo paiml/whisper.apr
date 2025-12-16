@@ -29,6 +29,94 @@ pub const TIMESTAMP_RESOLUTION: f32 = 0.02;
 /// Maximum number of timestamp tokens (30s / 20ms = 1500)
 pub const MAX_TIMESTAMP_TOKENS: u32 = 1500;
 
+/// Segment extraction state
+struct SegmentExtractor {
+    segments: Vec<Segment>,
+    current_start: Option<f32>,
+    current_tokens: Vec<u32>,
+}
+
+impl SegmentExtractor {
+    fn new() -> Self {
+        Self {
+            segments: Vec::new(),
+            current_start: None,
+            current_tokens: Vec::new(),
+        }
+    }
+
+    /// Try to finalize current segment and push to results
+    fn try_finalize_segment<F>(&mut self, end_time: f32, tokenizer_decode: &mut F)
+    where
+        F: FnMut(&[u32]) -> Option<String>,
+    {
+        let Some(start) = self.current_start else {
+            return;
+        };
+
+        if let Some(segment) = self.create_segment(start, end_time, tokenizer_decode) {
+            self.segments.push(segment);
+        }
+        self.current_tokens.clear();
+    }
+
+    /// Create a segment from current tokens if valid
+    fn create_segment<F>(&self, start: f32, end: f32, tokenizer_decode: &mut F) -> Option<Segment>
+    where
+        F: FnMut(&[u32]) -> Option<String>,
+    {
+        if self.current_tokens.is_empty() {
+            return None;
+        }
+
+        let text = tokenizer_decode(&self.current_tokens)?;
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            return None;
+        }
+
+        Some(Segment {
+            start,
+            end,
+            text,
+            tokens: self.current_tokens.clone(),
+        })
+    }
+
+    /// Handle a timestamp token
+    fn handle_timestamp<F>(&mut self, time: f32, tokenizer_decode: &mut F)
+    where
+        F: FnMut(&[u32]) -> Option<String>,
+    {
+        if self.current_start.is_some() {
+            self.try_finalize_segment(time, tokenizer_decode);
+        }
+        self.current_start = Some(time);
+    }
+
+    /// Handle trailing tokens without end timestamp
+    fn finalize_remaining<F>(&mut self, tokenizer_decode: &mut F)
+    where
+        F: FnMut(&[u32]) -> Option<String>,
+    {
+        let Some(start) = self.current_start else {
+            return;
+        };
+
+        if self.current_tokens.is_empty() {
+            return;
+        }
+
+        // Estimate end time based on token count (~60ms per token)
+        let estimated_duration = (self.current_tokens.len() as f32) * 0.06;
+        let end = start + estimated_duration;
+
+        if let Some(segment) = self.create_segment(start, end, tokenizer_decode) {
+            self.segments.push(segment);
+        }
+    }
+}
+
 /// Extract segments with timestamps from token sequence
 ///
 /// # Arguments
@@ -41,69 +129,23 @@ pub fn extract_segments<F>(tokens: &[u32], mut tokenizer_decode: F) -> Vec<Segme
 where
     F: FnMut(&[u32]) -> Option<String>,
 {
-    let mut segments = Vec::new();
-    let mut current_start: Option<f32> = None;
-    let mut current_tokens: Vec<u32> = Vec::new();
+    let mut extractor = SegmentExtractor::new();
 
     for &token in tokens {
-        // Skip special control tokens
         if is_control_token(token) {
             continue;
         }
 
         if special_tokens::is_timestamp(token) {
             let time = special_tokens::timestamp_to_seconds(token).unwrap_or(0.0);
-
-            match current_start {
-                None => {
-                    // First timestamp marks segment start
-                    current_start = Some(time);
-                }
-                Some(start) => {
-                    // Second timestamp marks segment end
-                    if !current_tokens.is_empty() {
-                        if let Some(text) = tokenizer_decode(&current_tokens) {
-                            let text = text.trim().to_string();
-                            if !text.is_empty() {
-                                segments.push(Segment {
-                                    start,
-                                    end: time,
-                                    text,
-                                    tokens: current_tokens.clone(),
-                                });
-                            }
-                        }
-                    }
-                    current_tokens.clear();
-                    current_start = Some(time);
-                }
-            }
+            extractor.handle_timestamp(time, &mut tokenizer_decode);
         } else {
-            // Regular text token
-            current_tokens.push(token);
+            extractor.current_tokens.push(token);
         }
     }
 
-    // Handle any remaining tokens without end timestamp
-    if let Some(start) = current_start {
-        if !current_tokens.is_empty() {
-            if let Some(text) = tokenizer_decode(&current_tokens) {
-                let text = text.trim().to_string();
-                if !text.is_empty() {
-                    // Estimate end time based on token count (rough heuristic)
-                    let estimated_duration = (current_tokens.len() as f32) * 0.06; // ~60ms per token
-                    segments.push(Segment {
-                        start,
-                        end: start + estimated_duration,
-                        text,
-                        tokens: current_tokens,
-                    });
-                }
-            }
-        }
-    }
-
-    segments
+    extractor.finalize_remaining(&mut tokenizer_decode);
+    extractor.segments
 }
 
 /// Check if a token is a control token (SOT, EOT, LANG, TASK, etc.)

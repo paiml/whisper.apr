@@ -183,7 +183,7 @@ impl StreamingConfig {
             enable_vad: true,
             vad_threshold: 0.5,
             min_speech_duration_ms: 50, // 50ms
-            buffer_duration: 2.0, // 2 seconds
+            buffer_duration: 2.0,       // 2 seconds
             latency_mode: LatencyMode::UltraLow,
         }
     }
@@ -235,7 +235,10 @@ impl StreamingConfig {
     /// Check if this is a low-latency configuration
     #[must_use]
     pub const fn is_low_latency(&self) -> bool {
-        matches!(self.latency_mode, LatencyMode::LowLatency | LatencyMode::UltraLow)
+        matches!(
+            self.latency_mode,
+            LatencyMode::LowLatency | LatencyMode::UltraLow
+        )
     }
 
     /// Enable VAD (Voice Activity Detection)
@@ -602,8 +605,7 @@ impl StreamingProcessor {
     ///
     /// Controls how much audio must accumulate before a partial result is triggered.
     pub fn set_partial_threshold(&mut self, seconds: f32) {
-        self.partial_threshold_samples =
-            (seconds * self.config.output_sample_rate as f32) as usize;
+        self.partial_threshold_samples = (seconds * self.config.output_sample_rate as f32) as usize;
     }
 
     /// Get the partial result threshold in seconds
@@ -620,7 +622,9 @@ impl StreamingProcessor {
     ///
     /// Call this when you begin transcribing a chunk
     pub fn mark_processing_started(&mut self) {
-        if self.state == ProcessorState::ChunkReady || self.state == ProcessorState::PartialResultReady {
+        if self.state == ProcessorState::ChunkReady
+            || self.state == ProcessorState::PartialResultReady
+        {
             self.prev_state = self.state;
             self.state = ProcessorState::Processing;
             self.events.push(StreamingEvent::ProcessingStarted);
@@ -767,8 +771,11 @@ impl StreamingProcessor {
                 // Check if chunk is complete
                 if self.chunk_buffer.len() >= self.config.chunk_samples() {
                     self.state = ProcessorState::ChunkReady;
-                    let duration = self.chunk_buffer.len() as f32 / self.config.output_sample_rate as f32;
-                    self.emit_event(StreamingEvent::ChunkReady { duration_secs: duration });
+                    let duration =
+                        self.chunk_buffer.len() as f32 / self.config.output_sample_rate as f32;
+                    self.emit_event(StreamingEvent::ChunkReady {
+                        duration_secs: duration,
+                    });
                 }
                 // Or if we hit extended silence (end of utterance)
                 else if !is_speech && self.silence_frames >= self.max_silence_frames() {
@@ -778,8 +785,11 @@ impl StreamingProcessor {
                     // Partial chunk is ready
                     if self.chunk_buffer.len() >= self.config.overlap_samples() * 2 {
                         self.state = ProcessorState::ChunkReady;
-                        let duration = self.chunk_buffer.len() as f32 / self.config.output_sample_rate as f32;
-                        self.emit_event(StreamingEvent::ChunkReady { duration_secs: duration });
+                        let duration =
+                            self.chunk_buffer.len() as f32 / self.config.output_sample_rate as f32;
+                        self.emit_event(StreamingEvent::ChunkReady {
+                            duration_secs: duration,
+                        });
                     } else {
                         // Too short, discard and wait for more speech
                         self.state = ProcessorState::WaitingForSpeech;
@@ -795,13 +805,14 @@ impl StreamingProcessor {
                 // Check if full chunk is now ready
                 if self.chunk_buffer.len() >= self.config.chunk_samples() {
                     self.state = ProcessorState::ChunkReady;
-                    let duration = self.chunk_buffer.len() as f32 / self.config.output_sample_rate as f32;
-                    self.emit_event(StreamingEvent::ChunkReady { duration_secs: duration });
+                    let duration =
+                        self.chunk_buffer.len() as f32 / self.config.output_sample_rate as f32;
+                    self.emit_event(StreamingEvent::ChunkReady {
+                        duration_secs: duration,
+                    });
                 }
             }
-            ProcessorState::ChunkReady
-            | ProcessorState::Processing
-            | ProcessorState::Error => {
+            ProcessorState::ChunkReady | ProcessorState::Processing | ProcessorState::Error => {
                 // Waiting for chunk to be consumed / processing to complete / error recovery
             }
         }
@@ -820,7 +831,7 @@ impl StreamingProcessor {
     /// Get maximum silence frames before ending chunk
     fn max_silence_frames(&self) -> u32 {
         let _ = self; // Used for consistency with min_speech_frames
-        // 1 second of silence
+                      // 1 second of silence
         let frame_duration_ms = 30;
         1000 / frame_duration_ms
     }
@@ -1518,7 +1529,9 @@ mod tests {
             accumulated_samples: 48000,
             duration_secs: 3.0,
         };
-        let chunk_ready = StreamingEvent::ChunkReady { duration_secs: 30.0 };
+        let chunk_ready = StreamingEvent::ChunkReady {
+            duration_secs: 30.0,
+        };
         let processing_started = StreamingEvent::ProcessingStarted;
         let processing_completed = StreamingEvent::ProcessingCompleted;
         let error = StreamingEvent::Error("test error".to_string());
@@ -1551,7 +1564,10 @@ mod tests {
         assert!(format!("{error:?}").contains("Error"));
 
         // Test equality
-        assert_ne!(ProcessorState::PartialResultReady, ProcessorState::Processing);
+        assert_ne!(
+            ProcessorState::PartialResultReady,
+            ProcessorState::Processing
+        );
         assert_ne!(ProcessorState::Processing, ProcessorState::Error);
     }
 
@@ -1789,7 +1805,9 @@ mod tests {
         // Should have SpeechEnd then ChunkReady events
         let events = processor.drain_events();
         assert!(events.iter().any(|e| *e == StreamingEvent::SpeechEnd));
-        assert!(events.iter().any(|e| matches!(e, StreamingEvent::ChunkReady { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamingEvent::ChunkReady { .. })));
     }
 
     #[test]
@@ -1832,7 +1850,9 @@ mod tests {
 
         // Should have emitted PartialReady event
         let events = processor.drain_events();
-        assert!(events.iter().any(|e| matches!(e, StreamingEvent::PartialReady { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamingEvent::PartialReady { .. })));
     }
 
     #[test]
@@ -2126,8 +2146,8 @@ mod tests {
         let config = StreamingConfig {
             input_sample_rate: 16000,
             output_sample_rate: 16000,
-            chunk_duration: 0.02,  // 320 samples
-            chunk_overlap: 0.005, // 80 samples overlap
+            chunk_duration: 0.02,      // 320 samples
+            chunk_overlap: 0.005,      // 80 samples overlap
             min_speech_duration_ms: 0, // Immediate transition
             ..Default::default()
         };

@@ -1,0 +1,57 @@
+{
+  "audio_path": "demos/test-audio/test-speech-1.5s.wav",
+  "whisper_cpp_model": "../whisper.cpp/models/ggml-tiny.bin",
+  "steps": {
+    "step_a_audio": {
+      "name": "step_a_audio",
+      "shape": [
+        24000
+      ],
+      "dtype": "float32",
+      "min": -0.198333740234375,
+      "max": 0.2979736328125,
+      "mean": 0.00017776997992768884,
+      "std": 0.06962854415178299,
+      "nonzero": 23980,
+      "file": "golden_traces/step_a_audio.bin",
+      "source": "demos/test-audio/test-speech-1.5s.wav",
+      "sample_rate": 16000,
+      "channels": 1,
+      "duration_sec": 1.5
+    },
+    "step_b_filterbank": {
+      "name": "step_b_filterbank",
+      "shape": [
+        80,
+        201
+      ],
+      "dtype": "float32",
+      "min": 0.0,
+      "max": 0.025880683213472366,
+      "mean": 0.0001243174192495644,
+      "std": 0.0011410751612856984,
+      "nonzero": 391,
+      "file": "golden_traces/step_b_filterbank.bin",
+      "source": "whisper.cpp ggml-tiny.bin",
+      "n_mels": 80,
+      "n_freqs": 201
+    },
+    "step_c_mel_numpy": {
+      "name": "step_c_mel_numpy",
+      "shape": [
+        148,
+        80
+      ],
+      "dtype": "float32",
+      "min": -0.7658332586288452,
+      "max": 1.2341667413711548,
+      "mean": -0.21480512619018555,
+      "std": 0.4479222297668457,
+      "nonzero": 11840,
+      "file": "golden_traces/step_c_mel_numpy.bin",
+      "method": "numpy",
+      "n_frames": 148,
+      "n_mels": 80
+    }
+  }
+}

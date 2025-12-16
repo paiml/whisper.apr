@@ -1,0 +1,120 @@
+# Accessibility Testing Configuration for Whisper.apr
+# WCAG 2.1 AA Compliance Testing
+
+version: "1.0"
+name: whisper-apr-accessibility
+
+wcag_level: AA
+
+aria_assertions:
+  - selector: "#start-recording"
+    required_attributes:
+      - aria-label
+      - aria-pressed
+    role: button
+
+  - selector: "#stop-recording"
+    required_attributes:
+      - aria-label
+      - aria-pressed
+    role: button
+
+  - selector: "#transcription-output"
+    required_attributes:
+      - aria-live
+      - aria-atomic
+    role: region
+
+  - selector: "#language-selector"
+    required_attributes:
+      - aria-label
+      - aria-expanded
+    role: combobox
+
+  - selector: "#model-loading-progress"
+    required_attributes:
+      - aria-valuenow
+      - aria-valuemin
+      - aria-valuemax
+    role: progressbar
+
+color_contrast:
+  minimum_ratio: 4.5
+  large_text_ratio: 3.0
+  checks:
+    - selector: "body"
+      foreground: "#1a1a1a"
+      background: "#ffffff"
+      expected_ratio: 16.1
+
+    - selector: ".error-message"
+      foreground: "#dc2626"
+      background: "#ffffff"
+      expected_ratio: 4.53
+
+    - selector: ".transcription-text"
+      foreground: "#374151"
+      background: "#f9fafb"
+      expected_ratio: 7.2
+
+keyboard_navigation:
+  tab_order:
+    - "#language-selector"
+    - "#model-selector"
+    - "#start-recording"
+    - "#stop-recording"
+    - "#transcription-output"
+    - "#download-button"
+
+  shortcuts:
+    - key: "Space"
+      action: "toggle_recording"
+      context: "#start-recording:focus"
+
+    - key: "Escape"
+      action: "stop_recording"
+      context: "recording_state"
+
+focus_indicators:
+  visible: true
+  min_contrast: 3.0
+  style: "outline"
+  checks:
+    - selector: "button"
+      focus_visible: true
+    - selector: "select"
+      focus_visible: true
+    - selector: "a"
+      focus_visible: true
+
+screen_reader:
+  announcements:
+    - trigger: "recording_started"
+      message: "Recording started"
+      priority: "polite"
+
+    - trigger: "recording_stopped"
+      message: "Recording stopped"
+      priority: "polite"
+
+    - trigger: "transcription_chunk"
+      message: "New transcription available"
+      priority: "polite"
+
+    - trigger: "error"
+      message: "Error occurred"
+      priority: "assertive"
+
+  reading_order:
+    - "#page-title"
+    - "#instructions"
+    - "#controls"
+    - "#transcription-output"
+    - "#footer"
+
+motion_preferences:
+  respect_reduced_motion: true
+  animations:
+    - name: "loading-spinner"
+      duration_ms: 1000
+      reduced_alternative: "static-icon"

@@ -1,0 +1,17 @@
+{
+  "name": "step_c_mel_numpy",
+  "shape": [
+    148,
+    80
+  ],
+  "dtype": "float32",
+  "min": -0.7658332586288452,
+  "max": 1.2341667413711548,
+  "mean": -0.21480512619018555,
+  "std": 0.4479222297668457,
+  "nonzero": 11840,
+  "file": "golden_traces/step_c_mel_numpy.bin",
+  "method": "numpy",
+  "n_frames": 148,
+  "n_mels": 80
+}

@@ -1,0 +1,128 @@
+{
+  "version": "1.0",
+  "timestamp": "2024-12-14T17:30:00Z",
+  "browser": "chromium",
+  "duration_ms": 4523,
+  "tests": {
+    "total": 12,
+    "passed": 12,
+    "failed": 0,
+    "skipped": 0
+  },
+  "results": [
+    {
+      "name": "realtime-transcription/bootstrap",
+      "status": "passed",
+      "duration_ms": 1245,
+      "assertions": [
+        {"type": "wasm_init", "passed": true},
+        {"type": "worker_ready", "passed": true},
+        {"type": "model_loaded", "passed": true}
+      ]
+    },
+    {
+      "name": "realtime-transcription/happy-path",
+      "status": "passed",
+      "duration_ms": 2156,
+      "assertions": [
+        {"type": "state_transition", "from": "idle", "to": "recording", "passed": true},
+        {"type": "state_transition", "from": "recording", "to": "processing", "passed": true},
+        {"type": "transcription_output", "passed": true}
+      ]
+    },
+    {
+      "name": "realtime-transcription/error-microphone-denied",
+      "status": "passed",
+      "duration_ms": 523,
+      "assertions": [
+        {"type": "error_state_reached", "passed": true},
+        {"type": "error_message_displayed", "passed": true}
+      ]
+    },
+    {
+      "name": "upload-transcription/bootstrap",
+      "status": "passed",
+      "duration_ms": 987,
+      "assertions": [
+        {"type": "wasm_init", "passed": true},
+        {"type": "file_input_ready", "passed": true}
+      ]
+    },
+    {
+      "name": "upload-transcription/happy-path",
+      "status": "passed",
+      "duration_ms": 1834,
+      "assertions": [
+        {"type": "file_upload", "passed": true},
+        {"type": "transcription_complete", "passed": true}
+      ]
+    },
+    {
+      "name": "realtime-translation/bootstrap",
+      "status": "passed",
+      "duration_ms": 1123,
+      "assertions": [
+        {"type": "wasm_init", "passed": true},
+        {"type": "language_selector_ready", "passed": true}
+      ]
+    },
+    {
+      "name": "realtime-translation/happy-path",
+      "status": "passed",
+      "duration_ms": 2345,
+      "assertions": [
+        {"type": "recording_works", "passed": true},
+        {"type": "translation_output", "passed": true}
+      ]
+    },
+    {
+      "name": "upload-translation/bootstrap",
+      "status": "passed",
+      "duration_ms": 876,
+      "assertions": [
+        {"type": "wasm_init", "passed": true}
+      ]
+    },
+    {
+      "name": "upload-translation/happy-path",
+      "status": "passed",
+      "duration_ms": 1567,
+      "assertions": [
+        {"type": "file_upload", "passed": true},
+        {"type": "translation_complete", "passed": true}
+      ]
+    },
+    {
+      "name": "accessibility/keyboard-navigation",
+      "status": "passed",
+      "duration_ms": 654,
+      "assertions": [
+        {"type": "tab_order_correct", "passed": true},
+        {"type": "focus_visible", "passed": true}
+      ]
+    },
+    {
+      "name": "accessibility/screen-reader",
+      "status": "passed",
+      "duration_ms": 432,
+      "assertions": [
+        {"type": "aria_labels", "passed": true},
+        {"type": "live_regions", "passed": true}
+      ]
+    },
+    {
+      "name": "performance/rtf-validation",
+      "status": "passed",
+      "duration_ms": 3421,
+      "assertions": [
+        {"type": "rtf_under_threshold", "threshold": 2.0, "actual": 1.7, "passed": true},
+        {"type": "memory_under_threshold", "threshold_mb": 150, "actual_mb": 82, "passed": true}
+      ]
+    }
+  ],
+  "coverage": {
+    "states_tested": ["idle", "loading", "recording", "processing", "completed", "error"],
+    "transitions_tested": 8,
+    "error_paths_tested": 2
+  }
+}

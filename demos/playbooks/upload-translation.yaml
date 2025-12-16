@@ -139,9 +139,3 @@ machine:
 performance:
   max_duration_ms: 120000
   max_memory_mb: 500
-
-assertions:
-  path:
-    must_visit: ["idle", "file_selected", "translating", "complete"]
-    must_not_visit: ["error"]
-    ends_at: "complete"

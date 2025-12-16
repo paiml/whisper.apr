@@ -3,23 +3,15 @@
 //! Provides GPU-accelerated implementations of core operations used in
 //! transformer inference.
 
+mod gelu;
+mod layernorm;
 mod matmul;
 mod softmax;
-mod layernorm;
-mod gelu;
 
-pub use matmul::{
-    GpuMatMul, MatMulConfig, MatMulDimensions, TileSize,
-};
-pub use softmax::{
-    GpuSoftmax, SoftmaxConfig, SoftmaxDimension,
-};
-pub use layernorm::{
-    GpuLayerNorm, LayerNormConfig, LayerNormMode,
-};
-pub use gelu::{
-    GpuGelu, GeluConfig, GeluApproximation,
-};
+pub use gelu::{GeluApproximation, GeluConfig, GpuGelu};
+pub use layernorm::{GpuLayerNorm, LayerNormConfig, LayerNormMode};
+pub use matmul::{GpuMatMul, MatMulConfig, MatMulDimensions, TileSize};
+pub use softmax::{GpuSoftmax, SoftmaxConfig, SoftmaxDimension};
 
 /// Validate matrix dimensions for multiplication
 #[must_use]

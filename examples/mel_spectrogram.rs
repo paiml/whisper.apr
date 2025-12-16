@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Mel spectrogram computation example
 //!
 //! Demonstrates the mel filterbank and spectrogram computation.

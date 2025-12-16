@@ -480,8 +480,7 @@ impl SilenceDetector {
             let percentile_idx = sorted.len() / 10;
             let estimated_floor = sorted[percentile_idx];
 
-            self.noise_floor +=
-                self.config.adaptation_rate * (estimated_floor - self.noise_floor);
+            self.noise_floor += self.config.adaptation_rate * (estimated_floor - self.noise_floor);
         }
     }
 
@@ -685,12 +684,12 @@ impl VoiceActivityDetector {
             return 0.0;
         }
 
-        let crossings: usize = frame
+        let crossings: f32 = frame
             .windows(2)
             .filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0))
-            .count();
+            .count() as f32;
 
-        crossings as f32 / (frame.len() - 1) as f32
+        crossings / (frame.len() - 1) as f32
     }
 
     /// Convert sample index to time in seconds

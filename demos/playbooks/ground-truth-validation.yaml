@@ -1,0 +1,169 @@
+# Ground Truth Validation Playbook
+# 3-Column Comparison: whisper.apr vs whisper.cpp vs HuggingFace
+#
+# Run: probar playbook demos/playbooks/ground-truth-validation.yaml
+#
+# This playbook validates transcription accuracy against two independent
+# reference implementations (whisper.cpp and HuggingFace OpenAI Whisper).
+# If both references agree but whisper.apr differs, there's a bug.
+
+version: "1.0"
+name: "Ground Truth ASR Validation"
+description: "WAPR-QA-GT: Validates whisper.apr against reference implementations"
+
+config:
+  whisper_cpp_bin: "/home/noah/.local/bin/main"
+  whisper_cpp_model: "/home/noah/src/whisper.cpp/models/ggml-tiny.bin"
+  whisper_apr_model: "models/whisper-tiny.apr"
+  test_audio_dir: "demos/test-audio"
+
+# Test audio samples with expected transcriptions
+test_samples:
+  - id: "speech_1.5s"
+    file: "test-speech-1.5s.wav"
+    expected: "The birds can use"
+    duration_sec: 1.5
+
+  - id: "speech_3s"
+    file: "test-speech-3s.wav"
+    expected: null  # Will use consensus
+    duration_sec: 3.0
+
+  - id: "speech_full"
+    file: "test-speech-full.wav"
+    expected: null
+    duration_sec: 33.6
+
+steps:
+  # Step 1: Verify all tools are available
+  - name: "verify_tools"
+    description: "Verify all transcription tools are available"
+    actions:
+      - command: "test -x {{ config.whisper_cpp_bin }}"
+        assert: "exit_code == 0"
+        error: "whisper.cpp binary not found"
+
+      - command: "test -f {{ config.whisper_cpp_model }}"
+        assert: "exit_code == 0"
+        error: "whisper.cpp model not found"
+
+      - command: "test -f {{ config.whisper_apr_model }}"
+        assert: "exit_code == 0"
+        error: "whisper.apr model not found"
+
+      - command: "which uv"
+        assert: "exit_code == 0"
+        error: "uv not installed (required for HuggingFace)"
+
+  # Step 2: Build whisper.apr CLI
+  - name: "build_whisper_apr"
+    description: "Build whisper.apr CLI in release mode"
+    actions:
+      - command: "cargo build --release --bin whisper-apr-cli --features cli"
+        timeout_sec: 300
+        assert: "exit_code == 0"
+
+  # Step 3: Run transcription comparison for each sample
+  - name: "transcribe_samples"
+    description: "Run 3-column transcription comparison"
+    for_each: "{{ test_samples }}"
+    actions:
+      # whisper.apr
+      - name: "apr_transcribe"
+        command: |
+          cargo run --release --bin whisper-apr-cli --features cli -- transcribe \
+            --model-path {{ config.whisper_apr_model }} \
+            -q \
+            {{ config.test_audio_dir }}/{{ item.file }}
+        capture: "apr_result"
+        timeout_sec: 120
+
+      # whisper.cpp
+      - name: "cpp_transcribe"
+        command: |
+          {{ config.whisper_cpp_bin }} \
+            -m {{ config.whisper_cpp_model }} \
+            -f {{ config.test_audio_dir }}/{{ item.file }} \
+            --output-txt -of /tmp/wcpp_{{ item.id }} 2>/dev/null && \
+          cat /tmp/wcpp_{{ item.id }}.txt | grep -v '^\[' | tr -d '\n' | sed 's/^[[:space:]]*//'
+        capture: "cpp_result"
+        timeout_sec: 60
+
+      # HuggingFace (via uv)
+      - name: "hf_transcribe"
+        command: |
+          uv run scripts/hf_transcribe.py \
+            {{ config.test_audio_dir }}/{{ item.file }} 2>/dev/null | \
+          python3 -c "import sys,json; print(json.load(sys.stdin).get('text',''))"
+        capture: "hf_result"
+        timeout_sec: 120
+
+  # Step 4: Validate results
+  - name: "validate_results"
+    description: "Validate transcription accuracy"
+    for_each: "{{ test_samples }}"
+    assertions:
+      # Ground truth consensus check
+      - name: "consensus_check"
+        description: "whisper.cpp and HuggingFace should agree"
+        condition: "normalize(cpp_result) == normalize(hf_result)"
+        severity: "warning"
+        message: "No ground truth consensus for {{ item.id }}"
+
+      # whisper.apr accuracy check
+      - name: "apr_accuracy"
+        description: "whisper.apr should match ground truth"
+        condition: "normalize(apr_result) == normalize(cpp_result)"
+        severity: "error"
+        message: "whisper.apr failed for {{ item.id }}: expected '{{ cpp_result }}', got '{{ apr_result }}'"
+
+      # Hallucination check
+      - name: "no_hallucination"
+        description: "No repetitive hallucination patterns"
+        condition: "not has_repetition(apr_result, min_len=5, min_repeats=3)"
+        severity: "critical"
+        message: "Hallucination detected in {{ item.id }}: repetitive pattern in output"
+
+      # RTF check (Real-Time Factor)
+      - name: "rtf_check"
+        description: "RTF should be reasonable (<10x)"
+        condition: "apr_time_ms / (item.duration_sec * 1000) < 10"
+        severity: "warning"
+        message: "High RTF for {{ item.id }}: {{ apr_time_ms / (item.duration_sec * 1000) }}x"
+
+# Output format
+output:
+  format: "table"
+  columns:
+    - name: "Sample"
+      value: "{{ item.id }}"
+    - name: "whisper.apr"
+      value: "{{ apr_result[:30] }}"
+    - name: "whisper.cpp"
+      value: "{{ cpp_result[:30] }}"
+    - name: "HuggingFace"
+      value: "{{ hf_result[:30] }}"
+    - name: "Match"
+      value: "{{ 'PASS' if normalize(apr_result) == normalize(cpp_result) else 'FAIL' }}"
+
+# Pass/fail criteria
+pass_criteria:
+  - "All samples pass consensus check OR have expected value"
+  - "All samples pass apr_accuracy check"
+  - "No hallucinations detected"
+
+failure_actions:
+  - action: "create_issue"
+    title: "Ground Truth Validation Failed"
+    labels: ["bug", "transcription", "WAPR-QA-GT"]
+    body: |
+      ## Ground Truth Validation Failed
+
+      ### Failed Samples
+      {{ failed_samples | join('\n') }}
+
+      ### Investigation Steps
+      1. Check decoder EOT token detection
+      2. Verify attention mask computation
+      3. Compare mel spectrogram with reference
+      4. Check KV cache implementation

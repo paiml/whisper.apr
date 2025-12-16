@@ -1,0 +1,70 @@
+{
+  "version": "1.0",
+  "name": "edge-long-audio",
+  "description": "Edge case: Very long audio recording (5 minutes)",
+  "created": "2024-12-14T16:00:00Z",
+  "duration_ms": 310000,
+  "events": [
+    {
+      "timestamp_ms": 0,
+      "type": "page_load",
+      "url": "/realtime-transcription.html"
+    },
+    {
+      "timestamp_ms": 1200,
+      "type": "model_load_complete",
+      "memory_mb": 45
+    },
+    {
+      "timestamp_ms": 2000,
+      "type": "click",
+      "selector": "#start-recording"
+    },
+    {
+      "timestamp_ms": 2500,
+      "type": "audio_stream_start",
+      "sample_rate": 16000
+    },
+    {
+      "timestamp_ms": 60000,
+      "type": "memory_check",
+      "heap_mb": 65,
+      "status": "stable"
+    },
+    {
+      "timestamp_ms": 120000,
+      "type": "memory_check",
+      "heap_mb": 72,
+      "status": "stable"
+    },
+    {
+      "timestamp_ms": 180000,
+      "type": "memory_check",
+      "heap_mb": 78,
+      "status": "stable"
+    },
+    {
+      "timestamp_ms": 240000,
+      "type": "memory_check",
+      "heap_mb": 82,
+      "status": "stable"
+    },
+    {
+      "timestamp_ms": 300000,
+      "type": "click",
+      "selector": "#stop-recording"
+    },
+    {
+      "timestamp_ms": 305000,
+      "type": "transcription_complete",
+      "word_count": 850,
+      "rtf": 1.7
+    }
+  ],
+  "assertions": [
+    {"type": "memory_stable", "max_growth_mb": 50},
+    {"type": "rtf_under", "value": 2.0},
+    {"type": "no_buffer_overflow", "value": true},
+    {"type": "streaming_consistent", "value": true}
+  ]
+}

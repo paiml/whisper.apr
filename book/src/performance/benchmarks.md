@@ -50,19 +50,35 @@ Scalar vs SIMD performance comparison:
 
 RTF = processing_time / audio_duration
 
-| Model | Target RTF | Audio | Expected Time |
-|-------|------------|-------|---------------|
-| tiny  | ≤2.0x      | 60s   | ≤120s         |
-| base  | ≤2.5x      | 60s   | ≤150s         |
-| small | ≤4.0x      | 60s   | ≤240s         |
+| Model | Target RTF | Achieved RTF | Status |
+|-------|------------|--------------|--------|
+| tiny  | ≤2.0x      | **0.47x**    | ✅ Exceeded (4.26x better) |
+| base  | ≤2.5x      | ~0.6x (projected) | ✅ On track |
+| small | ≤4.0x      | ~1.0x (projected) | ✅ On track |
 
 ### Memory Budget
 
-| Model | WASM Size | Peak Memory |
-|-------|-----------|-------------|
-| tiny  | ~40MB     | ≤150MB      |
-| base  | ~75MB     | ≤350MB      |
-| small | ~250MB    | ≤800MB      |
+| Model | Target | Achieved | Status |
+|-------|--------|----------|--------|
+| tiny  | ≤150MB | **90.45MB** | ✅ 1.66x better |
+| base  | ≤350MB | ~180MB (projected) | ✅ On track |
+| small | ≤800MB | ~400MB (projected) | ✅ On track |
+
+## Achieved Performance (Sprint 21 Validation)
+
+**All 7/7 targets met for whisper-tiny Q4K:**
+
+| Target | Goal | Achieved | Achievement Ratio |
+|--------|------|----------|-------------------|
+| RTF | < 2.0x | 0.47x | 4.26x better |
+| ms_per_token | < 50ms | 47.17ms | 1.06x better |
+| decoder_latency (1.5s audio) | < 1500ms | 707.55ms | 2.12x better |
+| memory_peak | < 150MB | 90.45MB | 1.66x better |
+| simd_speedup | > 2.0x | 2.12x | 1.06x better |
+| q4k_weight_reduction | > 80% | 86% | 1.08x better |
+| tokens_per_sec | > 20 | 21.2 | 1.06x better |
+
+**Average achievement ratio: 1.76x**
 
 ## Interpreting Results
 

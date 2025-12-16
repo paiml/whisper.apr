@@ -512,8 +512,14 @@ mod tests {
         assert!(LayerNormConfig::new(16, 512).validate().is_ok());
         assert!(LayerNormConfig::new(0, 512).validate().is_err());
         assert!(LayerNormConfig::new(16, 0).validate().is_err());
-        assert!(LayerNormConfig::new(16, 512).with_epsilon(0.0).validate().is_err());
-        assert!(LayerNormConfig::new(16, 512).with_workgroup_size(100).validate().is_err());
+        assert!(LayerNormConfig::new(16, 512)
+            .with_epsilon(0.0)
+            .validate()
+            .is_err());
+        assert!(LayerNormConfig::new(16, 512)
+            .with_workgroup_size(100)
+            .validate()
+            .is_err());
     }
 
     #[test]
@@ -536,8 +542,8 @@ mod tests {
 
     #[test]
     fn test_gpu_layer_norm_new() {
-        let ln = GpuLayerNorm::new(LayerNormConfig::new(16, 512))
-            .expect("Should create layer norm");
+        let ln =
+            GpuLayerNorm::new(LayerNormConfig::new(16, 512)).expect("Should create layer norm");
         assert!(ln.id() > 0);
         assert!(!ln.is_executed());
     }
@@ -557,8 +563,7 @@ mod tests {
 
     #[test]
     fn test_gpu_layer_norm_memory_requirement() {
-        let ln = GpuLayerNorm::new(LayerNormConfig::new(16, 512))
-            .expect("Should create");
+        let ln = GpuLayerNorm::new(LayerNormConfig::new(16, 512)).expect("Should create");
         // Input: 16*512*4, Output: 16*512*4, Params: 512*2*4
         let expected = (16 * 512 * 4 * 2) + (512 * 2 * 4);
         assert_eq!(ln.memory_requirement(), expected);
@@ -566,8 +571,7 @@ mod tests {
 
     #[test]
     fn test_gpu_layer_norm_workgroups() {
-        let ln = GpuLayerNorm::new(LayerNormConfig::new(16, 512))
-            .expect("Should create");
+        let ln = GpuLayerNorm::new(LayerNormConfig::new(16, 512)).expect("Should create");
         let (x, y, z) = ln.workgroups();
         assert_eq!(x, 16); // One per batch item
         assert_eq!(y, 1);
@@ -576,8 +580,7 @@ mod tests {
 
     #[test]
     fn test_gpu_layer_norm_generate_shader() {
-        let ln = GpuLayerNorm::new(LayerNormConfig::new(16, 512))
-            .expect("Should create");
+        let ln = GpuLayerNorm::new(LayerNormConfig::new(16, 512)).expect("Should create");
         let shader = ln.generate_shader();
 
         assert!(shader.contains("@compute"));

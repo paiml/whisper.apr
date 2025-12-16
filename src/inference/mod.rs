@@ -6,14 +6,29 @@
 //!
 //! - [`beam`] - Beam search decoding for higher quality
 //! - [`greedy`] - Fast greedy decoding
+//! - [`processors`] - Logit processors for pre-sampling transforms
 //! - [`streaming`] - Real-time streaming transcription
+//!
+//! # LogitProcessor Integration
+//!
+//! The `processors` module provides Whisper-specific implementations of
+//! realizar's `LogitProcessor` trait, enabling composable pre-sampling transforms:
+//!
+//! ```rust,ignore
+//! use whisper_apr::inference::processors::WhisperTokenSuppressor;
+//!
+//! let suppressor = WhisperTokenSuppressor::default();
+//! suppressor.apply(&mut logits);
+//! ```
 
 mod beam;
 mod greedy;
+pub mod processors;
 mod streaming;
 
 pub use beam::{BeamSearchDecoder, Hypothesis};
 pub use greedy::GreedyDecoder;
+pub use processors::WhisperTokenSuppressor;
 pub use streaming::{
     StreamingConfig, StreamingResult, StreamingStats, StreamingTranscriber, TranscriberState,
 };

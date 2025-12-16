@@ -1,0 +1,59 @@
+{
+  "version": "1.0",
+  "name": "error-microphone-denied",
+  "description": "Error flow when microphone permission is denied",
+  "created": "2024-12-14T16:00:00Z",
+  "duration_ms": 5000,
+  "events": [
+    {
+      "timestamp_ms": 0,
+      "type": "page_load",
+      "url": "/realtime-transcription.html"
+    },
+    {
+      "timestamp_ms": 500,
+      "type": "model_load_start",
+      "model": "whisper-tiny-int8.apr"
+    },
+    {
+      "timestamp_ms": 1200,
+      "type": "model_load_complete",
+      "memory_mb": 45
+    },
+    {
+      "timestamp_ms": 2000,
+      "type": "click",
+      "selector": "#start-recording",
+      "state": "idle"
+    },
+    {
+      "timestamp_ms": 2100,
+      "type": "permission_request",
+      "permission": "microphone"
+    },
+    {
+      "timestamp_ms": 2500,
+      "type": "permission_denied",
+      "permission": "microphone",
+      "reason": "user_denied"
+    },
+    {
+      "timestamp_ms": 2600,
+      "type": "error_displayed",
+      "message": "Microphone access denied. Please enable microphone permissions.",
+      "selector": "#error-message"
+    },
+    {
+      "timestamp_ms": 3000,
+      "type": "state_change",
+      "from": "requesting_permission",
+      "to": "error"
+    }
+  ],
+  "assertions": [
+    {"type": "state", "expected": "error", "at_end": true},
+    {"type": "error_message_visible", "value": true},
+    {"type": "no_crash", "value": true},
+    {"type": "graceful_degradation", "value": true}
+  ]
+}

@@ -94,6 +94,10 @@ pub mod wasm;
 #[cfg(feature = "cli")]
 pub mod cli;
 
+/// TUI module for pipeline visualization dashboard
+#[cfg(feature = "tui")]
+pub mod tui;
+
 pub use error::{WhisperError, WhisperResult};
 
 /// Whisper model configuration
@@ -410,13 +414,51 @@ impl WhisperApr {
     }
 
     /// Compute mel spectrogram from audio
+    ///
+    /// Pads or truncates audio to exactly 30 seconds (480,000 samples at 16kHz)
+    /// before computing mel spectrogram to match Whisper's expected input.
+    /// The output is always exactly 3000 frames x 80 mel bins.
     pub fn compute_mel(&self, audio: &[f32]) -> WhisperResult<Vec<f32>> {
-        self.mel_filters.compute(audio, audio::HOP_LENGTH)
+        const N_SAMPLES_30S: usize = 480_000; // 30 seconds at 16kHz
+        const N_FRAMES: usize = 3000; // Whisper expects exactly 3000 frames
+        const N_MELS: usize = 80;
+
+        // Pad or truncate audio to exactly 30 seconds
+        let padded_audio = match audio.len().cmp(&N_SAMPLES_30S) {
+            std::cmp::Ordering::Equal => audio.to_vec(),
+            std::cmp::Ordering::Less => {
+                // Pad with zeros (silence) to 30 seconds
+                let mut padded = vec![0.0_f32; N_SAMPLES_30S];
+                padded[..audio.len()].copy_from_slice(audio);
+                padded
+            }
+            std::cmp::Ordering::Greater => {
+                // Truncate to 30 seconds
+                audio[..N_SAMPLES_30S].to_vec()
+            }
+        };
+
+        let mut mel = self.mel_filters.compute(&padded_audio, audio::HOP_LENGTH)?;
+        let actual_frames = mel.len() / N_MELS;
+
+        // Ensure exactly 3000 frames (pad or truncate mel output)
+        if actual_frames < N_FRAMES {
+            // Pad with log-mel floor value (silence in log domain)
+            // HF uses -1.0 (which is roughly log(0.1)/log(10) after normalization)
+            let pad_value = -1.0_f32;
+            let mut padded_mel = vec![pad_value; N_FRAMES * N_MELS];
+            padded_mel[..mel.len()].copy_from_slice(&mel);
+            mel = padded_mel;
+        } else if actual_frames > N_FRAMES {
+            mel.truncate(N_FRAMES * N_MELS);
+        }
+
+        Ok(mel)
     }
 
     /// Encode audio features (mel spectrogram -> encoder features)
     pub fn encode(&self, mel: &[f32]) -> WhisperResult<Vec<f32>> {
-        // Use forward_mel to process raw mel spectrogram through conv frontend first
+        // Use forward_mel to process mel spectrogram through conv frontend
         self.encoder.forward_mel(mel)
     }
 
@@ -509,9 +551,13 @@ impl WhisperApr {
         let cache = RefCell::new(model::DecoderKVCache::new(n_layers, d_model, max_tokens));
         let processed_count = RefCell::new(0usize);
 
-        let logits_fn = |tokens: &[u32]| -> WhisperResult<Vec<f32>> {
-            use tokenizer::special_tokens;
+        // Create Whisper token suppressor using realizar's LogitProcessor architecture
+        // This provides composable, reusable pre-sampling transforms
+        let suppressor = inference::WhisperTokenSuppressor::new()
+            .with_timestamp_suppression(!options.word_timestamps)
+            .with_vocab_size(n_vocab);
 
+        let logits_fn = |tokens: &[u32]| -> WhisperResult<Vec<f32>> {
             let seq_len = tokens.len();
             let already_processed = *processed_count.borrow();
 
@@ -526,32 +572,9 @@ impl WhisperApr {
 
             *processed_count.borrow_mut() = seq_len;
 
-            // Suppress special tokens (matching whisper.cpp behavior)
-            // These tokens should never be generated during decoding
-            logits[special_tokens::SOT as usize] = f32::NEG_INFINITY;
-            logits[special_tokens::NO_SPEECH as usize] = f32::NEG_INFINITY;
-            logits[special_tokens::TRANSLATE as usize] = f32::NEG_INFINITY;
-            logits[special_tokens::TRANSCRIBE as usize] = f32::NEG_INFINITY;
-            logits[special_tokens::PREV as usize] = f32::NEG_INFINITY;
-            logits[special_tokens::SPEAKER_TURN as usize] = f32::NEG_INFINITY;
-            logits[special_tokens::NO_TIMESTAMPS as usize] = f32::NEG_INFINITY;
-
-            // Suppress all language tokens (50258 to 50357)
-            for i in special_tokens::LANG_BASE..special_tokens::TRANSLATE {
-                logits[i as usize] = f32::NEG_INFINITY;
-            }
-
-            // Suppress timestamps if word_timestamps is disabled (default)
-            // When word_timestamps is false, we use NO_TIMESTAMPS token and suppress all timestamp tokens
-            if !options.word_timestamps {
-                for logit in logits
-                    .iter_mut()
-                    .take(n_vocab)
-                    .skip(special_tokens::TIMESTAMP_BASE as usize)
-                {
-                    *logit = f32::NEG_INFINITY;
-                }
-            }
+            // Apply Whisper-specific token suppression via LogitProcessor
+            // Suppresses: SOT, language tokens, task tokens, timestamps (if disabled)
+            suppressor.apply(&mut logits);
 
             Ok(logits)
         };
@@ -715,10 +738,12 @@ impl WhisperApr {
         );
         tracker.next_phase();
 
-        // Phase 5: Initializing
+        // Phase 5: Initializing (load mel filterbank from APR if available)
         callback(&tracker.to_progress());
-        let mel_filters =
-            audio::MelFilterbank::new(config.n_mels as usize, audio::N_FFT, audio::SAMPLE_RATE);
+        let mel_filters = reader.read_mel_filterbank().map_or_else(
+            || audio::MelFilterbank::new(config.n_mels as usize, audio::N_FFT, audio::SAMPLE_RATE),
+            |fb| audio::MelFilterbank::from_apr_data(fb, audio::SAMPLE_RATE),
+        );
         tracker.complete();
         callback(&tracker.to_progress());
 
@@ -741,6 +766,33 @@ impl WhisperApr {
         callback: progress::ProgressCallback<'_>,
     ) {
         let n_layers = encoder.n_layers();
+
+        // Load convolutional frontend weights
+        let conv_frontend = encoder.conv_frontend_mut();
+
+        // Conv1: mel -> hidden (n_mels x d_model with kernel_size=3)
+        if let Ok(weight) = reader.load_tensor("encoder.conv1.weight") {
+            let target = conv_frontend.conv1.weight_mut();
+            let len = weight.len().min(target.len());
+            target[..len].copy_from_slice(&weight[..len]);
+        }
+        if let Ok(bias) = reader.load_tensor("encoder.conv1.bias") {
+            let target = conv_frontend.conv1.bias_mut();
+            let len = bias.len().min(target.len());
+            target[..len].copy_from_slice(&bias[..len]);
+        }
+
+        // Conv2: hidden -> hidden with stride 2
+        if let Ok(weight) = reader.load_tensor("encoder.conv2.weight") {
+            let target = conv_frontend.conv2.weight_mut();
+            let len = weight.len().min(target.len());
+            target[..len].copy_from_slice(&weight[..len]);
+        }
+        if let Ok(bias) = reader.load_tensor("encoder.conv2.bias") {
+            let target = conv_frontend.conv2.bias_mut();
+            let len = bias.len().min(target.len());
+            target[..len].copy_from_slice(&bias[..len]);
+        }
 
         // Load positional embedding if available
         if let Ok(pe) = reader.load_tensor("encoder.positional_embedding") {

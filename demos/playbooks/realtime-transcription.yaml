@@ -2,6 +2,10 @@
 # Prevents "whack-a-mole" regressions by validating state transitions
 #
 # Run: probar playbook demos/playbooks/realtime-transcription.yaml --validate
+#
+# Performance baseline: trueno 0.8.2 (matmul_wasm_tiled optimization)
+# - matmul(384,74,384) < 30ms (Whisper encoder attention)
+# - No O(n^2) transpose overhead in WASM
 
 version: "1.0"
 name: "Realtime Transcription State Machine"
@@ -49,6 +53,10 @@ machine:
           condition: "!can_start_recording()"
         - description: "Recording indicator visible"
           condition: "has_element('.recording-indicator')"
+        - description: "Transcript container exists"
+          condition: "has_element('#transcript')"
+        - description: "Transcription updates within 5s"
+          condition: "transcript_text_changes_within(5000)"
 
     processing:
       id: "processing"
@@ -115,6 +123,12 @@ machine:
       to: "error"
       event: "audio_error"
 
+    - id: "recording_to_error_timeout"
+      from: "recording"
+      to: "error"
+      event: "transcription_timeout"
+      guard: "no_transcript_update_for(10000)"
+
     # Recovery paths
     - id: "error_to_idle"
       from: "error"
@@ -152,50 +166,69 @@ machine:
       to: "idle"
       reason: "Cannot skip model loading"
 
+  # Invariant violations that indicate bugs
+  invariant_violations:
+    - state: "recording"
+      condition: "recording_duration() > 5000 && transcript_empty()"
+      reason: "Recording for 5s+ with no transcript output indicates worker/model failure"
+
+    - state: "recording"
+      condition: "chunks_sent() > 3 && chunks_processed() == 0"
+      reason: "Audio chunks sent but none processed - worker communication broken"
+
 performance:
+  # Session constraints
   max_duration_ms: 10000
   max_memory_mb: 200
 
-playbook:
-  setup:
-    - type: navigate
-      url: "http://localhost:8080/realtime-transcription.html"
-    - type: wait
-      selector: "#app"
-      timeout_ms: 5000
+  # Latency targets (trueno 0.8.2 baseline)
+  first_transcript_latency_ms: 3000      # Tightened from 5000ms
+  first_transcript_latency_critical_ms: 5000  # Tightened from 10000ms
 
-  steps:
-    - name: "Wait for initialization"
-      transitions: ["init_to_loading", "loading_to_idle"]
-      timeout_ms: 10000
+  # Real-Time Factor (processing_time / audio_duration)
+  # trueno 0.8.2: matmul < 30ms enables RTF < 1.5 for Whisper tiny
+  rtf_target: 1.5        # Tightened from 2.0
+  rtf_critical: 2.0      # Tightened from 4.0
 
-    - name: "Start recording"
-      transitions: ["idle_to_requesting", "requesting_to_recording"]
-      timeout_ms: 5000
+  # Chunk processing (1.5s audio chunks)
+  chunk_processing_ms: 1500    # Tightened from 2000ms
+  chunk_processing_critical_ms: 3000  # Tightened from 5000ms
 
-    - name: "Stop and process"
-      transitions: ["recording_to_processing", "processing_to_idle"]
-      timeout_ms: 5000
-      capture:
-        - var: "transcript"
-          from: "#transcript-output"
+  # Matmul performance (trueno 0.8.2 baseline)
+  matmul_384x74x384_ms: 30     # Whisper encoder attention
+  matmul_critical_ms: 100      # Critical threshold
 
-  teardown:
-    - type: screenshot
-      path: "./target/playbook-screenshots/realtime-final.png"
-      ignore_errors: true
+  # Queue constraints
+  max_queue_depth: 3
+  drop_tolerance: 0  # Zero tolerance for dropped chunks
 
-assertions:
-  path:
-    must_visit: ["initializing", "idle", "recording"]
-    must_not_visit: ["error"]
-    ends_at: "idle"
+# Performance assertions (testable conditions)
+# Updated for trueno 0.8.2 matmul_wasm_tiled optimization
+performance_assertions:
+  - name: "first_transcript_latency"
+    condition: "first_transcript_latency_ms() <= 3000"
+    critical: "first_transcript_latency_ms() <= 5000"
+    failure_reason: "Transcription pipeline too slow or hanging"
 
-  output:
-    - var: "transcript"
-      not_empty: false  # May be empty for short tests
+  - name: "realtime_factor"
+    condition: "rtf() <= 1.5"
+    critical: "rtf() <= 2.0"
+    failure_reason: "Processing slower than realtime threshold"
 
-  complexity:
-    operation: "transcription"
-    expected: "linear"
-    tolerance: 0.15
+  - name: "chunk_processing"
+    condition: "chunk_processing_ms() <= 1500"
+    critical: "chunk_processing_ms() <= 3000"
+    failure_reason: "Chunk processing exceeds audio duration"
+
+  - name: "matmul_performance"
+    condition: "matmul_384x74x384_ms() <= 30"
+    critical: "matmul_384x74x384_ms() <= 100"
+    failure_reason: "Matrix multiplication regression - check trueno version"
+
+  - name: "no_drops"
+    condition: "chunks_dropped() == 0"
+    failure_reason: "Audio chunks dropped - worker cannot keep up"
+
+  - name: "queue_bounded"
+    condition: "queue_depth() <= 3"
+    failure_reason: "Queue overflow indicates backpressure"

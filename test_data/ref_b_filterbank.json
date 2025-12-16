@@ -1,0 +1,17 @@
+{
+  "name": "step_b_filterbank",
+  "shape": [
+    80,
+    201
+  ],
+  "dtype": "float32",
+  "min": 0.0,
+  "max": 0.025880683213472366,
+  "mean": 0.0001243174192495644,
+  "std": 0.0011410751612856984,
+  "nonzero": 391,
+  "file": "golden_traces/step_b_filterbank.bin",
+  "source": "whisper.cpp ggml-tiny.bin",
+  "n_mels": 80,
+  "n_freqs": 201
+}

@@ -15,23 +15,29 @@ use std::collections::HashMap;
 /// Special token IDs for Whisper
 ///
 /// These tokens control the decoder's behavior during transcription.
+/// Token IDs match whisper.cpp: token_eot=50256, token_sot=50257, etc.
 pub mod special_tokens {
-    /// End of text token - signals end of transcription
-    pub const EOT: u32 = 50257;
-    /// Start of transcript token - begins transcription
-    pub const SOT: u32 = 50258;
+    /// End of text token - signals end of transcription (whisper.cpp: token_eot)
+    pub const EOT: u32 = 50256;
+    /// Start of transcript token - begins transcription (whisper.cpp: token_sot)
+    pub const SOT: u32 = 50257;
     /// Language token base - language ID is LANG_BASE + lang_offset
-    pub const LANG_BASE: u32 = 50259;
-    /// Transcribe task token - transcribe audio in original language
-    pub const TRANSCRIBE: u32 = 50359;
-    /// Translate task token - translate audio to English
-    pub const TRANSLATE: u32 = 50358;
-    /// No speech token - indicates silence/no speech detected
-    pub const NO_SPEECH: u32 = 50362;
-    /// No timestamps token - disable timestamp generation
-    pub const NO_TIMESTAMPS: u32 = 50363;
-    /// Timestamp token base - timestamp tokens start here
-    pub const TIMESTAMP_BASE: u32 = 50364;
+    /// Languages start at token_sot + 1 = 50258
+    pub const LANG_BASE: u32 = 50258;
+    /// Translate task token - translate audio to English (whisper.cpp: token_translate)
+    pub const TRANSLATE: u32 = 50357;
+    /// Transcribe task token - transcribe audio in original language (whisper.cpp: token_transcribe)
+    pub const TRANSCRIBE: u32 = 50358;
+    /// Speaker turn marker - used by tinydiarize models (whisper.cpp: token_solm)
+    pub const SPEAKER_TURN: u32 = 50359;
+    /// Previous context token (whisper.cpp: token_prev)
+    pub const PREV: u32 = 50360;
+    /// No speech token - indicates silence/no speech detected (whisper.cpp: token_nosp)
+    pub const NO_SPEECH: u32 = 50361;
+    /// No timestamps token - disable timestamp generation (whisper.cpp: token_not)
+    pub const NO_TIMESTAMPS: u32 = 50362;
+    /// Begin timestamps token / Timestamp token base (whisper.cpp: token_beg)
+    pub const TIMESTAMP_BASE: u32 = 50363;
 
     /// Get language token ID for a language code
     ///
@@ -295,6 +301,120 @@ impl Vocabulary {
     pub fn num_merges(&self) -> usize {
         self.merge_rules.len()
     }
+
+    /// Serialize vocabulary to bytes
+    ///
+    /// Format:
+    /// - u32: number of tokens
+    /// - u32: number of merge rules
+    /// - For each token: u16 len, bytes
+    /// - For each merge: u16 first_len, first_bytes, u16 second_len, second_bytes
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+
+        // Write token count and merge count
+        bytes.extend_from_slice(&(self.id_to_bytes.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(self.merge_rules.len() as u32).to_le_bytes());
+
+        // Write tokens
+        for token_bytes in &self.id_to_bytes {
+            let len = token_bytes.len() as u16;
+            bytes.extend_from_slice(&len.to_le_bytes());
+            bytes.extend_from_slice(token_bytes);
+        }
+
+        // Write merge rules
+        for rule in &self.merge_rules {
+            let first_len = rule.first.len() as u16;
+            bytes.extend_from_slice(&first_len.to_le_bytes());
+            bytes.extend_from_slice(&rule.first);
+
+            let second_len = rule.second.len() as u16;
+            bytes.extend_from_slice(&second_len.to_le_bytes());
+            bytes.extend_from_slice(&rule.second);
+        }
+
+        bytes
+    }
+
+    /// Deserialize vocabulary from bytes
+    ///
+    /// # Errors
+    /// Returns None if parsing fails
+    #[must_use]
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        if data.len() < 8 {
+            return None;
+        }
+
+        let n_tokens = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+        let n_merges = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+
+        let mut offset = 8;
+        let mut vocab = Self::new();
+
+        // Read tokens
+        for _ in 0..n_tokens {
+            if offset + 2 > data.len() {
+                return None;
+            }
+            let len = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
+            offset += 2;
+
+            if offset + len > data.len() {
+                return None;
+            }
+            let token_bytes = data[offset..offset + len].to_vec();
+            offset += len;
+
+            vocab.add_token(token_bytes);
+        }
+
+        // Read merge rules
+        for _ in 0..n_merges {
+            // Read first
+            if offset + 2 > data.len() {
+                return None;
+            }
+            let first_len = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
+            offset += 2;
+
+            if offset + first_len > data.len() {
+                return None;
+            }
+            let first = data[offset..offset + first_len].to_vec();
+            offset += first_len;
+
+            // Read second
+            if offset + 2 > data.len() {
+                return None;
+            }
+            let second_len = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
+            offset += 2;
+
+            if offset + second_len > data.len() {
+                return None;
+            }
+            let second = data[offset..offset + second_len].to_vec();
+            offset += second_len;
+
+            // Add merge (this also adds the merged token if not exists)
+            vocab.merge_lookup.insert(
+                (first.clone(), second.clone()),
+                vocab.id_to_bytes.len() as u32,
+            );
+            vocab.merge_rules.push(MergeRule::new(first, second));
+        }
+
+        Some(vocab)
+    }
+
+    /// Get merge rules reference
+    #[must_use]
+    pub fn merge_rules(&self) -> &[MergeRule] {
+        &self.merge_rules
+    }
 }
 
 impl Default for Vocabulary {
@@ -444,29 +564,33 @@ mod tests {
 
     #[test]
     fn test_special_tokens_values() {
-        assert_eq!(special_tokens::EOT, 50257);
-        assert_eq!(special_tokens::SOT, 50258);
-        assert_eq!(special_tokens::LANG_BASE, 50259);
-        assert_eq!(special_tokens::TRANSCRIBE, 50359);
-        assert_eq!(special_tokens::TRANSLATE, 50358);
-        assert_eq!(special_tokens::NO_SPEECH, 50362);
-        assert_eq!(special_tokens::NO_TIMESTAMPS, 50363);
-        assert_eq!(special_tokens::TIMESTAMP_BASE, 50364);
+        // Token IDs match whisper.cpp exactly
+        assert_eq!(special_tokens::EOT, 50256);
+        assert_eq!(special_tokens::SOT, 50257);
+        assert_eq!(special_tokens::LANG_BASE, 50258);
+        assert_eq!(special_tokens::TRANSLATE, 50357);
+        assert_eq!(special_tokens::TRANSCRIBE, 50358);
+        assert_eq!(special_tokens::SPEAKER_TURN, 50359);
+        assert_eq!(special_tokens::PREV, 50360);
+        assert_eq!(special_tokens::NO_SPEECH, 50361);
+        assert_eq!(special_tokens::NO_TIMESTAMPS, 50362);
+        assert_eq!(special_tokens::TIMESTAMP_BASE, 50363);
     }
 
     #[test]
     fn test_language_token() {
-        assert_eq!(special_tokens::language_token("en"), Some(50259));
-        assert_eq!(special_tokens::language_token("zh"), Some(50260));
-        assert_eq!(special_tokens::language_token("es"), Some(50262));
+        // English is at LANG_BASE + 0 = 50258
+        assert_eq!(special_tokens::language_token("en"), Some(50258));
+        assert_eq!(special_tokens::language_token("zh"), Some(50259));
+        assert_eq!(special_tokens::language_token("es"), Some(50261)); // es is index 3
         assert_eq!(special_tokens::language_token("invalid"), None);
     }
 
     #[test]
     fn test_is_timestamp() {
-        assert!(!special_tokens::is_timestamp(50363)); // NO_TIMESTAMPS
-        assert!(special_tokens::is_timestamp(50364)); // TIMESTAMP_BASE
-        assert!(special_tokens::is_timestamp(50365)); // First timestamp
+        assert!(!special_tokens::is_timestamp(50362)); // NO_TIMESTAMPS
+        assert!(special_tokens::is_timestamp(50363)); // TIMESTAMP_BASE
+        assert!(special_tokens::is_timestamp(50364)); // First timestamp
     }
 
     #[test]
@@ -512,5 +636,108 @@ mod tests {
 
         vocab.add_merge(vec![116], vec![104]);
         assert_eq!(vocab.num_merges(), 2);
+    }
+
+    // =========================================================================
+    // Serialization Tests
+    // =========================================================================
+
+    #[test]
+    fn test_vocabulary_to_bytes_empty() {
+        let vocab = Vocabulary::new();
+        let bytes = vocab.to_bytes();
+
+        // 4 bytes for n_tokens (0) + 4 bytes for n_merges (0)
+        assert_eq!(bytes.len(), 8);
+        assert_eq!(&bytes[0..4], &0u32.to_le_bytes());
+        assert_eq!(&bytes[4..8], &0u32.to_le_bytes());
+    }
+
+    #[test]
+    fn test_vocabulary_to_bytes_base_tokens() {
+        let vocab = Vocabulary::with_base_tokens();
+        let bytes = vocab.to_bytes();
+
+        // Check header
+        let n_tokens = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let n_merges = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+
+        assert_eq!(n_tokens, 256);
+        assert_eq!(n_merges, 0);
+
+        // Total size: 8 header + 256 * (2 len + 1 byte) = 8 + 768 = 776 bytes
+        assert_eq!(bytes.len(), 776);
+    }
+
+    #[test]
+    fn test_vocabulary_roundtrip_empty() {
+        let original = Vocabulary::new();
+        let bytes = original.to_bytes();
+        let restored = Vocabulary::from_bytes(&bytes).expect("should parse");
+
+        assert_eq!(restored.len(), 0);
+        assert_eq!(restored.num_merges(), 0);
+    }
+
+    #[test]
+    fn test_vocabulary_roundtrip_base_tokens() {
+        let original = Vocabulary::with_base_tokens();
+        let bytes = original.to_bytes();
+        let restored = Vocabulary::from_bytes(&bytes).expect("should parse");
+
+        assert_eq!(restored.len(), 256);
+        assert_eq!(restored.num_merges(), 0);
+
+        // Verify all base tokens
+        for i in 0..256u32 {
+            assert_eq!(restored.get_bytes(i), Some(&[i as u8][..]));
+        }
+    }
+
+    #[test]
+    fn test_vocabulary_roundtrip_with_merges() {
+        let mut original = Vocabulary::with_base_tokens();
+        original.add_merge(vec![104], vec![105]); // "hi"
+        original.add_merge(vec![116], vec![104]); // "th"
+        original.add_merge(vec![116, 104], vec![101]); // "the"
+
+        let bytes = original.to_bytes();
+        let restored = Vocabulary::from_bytes(&bytes).expect("should parse");
+
+        assert_eq!(restored.len(), original.len());
+        assert_eq!(restored.num_merges(), 3);
+
+        // Verify merge lookup works
+        assert!(restored.merge_priority(&[104], &[105]).is_some());
+        assert!(restored.merge_priority(&[116], &[104]).is_some());
+        assert!(restored.merge_priority(&[116, 104], &[101]).is_some());
+    }
+
+    #[test]
+    fn test_vocabulary_from_bytes_too_short() {
+        let bytes = vec![0u8; 4]; // Too short
+        assert!(Vocabulary::from_bytes(&bytes).is_none());
+    }
+
+    #[test]
+    fn test_vocabulary_from_bytes_truncated_tokens() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // n_tokens = 1
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // n_merges = 0
+        bytes.extend_from_slice(&10u16.to_le_bytes()); // token len = 10
+                                                       // But no token data
+
+        assert!(Vocabulary::from_bytes(&bytes).is_none());
+    }
+
+    #[test]
+    fn test_merge_rules_accessor() {
+        let mut vocab = Vocabulary::with_base_tokens();
+        vocab.add_merge(vec![104], vec![105]);
+
+        let rules = vocab.merge_rules();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].first, vec![104]);
+        assert_eq!(rules[0].second, vec![105]);
     }
 }

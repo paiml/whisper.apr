@@ -245,81 +245,28 @@
         </div>
     </main>
 
+    <!-- ZERO JAVASCRIPT: All logic in Rust/WASM via #[wasm_bindgen(start)] -->
     <script type="module">
-        // Pure Rust WASM module will be loaded here
-        // This is a minimal JavaScript loader - all logic is in Rust
-        import init, { RealtimeTranscriptionDemo, check_browser_compatibility } from './pkg/whisper_apr_demo_realtime_transcription.js';
+        import init, {
+            init_test_pipeline,
+            inject_test_audio,
+            process_test_chunk,
+            get_transcript,
+            is_worker_ready,
+            get_pipeline_diagnostics
+        } from '../realtime-transcription/pkg/whisper_apr_demo_realtime_transcription.js';
 
-        async function main() {
-            await init();
+        await init();
 
-            const compat = check_browser_compatibility();
-            if (!compat.is_supported()) {
-                document.getElementById('compatibility_warning').classList.add('visible');
-                document.getElementById('start_recording').disabled = true;
-                return;
-            }
-
-            const demo = new RealtimeTranscriptionDemo();
-
-            // Wire up UI elements to Rust state machine
-            const startBtn = document.getElementById('start_recording');
-            const stopBtn = document.getElementById('stop_recording');
-            const clearBtn = document.getElementById('clear_transcript');
-
-            function updateUI() {
-                document.getElementById('status_indicator').innerHTML =
-                    `<span class="status-dot ${demo.state().toLowerCase()}"></span><span>${demo.status_text()}</span>`;
-                document.getElementById('recording_duration').textContent = demo.recording_duration();
-                document.getElementById('transcript_display').textContent = demo.transcript();
-                document.getElementById('partial_transcript').textContent = demo.partial_transcript();
-
-                startBtn.disabled = !demo.can_start_recording();
-                stopBtn.disabled = !demo.can_stop_recording();
-
-                const waveform = document.getElementById('waveform_container');
-                if (demo.state() === 'Recording') {
-                    waveform.classList.add('visible');
-                } else {
-                    waveform.classList.remove('visible');
-                }
-            }
-
-            startBtn.addEventListener('click', () => {
-                demo.start_recording();
-                updateUI();
-            });
-
-            stopBtn.addEventListener('click', () => {
-                demo.stop_recording();
-                updateUI();
-            });
-
-            clearBtn.addEventListener('click', () => {
-                demo.clear_transcript();
-                updateUI();
-            });
-
-            // Keyboard shortcuts
-            document.addEventListener('keydown', (e) => {
-                if (e.code === 'Space' && e.target === document.body) {
-                    e.preventDefault();
-                    if (demo.can_start_recording()) {
-                        demo.start_recording();
-                    } else if (demo.can_stop_recording()) {
-                        demo.stop_recording();
-                    }
-                    updateUI();
-                } else if (e.code === 'Escape') {
-                    demo.clear_transcript();
-                    updateUI();
-                }
-            });
-
-            updateUI();
-        }
-
-        main().catch(console.error);
+        // Expose test hooks globally for E2E testing with probar
+        window.wasm_bindgen = {
+            init_test_pipeline,
+            inject_test_audio,
+            process_test_chunk,
+            get_transcript,
+            is_worker_ready,
+            get_pipeline_diagnostics
+        };
     </script>
 </body>
 </html>

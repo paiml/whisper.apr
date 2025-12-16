@@ -244,6 +244,7 @@ mod queue_management_tests {
             errors: 2,
             avg_latency_ms: 150.0,
             queue_depth: 2,
+            processing_started: true,
         };
         let cloned = stats.clone();
         assert_eq!(stats.chunks_sent, cloned.chunks_sent);
@@ -444,6 +445,7 @@ mod memory_stability_tests {
             errors: u64::MAX / 4,
             avg_latency_ms: f64::MAX / 2.0,
             queue_depth: usize::MAX,
+            processing_started: true,
         };
 
         // Should not panic on large values

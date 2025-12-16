@@ -1,0 +1,95 @@
+# renacer.toml - Performance assertions for whisper.apr pipeline
+# Reference: docs/specifications/benchmark-whisper-steps-a-z.md (Appendix C.2)
+#
+# Run with: renacer -s -- cargo run --release --example format_comparison
+
+[tracing]
+level = "debug"
+output = "chrome"
+file = "whisper-benchmark.trace.json"
+
+[spans]
+include = ["step_*", "transcribe", "encode", "decode"]
+
+[metrics]
+histograms = true
+percentiles = [50, 90, 95, 99]
+
+# =============================================================================
+# PERFORMANCE ASSERTIONS (Andon Principle - fail fast on regression)
+# =============================================================================
+
+[[assertion]]
+name = "mel_compute_latency"
+description = "Mel spectrogram for 1.5s audio must complete in <20ms"
+max_duration_ms = 20
+pattern = "step_f_mel"
+
+[[assertion]]
+name = "encoder_latency"
+description = "Encoder forward pass must complete in <500ms (tiny model)"
+max_duration_ms = 500
+pattern = "step_g_encode"
+
+[[assertion]]
+name = "decoder_per_token"
+description = "Each decoder token must complete in <100ms"
+max_duration_ms = 100
+pattern = "step_h_decode_token"
+
+[[assertion]]
+name = "first_token_latency"
+description = "Time to first token must be <800ms"
+max_duration_ms = 800
+pattern = "first_token"
+
+[[assertion]]
+name = "memory_budget_tiny_int8"
+description = "Peak memory for tiny-int8 model must be <150MB"
+max_bytes = 157286400  # 150MB
+
+# =============================================================================
+# ANTI-PATTERN DETECTION
+# =============================================================================
+
+[[assertion]]
+name = "decoder_repetition_loop"
+description = "Detect decoder stuck in repetition (>50 consecutive same tokens)"
+pattern = "repetition_detected"
+action = "fail"
+
+[[assertion]]
+name = "excessive_allocations"
+description = "Warn on >1000 allocations per transcription"
+max_allocations = 1000
+action = "warn"
+
+# =============================================================================
+# RTF TARGETS (Real-Time Factor)
+# =============================================================================
+# RTF = processing_time / audio_duration
+# Target: RTF < 2.0x for tiny model (1.5s audio processed in <3s)
+
+[[assertion]]
+name = "rtf_tiny_1_5s"
+description = "RTF must be <2.0x for 1.5s audio on tiny model"
+max_duration_ms = 3000
+pattern = "e2e_1_5s"
+
+[[assertion]]
+name = "rtf_tiny_3s"
+description = "RTF must be <1.5x for 3s audio on tiny model"
+max_duration_ms = 4500
+pattern = "e2e_3s"
+
+# =============================================================================
+# GOLDEN TRACE VALIDATION (DISABLED)
+# =============================================================================
+# Note: renacer does not have 'validate' subcommand.
+# Reference data stored in test_data/ directory for manual comparison.
+# Re-enable when renacer supports trace validation.
+#
+# [golden]
+# enabled = true
+# directory = "test_data"
+# tolerance_percent = 20

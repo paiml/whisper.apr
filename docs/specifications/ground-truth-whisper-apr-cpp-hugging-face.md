@@ -4,10 +4,13 @@
 
 | Field | Value |
 |-------|-------|
-| Status | DRAFT - Awaiting AI Engineering Review |
+| Status | STUCK @ Step 20/25 - Cross-Attention Divergence |
 | Author | Claude Code |
 | Created | 2025-12-16 |
-| Toyota Way Phase | Genchi Genbutsu (現地現物) - Go and See |
+| Updated | 2025-12-16 |
+| Toyota Way Phase | Jidoka (自働化) - Stop and Fix |
+| Pipeline Position | 20/25 (80%) |
+| Upstream Issue | [RLZR-GEN-001](https://github.com/paiml/realizar/issues/23) |
 
 ---
 
@@ -258,7 +261,154 @@ Phase 4: Bisect to find divergence point
 
 ---
 
+## LogitProcessor Architecture (RLZR-GEN-001)
+
+### Root Cause Analysis
+
+The hallucination bug stems from missing logit processing between model forward pass and token sampling:
+
+```
+CURRENT (Broken):
+  decoder.forward() → [logits] → argmax → token
+                                    ↑
+                            NO PROCESSING!
+                    (SOT token has highest logit, wins every time)
+
+FIXED (With LogitProcessor):
+  decoder.forward() → [logits] → LogitProcessors → Sampler → token
+                                       ↓
+                            ├── TokenSuppressor (suppress SOT)
+                            ├── RepetitionPenalty
+                            └── TemperatureScaler
+```
+
+### Three-Layer Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Layer 1: aprender (Storage)                                         │
+├─────────────────────────────────────────────────────────────────────┤
+│  • .apr file format (tensor serialization)                           │
+│  • LZ4 compression in 64KB blocks                                    │
+│  • Weight quantization (fp32, fp16, int8)                            │
+│  • Model metadata and versioning                                     │
+│  → Pure storage, NO inference logic                                  │
+└──────────────────────────────────────┬──────────────────────────────┘
+                                       │ weights
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Layer 2: realizar (Inference Runtime)                               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  pub trait LogitProcessor: Send + Sync {                            │
+│      fn process(&self, logits: &mut [f32], ctx: &GenerationContext);│
+│  }                                                                   │
+│                                                                      │
+│  pub struct GenerationPipeline<M: Model> {                          │
+│      model: M,                                                       │
+│      processors: Vec<Box<dyn LogitProcessor>>,                      │
+│      sampler: SamplingStrategy,                                      │
+│      eos_token: Option<u32>,                                         │
+│  }                                                                   │
+│                                                                      │
+│  Built-in processors:                                                │
+│  ├── TokenSuppressor       - Suppress specific tokens                │
+│  ├── RepetitionPenalty     - Penalize repeated n-grams               │
+│  ├── TemperatureScaler     - Scale logits by temperature             │
+│  ├── TopKFilter            - Keep only top-k logits                  │
+│  └── TopPFilter            - Keep nucleus by cumulative prob         │
+│                                                                      │
+└──────────────────────────────────────┬──────────────────────────────┘
+                                       │ trait Model
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Layer 3: whisper.apr (Application)                                  │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  impl realizar::Model for WhisperDecoder {                          │
+│      fn forward(&self, tokens: &[u32]) -> Result<Vec<f32>>;         │
+│      fn vocab_size(&self) -> usize { 51865 }                        │
+│  }                                                                   │
+│                                                                      │
+│  // Whisper-specific processors                                      │
+│  pub struct WhisperTokenSuppressor;  // Suppress SOT, PREV, SOLM    │
+│  pub struct TimestampConstrainer;    // Enforce timestamp grammar    │
+│  pub struct LanguageForcer;          // Force language token         │
+│                                                                      │
+│  let pipeline = GenerationPipeline::new(decoder)                    │
+│      .add_processor(WhisperTokenSuppressor::new())                  │
+│      .add_processor(TimestampConstrainer::new())                    │
+│      .with_eos_token(EOT)  // 50256                                 │
+│      .with_sampler(SamplingStrategy::Greedy);                       │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Contract Definition
+
+The APR serving contract between layers:
+
+```rust
+// realizar/src/generate.rs - Core traits
+
+/// Context available during generation
+pub struct GenerationContext<'a> {
+    /// Previously generated tokens
+    pub tokens: &'a [u32],
+    /// Current generation step (0-indexed)
+    pub step: usize,
+    /// Vocabulary size
+    pub n_vocab: usize,
+    /// Model-specific metadata
+    pub metadata: Option<&'a dyn std::any::Any>,
+}
+
+/// Logit processor - composable pre-sampling transform
+pub trait LogitProcessor: Send + Sync {
+    /// Process logits in-place before sampling
+    ///
+    /// Processors can:
+    /// - Set logits to -inf to suppress tokens
+    /// - Add penalties (repetition, length)
+    /// - Scale logits (temperature)
+    fn process(&self, logits: &mut [f32], ctx: &GenerationContext);
+
+    /// Human-readable name for debugging
+    fn name(&self) -> &str { "unnamed" }
+}
+
+/// Model trait for generation pipeline
+pub trait GenerativeModel {
+    /// Forward pass producing logits
+    fn forward(&self, tokens: &[u32]) -> Result<Vec<f32>>;
+
+    /// Vocabulary size
+    fn vocab_size(&self) -> usize;
+
+    /// Optional: reset KV cache
+    fn reset_cache(&mut self) {}
+}
+```
+
+### Why realizar (Not aprender)
+
+| Concern | aprender | realizar | Decision |
+|---------|----------|----------|----------|
+| Tensor storage | ✓ Core competency | Uses for weights | aprender |
+| Model format | ✓ .apr format | Consumes | aprender |
+| Forward pass | Too low-level | ✓ Runtime | realizar |
+| Logit processing | Not applicable | ✓ Inference | realizar |
+| Sampling | Not applicable | ✓ Generation | realizar |
+| Pipeline orchestration | Not applicable | ✓ Runtime | realizar |
+
+**aprender** = "to learn" → Training, model storage
+**realizar** = "to accomplish" → Inference, generation
+
+---
+
 ## Peer-Reviewed Citations
+
+### Speech Recognition & Transformer Architecture (1-10)
 
 1. **Radford, A., Kim, J.W., Xu, T., Brockman, G., McLeavey, C., & Sutskever, I. (2022).** "Robust Speech Recognition via Large-Scale Weak Supervision." *arXiv preprint arXiv:2212.04356*. [OpenAI Whisper architecture]
 
@@ -279,6 +429,18 @@ Phase 4: Bisect to find divergence point
 9. **Liker, J.K. (2004).** "The Toyota Way: 14 Management Principles from the World's Greatest Manufacturer." *McGraw-Hill*. [Toyota Production System principles]
 
 10. **Popper, K. (1959).** "The Logic of Scientific Discovery." *Hutchinson & Co*. [Falsificationism methodology]
+
+### Text Generation & Logit Processing (11-15)
+
+11. **Holtzman, A., Buys, J., Du, L., Forbes, M., & Choi, Y. (2020).** "The Curious Case of Neural Text Degeneration." *ICLR 2020*. [Nucleus (top-p) sampling - demonstrates that greedy/beam search leads to repetitive, degenerate text; proposes top-p sampling as solution. **Key insight: token suppression and probability shaping are essential for coherent generation.**]
+
+12. **Keskar, N.S., McCann, B., Varshney, L.R., Xiong, C., & Socher, R. (2019).** "CTRL: A Conditional Transformer Language Model for Controllable Generation." *arXiv preprint arXiv:1909.05858*. [Controllable generation with token-level constraints - shows how to influence generation via logit manipulation. **Validates composable processor architecture.**]
+
+13. **Su, Y., Lan, T., Wang, Y., Yogatama, D., Kong, L., & Collier, N. (2022).** "A Contrastive Framework for Neural Text Generation." *NeurIPS 2022*. [Contrastive decoding - applies penalties to reduce repetition. **Demonstrates that logit processors can prevent hallucination/repetition.**]
+
+14. **Fan, A., Lewis, M., & Dauphin, Y. (2018).** "Hierarchical Neural Story Generation." *ACL 2018*. [Top-k sampling - shows that restricting sampling to top-k tokens improves coherence. **Foundation for TopKFilter processor.**]
+
+15. **Wolf, T., Debut, L., Sanh, V., Chaumond, J., Delangue, C., Moi, A., Cistac, P., Rault, T., Louf, R., Funtowicz, M., Davison, J., Shleifer, S., von Platen, P., Ma, C., Jernite, Y., Plu, J., Xu, C., Le Scao, T., Gugger, S., Drame, M., Lhoest, Q., & Rush, A.M. (2020).** "Transformers: State-of-the-Art Natural Language Processing." *EMNLP 2020 System Demonstrations*. [HuggingFace Transformers library - defines LogitsProcessor pattern adopted industry-wide. **Direct precedent for realizar's LogitProcessor trait.**]
 
 ---
 
@@ -333,6 +495,157 @@ renacer -s -- cargo test test_decoder_eot
 # - decoder.logits (check EOT probability)
 # - decoder.sample (verify token selection)
 ```
+
+---
+
+## Linear Progress Scale (25-Step Pipeline)
+
+### Methodology
+
+Divide inference pipeline into 25 atomic steps. Each iteration:
+1. Identify current step position for each implementation
+2. Compare intermediate outputs at that step
+3. If stuck (same step 3+ iterations), apply Five Whys
+
+### Step Definitions
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AUDIO PREPROCESSING (1-5)                      │
+├─────────────────────────────────────────────────────────────────┤
+│ Step 1:  Load WAV → raw samples (f32)                            │
+│ Step 2:  Resample to 16kHz                                       │
+│ Step 3:  Pad/truncate to 30s (480000 samples)                    │
+│ Step 4:  Apply Hann window (400 samples, hop 160)                │
+│ Step 5:  Compute FFT (201 bins)                                  │
+├─────────────────────────────────────────────────────────────────┤
+│                    MEL SPECTROGRAM (6-10)                         │
+├─────────────────────────────────────────────────────────────────┤
+│ Step 6:  Apply 80-mel filterbank                                 │
+│ Step 7:  Log mel scaling (log1p)                                 │
+│ Step 8:  Normalize (mean/std per channel)                        │
+│ Step 9:  Reshape to (1, 80, 3000)                                │
+│ Step 10: Verify mel checksum vs reference                        │
+├─────────────────────────────────────────────────────────────────┤
+│                    ENCODER (11-15)                                │
+├─────────────────────────────────────────────────────────────────┤
+│ Step 11: Conv1 + GELU (80→d_model)                               │
+│ Step 12: Conv2 + GELU (d_model→d_model)                          │
+│ Step 13: Add sinusoidal positional encoding                      │
+│ Step 14: Encoder transformer layers (N layers)                   │
+│ Step 15: Final layer norm → encoder output (1, 1500, d_model)    │
+├─────────────────────────────────────────────────────────────────┤
+│                    DECODER INIT (16-18)                           │
+├─────────────────────────────────────────────────────────────────┤
+│ Step 16: Token embedding lookup                                  │
+│ Step 17: Add positional embedding                                │
+│ Step 18: Initialize KV cache                                     │
+├─────────────────────────────────────────────────────────────────┤
+│                    DECODER LOOP (19-22)                           │
+├─────────────────────────────────────────────────────────────────┤
+│ Step 19: Self-attention (causal mask)                            │
+│ Step 20: Cross-attention (attend to encoder)          ← SUSPECT  │
+│ Step 21: FFN + residual                                          │
+│ Step 22: Output projection → logits (51865)                      │
+├─────────────────────────────────────────────────────────────────┤
+│                    TOKEN GENERATION (23-25)                       │
+├─────────────────────────────────────────────────────────────────┤
+│ Step 23: Apply LogitProcessor (suppress SOT, etc.)               │
+│ Step 24: Sample next token (greedy/beam)                         │
+│ Step 25: Check EOT → terminate or loop to Step 19    ← SUSPECT   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Current Position
+
+| Implementation | Current Step | Status | Notes |
+|----------------|--------------|--------|-------|
+| whisper.cpp    | 25 ✓         | PASS   | Full pipeline works |
+| HuggingFace    | 25 ✓         | PASS   | Full pipeline works |
+| whisper.apr    | **20** ✗     | STUCK  | Cross-attention outputs wrong |
+
+### Hypothesis Testing Results (2025-12-16)
+
+Debug tooling created in `examples/debug_cross_attn.rs` to systematically test 5 hypotheses:
+
+| Hypothesis | Description | Test Method | Result |
+|------------|-------------|-------------|--------|
+| H1 | Cross-attn K/V not connected to encoder | Different inputs → different outputs? | ✅ PASSED |
+| H2 | Encoder output shape wrong | Check 1500 × d_model = 576000 | ✅ PASSED |
+| H3 | Cross-attn weights never loaded | Check weight norms non-zero | ✅ PASSED |
+| H4 | Attention scaling factor wrong | Verify 1/sqrt(d_head) | ✅ PASSED |
+| H5 | KV cache overwrites encoder context | Code review | ✅ PASSED (code review) |
+
+**Key Observation:** All structural hypotheses PASSED, yet model still produces repetitive garbage:
+- Real audio: `"the other one of the other one of..."`
+- Silence: `"the other. the other. the other..."`
+- Noise: `"the other one.d.d.d.d..."`
+
+**Refined Hypothesis (H6):** The architecture is correct but **weight values** may be incorrectly converted. Cross-attention weights have correct norms but may have wrong values compared to reference implementations.
+
+**Next Steps:**
+1. Compare cross-attention weight VALUES (not just norms) against whisper.cpp ggml weights
+2. Add repetition penalty to logit processors (currently missing)
+3. Dump intermediate attention outputs and compare against reference
+
+### Model Size Elimination Test
+
+| Model | whisper.cpp | HuggingFace | whisper.apr | Conclusion |
+|-------|-------------|-------------|-------------|------------|
+| tiny  | "The birds can use" | "The birds can use" | "the other one of..." ×100 | ✗ Hallucination |
+| base  | "the birch canoes" | "The Birch can do" | ". The. The..." ×200 | ✗ Hallucination |
+
+**Finding:** Both models hallucinate differently but with same root cause. Issue is NOT model-specific - confirms Step 20 (cross-attention) divergence.
+
+### Divergence Analysis
+
+**Step 20 (Cross-Attention) is the likely divergence point:**
+
+```
+whisper.cpp Step 20 output:
+  - Query attends to encoder positions 0-1500
+  - Attention weights peak at audio boundaries
+  - EOT probability rises when audio ends
+
+whisper.apr Step 20 output:
+  - Query ignores encoder (flat attention?)
+  - No correlation with audio content
+  - EOT probability stays at rank ~50000
+```
+
+### Five Whys (Triggered: Stuck at Step 20)
+
+| Level | Question | Answer |
+|-------|----------|--------|
+| Why 1 | Why is cross-attention output wrong? | Attention weights don't match reference |
+| Why 2 | Why don't attention weights match? | Keys/Values from encoder may be wrong |
+| Why 3 | Why might encoder output be wrong? | Weights may be incorrectly loaded |
+| Why 4 | Why might weights be wrong? | APR→tensor mapping or quantization |
+| Why 5 | Why check APR format first? | It's the untested interface between aprender and whisper.apr |
+
+### Iteration Protocol
+
+```bash
+# Each debugging iteration:
+1. cargo run --example debug_step_N  # Compare at step N
+2. diff output_whisper_apr.json output_whisper_cpp.json
+3. if divergence > threshold:
+     record_divergence(step=N)
+     five_whys(step=N)
+   else:
+     advance(step=N+1)
+```
+
+### Step Validation Commands
+
+| Step | Validation Command | Pass Criteria |
+|------|-------------------|---------------|
+| 1-5  | `cargo run --example debug_audio` | Samples match ±1e-6 |
+| 6-10 | `cargo run --example debug_mel` | Mel L2 < 1e-4 |
+| 11-15| `cargo run --example debug_encoder` | Encoder L2 < 1e-3 |
+| 16-18| `cargo run --example debug_decoder_init` | Embeddings match |
+| 19-22| `cargo run --example debug_decoder_step` | Logits L2 < 1e-2 |
+| 23-25| `cargo run --example debug_generation` | Same tokens |
 
 ---
 

@@ -282,11 +282,8 @@ impl DomainAdapter {
                 .or_insert(clamped_boost);
         }
 
-        self.terms.push(DomainTerm::new(
-            text.to_string(),
-            tokens,
-            clamped_boost,
-        ));
+        self.terms
+            .push(DomainTerm::new(text.to_string(), tokens, clamped_boost));
 
         self.first_token_map
             .entry(first_token)
@@ -578,8 +575,7 @@ mod tests {
 
     #[test]
     fn test_domain_term_with_category() {
-        let term = DomainTerm::new("test".to_string(), vec![100], 1.0)
-            .with_category("anatomy");
+        let term = DomainTerm::new("test".to_string(), vec![100], 1.0).with_category("anatomy");
         assert_eq!(term.category, Some("anatomy".to_string()));
     }
 
@@ -614,9 +610,18 @@ mod tests {
     fn test_domain_adapter_factory_methods() {
         assert_eq!(DomainAdapter::medical().domain_type(), DomainType::Medical);
         assert_eq!(DomainAdapter::legal().domain_type(), DomainType::Legal);
-        assert_eq!(DomainAdapter::technical().domain_type(), DomainType::Technical);
-        assert_eq!(DomainAdapter::financial().domain_type(), DomainType::Financial);
-        assert_eq!(DomainAdapter::scientific().domain_type(), DomainType::Scientific);
+        assert_eq!(
+            DomainAdapter::technical().domain_type(),
+            DomainType::Technical
+        );
+        assert_eq!(
+            DomainAdapter::financial().domain_type(),
+            DomainType::Financial
+        );
+        assert_eq!(
+            DomainAdapter::scientific().domain_type(),
+            DomainType::Scientific
+        );
         assert_eq!(DomainAdapter::custom().domain_type(), DomainType::Custom);
     }
 

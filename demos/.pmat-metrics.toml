@@ -1,0 +1,19 @@
+# PMAT Quality Gate overrides for demos
+# WASM demos have "dead code" that's actually called from JavaScript
+
+[exclude]
+paths = [
+    "www/pkg/**",
+    "target/**",
+]
+
+[quality_gates]
+# Relax dead code for WASM (JS calls functions that appear "dead" to Rust analyzer)
+max_dead_code_pct = 60.0
+
+# SATD in vendored/generated code is acceptable
+max_satd_comments = 10
+
+[thresholds]
+# WASM demos export many functions for JS that look "unused" to Rust
+dead_code_threshold = 60.0

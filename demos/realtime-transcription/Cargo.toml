@@ -31,6 +31,7 @@ web-sys = { workspace = true, features = [
     "Blob",
     "BlobPropertyBag",
     "Url",
+    "Location",
     "DedicatedWorkerGlobalScope",
     "AudioContext",
     "AudioContextState",

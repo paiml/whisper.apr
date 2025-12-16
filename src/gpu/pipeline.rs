@@ -746,8 +746,7 @@ mod tests {
 
     #[test]
     fn test_shader_module_descriptor() {
-        let desc = ShaderModuleDescriptor::wgsl("@compute fn main() {}")
-            .with_label("test_shader");
+        let desc = ShaderModuleDescriptor::wgsl("@compute fn main() {}").with_label("test_shader");
         assert!(desc.label.is_some());
         assert!(desc.validate().is_ok());
     }
@@ -800,7 +799,8 @@ mod tests {
         let desc = BindGroupLayoutDescriptor::new(vec![
             BindGroupLayoutEntry::storage_buffer(0),
             BindGroupLayoutEntry::uniform_buffer(1),
-        ]).with_label("test_layout");
+        ])
+        .with_label("test_layout");
 
         assert_eq!(desc.entry_count(), 2);
         assert!(desc.validate().is_ok());
@@ -818,9 +818,7 @@ mod tests {
 
     #[test]
     fn test_bind_group_layout_new() {
-        let desc = BindGroupLayoutDescriptor::new(vec![
-            BindGroupLayoutEntry::storage_buffer(0),
-        ]);
+        let desc = BindGroupLayoutDescriptor::new(vec![BindGroupLayoutEntry::storage_buffer(0)]);
         let layout = BindGroupLayout::new(desc).expect("Should create layout");
         assert!(layout.id() > 0);
         assert_eq!(layout.entry_count(), 1);
@@ -902,8 +900,7 @@ mod tests {
 
     #[test]
     fn test_compute_dispatch_with_workgroup_size() {
-        let dispatch = ComputeDispatch::for_elements(1, 1000)
-            .with_workgroup_size(128);
+        let dispatch = ComputeDispatch::for_elements(1, 1000).with_workgroup_size(128);
         assert_eq!(dispatch.workgroup_size, 128);
     }
 
@@ -921,9 +918,7 @@ mod tests {
 
     #[test]
     fn test_buffer_binding_builders() {
-        let binding = BufferBinding::new(1)
-            .at_offset(512)
-            .with_size(256);
+        let binding = BufferBinding::new(1).at_offset(512).with_size(256);
 
         assert_eq!(binding.offset, 512);
         assert_eq!(binding.size, Some(256));
@@ -938,10 +933,11 @@ mod tests {
 
     #[test]
     fn test_bind_group_descriptor() {
-        let desc = BindGroupDescriptor::new(1, vec![
-            BindGroupEntry::new(0, 1),
-            BindGroupEntry::new(1, 2),
-        ]).with_label("test_bind_group");
+        let desc = BindGroupDescriptor::new(
+            1,
+            vec![BindGroupEntry::new(0, 1), BindGroupEntry::new(1, 2)],
+        )
+        .with_label("test_bind_group");
 
         assert_eq!(desc.layout_id, 1);
         assert_eq!(desc.entries.len(), 2);
@@ -950,19 +946,20 @@ mod tests {
 
     #[test]
     fn test_bind_group_descriptor_duplicate_fails() {
-        let desc = BindGroupDescriptor::new(1, vec![
-            BindGroupEntry::new(0, 1),
-            BindGroupEntry::new(0, 2), // Duplicate binding!
-        ]);
+        let desc = BindGroupDescriptor::new(
+            1,
+            vec![
+                BindGroupEntry::new(0, 1),
+                BindGroupEntry::new(0, 2), // Duplicate binding!
+            ],
+        );
 
         assert!(desc.validate().is_err());
     }
 
     #[test]
     fn test_bind_group_new() {
-        let desc = BindGroupDescriptor::new(1, vec![
-            BindGroupEntry::new(0, 1),
-        ]);
+        let desc = BindGroupDescriptor::new(1, vec![BindGroupEntry::new(0, 1)]);
         let group = BindGroup::new(desc).expect("Should create bind group");
         assert!(group.id() > 0);
         assert_eq!(group.layout_id(), 1);

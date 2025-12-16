@@ -549,8 +549,8 @@ mod tests {
 
     #[test]
     fn test_mmap_handle_new() {
-        let handle = MmapHandle::new(1024 * 1024, MmapConfig::default())
-            .expect("Should create handle");
+        let handle =
+            MmapHandle::new(1024 * 1024, MmapConfig::default()).expect("Should create handle");
         assert!(handle.id() > 0);
         assert_eq!(handle.size(), 1024 * 1024);
         assert!(handle.is_valid());
@@ -564,8 +564,8 @@ mod tests {
 
     #[test]
     fn test_mmap_handle_regions() {
-        let mut handle = MmapHandle::new(1024 * 1024, MmapConfig::default())
-            .expect("Should create");
+        let mut handle =
+            MmapHandle::new(1024 * 1024, MmapConfig::default()).expect("Should create");
 
         assert_eq!(handle.region_count(), 0);
         assert_eq!(handle.tracked_bytes(), 0);
@@ -579,8 +579,7 @@ mod tests {
 
     #[test]
     fn test_mmap_handle_invalidate() {
-        let mut handle = MmapHandle::new(1024, MmapConfig::default())
-            .expect("Should create");
+        let mut handle = MmapHandle::new(1024, MmapConfig::default()).expect("Should create");
         assert!(handle.is_valid());
 
         handle.invalidate();
@@ -589,8 +588,7 @@ mod tests {
 
     #[test]
     fn test_mmap_handle_read_at() {
-        let handle = MmapHandle::new(1024, MmapConfig::default())
-            .expect("Should create");
+        let handle = MmapHandle::new(1024, MmapConfig::default()).expect("Should create");
 
         let data = handle.read_at(0, 100).expect("Should read");
         assert_eq!(data.len(), 100);
@@ -601,8 +599,7 @@ mod tests {
 
     #[test]
     fn test_mmap_handle_write_at_readonly() {
-        let mut handle = MmapHandle::new(1024, MmapConfig::default())
-            .expect("Should create");
+        let mut handle = MmapHandle::new(1024, MmapConfig::default()).expect("Should create");
 
         // Write to read-only should fail
         assert!(handle.write_at(0, &[1, 2, 3]).is_err());
@@ -610,11 +607,9 @@ mod tests {
 
     #[test]
     fn test_mmap_handle_write_at_readwrite() {
-        let mut handle = MmapHandle::new(
-            1024,
-            MmapConfig::default().with_mode(MmapMode::ReadWrite),
-        )
-        .expect("Should create");
+        let mut handle =
+            MmapHandle::new(1024, MmapConfig::default().with_mode(MmapMode::ReadWrite))
+                .expect("Should create");
 
         // Write should succeed
         assert!(handle.write_at(0, &[1, 2, 3]).is_ok());
