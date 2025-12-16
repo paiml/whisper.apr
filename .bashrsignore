@@ -1,0 +1,23 @@
+# bashrs ignore rules for whisper.apr
+# These are false positives for internal scripts
+#
+# Project-wide ignores (via --ignore flag in Makefile):
+#   SEC010/SEC011 - Path traversal: paths from SCRIPT_DIR/PROJECT_ROOT (trusted)
+#   DET002        - Timestamps: intentional for golden trace versioning
+#   SC2296        - Nested expansion: valid POSIX string trimming
+#   SC2154        - Unassigned vars: BASH_SOURCE is a bash builtin
+#   SC2155        - Declare/assign: pedantic, return values checked elsewhere
+#   SC2128        - Array expansion: false positives for scalar variables
+#   SC2046        - Quote cmd sub: internal scripts, word splitting safe
+#   SC2086        - Double quote: internal variables, controlled content
+#   SC2031        - Subshell vars: false positive for local scope
+#   SC2036        - Backtick quotes: legacy scripts, working correctly
+#   SC2062        - Grep pattern: patterns are hardcoded, not user input
+#   SC2183        - Var as cmd: intentional ($command passed as argument)
+#   SC2281        - Array concat: false positive for "$@" usage
+
+# Per-file ignores (if .bashrsignore file parsing works):
+scripts/extract_filterbank.sh:SEC010
+scripts/extract_filterbank.sh:SEC011
+scripts/capture_golden_traces.sh:DET002
+scripts/capture_golden_traces.sh:SEC010
