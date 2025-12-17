@@ -34,7 +34,7 @@ pub mod worker;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use tracing::{info, info_span, warn};
+use tracing::{debug, info, info_span, warn};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -44,7 +44,7 @@ use whisper_apr::{TranscribeOptions, WhisperApr};
 
 /// Default model URL - can be served locally or from CDN
 /// For local development: serve the models/ directory at http://localhost:8080/models/
-const MODEL_URL: &str = "/models/whisper-tiny-int8.apr";
+const MODEL_URL: &str = "/models/whisper-tiny-int8-fb.apr";
 
 /// Demo application state machine
 #[wasm_bindgen]
@@ -109,6 +109,8 @@ pub struct RealtimeTranscriptionDemo {
     samples_captured: u64,
     model_loaded: bool,
     chunks_captured: u32,
+    /// Number of chunks currently being processed
+    chunks_processing: u32,
 }
 
 #[wasm_bindgen]
@@ -126,6 +128,7 @@ impl RealtimeTranscriptionDemo {
             samples_captured: 0,
             model_loaded: false,
             chunks_captured: 0,
+            chunks_processing: 0,
         }
     }
 
@@ -187,6 +190,18 @@ impl RealtimeTranscriptionDemo {
         self.partial_transcript.clone()
     }
 
+    /// Get number of chunks currently being processed
+    #[must_use]
+    pub fn chunks_processing(&self) -> u32 {
+        self.chunks_processing
+    }
+
+    /// Check if any chunks are being processed
+    #[must_use]
+    pub fn is_processing(&self) -> bool {
+        self.chunks_processing > 0
+    }
+
     /// Get recording duration formatted as M:SS
     #[must_use]
     pub fn recording_duration(&self) -> String {
@@ -224,6 +239,8 @@ impl RealtimeTranscriptionDemo {
             return Err(JsValue::from_str("Cannot start recording in current state"));
         }
 
+        // Clear previous transcript when starting new recording
+        self.clear_transcript();
         self.transition_to(DemoState::RequestingPermission)?;
         Ok(())
     }
@@ -244,10 +261,12 @@ impl RealtimeTranscriptionDemo {
 
     /// Clear the transcript
     pub fn clear_transcript(&mut self) {
+        info!(old_len = self.transcript.len(), "Clearing transcript");
         self.transcript.clear();
         self.partial_transcript.clear();
         self.recording_duration_ms = 0;
         self.samples_captured = 0;
+        self.chunks_processing = 0;
     }
 
     /// Handle permission granted callback
@@ -639,14 +658,19 @@ fn handle_worker_result(
         }
         WorkerResult::Transcription { chunk_id, text, rtf, .. } => {
             info!(chunk_id, text = %text, rtf, "Transcription received from worker");
-            let mut demo = demo.borrow_mut();
-            demo.chunks_captured += 1;
-            if !demo.transcript.is_empty() && !demo.transcript.ends_with(' ') {
-                demo.transcript.push(' ');
-            }
-            demo.transcript.push_str(&text);
-            demo.on_partial_result("");
-            let _ = update_ui(document, &demo);
+            {
+                let mut demo_mut = demo.borrow_mut();
+                demo_mut.chunks_captured += 1;
+                demo_mut.chunks_processing = demo_mut.chunks_processing.saturating_sub(1);
+                if !demo_mut.transcript.is_empty() && !demo_mut.transcript.ends_with(' ') {
+                    demo_mut.transcript.push(' ');
+                }
+                demo_mut.transcript.push_str(&text);
+                info!(transcript = %demo_mut.transcript, chunks_processing = demo_mut.chunks_processing, "Transcript updated");
+                demo_mut.on_partial_result("");
+            } // Release mutable borrow
+            let demo_ref = demo.borrow();
+            let _ = update_ui(document, &demo_ref);
         }
         WorkerResult::Error { chunk_id, message, .. } => {
             warn!(chunk_id = ?chunk_id, message = %message, "Worker error");
@@ -814,6 +838,7 @@ fn handle_transcription_chunk(
             // Queue management handles overflow automatically
             match bridge_mut.transcribe(&chunk, &session_id, &[], false) {
                 Ok(Some(chunk_id)) => {
+                    demo.borrow_mut().chunks_processing += 1;
                     info!(chunk_id, queue_depth = queue_stats.queue_depth + 1, "Chunk sent to worker");
                 }
                 Ok(None) => {
@@ -1099,16 +1124,7 @@ fn create_stop_handler(
     move |doc| {
         stop_audio_capture();
         let _ = demo.borrow_mut().stop_recording();
-
-        let samples = demo.borrow().samples_captured();
-        let duration = demo.borrow().recording_duration();
-        let transcript = demo.borrow().transcript();
-
-        let final_text = format!(
-            "{transcript}\n\n--- Recording Complete ---\nDuration: {duration}\nTotal Samples: {samples}\n(Transcription requires loading whisper model)"
-        );
-
-        let _ = demo.borrow_mut().on_transcription_complete(&final_text);
+        // Don't modify transcript - just update UI. Transcription results come from worker.
         let _ = update_ui(doc, &demo.borrow());
     }
 }
@@ -1199,8 +1215,32 @@ fn update_text_displays(document: &web_sys::Document, demo: &RealtimeTranscripti
     if let Some(duration) = document.get_element_by_id("recording_duration") {
         duration.set_text_content(Some(&demo.recording_duration()));
     }
+    let transcript_text = demo.transcript();
     if let Some(transcript) = document.get_element_by_id("transcript_display") {
-        transcript.set_text_content(Some(&demo.transcript()));
+        if !transcript_text.is_empty() {
+            debug!(
+                transcript_len = transcript_text.len(),
+                transcript_preview = %transcript_text.chars().take(50).collect::<String>(),
+                "Setting transcript_display text"
+            );
+        }
+        transcript.set_text_content(Some(&transcript_text));
+
+        // Verify the DOM was actually updated
+        if !transcript_text.is_empty() {
+            let actual = transcript.text_content().unwrap_or_default();
+            if actual != transcript_text {
+                warn!(
+                    expected = %transcript_text,
+                    actual = %actual,
+                    "DOM text mismatch after set_text_content!"
+                );
+            } else {
+                debug!(actual_len = actual.len(), "DOM verified - text content matches");
+            }
+        }
+    } else if !transcript_text.is_empty() {
+        warn!("transcript_display element not found!");
     }
     if let Some(partial) = document.get_element_by_id("partial_transcript") {
         partial.set_text_content(Some(&demo.partial_transcript()));
@@ -1247,7 +1287,39 @@ fn update_ui(
     update_text_displays(document, demo);
     update_button_states(document, demo);
     update_waveform_visibility(document, demo);
+    update_processing_indicator(document, demo);
     Ok(())
+}
+
+/// Update processing indicator visibility and text
+fn update_processing_indicator(document: &web_sys::Document, demo: &RealtimeTranscriptionDemo) {
+    if let Some(indicator) = document.get_element_by_id("processing_indicator") {
+        if demo.is_processing() {
+            let _ = indicator.class_list().add_1("visible");
+        } else {
+            let _ = indicator.class_list().remove_1("visible");
+        }
+    }
+    if let Some(text) = document.get_element_by_id("processing_text") {
+        let chunks = demo.chunks_processing();
+        let msg = if chunks == 1 {
+            "Processing audio chunk...".to_string()
+        } else if chunks > 1 {
+            format!("Processing {} chunks...", chunks)
+        } else {
+            String::new()
+        };
+        text.set_text_content(Some(&msg));
+    }
+    if let Some(queue_status) = document.get_element_by_id("queue_status") {
+        let chunks = demo.chunks_processing();
+        let msg = if chunks > 0 {
+            format!("(~{}s remaining)", chunks * 15)
+        } else {
+            String::new()
+        };
+        queue_status.set_text_content(Some(&msg));
+    }
 }
 
 /// Set up a click listener on a button

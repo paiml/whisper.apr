@@ -168,6 +168,25 @@
         #transcript_display {
             line-height: 1.8;
             white-space: pre-wrap;
+            min-height: 100px;
+            padding: 1rem;
+            border: 3px solid var(--success);
+            background: #1a2a1a;
+            color: #4ade80 !important;
+            font-size: 1.5rem;
+            font-weight: bold;
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            margin-bottom: 1rem;
+        }
+
+        #transcript_display:empty::before {
+            content: "(transcript will appear here)";
+            color: var(--text-secondary);
+            font-style: italic;
+            font-weight: normal;
+            font-size: 1rem;
         }
 
         #error_message {
@@ -193,6 +212,39 @@
         }
 
         #compatibility_warning.visible { display: block; }
+
+        /* Processing indicator */
+        #processing_indicator {
+            display: none;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            background: rgba(88, 166, 255, 0.1);
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            color: var(--accent);
+        }
+
+        #processing_indicator.visible { display: flex; }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--accent);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        #queue_status {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
 
         /* Accessibility */
         [role="status"] { position: absolute; left: -9999px; }
@@ -238,10 +290,16 @@
             </div>
         </div>
 
+        <div id="processing_indicator" role="status" aria-live="polite">
+            <div class="spinner"></div>
+            <span id="processing_text">Processing audio...</span>
+            <span id="queue_status"></span>
+        </div>
+
         <div class="transcript-container">
             <h2>Transcript</h2>
-            <div id="partial_transcript"></div>
             <div id="transcript_display" role="status" aria-live="polite"></div>
+            <div id="partial_transcript"></div>
         </div>
     </main>
 

@@ -209,42 +209,7 @@ fn handle_transcribe(obj: &js_sys::Object) {
 
             info!(chunk_id, "Calling model.transcribe()...");
 
-            // Diagnostic: time each stage
-            let t0 = js_sys::Date::now();
-
-            // Stage 1: Mel spectrogram
-            let mel = match model.compute_mel(&audio) {
-                Ok(m) => {
-                    let t1 = js_sys::Date::now();
-                    info!(chunk_id, mel_len = m.len(), mel_time_ms = t1 - t0, "Mel computed");
-                    m
-                }
-                Err(e) => {
-                    error!(chunk_id, error = %e, "Mel computation failed");
-                    post_error(&format!("Mel failed: {e:?}"), Some(chunk_id));
-                    return;
-                }
-            };
-
-            // Stage 2: Encode
-            let t1 = js_sys::Date::now();
-            let encoded = match model.encode(&mel) {
-                Ok(e) => {
-                    let t2 = js_sys::Date::now();
-                    info!(chunk_id, encoded_len = e.len(), encode_time_ms = t2 - t1, "Encoded");
-                    e
-                }
-                Err(e) => {
-                    error!(chunk_id, error = %e, "Encode failed");
-                    post_error(&format!("Encode failed: {e:?}"), Some(chunk_id));
-                    return;
-                }
-            };
-
-            // Log that we're about to decode (this is likely where it hangs)
-            let t2 = js_sys::Date::now();
-            info!(chunk_id, encoded_features = encoded.len(), "Starting decode...");
-
+            // Call transcribe directly (no diagnostic mel/encode steps to avoid double work)
             match model.transcribe(&audio, options) {
                 Ok(result) => {
                     let elapsed_ms = js_sys::Date::now() - start_time;
