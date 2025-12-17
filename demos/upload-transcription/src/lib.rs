@@ -1116,6 +1116,50 @@ mod tests {
         assert!(srt.contains("00:00:02,500"));
     }
 
+    #[test]
+    fn test_segment_text_getter() {
+        let segment = TranscriptSegment {
+            start_seconds: 0.0,
+            end_seconds: 5.0,
+            text: "Test text content".to_string(),
+        };
+        assert_eq!(segment.text(), "Test text content");
+    }
+
+    #[test]
+    fn test_segment_timestamp_format() {
+        let segment = TranscriptSegment {
+            start_seconds: 61.5,
+            end_seconds: 125.123,
+            text: "Test".to_string(),
+        };
+        let ts = segment.timestamp();
+        assert!(ts.contains("01:01.500"));
+        assert!(ts.contains("02:05.123"));
+    }
+
+    #[test]
+    fn test_segment_clone() {
+        let segment = TranscriptSegment {
+            start_seconds: 1.0,
+            end_seconds: 2.0,
+            text: "Cloned".to_string(),
+        };
+        let cloned = segment.clone();
+        assert_eq!(segment.text(), cloned.text());
+    }
+
+    #[test]
+    fn test_segment_debug() {
+        let segment = TranscriptSegment {
+            start_seconds: 0.0,
+            end_seconds: 1.0,
+            text: "Debug".to_string(),
+        };
+        let debug_str = format!("{:?}", segment);
+        assert!(debug_str.contains("TranscriptSegment"));
+    }
+
     // =========================================================================
     // Default Trait Tests
     // =========================================================================
@@ -1165,5 +1209,207 @@ mod tests {
     fn test_progress_default() {
         let progress = TranscriptionProgress::default();
         assert_eq!(progress.percent(), 0.0);
+    }
+
+    // =========================================================================
+    // FileInfo Additional Tests
+    // =========================================================================
+
+    #[test]
+    fn test_file_info_clone() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let info = demo.file_info().unwrap();
+        let cloned = info.clone();
+        assert_eq!(info.name(), cloned.name());
+    }
+
+    #[test]
+    fn test_file_info_debug() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let info = demo.file_info().unwrap();
+        let debug_str = format!("{:?}", info);
+        assert!(debug_str.contains("FileInfo"));
+    }
+
+    #[test]
+    fn test_file_info_duration_formatted_with_hours() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        demo.set_file_duration(3661.0); // 1 hour, 1 minute, 1 second
+        let info = demo.file_info().unwrap();
+        let formatted = info.duration_formatted().unwrap();
+        assert!(formatted.contains("1:01:01"));
+    }
+
+    // =========================================================================
+    // TranscriptionProgress Additional Tests
+    // =========================================================================
+
+    #[test]
+    fn test_progress_clone() {
+        let progress = TranscriptionProgress {
+            current_chunk: 2,
+            total_chunks: 5,
+            percent_complete: 40.0,
+            estimated_remaining_seconds: Some(60.0),
+        };
+        let cloned = progress.clone();
+        assert_eq!(progress.percent(), cloned.percent());
+    }
+
+    #[test]
+    fn test_progress_debug() {
+        let progress = TranscriptionProgress::default();
+        let debug_str = format!("{:?}", progress);
+        assert!(debug_str.contains("TranscriptionProgress"));
+    }
+
+    // =========================================================================
+    // Helper Functions Tests
+    // =========================================================================
+
+    #[test]
+    fn test_format_duration_with_hours() {
+        assert_eq!(format_duration(7325.0), "2:02:05");
+    }
+
+    #[test]
+    fn test_format_duration_exact_hour() {
+        assert_eq!(format_duration(3600.0), "1:00:00");
+    }
+
+    #[test]
+    fn test_calculate_chunks_boundary() {
+        assert_eq!(calculate_chunks(30.0), 1);
+        assert_eq!(calculate_chunks(30.1), 2);
+        assert_eq!(calculate_chunks(0.0), 1);
+        assert_eq!(calculate_chunks(1.0), 1);
+    }
+
+    // =========================================================================
+    // Start Transcription Edge Cases
+    // =========================================================================
+
+    // Note: test_start_transcription_no_file omitted because JsValue::from_str
+    // panics on non-WASM targets. This path is tested via browser tests.
+
+    #[test]
+    fn test_start_transcription_clears_previous() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let _ = demo.start_transcription();
+        demo.add_segment(0.0, 1.0, "First");
+        demo.complete();
+
+        // Start again
+        let _ = demo.start_transcription();
+        assert_eq!(demo.segments_count(), 0);
+        assert!(!demo.is_cancelled());
+    }
+
+    #[test]
+    fn test_start_transcription_uses_file_duration() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        demo.set_file_duration(90.0); // 3 chunks
+        let _ = demo.start_transcription();
+        let progress = demo.progress();
+        assert!(progress.chunk_text().contains("/3"));
+    }
+
+    // =========================================================================
+    // Export Additional Tests
+    // =========================================================================
+
+    #[test]
+    fn test_export_srt_multiple_segments() {
+        let mut demo = UploadTranscriptionDemo::new();
+        demo.add_segment(0.0, 2.0, "First");
+        demo.add_segment(2.0, 4.0, "Second");
+        demo.add_segment(4.0, 6.0, "Third");
+        let srt = demo.export_srt();
+        assert!(srt.contains("1\n"));
+        assert!(srt.contains("2\n"));
+        assert!(srt.contains("3\n"));
+        assert!(srt.contains("First"));
+        assert!(srt.contains("Second"));
+        assert!(srt.contains("Third"));
+    }
+
+    #[test]
+    fn test_export_vtt_multiple_segments() {
+        let mut demo = UploadTranscriptionDemo::new();
+        demo.add_segment(0.0, 2.0, "First");
+        demo.add_segment(2.0, 4.0, "Second");
+        let vtt = demo.export_vtt();
+        assert!(vtt.starts_with("WEBVTT"));
+        assert!(vtt.contains("First"));
+        assert!(vtt.contains("Second"));
+        assert!(vtt.contains("-->"));
+    }
+
+    #[test]
+    fn test_export_vtt_timestamp_format() {
+        let mut demo = UploadTranscriptionDemo::new();
+        demo.add_segment(3661.123, 3665.456, "Test");
+        let vtt = demo.export_vtt();
+        // VTT format: HH:MM:SS.mmm
+        assert!(vtt.contains("01:01:01.123"));
+        assert!(vtt.contains("01:01:05.456"));
+    }
+
+    #[test]
+    fn test_export_srt_timestamp_format() {
+        let mut demo = UploadTranscriptionDemo::new();
+        demo.add_segment(3661.123, 3665.456, "Test");
+        let srt = demo.export_srt();
+        // SRT format: HH:MM:SS,mmm
+        assert!(srt.contains("01:01:01,123"));
+        assert!(srt.contains("01:01:05,456"));
+    }
+
+    // =========================================================================
+    // File Validation Additional Tests
+    // =========================================================================
+
+    #[test]
+    fn test_file_selection_resets_error() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("bad.pdf", 1000);
+        assert_eq!(demo.state(), DemoState::Error);
+
+        let _ = demo.on_file_selected("good.wav", 1000);
+        assert_eq!(demo.state(), DemoState::FileSelected);
+        assert!(demo.error_message().is_none());
+    }
+
+    #[test]
+    fn test_case_insensitive_extension() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("test.WAV", 1000);
+        assert_eq!(demo.state(), DemoState::FileSelected);
+
+        demo.clear();
+        let _ = demo.on_file_selected("test.Mp3", 1000);
+        assert_eq!(demo.state(), DemoState::FileSelected);
+    }
+
+    #[test]
+    fn test_file_no_extension() {
+        let mut demo = UploadTranscriptionDemo::new();
+        let _ = demo.on_file_selected("noextension", 1000);
+        assert_eq!(demo.state(), DemoState::Error);
+    }
+
+    // =========================================================================
+    // UploadTranscriptionDemo Clone/Debug Tests
+    // =========================================================================
+
+    #[test]
+    fn test_demo_file_info_none_initially() {
+        let demo = UploadTranscriptionDemo::new();
+        assert!(demo.file_info().is_none());
     }
 }

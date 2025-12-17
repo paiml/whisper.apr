@@ -1201,4 +1201,138 @@ mod tests {
         assert_eq!(format_language_pair("French", "English"), "French → English");
         assert_eq!(format_language_pair("Japanese", "English"), "Japanese → English");
     }
+
+    // =========================================================================
+    // Additional FileInfo Tests
+    // =========================================================================
+
+    #[test]
+    fn test_file_info_clone() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let info = demo.file_info().unwrap();
+        let cloned = info.clone();
+        assert_eq!(info.name(), cloned.name());
+    }
+
+    #[test]
+    fn test_file_info_debug() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        let info = demo.file_info().unwrap();
+        let debug_str = format!("{:?}", info);
+        assert!(debug_str.contains("FileInfo"));
+    }
+
+    #[test]
+    fn test_file_info_duration_with_hours() {
+        let mut demo = UploadTranslationDemo::new();
+        let _ = demo.on_file_selected("test.wav", 1000);
+        demo.set_file_duration(3661.0); // 1 hour, 1 minute, 1 second
+        let info = demo.file_info().unwrap();
+        let formatted = info.duration_formatted().unwrap();
+        assert!(formatted.contains("1:01:01"));
+    }
+
+    // =========================================================================
+    // Additional DetectedLanguage Tests
+    // =========================================================================
+
+    #[test]
+    fn test_detected_language_clone() {
+        let lang = DetectedLanguage {
+            code: "es".to_string(),
+            name: "Spanish".to_string(),
+            confidence: 95.0,
+        };
+        let cloned = lang.clone();
+        assert_eq!(lang.name(), cloned.name());
+    }
+
+    #[test]
+    fn test_detected_language_debug() {
+        let lang = DetectedLanguage {
+            code: "fr".to_string(),
+            name: "French".to_string(),
+            confidence: 90.0,
+        };
+        let debug_str = format!("{:?}", lang);
+        assert!(debug_str.contains("DetectedLanguage"));
+    }
+
+    // Note: DetectedLanguage::code() test omitted - method doesn't exist
+    // The code field is used internally by is_english()
+
+    // =========================================================================
+    // Additional TranslationSegment Tests
+    // =========================================================================
+
+    #[test]
+    fn test_segment_clone() {
+        let segment = TranslationSegment {
+            start_seconds: 0.0,
+            end_seconds: 2.0,
+            source_text: "Hola".to_string(),
+            translated_text: "Hello".to_string(),
+        };
+        let cloned = segment.clone();
+        assert_eq!(segment.source_text(), cloned.source_text());
+    }
+
+    #[test]
+    fn test_segment_debug() {
+        let segment = TranslationSegment {
+            start_seconds: 0.0,
+            end_seconds: 2.0,
+            source_text: "Test".to_string(),
+            translated_text: "Test".to_string(),
+        };
+        let debug_str = format!("{:?}", segment);
+        assert!(debug_str.contains("TranslationSegment"));
+    }
+
+    // =========================================================================
+    // Export Format Tests
+    // =========================================================================
+
+    #[test]
+    fn test_export_srt_timestamp_format() {
+        let mut demo = UploadTranslationDemo::new();
+        demo.add_segment(3661.123, 3665.456, "Hola", "Hello");
+        let srt = demo.export_srt();
+        // SRT format: HH:MM:SS,mmm
+        assert!(srt.contains("01:01:01,123"));
+        assert!(srt.contains("01:01:05,456"));
+    }
+
+    #[test]
+    fn test_export_vtt_timestamp_format() {
+        let mut demo = UploadTranslationDemo::new();
+        demo.add_segment(3661.123, 3665.456, "Hola", "Hello");
+        let vtt = demo.export_vtt();
+        // VTT format: HH:MM:SS.mmm
+        assert!(vtt.contains("01:01:01.123"));
+        assert!(vtt.contains("01:01:05.456"));
+    }
+
+    #[test]
+    fn test_export_bilingual_srt_multiple() {
+        let mut demo = UploadTranslationDemo::new();
+        demo.add_segment(0.0, 2.0, "Hola", "Hello");
+        demo.add_segment(2.0, 4.0, "Mundo", "World");
+        let srt = demo.export_bilingual_srt();
+        assert!(srt.contains("1\n"));
+        assert!(srt.contains("2\n"));
+        assert!(srt.contains("Hola"));
+        assert!(srt.contains("Hello"));
+        assert!(srt.contains("Mundo"));
+        assert!(srt.contains("World"));
+    }
+
+    // Note: Edge case tests for file validation omitted - upload-translation
+    // doesn't have the same file validation logic as upload-transcription
+    // (it accepts all files)
+
+    // Note: Progress tests omitted - upload-translation doesn't have a
+    // TranslationProgress struct (uses different state tracking)
 }
