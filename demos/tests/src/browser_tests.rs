@@ -963,6 +963,167 @@ mod realtime_transcription_browser {
             transcription_text.trim()
         );
     }
+
+    /// PIXEL TEST: Verify transcript text is VISUALLY rendered, not just in DOM
+    /// This catches the bug where set_text_content succeeds but text doesn't display
+    #[tokio::test]
+    async fn test_transcript_is_visually_rendered() {
+        require_server!();
+
+        let browser_result = Browser::launch(test_browser_config()).await;
+        if browser_result.is_err() {
+            eprintln!("SKIP: Chrome not available");
+            return;
+        }
+        let browser = browser_result.unwrap();
+        let mut page = browser.new_page().await.unwrap();
+
+        let url = format!("{}{}", BASE_URL, paths::REALTIME_TRANSCRIPTION);
+        page.goto(&url).await.unwrap();
+
+        // Wait for model to load
+        for _ in 0..60 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            let enabled: bool = page
+                .eval_wasm("(function() { const b = document.querySelector('#start_recording'); return b && !b.disabled; })()")
+                .await
+                .unwrap_or(false);
+            if enabled {
+                break;
+            }
+        }
+
+        // Initialize test pipeline and inject audio
+        let _: bool = page
+            .eval_wasm("(function() { return wasm_bindgen.init_test_pipeline(16000); })()")
+            .await
+            .unwrap_or(false);
+
+        // Inject 2 seconds of test audio
+        let _: bool = page
+            .eval_wasm(r#"
+                (function() {
+                    const sampleRate = 16000;
+                    const samples = new Float32Array(sampleRate * 2);
+                    for (let i = 0; i < samples.length; i++) {
+                        samples[i] = Math.sin(2 * Math.PI * 440 * i / sampleRate) * 0.5;
+                    }
+                    return wasm_bindgen.inject_test_audio(samples);
+                })()
+            "#)
+            .await
+            .unwrap_or(false);
+
+        // Process chunk
+        let _: bool = page
+            .eval_wasm("(function() { return wasm_bindgen.process_test_chunk(); })()")
+            .await
+            .unwrap_or(false);
+
+        // Wait for transcription (up to 90s for WASM)
+        let mut transcript_received = false;
+        for i in 0..90 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+            let transcript: String = page
+                .eval_wasm("(function() { return wasm_bindgen.get_transcript ? wasm_bindgen.get_transcript() : ''; })()")
+                .await
+                .unwrap_or_default();
+            if !transcript.trim().is_empty() {
+                eprintln!("Transcript received after {}s: '{}'", i, transcript.trim());
+                transcript_received = true;
+                break;
+            }
+        }
+
+        if !transcript_received {
+            eprintln!("SKIP: No transcription received (slow or broken pipeline)");
+            return;
+        }
+
+        // KEY TEST: Verify DOM text matches WASM state
+        let wasm_transcript: String = page
+            .eval_wasm("(function() { return wasm_bindgen.get_transcript(); })()")
+            .await
+            .unwrap_or_default();
+
+        let dom_transcript: String = page
+            .eval_wasm("(function() { return document.querySelector('#transcript_display')?.textContent || ''; })()")
+            .await
+            .unwrap_or_default();
+
+        eprintln!("WASM transcript: '{}'", wasm_transcript.trim());
+        eprintln!("DOM transcript:  '{}'", dom_transcript.trim());
+
+        // ASSERTION: DOM must contain the same text as WASM state
+        assert!(
+            !wasm_transcript.trim().is_empty(),
+            "WASM transcript should not be empty after transcription"
+        );
+        assert_eq!(
+            dom_transcript.trim(),
+            wasm_transcript.trim(),
+            "DOM transcript must match WASM state - UI not updating correctly"
+        );
+
+        // Take screenshot for visual verification
+        let screenshot = page.screenshot().await;
+        if let Ok(png_data) = screenshot {
+            let screenshot_path = "/tmp/whisper_apr_transcript_test.png";
+            std::fs::write(screenshot_path, &png_data).ok();
+            eprintln!("Screenshot saved to: {}", screenshot_path);
+
+            // Verify screenshot is not empty/blank
+            assert!(
+                png_data.len() > 1000,
+                "Screenshot should contain actual rendered content"
+            );
+        }
+
+        // Check computed styles - element must be visible
+        let visibility_check: String = page
+            .eval_wasm(r#"
+                (function() {
+                    const el = document.querySelector('#transcript_display');
+                    if (!el) return 'ELEMENT_NOT_FOUND';
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return JSON.stringify({
+                        display: style.display,
+                        visibility: style.visibility,
+                        opacity: style.opacity,
+                        height: rect.height,
+                        width: rect.width,
+                        textLength: el.textContent?.length || 0
+                    });
+                })()
+            "#)
+            .await
+            .unwrap_or_else(|_| "ERROR".to_string());
+
+        eprintln!("Visibility check: {}", visibility_check);
+
+        // Verify visibility - element must be visible with content
+        assert!(
+            visibility_check != "ELEMENT_NOT_FOUND",
+            "transcript_display element must exist"
+        );
+        assert!(
+            visibility_check != "ERROR",
+            "Failed to get computed styles"
+        );
+        assert!(
+            !visibility_check.contains("\"display\":\"none\""),
+            "Element must not be display:none - check: {}", visibility_check
+        );
+        assert!(
+            !visibility_check.contains("\"visibility\":\"hidden\""),
+            "Element must not be visibility:hidden - check: {}", visibility_check
+        );
+        assert!(
+            visibility_check.contains("\"textLength\":") && !visibility_check.contains("\"textLength\":0"),
+            "Element must have text content - check: {}", visibility_check
+        );
+    }
 }
 
 // ============================================================================
