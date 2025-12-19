@@ -34,15 +34,16 @@ realizar-inference = ["dep:realizar"]
 thiserror = "2"
 
 # SIMD acceleration (trueno integration)
-# TODO: Switch back to crates.io after publishing trueno 0.8.5
-trueno = { path = "../trueno" }
+trueno = "0.8"
 
 # Model format (aprender is the canonical .apr format library)
-aprender = { path = "../aprender", default-features = false, features = ["safetensors-compare"] }
+# Note: audio feature provides mel/resample/stream primitives; whisper.apr has its own
+# specialized mel.rs with SIMD and tracing, but uses aprender for capture/resample/stream
+aprender = { path = "../aprender", default-features = false, features = ["safetensors-compare", "audio"] }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
-realizar = { path = "../realizar", optional = true, default-features = false }
+realizar = { version = "0.3", optional = true, default-features = false }
 
 # FFT for mel spectrogram computation
 rustfft = "6.2"
@@ -174,6 +175,26 @@ required-features = ["tui"]
 name = "cli_usage"
 path = "examples/cli_usage.rs"
 required-features = ["cli"]
+
+[[example]]
+name = "backend_test"
+path = "examples/backend_test.rs"
+
+[[example]]
+name = "component_timing"
+path = "examples/component_timing.rs"
+
+[[example]]
+name = "pipeline_tui"
+path = "examples/pipeline_tui.rs"
+
+[[example]]
+name = "inspect_model"
+path = "examples/inspect_model.rs"
+
+[[example]]
+name = "pipeline_ground_truth"
+path = "examples/pipeline_ground_truth.rs"
 
 [[bin]]
 name = "whisper-convert"

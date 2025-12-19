@@ -17,9 +17,9 @@ pub fn render_whisper_dashboard(f: &mut Frame, app: &WhisperApp) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Tabs
-            Constraint::Min(10),     // Main content
-            Constraint::Length(3),  // Status bar
+            Constraint::Length(3), // Tabs
+            Constraint::Min(10),   // Main content
+            Constraint::Length(3), // Status bar
         ])
         .split(f.area());
 
@@ -42,7 +42,11 @@ fn render_tabs(f: &mut Frame, app: &WhisperApp, area: Rect) {
 
     let tabs = Tabs::new(titles)
         .block(Block::default().borders(Borders::ALL).title("Navigation"))
-        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
         .select(app.current_panel.index());
 
     f.render_widget(tabs, area);
@@ -157,12 +161,15 @@ fn render_encoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
         })
         .collect();
 
-    let table = Table::new(rows, [
-        Constraint::Length(10),
-        Constraint::Length(12),
-        Constraint::Length(12),
-        Constraint::Length(14),
-    ])
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(10),
+            Constraint::Length(12),
+            Constraint::Length(12),
+            Constraint::Length(14),
+        ],
+    )
     .header(header)
     .block(Block::default());
 
@@ -204,12 +211,15 @@ fn render_decoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
         })
         .collect();
 
-    let table = Table::new(rows, [
-        Constraint::Length(5),
-        Constraint::Length(10),
-        Constraint::Length(20),
-        Constraint::Length(10),
-    ])
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(5),
+            Constraint::Length(10),
+            Constraint::Length(20),
+            Constraint::Length(10),
+        ],
+    )
     .header(header)
     .block(Block::default());
 
@@ -269,7 +279,9 @@ fn render_transcription_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
         for (i, token) in app.decoder_tokens.iter().enumerate() {
             text.push_str(&format!(
                 "  [{}] {} (p={:.3})\n",
-                i, token.text, token.log_prob.exp()
+                i,
+                token.text,
+                token.log_prob.exp()
             ));
         }
 
@@ -395,8 +407,7 @@ fn render_status_bar(f: &mut Frame, app: &WhisperApp, area: Rect) {
         Span::raw(format!(" {} {}", status, paused)),
     ];
 
-    let paragraph = Paragraph::new(Line::from(spans))
-        .block(Block::default().borders(Borders::ALL));
+    let paragraph = Paragraph::new(Line::from(spans)).block(Block::default().borders(Borders::ALL));
 
     f.render_widget(paragraph, area);
 }

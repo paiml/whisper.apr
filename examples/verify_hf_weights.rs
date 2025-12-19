@@ -65,9 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Map HF name to APR name
-            let apr_name = hf_name
-                .strip_prefix("model.")
-                .unwrap_or(hf_name);
+            let apr_name = hf_name.strip_prefix("model.").unwrap_or(hf_name);
 
             // Load both tensors
             let hf_tensor = match hf_model.tensor(hf_name) {
@@ -99,11 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!(
                 "  {} {} | max_diff={:.6} | cosine={:.6} | L2={:.4}",
-                status,
-                hf_name,
-                diff.max_diff,
-                diff.cosine_similarity,
-                diff.l2_distance
+                status, hf_name, diff.max_diff, diff.cosine_similarity, diff.l2_distance
             );
         }
         println!();

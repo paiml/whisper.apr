@@ -29,9 +29,7 @@ use wasm_bindgen::prelude::*;
 use crate::timestamps::{
     alignment::{AlignmentConfig, CrossAttentionAlignment, WordAlignment},
     boundaries::{BoundaryConfig, BoundaryDetector, WordBoundary},
-    interpolation::{
-        InterpolationConfig, TimestampInterpolator, TokenTimestamp,
-    },
+    interpolation::{InterpolationConfig, TimestampInterpolator, TokenTimestamp},
     WordTimestampResult, WordWithTimestamp,
 };
 

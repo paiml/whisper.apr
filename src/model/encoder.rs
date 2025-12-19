@@ -619,15 +619,14 @@ impl Encoder {
         let encoded = self.forward_batch(batch)?;
 
         // Find max sequence length
-        let max_seq_len = encoded.iter()
+        let max_seq_len = encoded
+            .iter()
             .map(|e| e.len() / self.d_model)
             .max()
             .unwrap_or(0);
 
         // Collect sequence lengths
-        let seq_lengths: Vec<usize> = encoded.iter()
-            .map(|e| e.len() / self.d_model)
-            .collect();
+        let seq_lengths: Vec<usize> = encoded.iter().map(|e| e.len() / self.d_model).collect();
 
         // Create padded tensor
         let batch_size = encoded.len();
@@ -1256,7 +1255,7 @@ mod tests {
         let encoder = Encoder::new(&config);
 
         let mel1 = vec![0.0_f32; 100 * 80]; // 100 frames
-        let mel2 = vec![0.1_f32; 50 * 80];  // 50 frames
+        let mel2 = vec![0.1_f32; 50 * 80]; // 50 frames
         let batch = vec![mel1, mel2];
 
         let results = encoder.forward_batch(&batch).expect("forward_batch");
@@ -1276,7 +1275,9 @@ mod tests {
         let encoder = Encoder::new(&config);
 
         let batch: Vec<Vec<f32>> = Vec::new();
-        let output = encoder.forward_batch_padded(&batch).expect("forward_batch_padded");
+        let output = encoder
+            .forward_batch_padded(&batch)
+            .expect("forward_batch_padded");
 
         assert!(output.is_empty());
         assert_eq!(output.batch_size, 0);
@@ -1290,7 +1291,9 @@ mod tests {
         let mel = vec![0.0_f32; 100 * 80];
         let batch = vec![mel];
 
-        let output = encoder.forward_batch_padded(&batch).expect("forward_batch_padded");
+        let output = encoder
+            .forward_batch_padded(&batch)
+            .expect("forward_batch_padded");
 
         assert_eq!(output.batch_size, 1);
         assert_eq!(output.seq_lengths.len(), 1);
@@ -1302,10 +1305,12 @@ mod tests {
         let encoder = Encoder::new(&config);
 
         let mel1 = vec![0.0_f32; 100 * 80]; // 100 frames
-        let mel2 = vec![0.0_f32; 50 * 80];  // 50 frames
+        let mel2 = vec![0.0_f32; 50 * 80]; // 50 frames
         let batch = vec![mel1, mel2];
 
-        let output = encoder.forward_batch_padded(&batch).expect("forward_batch_padded");
+        let output = encoder
+            .forward_batch_padded(&batch)
+            .expect("forward_batch_padded");
 
         assert_eq!(output.batch_size, 2);
         assert_eq!(output.seq_lengths.len(), 2);
@@ -1326,7 +1331,9 @@ mod tests {
         let mel2 = vec![0.2_f32; 50 * 80];
         let batch = vec![mel1, mel2];
 
-        let output = encoder.forward_batch_padded(&batch).expect("forward_batch_padded");
+        let output = encoder
+            .forward_batch_padded(&batch)
+            .expect("forward_batch_padded");
 
         // Should be able to get both items
         assert!(output.get(0).is_some());
@@ -1343,7 +1350,9 @@ mod tests {
         let mel2 = vec![0.0_f32; 50 * 80];
         let batch = vec![mel1, mel2];
 
-        let output = encoder.forward_batch_padded(&batch).expect("forward_batch_padded");
+        let output = encoder
+            .forward_batch_padded(&batch)
+            .expect("forward_batch_padded");
 
         let total = output.total_tokens();
         let expected = output.seq_lengths.iter().sum::<usize>();

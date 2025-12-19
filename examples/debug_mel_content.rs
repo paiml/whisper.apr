@@ -34,7 +34,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     println!("[AUDIO INPUT]");
-    println!("  Samples: {} ({:.2}s @ 16kHz)", samples.len(), samples.len() as f32 / 16000.0);
+    println!(
+        "  Samples: {} ({:.2}s @ 16kHz)",
+        samples.len(),
+        samples.len() as f32 / 16000.0
+    );
 
     // Check audio energy distribution
     let chunk_size = 1600; // 100ms chunks
@@ -45,14 +49,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for i in 0..n_chunks.min(30) {
         let start = i * chunk_size;
         let end = start + chunk_size;
-        let rms: f32 = (samples[start..end].iter().map(|&x| x * x).sum::<f32>() / chunk_size as f32).sqrt();
+        let rms: f32 =
+            (samples[start..end].iter().map(|&x| x * x).sum::<f32>() / chunk_size as f32).sqrt();
         if rms > 0.01 {
             nonzero_chunks += 1;
-            println!("    Chunk {:2} ({:.1}s - {:.1}s): RMS = {:.4}",
-                     i, start as f32 / 16000.0, end as f32 / 16000.0, rms);
+            println!(
+                "    Chunk {:2} ({:.1}s - {:.1}s): RMS = {:.4}",
+                i,
+                start as f32 / 16000.0,
+                end as f32 / 16000.0,
+                rms
+            );
         }
     }
-    println!("  Non-zero chunks (RMS>0.01): {}/{}", nonzero_chunks, n_chunks);
+    println!(
+        "  Non-zero chunks (RMS>0.01): {}/{}",
+        nonzero_chunks, n_chunks
+    );
 
     // Compute mel spectrogram
     let mel = model.compute_mel(&samples)?;
@@ -61,7 +74,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n[MEL SPECTROGRAM]");
     println!("  Shape: {} × {} = {} values", mel_len, n_mels, mel.len());
-    println!("  Time coverage: {} frames × 20ms = {:.1}s", mel_len, mel_len as f32 * 0.02);
+    println!(
+        "  Time coverage: {} frames × 20ms = {:.1}s",
+        mel_len,
+        mel_len as f32 * 0.02
+    );
 
     // Check mel energy distribution
     println!("\n  Energy per frame region:");
@@ -79,8 +96,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if start_idx < mel.len() && end_idx > start_idx {
             let region = &mel[start_idx..end_idx];
             let (mean, std, min, max) = stats(region);
-            println!("    {} (frames {}-{}): mean={:.4}  std={:.4}  range=[{:.2}, {:.2}]",
-                     label, start, end.min(&mel_len), mean, std, min, max);
+            println!(
+                "    {} (frames {}-{}): mean={:.4}  std={:.4}  range=[{:.2}, {:.2}]",
+                label,
+                start,
+                end.min(&mel_len),
+                mean,
+                std,
+                min,
+                max
+            );
         }
     }
 
@@ -91,8 +116,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let end = start + n_mels;
         let (mean, std, _, _) = stats(&mel[start..end]);
         let time_s = frame as f32 * 0.02;
-        println!("    Frame {:4} ({:5.1}s): mean={:+.4}  std={:.4}",
-                 frame, time_s, mean, std);
+        println!(
+            "    Frame {:4} ({:5.1}s): mean={:+.4}  std={:.4}",
+            frame, time_s, mean, std
+        );
     }
 
     // Check the encoder output at attended positions
@@ -113,15 +140,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let (mean, std, _, _) = stats(&encoded[start..end]);
             let time_s = pos as f32 * 0.02;
             let label = if pos < 75 { "ACTUAL AUDIO" } else { "PADDING" };
-            println!("    Pos {:4} ({:5.1}s) [{}]: mean={:+.4}  std={:.4}",
-                     pos, time_s, label, mean, std);
+            println!(
+                "    Pos {:4} ({:5.1}s) [{}]: mean={:+.4}  std={:.4}",
+                pos, time_s, label, mean, std
+            );
         }
     }
 
     // The key question: why does high-energy audio (pos 0-74) not get attended?
     println!("\n=== DIAGNOSIS ===");
-    println!("  Audio duration: {:.2}s = ~{} mel frames", samples.len() as f32 / 16000.0, samples.len() / 320);
-    println!("  Expected attention region: frames 0-{}", samples.len() / 320);
+    println!(
+        "  Audio duration: {:.2}s = ~{} mel frames",
+        samples.len() as f32 / 16000.0,
+        samples.len() / 320
+    );
+    println!(
+        "  Expected attention region: frames 0-{}",
+        samples.len() / 320
+    );
     println!("  Actual attended region: frames 1312-1494 (padding)");
     println!("\n  ISSUE: Model is attending to PADDING instead of CONTENT");
 

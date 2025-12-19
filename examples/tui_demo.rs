@@ -96,7 +96,10 @@ fn main() {
     println!("│ Idx │ Token ID │ Text                    │ Log P               │");
     println!("│─────┼──────────┼─────────────────────────┼─────────────────────│");
     for (i, t) in app.decoder_tokens.iter().enumerate() {
-        println!("│ {:>3} │  {:>5}   │ {:<23} │ {:>8.3}            │", i, t.id, t.text, t.log_prob);
+        println!(
+            "│ {:>3} │  {:>5}   │ {:<23} │ {:>8.3}            │",
+            i, t.id, t.text, t.log_prob
+        );
     }
     println!("└─────────────────────────────────────────────────────────────────┘\n");
 
@@ -120,13 +123,34 @@ fn main() {
     println!("┌─────────────────────────────────────────────────────────────────┐");
     println!("│ METRICS - Performance Data                                      │");
     println!("├─────────────────────────────────────────────────────────────────┤");
-    println!("│ Audio Duration:    {:>8.2} seconds                             │", app.metrics.audio_duration_secs);
-    println!("│ Mel Compute:       {:>8.2} ms                                  │", app.metrics.mel_time_ms);
-    println!("│ Encoder:           {:>8.2} ms                                  │", app.metrics.encoder_time_ms);
-    println!("│ Decoder:           {:>8.2} ms                                  │", app.metrics.decoder_time_ms);
-    println!("│ Total:             {:>8.2} ms                                  │", app.metrics.total_time_ms);
-    println!("│ RTF:               {:>8.3}x                                    │", app.metrics.rtf);
-    println!("│ Tokens Generated:  {:>8}                                       │", app.metrics.tokens_generated);
+    println!(
+        "│ Audio Duration:    {:>8.2} seconds                             │",
+        app.metrics.audio_duration_secs
+    );
+    println!(
+        "│ Mel Compute:       {:>8.2} ms                                  │",
+        app.metrics.mel_time_ms
+    );
+    println!(
+        "│ Encoder:           {:>8.2} ms                                  │",
+        app.metrics.encoder_time_ms
+    );
+    println!(
+        "│ Decoder:           {:>8.2} ms                                  │",
+        app.metrics.decoder_time_ms
+    );
+    println!(
+        "│ Total:             {:>8.2} ms                                  │",
+        app.metrics.total_time_ms
+    );
+    println!(
+        "│ RTF:               {:>8.3}x                                    │",
+        app.metrics.rtf
+    );
+    println!(
+        "│ Tokens Generated:  {:>8}                                       │",
+        app.metrics.tokens_generated
+    );
     println!("└─────────────────────────────────────────────────────────────────┘\n");
 
     // Keyboard controls

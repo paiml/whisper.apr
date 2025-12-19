@@ -207,7 +207,10 @@ impl ValidationReport {
     /// Get checks by category
     #[must_use]
     pub fn checks_by_category(&self, category: char) -> Vec<&ValidationCheck> {
-        self.checks.iter().filter(|c| c.category == category).collect()
+        self.checks
+            .iter()
+            .filter(|c| c.category == category)
+            .collect()
     }
 }
 
@@ -322,8 +325,18 @@ impl<'a> AprValidator<'a> {
         // Functional tests require external reference data
         // These return skip/placeholder results when reference not available
         vec![
-            ValidationCheck::pass(21, 'E', "Encoder output match", "Skipped: no reference data"),
-            ValidationCheck::pass(22, 'E', "Decoder logits match", "Skipped: no reference data"),
+            ValidationCheck::pass(
+                21,
+                'E',
+                "Encoder output match",
+                "Skipped: no reference data",
+            ),
+            ValidationCheck::pass(
+                22,
+                'E',
+                "Decoder logits match",
+                "Skipped: no reference data",
+            ),
             ValidationCheck::pass(23, 'E', "Transcription test", "Skipped: no test audio"),
             ValidationCheck::pass(24, 'E', "No repetitive output", "Skipped: no test audio"),
             ValidationCheck::pass(25, 'E', "End-to-end accuracy", "Skipped: no validation set"),
@@ -344,7 +357,12 @@ impl<'a> AprValidator<'a> {
         if version <= 1 {
             ValidationCheck::pass(2, 'A', "Header parseable", &format!("Version {version}"))
         } else {
-            ValidationCheck::fail(2, 'A', "Header parseable", &format!("Unknown version {version}"))
+            ValidationCheck::fail(
+                2,
+                'A',
+                "Header parseable",
+                &format!("Unknown version {version}"),
+            )
         }
     }
 
@@ -353,9 +371,19 @@ impl<'a> AprValidator<'a> {
         let expected = self.expected_tensor_count();
 
         if count >= expected {
-            ValidationCheck::pass(3, 'A', "All tensors present", &format!("{count} tensors (expected >= {expected})"))
+            ValidationCheck::pass(
+                3,
+                'A',
+                "All tensors present",
+                &format!("{count} tensors (expected >= {expected})"),
+            )
         } else {
-            ValidationCheck::fail(3, 'A', "All tensors present", &format!("{count} tensors (expected >= {expected})"))
+            ValidationCheck::fail(
+                3,
+                'A',
+                "All tensors present",
+                &format!("{count} tensors (expected >= {expected})"),
+            )
         }
     }
 
@@ -369,7 +397,9 @@ impl<'a> AprValidator<'a> {
         if let Some(tensor) = self.reader.find_tensor("decoder.token_embedding") {
             let shape = tensor.shape();
             if shape.len() != 2 || shape[1] != d_model {
-                failures.push(format!("token_embedding shape {shape:?}, expected [*, {d_model}]"));
+                failures.push(format!(
+                    "token_embedding shape {shape:?}, expected [*, {d_model}]"
+                ));
             }
         }
 
@@ -377,7 +407,9 @@ impl<'a> AprValidator<'a> {
         if let Some(tensor) = self.reader.find_tensor("encoder.conv1.weight") {
             let shape = tensor.shape();
             if shape.len() != 3 || shape[0] != d_model {
-                failures.push(format!("conv1 shape {shape:?}, expected [{d_model}, 80, 3]"));
+                failures.push(format!(
+                    "conv1 shape {shape:?}, expected [{d_model}, 80, 3]"
+                ));
             }
         }
 
@@ -409,17 +441,33 @@ impl<'a> AprValidator<'a> {
             Ok(data) => {
                 let stats = TensorStats::compute(name, &data);
                 if stats.mean >= 0.5 && stats.mean <= 3.0 {
-                    ValidationCheck::pass(id, 'B', description, &format!("mean={:.4} in [0.5, 3.0]", stats.mean))
+                    ValidationCheck::pass(
+                        id,
+                        'B',
+                        description,
+                        &format!("mean={:.4} in [0.5, 3.0]", stats.mean),
+                    )
                 } else {
-                    ValidationCheck::fail(id, 'B', description, &format!("mean={:.4} NOT in [0.5, 3.0]", stats.mean))
+                    ValidationCheck::fail(
+                        id,
+                        'B',
+                        description,
+                        &format!("mean={:.4} NOT in [0.5, 3.0]", stats.mean),
+                    )
                 }
             }
-            Err(_) => ValidationCheck::fail(id, 'B', description, &format!("Tensor {name} not found")),
+            Err(_) => {
+                ValidationCheck::fail(id, 'B', description, &format!("Tensor {name} not found"))
+            }
         }
     }
 
     fn check_block_ln_weights(&self) -> ValidationCheck {
-        let patterns = ["self_attn_layer_norm.weight", "encoder_attn_layer_norm.weight", "final_layer_norm.weight"];
+        let patterns = [
+            "self_attn_layer_norm.weight",
+            "encoder_attn_layer_norm.weight",
+            "final_layer_norm.weight",
+        ];
         let mut failures = Vec::new();
         let mut checked = 0;
 
@@ -438,7 +486,12 @@ impl<'a> AprValidator<'a> {
         }
 
         if failures.is_empty() {
-            ValidationCheck::pass(8, 'B', "Block LN weight means", &format!("All {checked} block LN means in [0.5, 3.0]"))
+            ValidationCheck::pass(
+                8,
+                'B',
+                "Block LN weight means",
+                &format!("All {checked} block LN means in [0.5, 3.0]"),
+            )
         } else {
             ValidationCheck::fail(8, 'B', "Block LN weight means", &failures.join("; "))
         }
@@ -461,7 +514,12 @@ impl<'a> AprValidator<'a> {
         }
 
         if failures.is_empty() {
-            ValidationCheck::pass(9, 'B', "LN bias means", &format!("All {checked} LN bias means in [-0.5, 0.5]"))
+            ValidationCheck::pass(
+                9,
+                'B',
+                "LN bias means",
+                &format!("All {checked} LN bias means in [-0.5, 0.5]"),
+            )
         } else {
             ValidationCheck::fail(9, 'B', "LN bias means", &failures.join("; "))
         }
@@ -500,7 +558,12 @@ impl<'a> AprValidator<'a> {
     }
 
     fn check_qkv_proj_means(&self) -> ValidationCheck {
-        let patterns = ["q_proj.weight", "k_proj.weight", "v_proj.weight", "out_proj.weight"];
+        let patterns = [
+            "q_proj.weight",
+            "k_proj.weight",
+            "v_proj.weight",
+            "out_proj.weight",
+        ];
         let mut failures = Vec::new();
         let mut checked = 0;
 
@@ -519,7 +582,12 @@ impl<'a> AprValidator<'a> {
         }
 
         if failures.is_empty() {
-            ValidationCheck::pass(11, 'C', "Q/K/V proj means", &format!("All {checked} proj means in [-0.1, 0.1]"))
+            ValidationCheck::pass(
+                11,
+                'C',
+                "Q/K/V proj means",
+                &format!("All {checked} proj means in [-0.1, 0.1]"),
+            )
         } else {
             ValidationCheck::fail(11, 'C', "Q/K/V proj means", &failures.join("; "))
         }
@@ -545,7 +613,12 @@ impl<'a> AprValidator<'a> {
         }
 
         if failures.is_empty() {
-            ValidationCheck::pass(12, 'C', "FFN weight means", &format!("All {checked} FFN means in [-0.1, 0.1]"))
+            ValidationCheck::pass(
+                12,
+                'C',
+                "FFN weight means",
+                &format!("All {checked} FFN means in [-0.1, 0.1]"),
+            )
         } else {
             ValidationCheck::fail(12, 'C', "FFN weight means", &failures.join("; "))
         }
@@ -568,13 +641,28 @@ impl<'a> AprValidator<'a> {
         }
 
         if failures.is_empty() {
-            ValidationCheck::pass(13, 'C', "Weight std reasonable", &format!("All {checked} weight stds in [0.01, 0.2]"))
+            ValidationCheck::pass(
+                13,
+                'C',
+                "Weight std reasonable",
+                &format!("All {checked} weight stds in [0.01, 0.2]"),
+            )
         } else {
             // Only fail if many weights are out of range
             if failures.len() > checked / 4 {
-                ValidationCheck::fail(13, 'C', "Weight std reasonable", &format!("{} failures: {}", failures.len(), failures[0]))
+                ValidationCheck::fail(
+                    13,
+                    'C',
+                    "Weight std reasonable",
+                    &format!("{} failures: {}", failures.len(), failures[0]),
+                )
             } else {
-                ValidationCheck::pass(13, 'C', "Weight std reasonable", &format!("{} minor outliers in {checked} weights", failures.len()))
+                ValidationCheck::pass(
+                    13,
+                    'C',
+                    "Weight std reasonable",
+                    &format!("{} minor outliers in {checked} weights", failures.len()),
+                )
             }
         }
     }
@@ -594,7 +682,12 @@ impl<'a> AprValidator<'a> {
         if zero_tensors.is_empty() {
             ValidationCheck::pass(14, 'C', "No zero tensors", "No all-zero tensors found")
         } else {
-            ValidationCheck::fail(14, 'C', "No zero tensors", &format!("Zero tensors: {zero_tensors:?}"))
+            ValidationCheck::fail(
+                14,
+                'C',
+                "No zero tensors",
+                &format!("Zero tensors: {zero_tensors:?}"),
+            )
         }
     }
 
@@ -617,7 +710,12 @@ impl<'a> AprValidator<'a> {
         }
 
         if failures.is_empty() {
-            ValidationCheck::pass(15, 'C', "Bias vectors valid", &format!("All {checked} bias means in [-1.0, 1.0]"))
+            ValidationCheck::pass(
+                15,
+                'C',
+                "Bias vectors valid",
+                &format!("All {checked} bias means in [-1.0, 1.0]"),
+            )
         } else {
             ValidationCheck::fail(15, 'C', "Bias vectors valid", &failures.join("; "))
         }
@@ -632,12 +730,27 @@ impl<'a> AprValidator<'a> {
             Some(tensor) => {
                 let shape = tensor.shape();
                 if shape.len() == 2 && shape[0] == vocab_size && shape[1] == d_model {
-                    ValidationCheck::pass(16, 'D', "Token embedding shape", &format!("[{vocab_size}, {d_model}] correct"))
+                    ValidationCheck::pass(
+                        16,
+                        'D',
+                        "Token embedding shape",
+                        &format!("[{vocab_size}, {d_model}] correct"),
+                    )
                 } else {
-                    ValidationCheck::fail(16, 'D', "Token embedding shape", &format!("Got {shape:?}, expected [{vocab_size}, {d_model}]"))
+                    ValidationCheck::fail(
+                        16,
+                        'D',
+                        "Token embedding shape",
+                        &format!("Got {shape:?}, expected [{vocab_size}, {d_model}]"),
+                    )
                 }
             }
-            None => ValidationCheck::fail(16, 'D', "Token embedding shape", "Token embedding not found"),
+            None => ValidationCheck::fail(
+                16,
+                'D',
+                "Token embedding shape",
+                "Token embedding not found",
+            ),
         }
     }
 
@@ -650,12 +763,30 @@ impl<'a> AprValidator<'a> {
                 let std_ok = stats.std >= 0.01 && stats.std <= 0.1;
 
                 if mean_ok && std_ok {
-                    ValidationCheck::pass(17, 'D', "Token embedding stats", &format!("mean={:.4}, std={:.4}", stats.mean, stats.std))
+                    ValidationCheck::pass(
+                        17,
+                        'D',
+                        "Token embedding stats",
+                        &format!("mean={:.4}, std={:.4}", stats.mean, stats.std),
+                    )
                 } else {
-                    ValidationCheck::fail(17, 'D', "Token embedding stats", &format!("mean={:.4} (want ~0), std={:.4} (want 0.01-0.1)", stats.mean, stats.std))
+                    ValidationCheck::fail(
+                        17,
+                        'D',
+                        "Token embedding stats",
+                        &format!(
+                            "mean={:.4} (want ~0), std={:.4} (want 0.01-0.1)",
+                            stats.mean, stats.std
+                        ),
+                    )
                 }
             }
-            Err(_) => ValidationCheck::fail(17, 'D', "Token embedding stats", "Token embedding not found"),
+            Err(_) => ValidationCheck::fail(
+                17,
+                'D',
+                "Token embedding stats",
+                "Token embedding not found",
+            ),
         }
     }
 
@@ -668,7 +799,9 @@ impl<'a> AprValidator<'a> {
         if let Some(tensor) = self.reader.find_tensor("encoder.positional_embedding") {
             let shape = tensor.shape();
             if shape.len() != 2 || shape[0] != 1500 || shape[1] != d_model_enc {
-                failures.push(format!("encoder pos: {shape:?}, expected [1500, {d_model_enc}]"));
+                failures.push(format!(
+                    "encoder pos: {shape:?}, expected [1500, {d_model_enc}]"
+                ));
             }
         }
 
@@ -676,12 +809,19 @@ impl<'a> AprValidator<'a> {
         if let Some(tensor) = self.reader.find_tensor("decoder.positional_embedding") {
             let shape = tensor.shape();
             if shape.len() != 2 || shape[0] != 448 || shape[1] != d_model_dec {
-                failures.push(format!("decoder pos: {shape:?}, expected [448, {d_model_dec}]"));
+                failures.push(format!(
+                    "decoder pos: {shape:?}, expected [448, {d_model_dec}]"
+                ));
             }
         }
 
         if failures.is_empty() {
-            ValidationCheck::pass(18, 'D', "Positional embedding shape", "Encoder [1500, d], Decoder [448, d]")
+            ValidationCheck::pass(
+                18,
+                'D',
+                "Positional embedding shape",
+                "Encoder [1500, d], Decoder [448, d]",
+            )
         } else {
             ValidationCheck::fail(18, 'D', "Positional embedding shape", &failures.join("; "))
         }
@@ -690,18 +830,29 @@ impl<'a> AprValidator<'a> {
     fn check_positional_embedding_stats(&self) -> ValidationCheck {
         let mut failures = Vec::new();
 
-        for name in ["encoder.positional_embedding", "decoder.positional_embedding"] {
+        for name in [
+            "encoder.positional_embedding",
+            "decoder.positional_embedding",
+        ] {
             if let Ok(data) = self.reader.load_tensor(name) {
                 let stats = TensorStats::compute(name, &data);
                 // Positional embeddings typically have mean ~0, std 0.01-0.05
                 if stats.mean.abs() > 0.5 || stats.std < 0.005 || stats.std > 0.1 {
-                    failures.push(format!("{}: mean={:.4}, std={:.4}", name, stats.mean, stats.std));
+                    failures.push(format!(
+                        "{}: mean={:.4}, std={:.4}",
+                        name, stats.mean, stats.std
+                    ));
                 }
             }
         }
 
         if failures.is_empty() {
-            ValidationCheck::pass(19, 'D', "Positional embedding stats", "Stats within expected ranges")
+            ValidationCheck::pass(
+                19,
+                'D',
+                "Positional embedding stats",
+                "Stats within expected ranges",
+            )
         } else {
             ValidationCheck::fail(19, 'D', "Positional embedding stats", &failures.join("; "))
         }
@@ -715,12 +866,28 @@ impl<'a> AprValidator<'a> {
             Some(tensor) => {
                 let shape = tensor.shape();
                 if !shape.is_empty() && shape[0] == header_vocab {
-                    ValidationCheck::pass(20, 'D', "Vocab size matches", &format!("vocab_size={header_vocab} matches tensor"))
+                    ValidationCheck::pass(
+                        20,
+                        'D',
+                        "Vocab size matches",
+                        &format!("vocab_size={header_vocab} matches tensor"),
+                    )
                 } else {
-                    ValidationCheck::fail(20, 'D', "Vocab size matches", &format!("Header vocab={}, tensor dim={}", header_vocab, shape.first().unwrap_or(&0)))
+                    ValidationCheck::fail(
+                        20,
+                        'D',
+                        "Vocab size matches",
+                        &format!(
+                            "Header vocab={}, tensor dim={}",
+                            header_vocab,
+                            shape.first().unwrap_or(&0)
+                        ),
+                    )
                 }
             }
-            None => ValidationCheck::fail(20, 'D', "Vocab size matches", "Token embedding not found"),
+            None => {
+                ValidationCheck::fail(20, 'D', "Vocab size matches", "Token embedding not found")
+            }
         }
     }
 
@@ -842,7 +1009,10 @@ mod tests {
         // Layer norm weights should have mean ~1.0
         let data: Vec<f32> = (0..384).map(|i| 0.8 + 0.4 * (i as f32 / 384.0)).collect();
         let stats = TensorStats::compute("ln_weight", &data);
-        assert!(stats.mean > 0.5 && stats.mean < 3.0, "LN mean should be in valid range");
+        assert!(
+            stats.mean > 0.5 && stats.mean < 3.0,
+            "LN mean should be in valid range"
+        );
     }
 
     #[test]
@@ -923,7 +1093,8 @@ mod tests {
         for i in 1..=25 {
             checks.push(ValidationCheck::pass(i, 'A', &format!("Test{i}"), "OK"));
         }
-        let report = ValidationReport::from_checks(checks, vec!["Critical: LN weight mean=11".to_string()]);
+        let report =
+            ValidationReport::from_checks(checks, vec!["Critical: LN weight mean=11".to_string()]);
         assert!(!report.passed);
     }
 
@@ -948,11 +1119,23 @@ mod tests {
         let mut writer = AprWriter::tiny();
 
         // Add token embedding [51865, 384]
-        writer.add("decoder.token_embedding", vec![51865, 384], vec![0.02; 51865 * 384]);
+        writer.add(
+            "decoder.token_embedding",
+            vec![51865, 384],
+            vec![0.02; 51865 * 384],
+        );
 
         // Add positional embeddings
-        writer.add("encoder.positional_embedding", vec![1500, 384], vec![0.01; 1500 * 384]);
-        writer.add("decoder.positional_embedding", vec![448, 384], vec![0.01; 448 * 384]);
+        writer.add(
+            "encoder.positional_embedding",
+            vec![1500, 384],
+            vec![0.01; 1500 * 384],
+        );
+        writer.add(
+            "decoder.positional_embedding",
+            vec![448, 384],
+            vec![0.01; 448 * 384],
+        );
 
         // Add layer norm weights with valid mean ~1.0
         let ln_weight: Vec<f32> = (0..384).map(|i| 0.9 + 0.2 * (i as f32 / 384.0)).collect();
@@ -965,25 +1148,69 @@ mod tests {
         writer.add("decoder.layer_norm.bias", vec![384], ln_bias.clone());
 
         // Add conv1 weight
-        writer.add("encoder.conv1.weight", vec![384, 80, 3], vec![0.05; 384 * 80 * 3]);
+        writer.add(
+            "encoder.conv1.weight",
+            vec![384, 80, 3],
+            vec![0.05; 384 * 80 * 3],
+        );
         writer.add("encoder.conv1.bias", vec![384], vec![0.01; 384]);
 
         // Add a layer with attention weights
         let attn_weight: Vec<f32> = vec![0.02; 384 * 384];
-        writer.add("encoder.layers.0.self_attn.q_proj.weight", vec![384, 384], attn_weight.clone());
-        writer.add("encoder.layers.0.self_attn.k_proj.weight", vec![384, 384], attn_weight.clone());
-        writer.add("encoder.layers.0.self_attn.v_proj.weight", vec![384, 384], attn_weight.clone());
-        writer.add("encoder.layers.0.self_attn.out_proj.weight", vec![384, 384], attn_weight.clone());
+        writer.add(
+            "encoder.layers.0.self_attn.q_proj.weight",
+            vec![384, 384],
+            attn_weight.clone(),
+        );
+        writer.add(
+            "encoder.layers.0.self_attn.k_proj.weight",
+            vec![384, 384],
+            attn_weight.clone(),
+        );
+        writer.add(
+            "encoder.layers.0.self_attn.v_proj.weight",
+            vec![384, 384],
+            attn_weight.clone(),
+        );
+        writer.add(
+            "encoder.layers.0.self_attn.out_proj.weight",
+            vec![384, 384],
+            attn_weight.clone(),
+        );
 
         // Add FFN weights
-        writer.add("encoder.layers.0.fc1.weight", vec![1536, 384], vec![0.02; 1536 * 384]);
-        writer.add("encoder.layers.0.fc2.weight", vec![384, 1536], vec![0.02; 384 * 1536]);
+        writer.add(
+            "encoder.layers.0.fc1.weight",
+            vec![1536, 384],
+            vec![0.02; 1536 * 384],
+        );
+        writer.add(
+            "encoder.layers.0.fc2.weight",
+            vec![384, 1536],
+            vec![0.02; 384 * 1536],
+        );
 
         // Add block layer norms
-        writer.add("encoder.layers.0.self_attn_layer_norm.weight", vec![384], ln_weight.clone());
-        writer.add("encoder.layers.0.self_attn_layer_norm.bias", vec![384], ln_bias.clone());
-        writer.add("encoder.layers.0.final_layer_norm.weight", vec![384], ln_weight.clone());
-        writer.add("encoder.layers.0.final_layer_norm.bias", vec![384], ln_bias.clone());
+        writer.add(
+            "encoder.layers.0.self_attn_layer_norm.weight",
+            vec![384],
+            ln_weight.clone(),
+        );
+        writer.add(
+            "encoder.layers.0.self_attn_layer_norm.bias",
+            vec![384],
+            ln_bias.clone(),
+        );
+        writer.add(
+            "encoder.layers.0.final_layer_norm.weight",
+            vec![384],
+            ln_weight.clone(),
+        );
+        writer.add(
+            "encoder.layers.0.final_layer_norm.bias",
+            vec![384],
+            ln_bias.clone(),
+        );
 
         writer.to_bytes().expect("should serialize")
     }
@@ -1000,7 +1227,11 @@ mod tests {
         writer.add("encoder.layer_norm.bias", vec![384], vec![0.0; 384]);
 
         // Add minimal other tensors
-        writer.add("decoder.token_embedding", vec![51865, 384], vec![0.02; 51865 * 384]);
+        writer.add(
+            "decoder.token_embedding",
+            vec![51865, 384],
+            vec![0.02; 51865 * 384],
+        );
 
         writer.to_bytes().expect("should serialize")
     }
@@ -1013,7 +1244,11 @@ mod tests {
         let report = validator.validate_all();
 
         // Should pass most checks
-        assert!(report.score >= 15, "Valid APR should pass at least 15 checks, got {}", report.score);
+        assert!(
+            report.score >= 15,
+            "Valid APR should pass at least 15 checks, got {}",
+            report.score
+        );
     }
 
     #[test]
@@ -1024,9 +1259,16 @@ mod tests {
         let report = validator.validate_all();
 
         // Check 7 (decoder LN weight) should fail
-        let check_7 = report.checks.iter().find(|c| c.id == 7).expect("should have check 7");
+        let check_7 = report
+            .checks
+            .iter()
+            .find(|c| c.id == 7)
+            .expect("should have check 7");
         assert!(!check_7.passed, "Check 7 should fail for bad LN weight");
-        assert!(check_7.message.contains("NOT in"), "Message should indicate failure");
+        assert!(
+            check_7.message.contains("NOT in"),
+            "Message should indicate failure"
+        );
     }
 
     #[test]
@@ -1038,7 +1280,10 @@ mod tests {
 
         // Should have critical failure
         assert!(!report.passed, "Should fail due to LN weight bug");
-        assert!(!report.critical_failures.is_empty(), "Should have critical failure");
+        assert!(
+            !report.critical_failures.is_empty(),
+            "Should have critical failure"
+        );
     }
 
     // =========================================================================
@@ -1110,7 +1355,10 @@ mod tests {
         let validator = AprValidator::new(&reader);
         let check = validator.check_decoder_ln_weight();
         assert!(!check.passed, "Decoder LN should fail: {}", check.message);
-        assert!(check.message.contains("11"), "Should show the bad mean value");
+        assert!(
+            check.message.contains("11"),
+            "Should show the bad mean value"
+        );
     }
 
     #[test]

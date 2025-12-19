@@ -58,7 +58,13 @@ pub struct MelDisplay {
 
 impl MelDisplay {
     /// Create new mel display
-    pub fn new(mel_data: &[f32], n_mels: usize, n_frames: usize, width: usize, height: usize) -> Self {
+    pub fn new(
+        mel_data: &[f32],
+        n_mels: usize,
+        n_frames: usize,
+        width: usize,
+        height: usize,
+    ) -> Self {
         Self {
             mel_data: mel_data.to_vec(),
             n_mels,
@@ -74,7 +80,13 @@ impl MelDisplay {
             return "No data".to_string();
         }
 
-        render_mel_spectrogram(&self.mel_data, self.n_mels, self.n_frames, self.width, self.height)
+        render_mel_spectrogram(
+            &self.mel_data,
+            self.n_mels,
+            self.n_frames,
+            self.width,
+            self.height,
+        )
     }
 }
 
@@ -194,7 +206,11 @@ pub fn render_mel_spectrogram(
                 }
             }
 
-            let avg = if count > 0 { sum / count as f32 } else { min_val };
+            let avg = if count > 0 {
+                sum / count as f32
+            } else {
+                min_val
+            };
             let normalized = ((avg - min_val) / range).clamp(0.0, 1.0);
             let char_idx = (normalized * (HEATMAP_CHARS.len() - 1) as f32) as usize;
 
@@ -321,7 +337,11 @@ mod tests {
     #[test]
     fn test_attention_render_basic() {
         let attention: Vec<Vec<f32>> = (0..5)
-            .map(|i| (0..10).map(|j| if i == j / 2 { 1.0 } else { 0.1 }).collect())
+            .map(|i| {
+                (0..10)
+                    .map(|j| if i == j / 2 { 1.0 } else { 0.1 })
+                    .collect()
+            })
             .collect();
 
         let output = render_attention_heatmap(&attention, 10, 5);

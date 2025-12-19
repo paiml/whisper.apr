@@ -39,15 +39,18 @@ fn load_npy_f32(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
 
     if is_f64 {
         // Convert f64 to f32
-        let f64_values: Vec<f64> = data.chunks(8)
-            .map(|chunk| f64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3],
-                chunk[4], chunk[5], chunk[6], chunk[7]
-            ]))
+        let f64_values: Vec<f64> = data
+            .chunks(8)
+            .map(|chunk| {
+                f64::from_le_bytes([
+                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+                ])
+            })
             .collect();
         Ok(f64_values.iter().map(|&x| x as f32).collect())
     } else if is_f32 {
-        Ok(data.chunks(4)
+        Ok(data
+            .chunks(4)
             .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
             .collect())
     } else {
@@ -98,7 +101,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     let our_mel = model.compute_mel(&samples)?;
-    println!("Our mel: {} values ({} frames)", our_mel.len(), our_mel.len() / 80);
+    println!(
+        "Our mel: {} values ({} frames)",
+        our_mel.len(),
+        our_mel.len() / 80
+    );
 
     // Compare mel (first 150 frames)
     let our_mel_flat: Vec<f32> = our_mel.iter().take(150 * 80).copied().collect();
@@ -123,18 +130,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let our_enc_mean: f32 = encoded.iter().sum::<f32>() / encoded.len() as f32;
     let our_enc_std: f32 = {
-        let variance: f32 = encoded.iter().map(|x| (x - our_enc_mean).powi(2)).sum::<f32>() / encoded.len() as f32;
+        let variance: f32 = encoded
+            .iter()
+            .map(|x| (x - our_enc_mean).powi(2))
+            .sum::<f32>()
+            / encoded.len() as f32;
         variance.sqrt()
     };
 
     let hf_enc_mean: f32 = hf_encoder.iter().sum::<f32>() / hf_encoder.len() as f32;
     let hf_enc_std: f32 = {
-        let variance: f32 = hf_encoder.iter().map(|x| (x - hf_enc_mean).powi(2)).sum::<f32>() / hf_encoder.len() as f32;
+        let variance: f32 = hf_encoder
+            .iter()
+            .map(|x| (x - hf_enc_mean).powi(2))
+            .sum::<f32>()
+            / hf_encoder.len() as f32;
         variance.sqrt()
     };
 
-    println!("Our encoder: mean={:.4}, std={:.4}", our_enc_mean, our_enc_std);
-    println!("HF encoder:  mean={:.4}, std={:.4}", hf_enc_mean, hf_enc_std);
+    println!(
+        "Our encoder: mean={:.4}, std={:.4}",
+        our_enc_mean, our_enc_std
+    );
+    println!(
+        "HF encoder:  mean={:.4}, std={:.4}",
+        hf_enc_mean, hf_enc_std
+    );
 
     // Compare encoder outputs if same size
     if encoded.len() == hf_encoder.len() {
@@ -165,18 +186,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let our_logits_mean: f32 = last_logits.iter().sum::<f32>() / last_logits.len() as f32;
     let our_logits_std: f32 = {
-        let variance: f32 = last_logits.iter().map(|x| (x - our_logits_mean).powi(2)).sum::<f32>() / last_logits.len() as f32;
+        let variance: f32 = last_logits
+            .iter()
+            .map(|x| (x - our_logits_mean).powi(2))
+            .sum::<f32>()
+            / last_logits.len() as f32;
         variance.sqrt()
     };
 
     let hf_logits_mean: f32 = hf_logits.iter().sum::<f32>() / hf_logits.len() as f32;
     let hf_logits_std: f32 = {
-        let variance: f32 = hf_logits.iter().map(|x| (x - hf_logits_mean).powi(2)).sum::<f32>() / hf_logits.len() as f32;
+        let variance: f32 = hf_logits
+            .iter()
+            .map(|x| (x - hf_logits_mean).powi(2))
+            .sum::<f32>()
+            / hf_logits.len() as f32;
         variance.sqrt()
     };
 
-    println!("Our logits: mean={:.4}, std={:.4}", our_logits_mean, our_logits_std);
-    println!("HF logits:  mean={:.4}, std={:.4}", hf_logits_mean, hf_logits_std);
+    println!(
+        "Our logits: mean={:.4}, std={:.4}",
+        our_logits_mean, our_logits_std
+    );
+    println!(
+        "HF logits:  mean={:.4}, std={:.4}",
+        hf_logits_mean, hf_logits_std
+    );
     println!("SHIFT: {:.4}", our_logits_mean - hf_logits_mean);
 
     let logits_sim = cosine_similarity(last_logits, &hf_logits);
@@ -185,34 +220,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Top tokens comparison
     println!("\n=== TOP TOKENS ===\n");
 
-    let mut our_indexed: Vec<(usize, f32)> = last_logits.iter().enumerate().map(|(i, &v)| (i, v)).collect();
-    our_indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let mut our_indexed: Vec<(usize, f32)> = last_logits
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| (i, v))
+        .collect();
+    our_indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut hf_indexed: Vec<(usize, f32)> = hf_logits.iter().enumerate().map(|(i, &v)| (i, v)).collect();
-    hf_indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let mut hf_indexed: Vec<(usize, f32)> =
+        hf_logits.iter().enumerate().map(|(i, &v)| (i, v)).collect();
+    hf_indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     println!("Top 10 tokens:");
-    println!("{:>6} {:>12} | {:>6} {:>12}", "Ours", "logit", "HF", "logit");
+    println!(
+        "{:>6} {:>12} | {:>6} {:>12}",
+        "Ours", "logit", "HF", "logit"
+    );
     println!("{}", "-".repeat(45));
     for i in 0..10 {
-        println!("{:>6} {:>12.4} | {:>6} {:>12.4}",
-            our_indexed[i].0, our_indexed[i].1,
-            hf_indexed[i].0, hf_indexed[i].1);
+        println!(
+            "{:>6} {:>12.4} | {:>6} {:>12.4}",
+            our_indexed[i].0, our_indexed[i].1, hf_indexed[i].0, hf_indexed[i].1
+        );
     }
 
     // Specific tokens
     println!("\n=== KEY TOKENS ===\n");
-    let key_tokens = [(440, " The"), (464, "The"), (220, " "), (50256, "EOT"), (50257, "SOT")];
+    let key_tokens = [
+        (440, " The"),
+        (464, "The"),
+        (220, " "),
+        (50256, "EOT"),
+        (50257, "SOT"),
+    ];
     for (tok, name) in key_tokens {
-        println!("Token {} '{}': our={:.4}, hf={:.4}, diff={:.4}",
-            tok, name, last_logits[tok], hf_logits[tok], last_logits[tok] - hf_logits[tok]);
+        println!(
+            "Token {} '{}': our={:.4}, hf={:.4}, diff={:.4}",
+            tok,
+            name,
+            last_logits[tok],
+            hf_logits[tok],
+            last_logits[tok] - hf_logits[tok]
+        );
     }
 
     // Check hidden state if we can get it
     println!("\n=== HIDDEN STATE ===\n");
-    println!("HF last hidden: mean={:.4}, L2={:.4}",
+    println!(
+        "HF last hidden: mean={:.4}, L2={:.4}",
         hf_hidden.iter().sum::<f32>() / hf_hidden.len() as f32,
-        hf_hidden.iter().map(|x| x * x).sum::<f32>().sqrt());
+        hf_hidden.iter().map(|x| x * x).sum::<f32>().sqrt()
+    );
 
     Ok(())
 }

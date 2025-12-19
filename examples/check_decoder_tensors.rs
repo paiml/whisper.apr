@@ -1,14 +1,14 @@
 //! Check decoder tensor statistics
 
-use whisper_apr::format::AprReader;
 use std::fs;
+use whisper_apr::format::AprReader;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_bytes = fs::read("models/whisper-tiny-fb.apr")?;
     let reader = AprReader::new(model_bytes)?;
-    
+
     println!("=== Decoder Tensor Statistics ===\n");
-    
+
     let tensors = [
         "decoder.token_embedding",
         "decoder.positional_embedding",
@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "decoder.layers.0.fc1.weight",
         "decoder.layers.0.fc2.weight",
     ];
-    
+
     for name in tensors {
         match reader.load_tensor(name) {
             Ok(t) => {
@@ -34,12 +34,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let min = t.iter().cloned().fold(f32::INFINITY, f32::min);
                 let max = t.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
                 println!("{}", name);
-                println!("  len={}, mean={:.4}, std={:.4}, min={:.4}, max={:.4}", 
-                    t.len(), mean, std, min, max);
-            },
+                println!(
+                    "  len={}, mean={:.4}, std={:.4}, min={:.4}, max={:.4}",
+                    t.len(),
+                    mean,
+                    std,
+                    min,
+                    max
+                );
+            }
             Err(_) => println!("{}: NOT FOUND", name),
         }
     }
-    
+
     Ok(())
 }

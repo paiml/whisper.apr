@@ -29,8 +29,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let max = values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
 
                 println!("{}", tensor.name);
-                println!("  shape: {:?}, sum: {:.4}, mean: {:.6}, range: [{:.4}, {:.4}]",
-                         tensor.shape, sum, mean, min, max);
+                println!(
+                    "  shape: {:?}, sum: {:.4}, mean: {:.6}, range: [{:.4}, {:.4}]",
+                    tensor.shape, sum, mean, min, max
+                );
 
                 // Categorize
                 if tensor.name.contains("mlp.0") || tensor.name.contains("fc1") {
@@ -55,8 +57,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Detailed fc2 biases (output projection) ===\n");
 
     for tensor in &reader.tensors {
-        if tensor.name.contains("decoder") &&
-           (tensor.name.contains("mlp.2.bias") || tensor.name.contains("fc2.bias")) {
+        if tensor.name.contains("decoder")
+            && (tensor.name.contains("mlp.2.bias") || tensor.name.contains("fc2.bias"))
+        {
             if let Ok(values) = reader.load_tensor(&tensor.name) {
                 let sum: f64 = values.iter().map(|&v| v as f64).sum::<f64>();
                 let mean = sum / values.len() as f64;
@@ -78,7 +81,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(values) = reader.load_tensor(&tensor.name) {
                 let sum: f64 = values.iter().map(|&v| v as f64).sum::<f64>();
                 let mean = sum / values.len() as f64;
-                println!("{}: sum={:.4}, mean={:.6}, len={}", tensor.name, sum, mean, values.len());
+                println!(
+                    "{}: sum={:.4}, mean={:.6}, len={}",
+                    tensor.name,
+                    sum,
+                    mean,
+                    values.len()
+                );
             }
         }
     }
@@ -87,8 +96,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Encoder fc2 biases for comparison ===\n");
 
     for tensor in &reader.tensors {
-        if tensor.name.contains("encoder") &&
-           (tensor.name.contains("mlp.2.bias") || tensor.name.contains("fc2.bias")) {
+        if tensor.name.contains("encoder")
+            && (tensor.name.contains("mlp.2.bias") || tensor.name.contains("fc2.bias"))
+        {
             if let Ok(values) = reader.load_tensor(&tensor.name) {
                 let sum: f64 = values.iter().map(|&v| v as f64).sum::<f64>();
                 let mean = sum / values.len() as f64;

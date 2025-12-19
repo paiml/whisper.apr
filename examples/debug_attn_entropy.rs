@@ -23,7 +23,11 @@ fn softmax(scores: &[f32]) -> Vec<f32> {
 }
 
 fn entropy(probs: &[f32]) -> f32 {
-    -probs.iter().filter(|&&p| p > 1e-10).map(|&p| p * p.ln()).sum::<f32>()
+    -probs
+        .iter()
+        .filter(|&&p| p > 1e-10)
+        .map(|&p| p * p.ln())
+        .sum::<f32>()
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -66,7 +70,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cache = model.decoder_mut().create_kv_cache();
 
     for &token in &initial_tokens {
-        let _ = model.decoder_mut().forward_one(token, &encoded, &mut cache)?;
+        let _ = model
+            .decoder_mut()
+            .forward_one(token, &encoded, &mut cache)?;
     }
 
     println!("Processed {} initial tokens\n", initial_tokens.len());
@@ -88,7 +94,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token_embed = decoder.token_embedding();
     let pos_embed = decoder.positional_embedding();
 
-    let mut x: Vec<f32> = token_embed[(test_token as usize) * d_model..((test_token as usize) + 1) * d_model].to_vec();
+    let mut x: Vec<f32> = token_embed
+        [(test_token as usize) * d_model..((test_token as usize) + 1) * d_model]
+        .to_vec();
     for (i, x_val) in x.iter_mut().enumerate() {
         *x_val += pos_embed[pos * d_model + i];
     }
@@ -116,7 +124,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let self_kv_len = k_full.len() / d_model;
     println!("[SELF-ATTENTION for position {}]", pos);
     println!("  Q: {} values (1 × {})", q_self.len(), d_model);
-    println!("  K: {} values ({} × {})", k_full.len(), self_kv_len, d_model);
+    println!(
+        "  K: {} values ({} × {})",
+        k_full.len(),
+        self_kv_len,
+        d_model
+    );
 
     // Compute self-attention scores for head 0
     let scale = 1.0 / (d_head as f32).sqrt();
@@ -124,7 +137,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for t in 0..self_kv_len {
         let q_head0 = &q_self[0..d_head];
         let k_head0_start = t * d_model;
-        let dot: f32 = q_head0.iter()
+        let dot: f32 = q_head0
+            .iter()
             .zip(&k_full[k_head0_start..k_head0_start + d_head])
             .map(|(a, b)| a * b)
             .sum();
@@ -137,19 +151,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let self_entropy_ratio = self_entropy / self_max_entropy;
 
     let (ss_mean, ss_std, ss_min, ss_max) = stats(&self_scores);
-    println!("  Scores (head 0): mean={:.4}  std={:.4}  range=[{:.2}, {:.2}]",
-             ss_mean, ss_std, ss_min, ss_max);
-    println!("  Entropy: {:.4} / {:.4} = {:.1}%", self_entropy, self_max_entropy, self_entropy_ratio * 100.0);
+    println!(
+        "  Scores (head 0): mean={:.4}  std={:.4}  range=[{:.2}, {:.2}]",
+        ss_mean, ss_std, ss_min, ss_max
+    );
+    println!(
+        "  Entropy: {:.4} / {:.4} = {:.1}%",
+        self_entropy,
+        self_max_entropy,
+        self_entropy_ratio * 100.0
+    );
 
     // Now compute the residual after self-attention
     // Simplified: approximate with V (since softmax is mostly recent token for causal)
     let attn_out_self = block0.self_attn.w_o().forward_simd(&v_new, 1)?;
-    let residual1: Vec<f32> = x.iter().zip(attn_out_self.iter()).map(|(a, b)| a + b).collect();
+    let residual1: Vec<f32> = x
+        .iter()
+        .zip(attn_out_self.iter())
+        .map(|(a, b)| a + b)
+        .collect();
 
     // LayerNorm2
     let normed2 = block0.ln2.forward(&residual1)?;
     let (n2_mean, n2_std, _, _) = stats(&normed2);
-    println!("\n  LayerNorm2 output: mean={:+.4}  std={:.4}", n2_mean, n2_std);
+    println!(
+        "\n  LayerNorm2 output: mean={:+.4}  std={:.4}",
+        n2_mean, n2_std
+    );
 
     // Cross-attention Q projection
     let q_cross = block0.cross_attn.w_q().forward_simd(&normed2, 1)?;
@@ -168,7 +196,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for t in 0..enc_len {
         let q_head0 = &q_cross[0..d_head];
         let k_head0_start = t * d_model;
-        let dot: f32 = q_head0.iter()
+        let dot: f32 = q_head0
+            .iter()
             .zip(&k_cross[k_head0_start..k_head0_start + d_head])
             .map(|(a, b)| a * b)
             .sum();
@@ -176,44 +205,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let (cs_mean, cs_std, cs_min, cs_max) = stats(&cross_scores);
-    println!("  Scores (head 0): mean={:.4}  std={:.4}  range=[{:.2}, {:.2}]",
-             cs_mean, cs_std, cs_min, cs_max);
+    println!(
+        "  Scores (head 0): mean={:.4}  std={:.4}  range=[{:.2}, {:.2}]",
+        cs_mean, cs_std, cs_min, cs_max
+    );
 
     let cross_weights = softmax(&cross_scores);
     let cross_entropy = entropy(&cross_weights);
     let cross_max_entropy = (enc_len as f32).ln();
     let cross_entropy_ratio = cross_entropy / cross_max_entropy;
 
-    println!("  Entropy: {:.4} / {:.4} = {:.1}%",
-             cross_entropy, cross_max_entropy, cross_entropy_ratio * 100.0);
+    println!(
+        "  Entropy: {:.4} / {:.4} = {:.1}%",
+        cross_entropy,
+        cross_max_entropy,
+        cross_entropy_ratio * 100.0
+    );
 
     // Top attended positions
     let mut indexed: Vec<(usize, f32)> = cross_weights.iter().cloned().enumerate().collect();
-    indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     println!("\n  Top-5 attended encoder positions:");
     for (i, (pos, weight)) in indexed.iter().take(5).enumerate() {
         let time_ms = (*pos as f32) * 20.0; // 50 Hz = 20ms per frame
-        println!("    {}: pos={} ({:.0}ms) = {:.4}", i + 1, pos, time_ms, weight);
+        println!(
+            "    {}: pos={} ({:.0}ms) = {:.4}",
+            i + 1,
+            pos,
+            time_ms,
+            weight
+        );
     }
 
     // Diagnosis
     println!("\n=== DIAGNOSIS ===");
     if cross_entropy_ratio > 0.95 {
-        println!("❌ UNIFORM: Cross-attention entropy = {:.1}% (near max)", cross_entropy_ratio * 100.0);
+        println!(
+            "❌ UNIFORM: Cross-attention entropy = {:.1}% (near max)",
+            cross_entropy_ratio * 100.0
+        );
         println!("   Decoder is NOT using encoder information effectively");
     } else if cross_entropy_ratio > 0.80 {
-        println!("⚠️  WEAK: Cross-attention entropy = {:.1}%", cross_entropy_ratio * 100.0);
+        println!(
+            "⚠️  WEAK: Cross-attention entropy = {:.1}%",
+            cross_entropy_ratio * 100.0
+        );
         println!("   Some differentiation but not strong peaks");
     } else {
-        println!("✅ PEAKED: Cross-attention entropy = {:.1}%", cross_entropy_ratio * 100.0);
+        println!(
+            "✅ PEAKED: Cross-attention entropy = {:.1}%",
+            cross_entropy_ratio * 100.0
+        );
         println!("   Decoder is attending to specific encoder positions");
     }
 
     // Check score range
     if cs_std < 0.5 {
         println!("\n   ISSUE: Score std={:.4} is too low", cs_std);
-        println!("   Even with healthy Q (std={:.4}) and K (std={:.4})", qc_std, kc_std);
+        println!(
+            "   Even with healthy Q (std={:.4}) and K (std={:.4})",
+            qc_std, kc_std
+        );
         println!("   -> Q and K may be nearly orthogonal");
     }
 

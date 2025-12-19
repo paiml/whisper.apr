@@ -26,7 +26,11 @@ fn softmax(scores: &[f32]) -> Vec<f32> {
 }
 
 fn entropy(probs: &[f32]) -> f32 {
-    -probs.iter().filter(|&&p| p > 1e-10).map(|&p| p * p.ln()).sum::<f32>()
+    -probs
+        .iter()
+        .filter(|&&p| p > 1e-10)
+        .map(|&p| p * p.ln())
+        .sum::<f32>()
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -66,7 +70,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let w_k = &block0.cross_attn.w_k().weight;
     let scale = block0.cross_attn.scale();
 
-    println!("Scale factor: {:.6} (should be 1/sqrt({})={:.6})", scale, d_head, 1.0/(d_head as f32).sqrt());
+    println!(
+        "Scale factor: {:.6} (should be 1/sqrt({})={:.6})",
+        scale,
+        d_head,
+        1.0 / (d_head as f32).sqrt()
+    );
 
     // Simulate a decoder query (using first timestep of encoder as dummy decoder state)
     // In real decoding, this would be the decoder hidden state after self-attention
@@ -93,7 +102,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n[DIMENSION CHECK (H9)]");
     println!("  Q shape: [1, {}] (single query position)", d_model);
-    println!("  K shape: [{}, {}] (all encoder positions)", seq_len, d_model);
+    println!(
+        "  K shape: [{}, {}] (all encoder positions)",
+        seq_len, d_model
+    );
     println!("  Expected scores shape: [1, {}]", seq_len);
 
     // Compute attention scores for head 0: Q @ K^T / sqrt(d_k)
@@ -114,7 +126,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n[ATTENTION SCORES (H10)]");
     println!("  Scores shape: [{}] (one query to all keys)", seq_len);
-    println!("  mean={:.4}  std={:.4}  min={:.4}  max={:.4}", scores_mean, scores_std, scores_min, scores_max);
+    println!(
+        "  mean={:.4}  std={:.4}  min={:.4}  max={:.4}",
+        scores_mean, scores_std, scores_min, scores_max
+    );
 
     // Check H10: Are scores in reasonable range?
     println!("\n=== H10 VERDICT ===");
@@ -122,10 +137,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("CONFIRMED: Scores out of range (softmax saturation)");
         println!("  -> Missing or incorrect scale factor");
     } else if scores_std < 0.1 {
-        println!("CONFIRMED: Scores have very low variance (std={:.4})", scores_std);
+        println!(
+            "CONFIRMED: Scores have very low variance (std={:.4})",
+            scores_std
+        );
         println!("  -> All scores similar, causing uniform attention");
     } else {
-        println!("FALSIFIED: Scores in reasonable range [{:.2}, {:.2}]", scores_min, scores_max);
+        println!(
+            "FALSIFIED: Scores in reasonable range [{:.2}, {:.2}]",
+            scores_min, scores_max
+        );
         println!("  -> Scale factor is working correctly");
     }
 
@@ -136,14 +157,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let entropy_ratio = attn_entropy / max_entropy;
 
     println!("\n[ATTENTION WEIGHT DISTRIBUTION]");
-    println!("  Entropy: {:.4} (max={:.4}, ratio={:.2}%)", attn_entropy, max_entropy, entropy_ratio * 100.0);
+    println!(
+        "  Entropy: {:.4} (max={:.4}, ratio={:.2}%)",
+        attn_entropy,
+        max_entropy,
+        entropy_ratio * 100.0
+    );
 
     let (w_mean, w_std, w_min, w_max) = stats(&attn_weights);
-    println!("  mean={:.6}  std={:.6}  min={:.6}  max={:.6}", w_mean, w_std, w_min, w_max);
+    println!(
+        "  mean={:.6}  std={:.6}  min={:.6}  max={:.6}",
+        w_mean, w_std, w_min, w_max
+    );
 
     // Top-5 attention positions
     let mut indexed: Vec<(usize, f32)> = attn_weights.iter().cloned().enumerate().collect();
-    indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     println!("\n  Top-5 attended positions:");
     for (i, (pos, weight)) in indexed.iter().take(5).enumerate() {
         println!("    {}: position {} = {:.4}", i + 1, pos, weight);
@@ -152,14 +181,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Posterior collapse detection
     println!("\n=== POSTERIOR COLLAPSE VERDICT ===");
     if entropy_ratio > 0.95 {
-        println!("CONFIRMED: Attention is UNIFORM (entropy ratio = {:.1}%)", entropy_ratio * 100.0);
+        println!(
+            "CONFIRMED: Attention is UNIFORM (entropy ratio = {:.1}%)",
+            entropy_ratio * 100.0
+        );
         println!("  -> Decoder ignores encoder output");
         println!("  -> Cross-attention provides no useful signal");
     } else if entropy_ratio > 0.8 {
-        println!("PARTIAL: Attention is WEAK (entropy ratio = {:.1}%)", entropy_ratio * 100.0);
+        println!(
+            "PARTIAL: Attention is WEAK (entropy ratio = {:.1}%)",
+            entropy_ratio * 100.0
+        );
         println!("  -> Some differentiation but not strong peaks");
     } else {
-        println!("FALSIFIED: Attention is PEAKED (entropy ratio = {:.1}%)", entropy_ratio * 100.0);
+        println!(
+            "FALSIFIED: Attention is PEAKED (entropy ratio = {:.1}%)",
+            entropy_ratio * 100.0
+        );
         println!("  -> Decoder is using encoder output correctly");
     }
 

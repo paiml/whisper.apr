@@ -142,7 +142,11 @@ impl<'a> FrameAssertion<'a> {
         if self.errors.is_empty() {
             Ok(())
         } else {
-            Err(format!("{} assertions failed:\n{}", self.errors.len(), self.errors.join("\n")))
+            Err(format!(
+                "{} assertions failed:\n{}",
+                self.errors.len(),
+                self.errors.join("\n")
+            ))
         }
     }
 }
@@ -374,7 +378,7 @@ fn test_mel_panel_renders() {
 
     expect_frame(&frame)
         .to_contain_text("MEL")
-        .to_contain_text("80");  // 80 mel bins
+        .to_contain_text("80"); // 80 mel bins
 }
 
 #[test]
@@ -420,8 +424,7 @@ fn test_transcription_panel_renders() {
 
     let frame = render_frame(&app, 80, 24);
 
-    expect_frame(&frame)
-        .to_contain_text("TRANSCRIPTION");
+    expect_frame(&frame).to_contain_text("TRANSCRIPTION");
 }
 
 #[test]
@@ -476,9 +479,7 @@ fn test_all_panels_render_without_panic() {
 #[test]
 fn test_waveform_visualization() {
     // Test data with clear peaks
-    let audio: Vec<f32> = (0..100)
-        .map(|i| (i as f32 * 0.1).sin())
-        .collect();
+    let audio: Vec<f32> = (0..100).map(|i| (i as f32 * 0.1).sin()).collect();
 
     let display = WaveformDisplay::new(&audio, 40, 10);
 
@@ -495,7 +496,7 @@ fn test_waveform_visualization() {
 fn test_mel_spectrogram_visualization() {
     // Mock mel data: 80 bins x 100 frames
     let mel: Vec<f32> = (0..8000)
-        .map(|i| ((i % 80) as f32 / 80.0) * -4.0)  // Log-mel scale
+        .map(|i| ((i % 80) as f32 / 80.0) * -4.0) // Log-mel scale
         .collect();
 
     let display = MelDisplay::new(&mel, 80, 100, 40, 20);
@@ -555,7 +556,16 @@ fn test_ux_coverage_complete() {
     let mut coverage = UxCoverage::new();
 
     // Visit all panels
-    for panel in ["waveform", "mel", "encoder", "decoder", "attention", "transcription", "metrics", "help"] {
+    for panel in [
+        "waveform",
+        "mel",
+        "encoder",
+        "decoder",
+        "attention",
+        "transcription",
+        "metrics",
+        "help",
+    ] {
         coverage.visit_panel(panel);
     }
 
@@ -594,16 +604,20 @@ fn test_full_ux_coverage_via_app() {
     }
 
     // Exercise other keys
-    app.handle_key(' ');  // pause
+    app.handle_key(' '); // pause
     coverage.press_key(' ');
 
-    app.handle_key('r');  // reset
+    app.handle_key('r'); // reset
     coverage.press_key('r');
 
-    app.handle_key('q');  // quit
+    app.handle_key('q'); // quit
     coverage.press_key('q');
 
-    assert!(coverage.is_complete(), "UX coverage not complete: {:.0}%", coverage.overall_coverage() * 100.0);
+    assert!(
+        coverage.is_complete(),
+        "UX coverage not complete: {:.0}%",
+        coverage.overall_coverage() * 100.0
+    );
 }
 
 // ============================================================================
@@ -687,14 +701,17 @@ fn test_state_transition_sequence() {
     states.push(app.state);
 
     // Verify expected sequence
-    assert_eq!(states, vec![
-        WhisperState::Idle,
-        WhisperState::WaveformReady,
-        WhisperState::MelReady,
-        WhisperState::Encoding,
-        WhisperState::Decoding,
-        WhisperState::Complete,
-    ]);
+    assert_eq!(
+        states,
+        vec![
+            WhisperState::Idle,
+            WhisperState::WaveformReady,
+            WhisperState::MelReady,
+            WhisperState::Encoding,
+            WhisperState::Decoding,
+            WhisperState::Complete,
+        ]
+    );
 }
 
 // ============================================================================

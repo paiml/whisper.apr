@@ -66,7 +66,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut cache = model.decoder_mut().create_kv_cache();
     for &token in &initial_tokens {
-        let _ = model.decoder_mut().forward_one(token, &encoded, &mut cache)?;
+        let _ = model
+            .decoder_mut()
+            .forward_one(token, &encoded, &mut cache)?;
     }
 
     // Get the cached cross-attention K
@@ -84,7 +86,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token_embed = decoder.token_embedding();
     let pos_embed = decoder.positional_embedding();
 
-    let mut x: Vec<f32> = token_embed[(test_token as usize) * d_model..((test_token as usize) + 1) * d_model].to_vec();
+    let mut x: Vec<f32> = token_embed
+        [(test_token as usize) * d_model..((test_token as usize) + 1) * d_model]
+        .to_vec();
     for (i, x_val) in x.iter_mut().enumerate() {
         *x_val += pos_embed[pos * d_model + i];
     }
@@ -96,7 +100,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let v_self = block0.self_attn.w_v().forward_simd(&normed1, 1)?;
 
     let attn_out_self = block0.self_attn.w_o().forward_simd(&v_self, 1)?;
-    let residual1: Vec<f32> = x.iter().zip(attn_out_self.iter()).map(|(a, b)| a + b).collect();
+    let residual1: Vec<f32> = x
+        .iter()
+        .zip(attn_out_self.iter())
+        .map(|(a, b)| a + b)
+        .collect();
 
     // Through ln2 to get cross-attention Q input
     let normed2 = block0.ln2.forward(&residual1)?;
@@ -104,7 +112,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("[CROSS-ATTENTION Q VECTOR]");
     let (q_mean, q_std, q_min, q_max) = stats(&q_cross);
-    println!("  mean={:.4}  std={:.4}  range=[{:.4}, {:.4}]", q_mean, q_std, q_min, q_max);
+    println!(
+        "  mean={:.4}  std={:.4}  range=[{:.4}, {:.4}]",
+        q_mean, q_std, q_min, q_max
+    );
     let q_norm: f32 = q_cross.iter().map(|&x| x * x).sum::<f32>().sqrt();
     println!("  L2 norm: {:.4}\n", q_norm);
 
@@ -129,8 +140,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cos = cosine_sim(q_head0, k_head0);
 
             let label = if enc_pos <= 75 { "AUDIO" } else { "PADDING" };
-            println!("  Pos {:4} [{}]: score={:+.4}  cos={:+.4}  K_norm={:.4}  K_std={:.4}",
-                     enc_pos, label, score, cos, k_norm, k_std);
+            println!(
+                "  Pos {:4} [{}]: score={:+.4}  cos={:+.4}  K_norm={:.4}  K_std={:.4}",
+                enc_pos, label, score, cos, k_norm, k_std
+            );
         }
     }
 
@@ -147,39 +160,65 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect();
 
-    scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     println!("  Top-10 highest scoring positions:");
     for (pos, score) in scores.iter().take(10) {
         let label = if *pos <= 75 { "AUDIO" } else { "PADDING" };
         let time_ms = (*pos as f32) * 20.0;
-        println!("    Pos {:4} ({:5.0}ms) [{}]: score={:+.4}", pos, time_ms, label, score);
+        println!(
+            "    Pos {:4} ({:5.0}ms) [{}]: score={:+.4}",
+            pos, time_ms, label, score
+        );
     }
 
     println!("\n  Bottom-10 lowest scoring positions:");
     for (pos, score) in scores.iter().rev().take(10) {
         let label = if *pos <= 75 { "AUDIO" } else { "PADDING" };
         let time_ms = (*pos as f32) * 20.0;
-        println!("    Pos {:4} ({:5.0}ms) [{}]: score={:+.4}", pos, time_ms, label, score);
+        println!(
+            "    Pos {:4} ({:5.0}ms) [{}]: score={:+.4}",
+            pos, time_ms, label, score
+        );
     }
 
     // Score distribution
-    let audio_scores: Vec<f32> = scores.iter().filter(|(p, _)| *p <= 75).map(|(_, s)| *s).collect();
-    let padding_scores: Vec<f32> = scores.iter().filter(|(p, _)| *p > 75).map(|(_, s)| *s).collect();
+    let audio_scores: Vec<f32> = scores
+        .iter()
+        .filter(|(p, _)| *p <= 75)
+        .map(|(_, s)| *s)
+        .collect();
+    let padding_scores: Vec<f32> = scores
+        .iter()
+        .filter(|(p, _)| *p > 75)
+        .map(|(_, s)| *s)
+        .collect();
 
     let (a_mean, a_std, a_min, a_max) = stats(&audio_scores);
     let (p_mean, p_std, p_min, p_max) = stats(&padding_scores);
 
     println!("\n[SCORE DISTRIBUTION BY REGION]");
-    println!("  Audio (0-75):     mean={:+.4}  std={:.4}  range=[{:.2}, {:.2}]", a_mean, a_std, a_min, a_max);
-    println!("  Padding (76-1499): mean={:+.4}  std={:.4}  range=[{:.2}, {:.2}]", p_mean, p_std, p_min, p_max);
+    println!(
+        "  Audio (0-75):     mean={:+.4}  std={:.4}  range=[{:.2}, {:.2}]",
+        a_mean, a_std, a_min, a_max
+    );
+    println!(
+        "  Padding (76-1499): mean={:+.4}  std={:.4}  range=[{:.2}, {:.2}]",
+        p_mean, p_std, p_min, p_max
+    );
 
     println!("\n=== DIAGNOSIS ===");
     if p_mean > a_mean {
-        println!("  ISSUE: Padding region has HIGHER average score ({:.4} vs {:.4})", p_mean, a_mean);
+        println!(
+            "  ISSUE: Padding region has HIGHER average score ({:.4} vs {:.4})",
+            p_mean, a_mean
+        );
         println!("  The Q vector is more aligned with padding K than audio K");
     } else {
-        println!("  Audio region has higher average score ({:.4} vs {:.4})", a_mean, p_mean);
+        println!(
+            "  Audio region has higher average score ({:.4} vs {:.4})",
+            a_mean, p_mean
+        );
     }
 
     Ok(())

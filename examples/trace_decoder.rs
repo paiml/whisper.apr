@@ -33,18 +33,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Compute mel
     let mel = model.compute_mel(&samples)?;
     println!("=== Mel Spectrogram ===");
-    println!("  Shape: {} values ({} frames x 80 mels)", mel.len(), mel.len() / 80);
+    println!(
+        "  Shape: {} values ({} frames x 80 mels)",
+        mel.len(),
+        mel.len() / 80
+    );
     let mel_stats = compute_stats(&mel);
-    println!("  Stats: min={:.4}, max={:.4}, mean={:.6}, std={:.4}",
-             mel_stats.0, mel_stats.1, mel_stats.2, mel_stats.3);
+    println!(
+        "  Stats: min={:.4}, max={:.4}, mean={:.6}, std={:.4}",
+        mel_stats.0, mel_stats.1, mel_stats.2, mel_stats.3
+    );
 
     // Encode
     let encoded = model.encode(&mel)?;
     println!("\n=== Encoder Output ===");
-    println!("  Shape: {} values ({} frames x 384 dim)", encoded.len(), encoded.len() / 384);
+    println!(
+        "  Shape: {} values ({} frames x 384 dim)",
+        encoded.len(),
+        encoded.len() / 384
+    );
     let enc_stats = compute_stats(&encoded);
-    println!("  Stats: min={:.4}, max={:.4}, mean={:.6}, std={:.4}",
-             enc_stats.0, enc_stats.1, enc_stats.2, enc_stats.3);
+    println!(
+        "  Stats: min={:.4}, max={:.4}, mean={:.6}, std={:.4}",
+        enc_stats.0, enc_stats.1, enc_stats.2, enc_stats.3
+    );
     println!("  First 10: {:?}", &encoded[..10.min(encoded.len())]);
 
     // Check encoder for issues
@@ -82,40 +94,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .forward_one(token, &encoded, &mut cache.borrow_mut())?;
 
         let logit_stats = compute_stats(&logits);
-        println!("  Logits: min={:.4}, max={:.4}, mean={:.4}, std={:.4}",
-                 logit_stats.0, logit_stats.1, logit_stats.2, logit_stats.3);
+        println!(
+            "  Logits: min={:.4}, max={:.4}, mean={:.4}, std={:.4}",
+            logit_stats.0, logit_stats.1, logit_stats.2, logit_stats.3
+        );
 
         // Find top tokens
-        let mut indexed: Vec<(usize, f32)> = logits.iter().enumerate().map(|(i, &v)| (i, v)).collect();
+        let mut indexed: Vec<(usize, f32)> =
+            logits.iter().enumerate().map(|(i, &v)| (i, v)).collect();
         indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        println!("  Top 5: {:?}",
-                 indexed.iter().take(5).map(|(t, l)| (t, format!("{:.2}", l))).collect::<Vec<_>>());
+        println!(
+            "  Top 5: {:?}",
+            indexed
+                .iter()
+                .take(5)
+                .map(|(t, l)| (t, format!("{:.2}", l)))
+                .collect::<Vec<_>>()
+        );
     }
 
     // Now generate one more token after initial sequence
     println!("\n  --- After initial sequence, next token prediction ---");
 
-    let logits = model
-        .decoder_mut()
-        .forward_one(initial_tokens[initial_tokens.len() - 1], &encoded, &mut cache.borrow_mut())?;
+    let logits = model.decoder_mut().forward_one(
+        initial_tokens[initial_tokens.len() - 1],
+        &encoded,
+        &mut cache.borrow_mut(),
+    )?;
 
     println!("\n  Full logits analysis:");
     let logit_stats = compute_stats(&logits);
-    println!("  Stats: min={:.4}, max={:.4}, mean={:.4}, std={:.4}",
-             logit_stats.0, logit_stats.1, logit_stats.2, logit_stats.3);
+    println!(
+        "  Stats: min={:.4}, max={:.4}, mean={:.4}, std={:.4}",
+        logit_stats.0, logit_stats.1, logit_stats.2, logit_stats.3
+    );
 
     // Check expected tokens
-    let expected_tokens = [
-        (440, " The"),
-        (464, "The"),
-        (220, " "),
-        (383, " the"),
-    ];
+    let expected_tokens = [(440, " The"), (464, "The"), (220, " "), (383, " the")];
 
     println!("\n  Expected token positions:");
     for (token, name) in &expected_tokens {
-        println!("    Token {} '{}': logit = {:.4}", token, name, logits[*token]);
+        println!(
+            "    Token {} '{}': logit = {:.4}",
+            token, name, logits[*token]
+        );
     }
 
     // Distribution analysis
@@ -137,7 +160,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n  Top 20 tokens:");
     for (i, (token, logit)) in indexed.iter().take(20).enumerate() {
         let token_type = categorize_token(*token as u32);
-        println!("    {:2}. token {:5} ({:12}) = {:.4}", i + 1, token, token_type, logit);
+        println!(
+            "    {:2}. token {:5} ({:12}) = {:.4}",
+            i + 1,
+            token,
+            token_type,
+            logit
+        );
     }
 
     // Check for anomalies
@@ -145,12 +174,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Are all logits positive?
     let all_positive = sorted_logits[0] > 0.0;
-    println!("  All logits positive: {} (min = {:.4})",
-             if all_positive { "YES - ANOMALY!" } else { "no" }, sorted_logits[0]);
+    println!(
+        "  All logits positive: {} (min = {:.4})",
+        if all_positive { "YES - ANOMALY!" } else { "no" },
+        sorted_logits[0]
+    );
 
     // 2. Is variance too low?
     if logit_stats.3 < 2.0 {
-        println!("  Low variance: YES - std={:.4} (expected > 2.0)", logit_stats.3);
+        println!(
+            "  Low variance: YES - std={:.4} (expected > 2.0)",
+            logit_stats.3
+        );
     }
 
     // 3. Is mean too high?
@@ -163,7 +198,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let decoder = model.decoder_mut();
     let emb_len = decoder.d_model() * decoder.n_vocab();
-    println!("  Expected embedding size: {} x {} = {}", decoder.n_vocab(), decoder.d_model(), emb_len);
+    println!(
+        "  Expected embedding size: {} x {} = {}",
+        decoder.n_vocab(),
+        decoder.d_model(),
+        emb_len
+    );
 
     // Sample some token embeddings
     let tokens_to_check = [0u32, 220, 440, 464, 50257];
@@ -175,9 +215,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sample: Vec<f32> = emb[start..start + 5].to_vec();
         let emb_slice = &emb[start..start + d_model];
         let stats = compute_stats(emb_slice);
-        println!("    Token {:5}: {:?} ... (min={:.4}, max={:.4}, mean={:.4})",
-                 token, sample.iter().map(|x| format!("{:.4}", x)).collect::<Vec<_>>(),
-                 stats.0, stats.1, stats.2);
+        println!(
+            "    Token {:5}: {:?} ... (min={:.4}, max={:.4}, mean={:.4})",
+            token,
+            sample
+                .iter()
+                .map(|x| format!("{:.4}", x))
+                .collect::<Vec<_>>(),
+            stats.0,
+            stats.1,
+            stats.2
+        );
     }
 
     Ok(())

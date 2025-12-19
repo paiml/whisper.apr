@@ -31,7 +31,8 @@ use whisper_apr::tokenizer::Vocabulary;
 const HF_REPO_BASE: &str = "https://huggingface.co/openai";
 
 /// OpenAI Whisper repository for assets (mel filters)
-const OPENAI_WHISPER_ASSETS: &str = "https://raw.githubusercontent.com/openai/whisper/main/whisper/assets";
+const OPENAI_WHISPER_ASSETS: &str =
+    "https://raw.githubusercontent.com/openai/whisper/main/whisper/assets";
 
 /// Model configurations
 #[derive(Debug, Clone, Copy)]
@@ -335,7 +336,8 @@ fn parse_mel_filterbank(
         (len, 10 + len)
     } else {
         // Version 2+ uses u32
-        let len = u32::from_le_bytes([npy_data[8], npy_data[9], npy_data[10], npy_data[11]]) as usize;
+        let len =
+            u32::from_le_bytes([npy_data[8], npy_data[9], npy_data[10], npy_data[11]]) as usize;
         (len, 12 + len)
     };
 
@@ -350,7 +352,8 @@ fn parse_mel_filterbank(
         return Err(format!(
             "NPY data too short: expected {expected_bytes} bytes, got {}",
             raw_data.len()
-        ).into());
+        )
+        .into());
     }
 
     // Parse f32 values (little-endian)
@@ -1004,8 +1007,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Convert to .apr with appropriate quantization (including vocabulary and filterbank)
     let apr_bytes = match args.quantize {
-        QuantizeType::None => convert_to_apr_f32(tensors, args.model_size, Some(vocab), Some(filterbank))?,
-        QuantizeType::Int8 => convert_to_apr_int8(tensors, args.model_size, Some(vocab), Some(filterbank))?,
+        QuantizeType::None => {
+            convert_to_apr_f32(tensors, args.model_size, Some(vocab), Some(filterbank))?
+        }
+        QuantizeType::Int8 => {
+            convert_to_apr_int8(tensors, args.model_size, Some(vocab), Some(filterbank))?
+        }
     };
 
     // Write output

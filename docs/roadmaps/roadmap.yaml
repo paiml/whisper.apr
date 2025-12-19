@@ -215,7 +215,7 @@ roadmap:
   priority: medium
   assigned_to: null
   created: 2025-12-15T09:26:57.090249965+00:00
-  updated: 2025-12-15T09:53:05.958892617+00:00
+  updated: 2025-12-18T15:56:28.110506324+00:00
   spec: null
   acceptance_criteria: []
   phases: []
@@ -579,11 +579,11 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'New task: WAPR-CLI-002: Implement whisper-apr CLI binary with EXTREME TDD'
-  status: completed
+  status: inprogress
   priority: medium
   assigned_to: null
   created: 2025-12-15T19:00:11.534939287+00:00
-  updated: 2025-12-16T02:03:13.351051444+00:00
+  updated: 2025-12-18T19:41:21.394647541+00:00
   spec: null
   acceptance_criteria: []
   phases: []
@@ -627,11 +627,11 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'New task: WAPR-CLI-003'
-  status: completed
+  status: inprogress
   priority: medium
   assigned_to: null
   created: 2025-12-16T02:03:18.868386026+00:00
-  updated: 2025-12-16T02:03:54.878610851+00:00
+  updated: 2025-12-18T19:59:43.372100556+00:00
   spec: null
   acceptance_criteria: []
   phases: []
@@ -680,6 +680,54 @@ roadmap:
   assigned_to: null
   created: 2025-12-16T12:09:52.818891279+00:00
   updated: 2025-12-16T12:09:52.818891279+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: 'WAPR-QA-FAST-001: Verify lint, test-fast, and coverage pass at 95%'
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-QA-FAST-001: Verify lint, test-fast, and coverage pass at 95%'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2025-12-18T12:01:11.425418086+00:00
+  updated: 2025-12-18T12:01:11.425418086+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-PARITY
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-PARITY'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-19T07:51:18.596882404+00:00
+  updated: 2025-12-19T08:01:42.922661422+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-QA-FIXES
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-QA-FIXES'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-19T08:23:54.757759469+00:00
+  updated: 2025-12-19T08:28:36.874252994+00:00
   spec: null
   acceptance_criteria: []
   phases: []

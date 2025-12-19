@@ -24,15 +24,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let orig_mean = orig_ln.iter().sum::<f32>() / orig_ln.len() as f32;
     let fb_mean = fb_ln.iter().sum::<f32>() / fb_ln.len() as f32;
 
-    println!("Original: mean={:.6}, first 5: {:?}",
-             orig_mean,
-             orig_ln[..5].iter().map(|x| format!("{:.4}", x)).collect::<Vec<_>>());
-    println!("With FB:  mean={:.6}, first 5: {:?}",
-             fb_mean,
-             fb_ln[..5].iter().map(|x| format!("{:.4}", x)).collect::<Vec<_>>());
+    println!(
+        "Original: mean={:.6}, first 5: {:?}",
+        orig_mean,
+        orig_ln[..5]
+            .iter()
+            .map(|x| format!("{:.4}", x))
+            .collect::<Vec<_>>()
+    );
+    println!(
+        "With FB:  mean={:.6}, first 5: {:?}",
+        fb_mean,
+        fb_ln[..5]
+            .iter()
+            .map(|x| format!("{:.4}", x))
+            .collect::<Vec<_>>()
+    );
 
     // Check if they're the same
-    let max_diff = orig_ln.iter().zip(fb_ln.iter())
+    let max_diff = orig_ln
+        .iter()
+        .zip(fb_ln.iter())
         .map(|(a, b)| (a - b).abs())
         .fold(0.0f32, f32::max);
     println!("Max diff: {:.10}", max_diff);
@@ -42,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let (Ok(orig_enc), Ok(fb_enc)) = (
         original.load_tensor("encoder.layers.3.final_layer_norm.weight"),
-        fb.load_tensor("encoder.layers.3.final_layer_norm.weight")
+        fb.load_tensor("encoder.layers.3.final_layer_norm.weight"),
     ) {
         let orig_mean = orig_enc.iter().sum::<f32>() / orig_enc.len() as f32;
         let fb_mean = fb_enc.iter().sum::<f32>() / fb_enc.len() as f32;

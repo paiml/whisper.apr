@@ -1,13 +1,11 @@
-#!/bin/bash
-# run_benchmark_qa.sh - 100-Point Falsification QA for WAPR-BENCH-001
-#
-# Reference: docs/specifications/benchmark-whisper-steps-a-z.md (Section 8)
-#
-# Usage:
-#   ./scripts/run_benchmark_qa.sh
-#   make qa-benchmark
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# bashrs: compliant
+set -euo pipefail
 
-set -uo pipefail
+# Description: 100-Point Falsification QA for WAPR-BENCH-001
+# Reference: docs/specifications/benchmark-whisper-steps-a-z.md (Section 8)
+# Usage: ./scripts/run_benchmark_qa.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"

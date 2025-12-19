@@ -26,8 +26,8 @@
 use wasm_bindgen::prelude::*;
 
 use crate::vocabulary::{
-    DomainAdapter, DomainConfig, DomainType, HotwordBooster, HotwordConfig,
-    TrieSearchResult, VocabularyCustomizer, VocabularyTrie,
+    DomainAdapter, DomainConfig, DomainType, HotwordBooster, HotwordConfig, TrieSearchResult,
+    VocabularyCustomizer, VocabularyTrie,
 };
 
 // ============================================================

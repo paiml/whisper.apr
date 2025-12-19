@@ -27,15 +27,18 @@ fn load_npy_f32(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
     let data = &buf[data_start..];
 
     if is_f64 {
-        let f64_values: Vec<f64> = data.chunks(8)
-            .map(|chunk| f64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3],
-                chunk[4], chunk[5], chunk[6], chunk[7]
-            ]))
+        let f64_values: Vec<f64> = data
+            .chunks(8)
+            .map(|chunk| {
+                f64::from_le_bytes([
+                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+                ])
+            })
             .collect();
         Ok(f64_values.iter().map(|&x| x as f32).collect())
     } else if is_f32 {
-        Ok(data.chunks(4)
+        Ok(data
+            .chunks(4)
             .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
             .collect())
     } else {
@@ -51,7 +54,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hf_l2: f32 = hf_hidden.iter().map(|x| x * x).sum::<f32>().sqrt();
     let hf_mean: f32 = hf_hidden.iter().sum::<f32>() / hf_hidden.len() as f32;
     let hf_std: f32 = {
-        let variance: f32 = hf_hidden.iter().map(|x| (x - hf_mean).powi(2)).sum::<f32>() / hf_hidden.len() as f32;
+        let variance: f32 =
+            hf_hidden.iter().map(|x| (x - hf_mean).powi(2)).sum::<f32>() / hf_hidden.len() as f32;
         variance.sqrt()
     };
 
@@ -92,8 +96,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\nOur implementation:");
     for (name, value) in &trace {
-        if name == "last_hidden" || name == "ln_mean" || name == "ln_var" || name == "ln_std"
-            || name == "ln_weight_mean" || name == "ln_bias_l2" {
+        if name == "last_hidden"
+            || name == "ln_mean"
+            || name == "ln_var"
+            || name == "ln_std"
+            || name == "ln_weight_mean"
+            || name == "ln_bias_l2"
+        {
             println!("  {:20}: {:.4}", name, value);
         }
     }
@@ -121,7 +130,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Theory: The shift comes from the hidden state magnitude difference
     // when projected through token embeddings
     println!("\n=== Hypothesis ===");
-    println!("Hidden L2 ratio: {:.4}x", trace.iter().find(|(n,_)| n == "last_hidden").map(|(_,v)| v / hf_l2).unwrap_or(1.0));
+    println!(
+        "Hidden L2 ratio: {:.4}x",
+        trace
+            .iter()
+            .find(|(n, _)| n == "last_hidden")
+            .map(|(_, v)| v / hf_l2)
+            .unwrap_or(1.0)
+    );
     println!("If token embeddings have positive bias, larger hidden = larger shift");
 
     // Check token embedding statistics

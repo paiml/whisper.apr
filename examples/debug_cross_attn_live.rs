@@ -16,7 +16,11 @@ fn stats(data: &[f32]) -> (f32, f32, f32, f32) {
 }
 
 fn entropy(probs: &[f32]) -> f32 {
-    -probs.iter().filter(|&&p| p > 1e-10).map(|&p| p * p.ln()).sum::<f32>()
+    -probs
+        .iter()
+        .filter(|&&p| p > 1e-10)
+        .map(|&p| p * p.ln())
+        .sum::<f32>()
 }
 
 fn softmax(scores: &[f32]) -> Vec<f32> {
@@ -70,10 +74,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Process each initial token
     for &token in &initial_tokens {
-        let _ = model.decoder_mut().forward_one(token, &encoded, &mut cache)?;
+        let _ = model
+            .decoder_mut()
+            .forward_one(token, &encoded, &mut cache)?;
     }
 
-    println!("\nAfter processing {} initial tokens:", initial_tokens.len());
+    println!(
+        "\nAfter processing {} initial tokens:",
+        initial_tokens.len()
+    );
 
     // Now let's manually compute cross-attention for the next token
     // Get the decoder hidden state after the last token
@@ -100,13 +109,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check K statistics
     let (k_mean, k_std, k_min, k_max) = stats(&k_all);
     println!("\n[K PROJECTION (from encoder)]");
-    println!("  mean={:.4}  std={:.4}  min={:.4}  max={:.4}", k_mean, k_std, k_min, k_max);
+    println!(
+        "  mean={:.4}  std={:.4}  min={:.4}  max={:.4}",
+        k_mean, k_std, k_min, k_max
+    );
 
     // Sample K at different timesteps
     println!("\n  K at different timesteps (head 0 only, first 4 dims):");
-    for t in [0, enc_len/4, enc_len/2, 3*enc_len/4, enc_len-1] {
+    for t in [0, enc_len / 4, enc_len / 2, 3 * enc_len / 4, enc_len - 1] {
         let k_t = &k_all[t * d_model..t * d_model + 4];
-        println!("    t={:4}: [{:.3}, {:.3}, {:.3}, {:.3}]", t, k_t[0], k_t[1], k_t[2], k_t[3]);
+        println!(
+            "    t={:4}: [{:.3}, {:.3}, {:.3}, {:.3}]",
+            t, k_t[0], k_t[1], k_t[2], k_t[3]
+        );
     }
 
     // Now let's check what Q looks like
@@ -116,7 +131,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token_embed = decoder.token_embedding();
     let last_token = initial_tokens[initial_tokens.len() - 1] as usize;
 
-    let decoder_hidden: Vec<f32> = token_embed[last_token * d_model..(last_token + 1) * d_model].to_vec();
+    let decoder_hidden: Vec<f32> =
+        token_embed[last_token * d_model..(last_token + 1) * d_model].to_vec();
 
     // Compute Q = decoder_hidden @ W_q
     let mut q = vec![0.0f32; d_model];
@@ -128,7 +144,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (q_mean, q_std, q_min, q_max) = stats(&q);
     println!("\n[Q PROJECTION (from token embedding)]");
-    println!("  mean={:.4}  std={:.4}  min={:.4}  max={:.4}", q_mean, q_std, q_min, q_max);
+    println!(
+        "  mean={:.4}  std={:.4}  min={:.4}  max={:.4}",
+        q_mean, q_std, q_min, q_max
+    );
 
     // Compute attention scores for head 0
     let q_head0: Vec<f32> = q[0..d_head].to_vec();
@@ -141,7 +160,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (s_mean, s_std, s_min, s_max) = stats(&scores);
     println!("\n[ATTENTION SCORES (head 0)]");
-    println!("  mean={:.4}  std={:.4}  min={:.4}  max={:.4}", s_mean, s_std, s_min, s_max);
+    println!(
+        "  mean={:.4}  std={:.4}  min={:.4}  max={:.4}",
+        s_mean, s_std, s_min, s_max
+    );
 
     // Apply softmax
     let weights = softmax(&scores);
@@ -149,7 +171,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let max_e = (enc_len as f32).ln();
 
     println!("\n[ATTENTION WEIGHTS]");
-    println!("  Entropy: {:.4} / {:.4} = {:.1}%", e, max_e, e/max_e * 100.0);
+    println!(
+        "  Entropy: {:.4} / {:.4} = {:.1}%",
+        e,
+        max_e,
+        e / max_e * 100.0
+    );
 
     // Key insight: compare Q and K variance
     println!("\n=== ROOT CAUSE ANALYSIS ===");
@@ -176,9 +203,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let m: f32 = k_t.iter().sum::<f32>() / d_head as f32;
                 k_t.iter().map(|&x| (x - m).powi(2)).sum::<f32>() / d_head as f32
             })
-            .sum::<f32>() / enc_len as f32;
+            .sum::<f32>()
+            / enc_len as f32;
 
-        println!("\n  K per-timestep variance: {:.4}", k_timestep_variance.sqrt());
+        println!(
+            "\n  K per-timestep variance: {:.4}",
+            k_timestep_variance.sqrt()
+        );
     }
 
     Ok(())

@@ -32,8 +32,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vocab_size = 51865;
 
     let (te_mean, te_std, te_min, te_max) = stats(token_embed);
-    println!("  Total shape: {} values ({}×{})", token_embed.len(), vocab_size, d_model);
-    println!("  mean={:.6}  std={:.6}  min={:.6}  max={:.6}", te_mean, te_std, te_min, te_max);
+    println!(
+        "  Total shape: {} values ({}×{})",
+        token_embed.len(),
+        vocab_size,
+        d_model
+    );
+    println!(
+        "  mean={:.6}  std={:.6}  min={:.6}  max={:.6}",
+        te_mean, te_std, te_min, te_max
+    );
 
     // Check specific token embeddings
     println!("\n  Per-token embedding stats:");
@@ -53,21 +61,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if end <= token_embed.len() {
             let emb = &token_embed[start..end];
             let (m, s, mn, mx) = stats(emb);
-            println!("    {:5} {:<12}: mean={:+.4}  std={:.4}  range=[{:.3}, {:.3}]",
-                     tok, name, m, s, mn, mx);
+            println!(
+                "    {:5} {:<12}: mean={:+.4}  std={:.4}  range=[{:.3}, {:.3}]",
+                tok, name, m, s, mn, mx
+            );
         }
     }
 
     // Check H13 verdict
     println!("\n=== H13 VERDICT ===");
     if te_std < 0.001 {
-        println!("CONFIRMED: Token embeddings have near-zero variance (std={:.6})", te_std);
+        println!(
+            "CONFIRMED: Token embeddings have near-zero variance (std={:.6})",
+            te_std
+        );
         println!("  -> Embeddings not properly initialized or loaded");
     } else if te_std > 0.1 {
-        println!("FALSIFIED: Token embeddings have healthy variance (std={:.6})", te_std);
+        println!(
+            "FALSIFIED: Token embeddings have healthy variance (std={:.6})",
+            te_std
+        );
         println!("  -> Problem is NOT in token embedding weights");
     } else {
-        println!("INCONCLUSIVE: Token embedding std={:.6} (borderline)", te_std);
+        println!(
+            "INCONCLUSIVE: Token embedding std={:.6} (borderline)",
+            te_std
+        );
     }
 
     // Check positional embedding
@@ -75,8 +94,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pos_embed = decoder.positional_embedding();
     let max_pos = 448; // Whisper tiny max positions
     let (pe_mean, pe_std, pe_min, pe_max) = stats(pos_embed);
-    println!("  shape: {} values ({}×{})", pos_embed.len(), max_pos, d_model);
-    println!("  mean={:.6}  std={:.6}  min={:.6}  max={:.6}", pe_mean, pe_std, pe_min, pe_max);
+    println!(
+        "  shape: {} values ({}×{})",
+        pos_embed.len(),
+        max_pos,
+        d_model
+    );
+    println!(
+        "  mean={:.6}  std={:.6}  min={:.6}  max={:.6}",
+        pe_mean, pe_std, pe_min, pe_max
+    );
 
     // Check LayerNorm weights
     println!("\n[H14: LAYERNORM WEIGHTS]");
@@ -89,8 +116,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (g1_mean, g1_std, g1_min, g1_max) = stats(ln1_gamma);
     let (b1_mean, b1_std, b1_min, b1_max) = stats(ln1_beta);
     println!("  ln1 (pre-self-attn):");
-    println!("    gamma: mean={:.4}  std={:.4}  range=[{:.4}, {:.4}]", g1_mean, g1_std, g1_min, g1_max);
-    println!("    beta:  mean={:.4}  std={:.4}  range=[{:.4}, {:.4}]", b1_mean, b1_std, b1_min, b1_max);
+    println!(
+        "    gamma: mean={:.4}  std={:.4}  range=[{:.4}, {:.4}]",
+        g1_mean, g1_std, g1_min, g1_max
+    );
+    println!(
+        "    beta:  mean={:.4}  std={:.4}  range=[{:.4}, {:.4}]",
+        b1_mean, b1_std, b1_min, b1_max
+    );
 
     // Pre-cross-attention LayerNorm (ln2)
     let ln2_gamma = &block0.ln2.weight;
@@ -98,8 +131,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (g2_mean, g2_std, g2_min, g2_max) = stats(ln2_gamma);
     let (b2_mean, b2_std, b2_min, b2_max) = stats(ln2_beta);
     println!("  ln2 (pre-cross-attn):");
-    println!("    gamma: mean={:.4}  std={:.4}  range=[{:.4}, {:.4}]", g2_mean, g2_std, g2_min, g2_max);
-    println!("    beta:  mean={:.4}  std={:.4}  range=[{:.4}, {:.4}]", b2_mean, b2_std, b2_min, b2_max);
+    println!(
+        "    gamma: mean={:.4}  std={:.4}  range=[{:.4}, {:.4}]",
+        g2_mean, g2_std, g2_min, g2_max
+    );
+    println!(
+        "    beta:  mean={:.4}  std={:.4}  range=[{:.4}, {:.4}]",
+        b2_mean, b2_std, b2_min, b2_max
+    );
 
     // Manually trace through the decoder for one token
     println!("\n[STEP-BY-STEP TRACE FOR TOKEN 'SOT']");
@@ -108,15 +147,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sot_id = special_tokens::SOT as usize;
     let tok_emb: Vec<f32> = token_embed[sot_id * d_model..(sot_id + 1) * d_model].to_vec();
     let (s1_mean, s1_std, _, _) = stats(&tok_emb);
-    println!("  1. Token embed:     mean={:+.6}  std={:.6}", s1_mean, s1_std);
+    println!(
+        "  1. Token embed:     mean={:+.6}  std={:.6}",
+        s1_mean, s1_std
+    );
 
     // Step 2: Add positional embedding (position 0)
-    let mut hidden: Vec<f32> = tok_emb.iter()
+    let mut hidden: Vec<f32> = tok_emb
+        .iter()
         .zip(&pos_embed[0..d_model])
         .map(|(t, p)| t + p)
         .collect();
     let (s2_mean, s2_std, _, _) = stats(&hidden);
-    println!("  2. + Positional:    mean={:+.6}  std={:.6}", s2_mean, s2_std);
+    println!(
+        "  2. + Positional:    mean={:+.6}  std={:.6}",
+        s2_mean, s2_std
+    );
 
     // Step 3: LayerNorm before self-attention
     // LN(x) = gamma * (x - mean) / sqrt(var + eps) + beta
@@ -125,12 +171,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let h_var: f32 = hidden.iter().map(|&x| (x - h_mean).powi(2)).sum::<f32>() / d_model as f32;
     let h_std_ln = (h_var + eps).sqrt();
 
-    let normed: Vec<f32> = hidden.iter()
+    let normed: Vec<f32> = hidden
+        .iter()
         .zip(ln1_gamma.iter().zip(ln1_beta.iter()))
         .map(|(&x, (&g, &b))| g * (x - h_mean) / h_std_ln + b)
         .collect();
     let (s3_mean, s3_std, _, _) = stats(&normed);
-    println!("  3. LayerNorm1:      mean={:+.6}  std={:.6}", s3_mean, s3_std);
+    println!(
+        "  3. LayerNorm1:      mean={:+.6}  std={:.6}",
+        s3_mean, s3_std
+    );
 
     // Step 4: Self-attention (simplified - using just Q projection for now)
     let w_q_self = &block0.self_attn.w_q().weight;
@@ -141,7 +191,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let (s4_mean, s4_std, _, _) = stats(&q_self);
-    println!("  4. Self-attn Q:     mean={:+.6}  std={:.6}", s4_mean, s4_std);
+    println!(
+        "  4. Self-attn Q:     mean={:+.6}  std={:.6}",
+        s4_mean, s4_std
+    );
 
     // Step 5: After self-attention (approximation: just use q_self as output)
     // In reality, we'd compute full attention, but let's check if Q itself is reasonable
@@ -151,12 +204,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let q_var: f32 = q_self.iter().map(|&x| (x - q_mean).powi(2)).sum::<f32>() / d_model as f32;
     let q_std_ln = (q_var + eps).sqrt();
 
-    let normed2: Vec<f32> = q_self.iter()
+    let normed2: Vec<f32> = q_self
+        .iter()
         .zip(ln2_gamma.iter().zip(ln2_beta.iter()))
         .map(|(&x, (&g, &b))| g * (x - q_mean) / q_std_ln + b)
         .collect();
     let (s5_mean, s5_std, _, _) = stats(&normed2);
-    println!("  5. LayerNorm2:      mean={:+.6}  std={:.6}", s5_mean, s5_std);
+    println!(
+        "  5. LayerNorm2:      mean={:+.6}  std={:.6}",
+        s5_mean, s5_std
+    );
 
     // Step 7: Cross-attention Q projection
     let w_q_cross = &block0.cross_attn.w_q().weight;
@@ -167,7 +224,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let (s6_mean, s6_std, _, _) = stats(&q_cross);
-    println!("  6. Cross-attn Q:    mean={:+.6}  std={:.6}", s6_mean, s6_std);
+    println!(
+        "  6. Cross-attn Q:    mean={:+.6}  std={:.6}",
+        s6_mean, s6_std
+    );
 
     // Summary
     println!("\n=== VARIANCE TRACE SUMMARY ===");
@@ -180,19 +240,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Identify the drop
     let stds = [s1_std, s2_std, s3_std, s4_std, s5_std, s6_std];
-    let names = ["Token Embed", "+Positional", "LayerNorm1", "Self-attn Q", "LayerNorm2", "Cross-attn Q"];
+    let names = [
+        "Token Embed",
+        "+Positional",
+        "LayerNorm1",
+        "Self-attn Q",
+        "LayerNorm2",
+        "Cross-attn Q",
+    ];
 
     println!("\n=== DIAGNOSIS ===");
     for i in 1..stds.len() {
-        let ratio = stds[i] / stds[i-1];
+        let ratio = stds[i] / stds[i - 1];
         if ratio < 0.1 {
-            println!("  ⚠️  {} → {}: std dropped by {:.1}x",
-                     names[i-1], names[i], 1.0/ratio);
+            println!(
+                "  ⚠️  {} → {}: std dropped by {:.1}x",
+                names[i - 1],
+                names[i],
+                1.0 / ratio
+            );
         }
     }
 
     if s6_std < 0.1 {
-        println!("\n  CONFIRMED: Cross-attention Q has low variance (std={:.6})", s6_std);
+        println!(
+            "\n  CONFIRMED: Cross-attention Q has low variance (std={:.6})",
+            s6_std
+        );
 
         if s3_std < 0.1 {
             println!("  → Problem starts at LayerNorm1 (std={:.6})", s3_std);
@@ -202,7 +276,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  → Problem starts at LayerNorm2 (std={:.6})", s5_std);
         }
     } else {
-        println!("\n  Cross-attention Q has healthy variance (std={:.6})", s6_std);
+        println!(
+            "\n  Cross-attention Q has healthy variance (std={:.6})",
+            s6_std
+        );
         println!("  → Bug may be in actual forward pass, not weights");
     }
 

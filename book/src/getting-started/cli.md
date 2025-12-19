@@ -23,17 +23,17 @@ cargo run --features cli --example cli_usage
 
 ```bash
 # Basic transcription
-whisper-apr transcribe audio.wav
+whisper-apr transcribe -f audio.wav
 
 # With options
-whisper-apr transcribe audio.mp3 \
+whisper-apr transcribe -f audio.mp3 \
   --model base \
   --language auto \
-  --output transcript.srt \
+  --output-file transcript.srt \
   --format srt
 
 # Translation (any language → English)
-whisper-apr translate audio.wav --output english.txt
+whisper-apr translate -f audio.wav --output-file english.txt
 
 # Real-time recording + transcription
 whisper-apr record --live
@@ -49,17 +49,26 @@ whisper-apr tui
 Transcribe audio/video files to text:
 
 ```bash
-whisper-apr transcribe input.wav [OPTIONS]
+whisper-apr transcribe -f input.wav [OPTIONS]
 
 Options:
+  -f, --file <FILE>         Input audio/video file (required)
   -m, --model <MODEL>       Model size [tiny|base|small|medium|large]
+  --model-path <PATH>       Path to custom .apr model file
   -l, --language <LANG>     Source language (ISO 639-1) or 'auto'
-  -o, --output <FILE>       Output file path
-  -f, --format <FORMAT>     Output format [txt|srt|vtt|json|csv|md]
+  --output-file <FILE>      Output file path
+  -o, --format <FORMAT>     Output format [txt|srt|vtt|json|csv|lrc|md]
   --timestamps              Include timestamps
   --word-timestamps         Word-level timestamps
   --vad                     Enable voice activity detection
+  --vad-threshold <F32>     VAD threshold (0.0-1.0, default: 0.5)
   --gpu                     Use GPU acceleration
+  -t, --threads <N>         Number of threads
+  --beam-size <N>           Beam search size (-1 for greedy)
+  --temperature <F32>       Sampling temperature
+  --best-of <N>             Best-of candidates
+  --hallucination-filter    Filter repeated hallucinations
+  --translate               Translate to English
 ```
 
 ### translate
@@ -67,7 +76,41 @@ Options:
 Translate speech from any language to English:
 
 ```bash
-whisper-apr translate german.wav --output english.txt
+whisper-apr translate -f german.wav --output-file english.txt
+```
+
+### stream
+
+Real-time streaming transcription from microphone:
+
+```bash
+whisper-apr stream [OPTIONS]
+
+Options:
+  --step <MS>         Step size in ms (default: 3000)
+  --length <MS>       Audio length in ms (default: 10000)
+  --keep <MS>         Audio to keep in ms (default: 200)
+  --capture <ID>      Capture device ID
+  --max-tokens <N>    Max tokens per segment (default: 32)
+  --vad-thold <F32>   VAD threshold (default: 0.6)
+  --keep-context      Keep previous context
+  --save-audio        Save audio to file
+  --translate         Translate to English
+```
+
+### serve
+
+Start HTTP API server (whisper.cpp server compatibility):
+
+```bash
+whisper-apr serve [OPTIONS]
+
+Options:
+  --host <HOST>           Host address (default: 127.0.0.1)
+  --port <PORT>           Port number (default: 8080)
+  --public <PATH>         Static files directory
+  --inference-path <PATH> Inference endpoint (default: /inference)
+  -m, --model <MODEL>     Model size to use
 ```
 
 ### record
@@ -90,7 +133,7 @@ whisper-apr record --live
 Process multiple files in parallel:
 
 ```bash
-whisper-apr batch *.mp4 --output-dir ./transcripts --parallel 4
+whisper-apr batch --pattern "*.mp4" --output-dir ./transcripts --parallel 4
 ```
 
 ### tui
@@ -154,6 +197,58 @@ whisper-apr benchmark base --iterations 3 -v
 Output includes:
 - Average, min, max processing times
 - Real-Time Factor (RTF)
+
+### validate
+
+Validate .apr model file (25-point QA checklist):
+
+```bash
+whisper-apr validate model.apr [OPTIONS]
+
+Options:
+  --quick           Quick validation (skip detailed checks)
+  --detailed        Show detailed breakdown
+  --min-score <N>   Minimum passing score (default: 80)
+  --format <FMT>    Output format [text|json]
+```
+
+### parity
+
+Compare output against whisper.cpp (parity testing):
+
+```bash
+whisper-apr parity -f audio.wav [OPTIONS]
+
+Options:
+  --cpp-output <FILE>  whisper.cpp output for comparison
+  --tolerance <F32>    WER tolerance (default: 0.01 = 1%)
+  --timestamp-ms <N>   Timestamp tolerance in ms (default: 50)
+```
+
+### quantize
+
+Quantize model to smaller size:
+
+```bash
+whisper-apr quantize input.bin output.apr [OPTIONS]
+
+Options:
+  -Q, --quantize <TYPE>  Quantization type [f32|f16|q8-0|q5-0|q4-0]
+  -v, --verbose          Verbose output
+```
+
+### command
+
+Voice command recognition (grammar-constrained):
+
+```bash
+whisper-apr command [OPTIONS]
+
+Options:
+  --grammar <FILE>   GBNF grammar file
+  --commands <FILE>  Commands file
+  -m, --model <MODEL> Model size
+```
 
 ## Global Options
 
