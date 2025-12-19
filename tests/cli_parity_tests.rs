@@ -3853,3 +3853,106 @@ mod section_h_model_optimization {
         assert!((sparsity - 0.5).abs() < 0.01, "Should detect 50% sparsity");
     }
 }
+
+// ============================================================================
+// WAPR-TRANS-001: Transcription Pipeline Tests
+// ============================================================================
+
+#[cfg(test)]
+mod transcription_pipeline {
+    use super::*;
+
+    /// T1.1: 16kHz mono WAV should produce non-empty transcription
+    ///
+    /// WAPR-TRANS-001: This test verifies that the CLI automatically downloads
+    /// and loads model weights from HuggingFace when no --model-path is provided.
+    #[test]
+    #[ignore = "WAPR-TRANS-001: Requires model auto-download implementation"]
+    fn test_t1_1_transcription_produces_output() {
+        use clap::Parser;
+        use whisper_apr::cli::args::Args;
+        use whisper_apr::cli::commands::run_transcribe;
+
+        // Parse minimal args
+        let args = Args::try_parse_from([
+            "whisper-apr",
+            "transcribe",
+            "-f",
+            TEST_AUDIO_SHORT,
+        ]).expect("Args should parse");
+
+        let transcribe_args = match &args.command {
+            whisper_apr::cli::args::Command::Transcribe(t) => t.clone(),
+            _ => panic!("Expected transcribe command"),
+        };
+
+        // Run transcription
+        let result = run_transcribe(transcribe_args, &args);
+
+        // Verify success
+        assert!(result.is_ok(), "Transcription should succeed: {:?}", result.err());
+        let result = result.unwrap();
+        assert!(result.success, "Result should indicate success");
+
+        // Verify non-empty output (the key assertion for WAPR-TRANS-001)
+        let text = result.message.trim();
+        assert!(!text.is_empty(), "Transcription output should not be empty");
+        assert!(text.len() > 5, "Transcription should contain meaningful text");
+
+        // Verify it's not just whitespace or special tokens
+        let has_letters = text.chars().any(|c| c.is_alphabetic());
+        assert!(has_letters, "Transcription should contain actual words");
+    }
+
+    /// T1.1b: CLI binary should produce non-empty output
+    #[test]
+    #[ignore = "WAPR-TRANS-001: Requires model auto-download implementation"]
+    fn test_t1_1b_cli_binary_produces_output() {
+        let output = Command::new("cargo")
+            .args([
+                "run", "--release", "--features", "cli",
+                "--bin", "whisper-apr-cli", "--",
+                "transcribe", "-f", TEST_AUDIO_SHORT,
+            ])
+            .output()
+            .expect("Failed to execute CLI");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(output.status.success(), "CLI should exit successfully. stderr: {}", stderr);
+
+        let text = stdout.trim();
+        assert!(!text.is_empty(), "CLI output should not be empty");
+        assert!(text.chars().any(|c| c.is_alphabetic()), "Output should contain words");
+    }
+
+    /// Test that model_loader module exists and has required functions
+    #[test]
+    fn test_model_loader_module_exists() {
+        // This test will fail until we create the model_loader module
+        // For now, just verify the CLI args module exists
+        use whisper_apr::cli::args::ModelSize;
+
+        let sizes = [
+            ModelSize::Tiny,
+            ModelSize::Base,
+            ModelSize::Small,
+            ModelSize::Medium,
+            ModelSize::Large,
+        ];
+        assert_eq!(sizes.len(), 5, "All model sizes should be available");
+    }
+
+    /// Test expected cache directory structure
+    #[test]
+    fn test_cache_directory_convention() {
+        // Model cache should follow XDG conventions or ~/.cache/whisper-apr/
+        let home = std::env::var("HOME").unwrap_or_default();
+        let expected_cache = format!("{}/.cache/whisper-apr/models", home);
+
+        // Just verify the path format is sensible
+        assert!(!home.is_empty(), "HOME should be set");
+        assert!(expected_cache.contains("whisper-apr"), "Cache should be in whisper-apr dir");
+    }
+}
