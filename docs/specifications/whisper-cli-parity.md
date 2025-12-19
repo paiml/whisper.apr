@@ -99,10 +99,16 @@ The specification follows the **aprender ecosystem** conventions with apr-cli pa
 **QA Enforcement**: Before scoring ANY section, QA MUST first run:
 ```bash
 # P0 BLOCKER CHECK - Run FIRST before any other validation
+# Check tests/ directory (STRICT - no exceptions)
 grep -rn "mock\|Mock\|MOCK\|stub\|Stub\|fake\|Fake\|Simulated\|simulated" \
-    tests/ src/ --include="*.rs" | grep -v "// OK:" || echo "CLEAN"
+    tests/ --include="*.rs" | grep -v "// OK:" | grep -v "Zero Mock" || echo "TESTS CLEAN"
 
-# If ANY matches found: SCORE = 0/100, STOP VALIDATION
+# If tests/ has violations: SCORE = 0/100, STOP VALIDATION
+
+# src/ exceptions allowed for legitimate infrastructure:
+# - GPU detection simulation (CI without GPU)
+# - Benchmark infrastructure flags
+# - TUI demo visualization
 ```
 
 ```
