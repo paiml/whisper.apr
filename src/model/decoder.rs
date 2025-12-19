@@ -4812,8 +4812,8 @@ mod tests {
             let fused = block.create_fused_ffn().expect("create fused FFN");
 
             // Verify dimensions match
-            assert_eq!(fused.d_model(), d_model);
-            assert_eq!(fused.d_ff(), d_ff);
+            assert_eq!(fused.d_model, d_model);
+            assert_eq!(fused.d_ff, d_ff);
         }
 
         #[test]

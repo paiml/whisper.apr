@@ -18,7 +18,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_path = Path::new("models/whisper-tiny.apr");
     if !model_path.exists() {
         eprintln!("Model not found: {}", model_path.display());
-        eprintln!("Please convert with: cargo run --bin whisper-convert --features converter -- tiny");
+        eprintln!(
+            "Please convert with: cargo run --bin whisper-convert --features converter -- tiny"
+        );
         return Ok(());
     }
 
@@ -112,7 +114,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if total_missing > 0 || total_zero > 0 {
-        println!("\n  🔴 H3 FAILED: {} missing, {} zero tensors", total_missing, total_zero);
+        println!(
+            "\n  🔴 H3 FAILED: {} missing, {} zero tensors",
+            total_missing, total_zero
+        );
     } else {
         println!("\n  🟢 H3 PASSED: All cross-attention weights loaded");
     }
@@ -146,7 +151,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let expected_elements = 1500 * d_model;
         let actual_elements = encoded.len();
 
-        println!("  Expected encoder output: [1, 1500, {}] = {} elements", d_model, expected_elements);
+        println!(
+            "  Expected encoder output: [1, 1500, {}] = {} elements",
+            d_model, expected_elements
+        );
         println!("  Actual encoder output: {} elements", actual_elements);
 
         if actual_elements == expected_elements {
@@ -165,7 +173,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else if actual_elements % 1500 == 0 {
                 println!(
                     "     → Possible cause: Wrong d_model ({} instead of {})",
-                    actual_elements / 1500, d_model
+                    actual_elements / 1500,
+                    d_model
                 );
             }
         }
@@ -173,8 +182,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Check encoder output statistics
         println!("\n  Encoder output statistics:");
         let enc_mean: f32 = encoded.iter().sum::<f32>() / encoded.len() as f32;
-        let enc_var: f32 = encoded.iter().map(|&x| (x - enc_mean).powi(2)).sum::<f32>()
-            / encoded.len() as f32;
+        let enc_var: f32 =
+            encoded.iter().map(|&x| (x - enc_mean).powi(2)).sum::<f32>() / encoded.len() as f32;
         let enc_std = enc_var.sqrt();
         let enc_max: f32 = encoded.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
         let enc_min: f32 = encoded.iter().fold(f32::INFINITY, |a, &b| a.min(b));
@@ -209,7 +218,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    d_model = {}", d_model);
     println!("    n_heads = {}", n_heads);
     println!("    d_head  = {} (= d_model / n_heads)", d_head);
-    println!("    Expected attention scale = 1/sqrt({}) = {:.6}", d_head, expected_scale);
+    println!(
+        "    Expected attention scale = 1/sqrt({}) = {:.6}",
+        d_head, expected_scale
+    );
 
     // We can't directly inspect the scale factor at runtime without modifying code,
     // but we can verify the math is correct
@@ -240,19 +252,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect();
 
         let result = model.transcribe(&samples, whisper_apr::TranscribeOptions::default())?;
-        println!("  Real audio transcription: {:?}", &result.text[..result.text.len().min(100)]);
+        println!(
+            "  Real audio transcription: {:?}",
+            &result.text[..result.text.len().min(100)]
+        );
 
         // Test with silence (zeros)
         let silence: Vec<f32> = vec![0.0; samples.len()];
-        let silence_result = model.transcribe(&silence, whisper_apr::TranscribeOptions::default())?;
-        println!("  Silence transcription:    {:?}", &silence_result.text[..silence_result.text.len().min(100)]);
+        let silence_result =
+            model.transcribe(&silence, whisper_apr::TranscribeOptions::default())?;
+        println!(
+            "  Silence transcription:    {:?}",
+            &silence_result.text[..silence_result.text.len().min(100)]
+        );
 
         // Test with noise
         let noise: Vec<f32> = (0..samples.len())
             .map(|i| (i as f32 * 0.1).sin() * 0.1)
             .collect();
         let noise_result = model.transcribe(&noise, whisper_apr::TranscribeOptions::default())?;
-        println!("  Noise transcription:      {:?}", &noise_result.text[..noise_result.text.len().min(100)]);
+        println!(
+            "  Noise transcription:      {:?}",
+            &noise_result.text[..noise_result.text.len().min(100)]
+        );
 
         // Analysis
         if result.text == silence_result.text && result.text == noise_result.text {
@@ -281,7 +303,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", "=".repeat(60));
     println!("H1 (Cross-attn input):     See transcription comparison above");
     println!("H2 (Encoder shape):        See shape analysis above");
-    println!("H3 (Weights loaded):       {} missing, {} zero", total_missing, total_zero);
+    println!(
+        "H3 (Weights loaded):       {} missing, {} zero",
+        total_missing, total_zero
+    );
     println!("H4 (Scaling factor):       Manual code review required");
     println!("H5 (KV cache):             Streaming test required");
     println!("{}", "=".repeat(60));

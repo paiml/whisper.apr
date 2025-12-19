@@ -1,13 +1,11 @@
-#!/bin/bash
-# capture_golden_traces.sh - Capture baseline performance traces for whisper.apr
-#
-# Reference: docs/specifications/benchmark-whisper-steps-a-z.md (Appendix C.4)
-#
-# Usage:
-#   ./scripts/capture_golden_traces.sh
-#   make golden-traces
-
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# bashrs: compliant
 set -euo pipefail
+
+# Description: Capture baseline performance traces for whisper.apr
+# Reference: docs/specifications/benchmark-whisper-steps-a-z.md (Appendix C.4)
+# Usage: ./scripts/capture_golden_traces.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"

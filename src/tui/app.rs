@@ -299,7 +299,8 @@ impl WhisperApp {
         for frame in 0..n_frames {
             for mel_bin in 0..N_MELS {
                 // Create a pattern that looks like real mel spectrogram
-                let frame_energy = self.audio_data
+                let frame_energy = self
+                    .audio_data
                     .get(frame * HOP_LENGTH..(frame + 1) * HOP_LENGTH)
                     .map_or(0.0, |s| s.iter().map(|x| x.powi(2)).sum::<f32>());
                 let log_energy = (frame_energy + 1e-10).ln();
@@ -358,7 +359,15 @@ impl WhisperApp {
         let start = std::time::Instant::now();
 
         // Mock decoder tokens
-        let sample_tokens = ["<|startoftranscript|>", "<|en|>", "Hello", ",", " world", ".", "<|endoftext|>"];
+        let sample_tokens = [
+            "<|startoftranscript|>",
+            "<|en|>",
+            "Hello",
+            ",",
+            " world",
+            ".",
+            "<|endoftext|>",
+        ];
 
         self.decoder_tokens = sample_tokens
             .iter()
@@ -383,7 +392,8 @@ impl WhisperApp {
             .collect();
 
         // Build attention weights matrix
-        self.attention_weights = self.decoder_tokens
+        self.attention_weights = self
+            .decoder_tokens
             .iter()
             .map(|t| t.attention_weights.clone())
             .collect();
@@ -407,7 +417,8 @@ impl WhisperApp {
         }
 
         // Build transcription from tokens
-        self.transcription = self.decoder_tokens
+        self.transcription = self
+            .decoder_tokens
             .iter()
             .filter(|t| !t.text.starts_with("<|"))
             .map(|t| t.text.as_str())
@@ -415,9 +426,8 @@ impl WhisperApp {
             .join("");
 
         // Compute total time and RTF
-        self.metrics.total_time_ms = self.metrics.mel_time_ms
-            + self.metrics.encoder_time_ms
-            + self.metrics.decoder_time_ms;
+        self.metrics.total_time_ms =
+            self.metrics.mel_time_ms + self.metrics.encoder_time_ms + self.metrics.decoder_time_ms;
         self.metrics.compute_rtf();
 
         self.state = WhisperState::Complete;

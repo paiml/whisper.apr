@@ -27,15 +27,18 @@ fn load_npy_f32(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
     let data = &buf[data_start..];
 
     if is_f64 {
-        let f64_values: Vec<f64> = data.chunks(8)
-            .map(|chunk| f64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3],
-                chunk[4], chunk[5], chunk[6], chunk[7]
-            ]))
+        let f64_values: Vec<f64> = data
+            .chunks(8)
+            .map(|chunk| {
+                f64::from_le_bytes([
+                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+                ])
+            })
             .collect();
         Ok(f64_values.iter().map(|&x| x as f32).collect())
     } else if is_f32 {
-        Ok(data.chunks(4)
+        Ok(data
+            .chunks(4)
             .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
             .collect())
     } else {
@@ -48,7 +51,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load HuggingFace encoder output (1500 x 384)
     let hf_encoder = load_npy_f32("/tmp/hf_encoder_output.npy")?;
-    println!("HF encoder output: {} values ({} positions x 384)", hf_encoder.len(), hf_encoder.len() / 384);
+    println!(
+        "HF encoder output: {} values ({} positions x 384)",
+        hf_encoder.len(),
+        hf_encoder.len() / 384
+    );
 
     let hf_enc_mean: f32 = hf_encoder.iter().sum::<f32>() / hf_encoder.len() as f32;
     let hf_enc_l2: f32 = hf_encoder.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -77,12 +84,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .forward_traced(&initial_tokens, &hf_encoder)?;
 
     let last_logits_hf_enc = &logits_hf_enc[3 * 51865..];
-    let our_mean_hf_enc: f32 = last_logits_hf_enc.iter().sum::<f32>() / last_logits_hf_enc.len() as f32;
+    let our_mean_hf_enc: f32 =
+        last_logits_hf_enc.iter().sum::<f32>() / last_logits_hf_enc.len() as f32;
 
     println!("With HF encoder output:");
     println!("  Our logits mean:  {:.4}", our_mean_hf_enc);
     println!("  HF logits mean:   {:.4}", hf_logits_mean);
-    println!("  SHIFT:            {:.4}", our_mean_hf_enc - hf_logits_mean);
+    println!(
+        "  SHIFT:            {:.4}",
+        our_mean_hf_enc - hf_logits_mean
+    );
 
     // Show trace
     println!("\nTrace (key values):");
@@ -107,28 +118,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mel = model.compute_mel(&samples)?;
     let our_encoder = model.encode(&mel)?;
 
-    println!("Our encoder output: {} values ({} positions x 384)", our_encoder.len(), our_encoder.len() / 384);
+    println!(
+        "Our encoder output: {} values ({} positions x 384)",
+        our_encoder.len(),
+        our_encoder.len() / 384
+    );
 
     let our_enc_mean: f32 = our_encoder.iter().sum::<f32>() / our_encoder.len() as f32;
     let our_enc_l2: f32 = our_encoder.iter().map(|x| x * x).sum::<f32>().sqrt();
-    println!("Our encoder: mean={:.4}, L2={:.4}\n", our_enc_mean, our_enc_l2);
+    println!(
+        "Our encoder: mean={:.4}, L2={:.4}\n",
+        our_enc_mean, our_enc_l2
+    );
 
     let (logits_our_enc, trace2) = model
         .decoder_mut()
         .forward_traced(&initial_tokens, &our_encoder)?;
 
     let last_logits_our_enc = &logits_our_enc[3 * 51865..];
-    let our_mean_our_enc: f32 = last_logits_our_enc.iter().sum::<f32>() / last_logits_our_enc.len() as f32;
+    let our_mean_our_enc: f32 =
+        last_logits_our_enc.iter().sum::<f32>() / last_logits_our_enc.len() as f32;
 
     println!("With our encoder output:");
     println!("  Our logits mean:  {:.4}", our_mean_our_enc);
     println!("  HF logits mean:   {:.4}", hf_logits_mean);
-    println!("  SHIFT:            {:.4}", our_mean_our_enc - hf_logits_mean);
+    println!(
+        "  SHIFT:            {:.4}",
+        our_mean_our_enc - hf_logits_mean
+    );
 
     // Comparison
     println!("\n=== CONCLUSION ===");
-    println!("Shift with HF encoder:  {:.4}", our_mean_hf_enc - hf_logits_mean);
-    println!("Shift with our encoder: {:.4}", our_mean_our_enc - hf_logits_mean);
+    println!(
+        "Shift with HF encoder:  {:.4}",
+        our_mean_hf_enc - hf_logits_mean
+    );
+    println!(
+        "Shift with our encoder: {:.4}",
+        our_mean_our_enc - hf_logits_mean
+    );
 
     if (our_mean_hf_enc - hf_logits_mean).abs() < 1.0 {
         println!("\n✓ Using HF encoder eliminates the shift!");

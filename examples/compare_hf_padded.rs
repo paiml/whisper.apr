@@ -27,15 +27,18 @@ fn load_npy_f32(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
     let data = &buf[data_start..];
 
     if is_f64 {
-        let f64_values: Vec<f64> = data.chunks(8)
-            .map(|chunk| f64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3],
-                chunk[4], chunk[5], chunk[6], chunk[7]
-            ]))
+        let f64_values: Vec<f64> = data
+            .chunks(8)
+            .map(|chunk| {
+                f64::from_le_bytes([
+                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+                ])
+            })
             .collect();
         Ok(f64_values.iter().map(|&x| x as f32).collect())
     } else if is_f32 {
-        Ok(data.chunks(4)
+        Ok(data
+            .chunks(4)
             .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
             .collect())
     } else {
@@ -48,7 +51,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load HuggingFace full mel (80, 3000)
     let hf_mel_full = load_npy_f32("/tmp/hf_mel_full.npy")?;
-    println!("HF full mel: {} values ({} frames)", hf_mel_full.len(), hf_mel_full.len() / 80);
+    println!(
+        "HF full mel: {} values ({} frames)",
+        hf_mel_full.len(),
+        hf_mel_full.len() / 80
+    );
 
     let hf_encoder = load_npy_f32("/tmp/hf_encoder_output.npy")?;
     let hf_logits = load_npy_f32("/tmp/hf_logits.npy")?;
@@ -68,7 +75,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     let our_mel = model.compute_mel(&samples)?;
-    println!("Our mel: {} values ({} frames)", our_mel.len(), our_mel.len() / 80);
+    println!(
+        "Our mel: {} values ({} frames)",
+        our_mel.len(),
+        our_mel.len() / 80
+    );
 
     // Pad our mel to 3000 frames like HuggingFace
     // HuggingFace uses -1.0 as padding value (log_spec padding)
@@ -91,14 +102,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Rest remains -1.0 (padding)
     }
 
-    println!("Padded mel: {} values ({} frames)", padded_mel.len(), padded_mel.len() / n_mels);
+    println!(
+        "Padded mel: {} values ({} frames)",
+        padded_mel.len(),
+        padded_mel.len() / n_mels
+    );
 
     // Compare mel values at same positions
     println!("\n=== MEL COMPARISON (FIRST 10 FRAMES) ===\n");
     for frame in 0..10 {
         let hf_idx = 0 * 3000 + frame; // First mel bin, frame N
         let our_idx = 0 * 3000 + frame; // Same
-        println!("Frame {} mel[0]: HF={:.4}, ours={:.4}", frame, hf_mel_full[hf_idx], padded_mel[our_idx]);
+        println!(
+            "Frame {} mel[0]: HF={:.4}, ours={:.4}",
+            frame, hf_mel_full[hf_idx], padded_mel[our_idx]
+        );
     }
 
     // Compare mel statistics
@@ -126,8 +144,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut padded_for_encoder = vec![0.0f32; 3000 * 80];
     for frame in 0..3000 {
         for mel in 0..80 {
-            let src_idx = mel * 3000 + frame;  // (80, 3000) format
-            let dst_idx = frame * 80 + mel;     // (3000, 80) format
+            let src_idx = mel * 3000 + frame; // (80, 3000) format
+            let dst_idx = frame * 80 + mel; // (3000, 80) format
             padded_for_encoder[dst_idx] = padded_mel[src_idx];
         }
     }
@@ -137,7 +155,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("HF encoder: {} values", hf_encoder.len());
 
     if encoded.len() == hf_encoder.len() {
-        let enc_dot: f32 = encoded.iter().zip(hf_encoder.iter()).map(|(a, b)| a * b).sum();
+        let enc_dot: f32 = encoded
+            .iter()
+            .zip(hf_encoder.iter())
+            .map(|(a, b)| a * b)
+            .sum();
         let enc_norm_a: f32 = encoded.iter().map(|x| x * x).sum::<f32>().sqrt();
         let enc_norm_b: f32 = hf_encoder.iter().map(|x| x * x).sum::<f32>().sqrt();
         let enc_sim = enc_dot / (enc_norm_a * enc_norm_b);
@@ -146,7 +168,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let our_enc_mean: f32 = encoded.iter().sum::<f32>() / encoded.len() as f32;
     let hf_enc_mean: f32 = hf_encoder.iter().sum::<f32>() / hf_encoder.len() as f32;
-    println!("Our encoder mean: {:.4}, HF encoder mean: {:.4}", our_enc_mean, hf_enc_mean);
+    println!(
+        "Our encoder mean: {:.4}, HF encoder mean: {:.4}",
+        our_enc_mean, hf_enc_mean
+    );
 
     // Decode
     println!("\n=== DECODER (WITH PADDED MEL ENCODER OUTPUT) ===\n");
@@ -172,18 +197,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("SHIFT: {:.4}", our_logits_mean - hf_logits_mean);
 
     // Top tokens
-    let mut our_indexed: Vec<(usize, f32)> = last_logits.iter().enumerate().map(|(i, &v)| (i, v)).collect();
-    our_indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let mut our_indexed: Vec<(usize, f32)> = last_logits
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| (i, v))
+        .collect();
+    our_indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut hf_indexed: Vec<(usize, f32)> = hf_logits.iter().enumerate().map(|(i, &v)| (i, v)).collect();
-    hf_indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let mut hf_indexed: Vec<(usize, f32)> =
+        hf_logits.iter().enumerate().map(|(i, &v)| (i, v)).collect();
+    hf_indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     println!("\nTop 5 tokens:");
-    println!("{:>6} {:>12} | {:>6} {:>12}", "Ours", "logit", "HF", "logit");
+    println!(
+        "{:>6} {:>12} | {:>6} {:>12}",
+        "Ours", "logit", "HF", "logit"
+    );
     for i in 0..5 {
-        println!("{:>6} {:>12.4} | {:>6} {:>12.4}",
-            our_indexed[i].0, our_indexed[i].1,
-            hf_indexed[i].0, hf_indexed[i].1);
+        println!(
+            "{:>6} {:>12.4} | {:>6} {:>12.4}",
+            our_indexed[i].0, our_indexed[i].1, hf_indexed[i].0, hf_indexed[i].1
+        );
     }
 
     Ok(())

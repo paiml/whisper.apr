@@ -20,7 +20,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Total tensors: {}\n", reader.tensors.len());
 
     // Group by prefix for organization
-    let mut by_prefix: std::collections::BTreeMap<String, Vec<_>> = std::collections::BTreeMap::new();
+    let mut by_prefix: std::collections::BTreeMap<String, Vec<_>> =
+        std::collections::BTreeMap::new();
 
     for tensor in &reader.tensors {
         let prefix = tensor.name.split('.').next().unwrap_or("other").to_string();
@@ -36,10 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!(
                 "  {} {:>20} {:>10.1} KB ({} elements)",
-                tensor.name,
-                shape_str,
-                size_kb,
-                tensor.n_elements
+                tensor.name, shape_str, size_kb, tensor.n_elements
             );
         }
         println!();
@@ -52,7 +50,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Summary ===");
     println!("Total tensors: {}", reader.tensors.len());
     println!("Total size: {:.2} MB", total_bytes as f64 / 1024.0 / 1024.0);
-    println!("Total elements: {} ({:.2}M)", total_elements, total_elements as f64 / 1_000_000.0);
+    println!(
+        "Total elements: {} ({:.2}M)",
+        total_elements,
+        total_elements as f64 / 1_000_000.0
+    );
 
     // Check for any suspicious tensors (layer_norm weights should have mean ~1.0)
     println!("\n=== Layer Norm Weight Check ===");
@@ -60,7 +62,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if tensor.name.contains("layer_norm") && tensor.name.contains("weight") {
             if let Ok(values) = reader.load_tensor(&tensor.name) {
                 let mean: f32 = values.iter().sum::<f32>() / values.len() as f32;
-                let flag = if mean.abs() > 5.0 { " <-- LARGE MEAN!" } else { "" };
+                let flag = if mean.abs() > 5.0 {
+                    " <-- LARGE MEAN!"
+                } else {
+                    ""
+                };
                 println!("  {}: mean={:.4}{}", tensor.name, mean, flag);
             }
         }

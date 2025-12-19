@@ -24,8 +24,7 @@
 use wasm_bindgen::prelude::*;
 
 use crate::backend::{
-    BackendSelection, BackendSelector, BackendType, MatMulOp,
-    SelectionStrategy, SelectorConfig,
+    BackendSelection, BackendSelector, BackendType, MatMulOp, SelectionStrategy, SelectorConfig,
 };
 use crate::gpu::{detect_gpu, DetectionOptions, GpuBackend, GpuCapabilities, GpuLimits};
 

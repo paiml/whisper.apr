@@ -54,8 +54,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n_mels = 80;
     let n_frames = mel.len() / n_mels;
     println!("  Mel shape: {} total values", mel.len());
-    println!("  Interpretation as [frames, mels]: {} × {}", n_frames, n_mels);
-    println!("  Interpretation as [mels, frames]: {} × {}", n_mels, n_frames);
+    println!(
+        "  Interpretation as [frames, mels]: {} × {}",
+        n_frames, n_mels
+    );
+    println!(
+        "  Interpretation as [mels, frames]: {} × {}",
+        n_mels, n_frames
+    );
 
     // Check current layout: is mel[i] = mel[frame * n_mels + mel_idx] or mel[mel_idx * n_frames + frame]?
     println!("\n[STEP 2: Verify mel layout]\n");
@@ -73,9 +79,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (f1400_mean, f1400_std, _, _) = stats(frame1400_if_frames_first);
 
     println!("  If [frames, mels] layout:");
-    println!("    Frame 0 (0ms):    mean={:+.4}  std={:.4}", f0_mean, f0_std);
-    println!("    Frame 100 (2s):   mean={:+.4}  std={:.4}", f100_mean, f100_std);
-    println!("    Frame 1400 (28s): mean={:+.4}  std={:.4}", f1400_mean, f1400_std);
+    println!(
+        "    Frame 0 (0ms):    mean={:+.4}  std={:.4}",
+        f0_mean, f0_std
+    );
+    println!(
+        "    Frame 100 (2s):   mean={:+.4}  std={:.4}",
+        f100_mean, f100_std
+    );
+    println!(
+        "    Frame 1400 (28s): mean={:+.4}  std={:.4}",
+        f1400_mean, f1400_std
+    );
 
     // If layout is [mels, frames]: mel[mel_idx * n_frames .. (mel_idx+1) * n_frames] is one mel bin across all frames
     // Frame 0 would be mel[0], mel[n_frames], mel[2*n_frames], ...
@@ -94,9 +109,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (f1400_mean_alt, f1400_std_alt, _, _) = stats(&frame1400_if_mels_first);
 
     println!("\n  If [mels, frames] layout:");
-    println!("    Frame 0 (0ms):    mean={:+.4}  std={:.4}", f0_mean_alt, f0_std_alt);
-    println!("    Frame 100 (2s):   mean={:+.4}  std={:.4}", f100_mean_alt, f100_std_alt);
-    println!("    Frame 1400 (28s): mean={:+.4}  std={:.4}", f1400_mean_alt, f1400_std_alt);
+    println!(
+        "    Frame 0 (0ms):    mean={:+.4}  std={:.4}",
+        f0_mean_alt, f0_std_alt
+    );
+    println!(
+        "    Frame 100 (2s):   mean={:+.4}  std={:.4}",
+        f100_mean_alt, f100_std_alt
+    );
+    println!(
+        "    Frame 1400 (28s): mean={:+.4}  std={:.4}",
+        f1400_mean_alt, f1400_std_alt
+    );
 
     // The correct layout should show:
     // - Audio frames (0-75) have higher variance/different mean than padding frames (>75)
@@ -108,7 +132,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mels_first_variance_diff = (f0_std_alt - f1400_std_alt).abs();
 
     println!("  Variance difference (audio vs padding):");
-    println!("    [frames, mels] layout: {:.4}", frames_first_variance_diff);
+    println!(
+        "    [frames, mels] layout: {:.4}",
+        frames_first_variance_diff
+    );
     println!("    [mels, frames] layout: {:.4}", mels_first_variance_diff);
 
     if frames_first_variance_diff > mels_first_variance_diff {
@@ -179,10 +206,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let enc_pos1487 = &encoded[1487 * d_model..1488 * d_model];
 
     println!("  Cosine similarities:");
-    println!("    Audio  pos0 ↔ pos37:   {:.4}", cosine_sim(enc_pos0, enc_pos37));
-    println!("    Padding pos1400 ↔ pos1487: {:.4}", cosine_sim(enc_pos1400, enc_pos1487));
-    println!("    Cross: pos0 ↔ pos1400: {:.4}", cosine_sim(enc_pos0, enc_pos1400));
-    println!("    Cross: pos37 ↔ pos1487: {:.4}", cosine_sim(enc_pos37, enc_pos1487));
+    println!(
+        "    Audio  pos0 ↔ pos37:   {:.4}",
+        cosine_sim(enc_pos0, enc_pos37)
+    );
+    println!(
+        "    Padding pos1400 ↔ pos1487: {:.4}",
+        cosine_sim(enc_pos1400, enc_pos1487)
+    );
+    println!(
+        "    Cross: pos0 ↔ pos1400: {:.4}",
+        cosine_sim(enc_pos0, enc_pos1400)
+    );
+    println!(
+        "    Cross: pos37 ↔ pos1487: {:.4}",
+        cosine_sim(enc_pos37, enc_pos1487)
+    );
 
     // High similarity within padding region + low cross-similarity suggests
     // encoder is producing uniform/collapsed output for padding

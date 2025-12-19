@@ -23,11 +23,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check mel layout by looking at frame 0 vs frame 1400
     // If [frames, mels]: frame 0 at mel[0..80], frame 1400 at mel[112000..112080]
     let frame0_frames_first: f32 = mel[0..80].iter().map(|x| x.abs()).sum::<f32>() / 80.0;
-    let frame1400_frames_first: f32 = mel[112000..112080].iter().map(|x| x.abs()).sum::<f32>() / 80.0;
+    let frame1400_frames_first: f32 =
+        mel[112000..112080].iter().map(|x| x.abs()).sum::<f32>() / 80.0;
 
     println!("\nIf mel is [frames, mels]:");
     println!("  Frame 0 mean abs: {:.4}", frame0_frames_first);
-    println!("  Frame 1400 mean abs: {:.4} (should be ~0.33 if padding)", frame1400_frames_first);
+    println!(
+        "  Frame 1400 mean abs: {:.4} (should be ~0.33 if padding)",
+        frame1400_frames_first
+    );
 
     // Now encode - this should internally transpose mel
     let encoded = model.encode(&mel)?;
@@ -50,7 +54,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let slice = &encoded[pos * d_model..(pos + 1) * d_model];
         let (mean, std) = stats(slice);
         let region = if pos <= 75 { "AUDIO" } else { "PADDING" };
-        println!("  Pos {:4} [{}]: mean={:+.4}, std={:.4}", pos, region, mean, std);
+        println!(
+            "  Pos {:4} [{}]: mean={:+.4}, std={:.4}",
+            pos, region, mean, std
+        );
     }
 
     println!("\n=== KEY QUESTION ===");
@@ -67,7 +74,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let padding_avg_std = padding_stds.iter().sum::<f32>() / padding_stds.len() as f32;
 
     println!("  Audio region (0-74) avg std: {:.4}", audio_avg_std);
-    println!("  Padding region (1350-1499) avg std: {:.4}", padding_avg_std);
+    println!(
+        "  Padding region (1350-1499) avg std: {:.4}",
+        padding_avg_std
+    );
 
     if (audio_avg_std - padding_avg_std).abs() > 0.1 {
         println!("  ✓ Regions have different variance - encoder sees the difference");
