@@ -1,7 +1,7 @@
 # whisper-apr CLI Parity Specification
 
-**Version**: 1.4.0-draft
-**Status**: Under Review
+**Version**: 2.0.0
+**Status**: UNIFIED CHECKLIST (210 points)
 **Created**: 2025-12-18
 **Methodology**: EXTREME TDD + Toyota Way + Popperian Falsification
 **Target Coverage**: ≥95% line coverage
@@ -21,12 +21,11 @@
 - [§8. Performance Parity Requirements](#8-performance-parity-requirements)
 - [§9. EXTREME TDD Methodology](#9-extreme-tdd-methodology)
 - [§10. Parity Testing Framework](#10-parity-testing-framework)
-- [§11. Error Handling & Security](#11-error-handling-security)
+- [§11. **UNIFIED 210-POINT MASTER FALSIFICATION CHECKLIST**](#11-unified-210-point-master-falsification-checklist)
 - [§12. Quality Gates](#12-quality-gates)
 - [§13. Peer-Reviewed Citations](#13-peer-reviewed-citations)
 - [§14. References](#14-references)
 - [§15. Ecosystem Dependencies](#15-ecosystem-dependencies)
-- [§16. 100-Point CLI Transcription Falsification Checklist](#16-100-point-cli-transcription-falsification-checklist)
 
 ---
 
@@ -55,14 +54,71 @@ The specification follows the **aprender ecosystem** conventions with apr-cli pa
 | **Fail-Fast Error Handling** | No silent failures; explicit error messages with exit codes | [4] Shore, Fail Fast |
 | **Deterministic Reproducibility** | Same input + seed → identical output across runs | [5] Sculley, ML Systems |
 | **Fail-Safe Defaults** | Security configuration defaults to highest safety (e.g., path restrictions) | [14] Saltzer & Schroeder, Protection |
+| **Single Inference Pathway** | WASM demos and CLI use identical code paths | [18] Parnas, Software Aging |
 
-### §2.2 Aprender Ecosystem Integration
+### §2.2 Unified Inference Pathway (CRITICAL)
+
+**MANDATORY**: The WASM demo and CLI MUST share a **single inference code path**.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         UNIFIED INFERENCE PATHWAY                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌─────────────┐      ┌─────────────┐      ┌─────────────────────────┐    │
+│   │  WASM Demo  │──┐   │   CLI       │──┐   │ Integration Tests       │──┐ │
+│   │  (browser)  │  │   │  (native)   │  │   │ (cargo test)            │  │ │
+│   └─────────────┘  │   └─────────────┘  │   └─────────────────────────┘  │ │
+│                    │                    │                                │ │
+│                    ▼                    ▼                                ▼ │
+│              ┌──────────────────────────────────────────────────────────┐  │
+│              │           whisper_apr::WhisperApr::transcribe()          │  │
+│              │                (SINGLE ENTRY POINT)                      │  │
+│              └──────────────────────────────────────────────────────────┘  │
+│                                        │                                   │
+│                    ┌───────────────────┼───────────────────┐               │
+│                    ▼                   ▼                   ▼               │
+│              ┌──────────┐       ┌──────────┐        ┌──────────┐          │
+│              │  mel.rs  │       │encoder.rs│        │decoder.rs│          │
+│              └──────────┘       └──────────┘        └──────────┘          │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Parity Invariant**: If WASM demo produces correct output for audio X, then CLI MUST produce identical output for audio X.
+
+**Anti-Pattern (PROHIBITED)**:
+```
+❌ cli/transcribe.rs calls decoder directly (bypassing lib.rs)
+❌ wasm/mod.rs has separate mel computation
+❌ Different token suppression logic per target
+```
+
+**Correct Pattern**:
+```rust
+// cli/commands.rs
+pub fn transcribe(args: &Args) -> CliResult {
+    let whisper = WhisperApr::load_from_apr(&model_bytes)?;
+    let result = whisper.transcribe(&audio, options)?;  // SAME as WASM
+    Ok(result)
+}
+
+// wasm/mod.rs
+#[wasm_bindgen]
+pub fn transcribe(&self, audio: &[f32]) -> Result<String, JsValue> {
+    self.inner.transcribe(audio, options)  // SAME as CLI
+        .map(|r| r.text)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+```
+
+### §2.3 Aprender Ecosystem Integration
 
 ```
 ┌────────────────────────────────────────────────────────────┐
 │  whisper-apr CLI (this specification)                      │
 ├────────────────────────────────────────────────────────────┤
-│  whisper-apr library (src/lib.rs)                          │
+│  whisper-apr library (src/lib.rs) ← SINGLE PATHWAY         │
 ├────────────────────────────────────────────────────────────┤
 │  aprender (.apr format) + trueno (tensor ops)              │
 ├────────────────────────────────────────────────────────────┤
@@ -1516,18 +1572,36 @@ Following realizar's ratio analysis pattern:
 
 ---
 
-## §11. 100-Point Popperian Falsification Checklist
+## §11. UNIFIED 210-POINT MASTER FALSIFICATION CHECKLIST
+
+**Version**: 2.0.0
+**Supersedes**: Former §11 (110 points) + Former §16 (100 points)
+**Methodology**: Popperian Falsification + Toyota Way Five-Whys
+**Unified Pathway**: WASM Demo and CLI share identical inference code path (§2.2)
+
+### Critical Requirement: Single Pathway Verification
+
+Before running ANY checklist item, verify unified pathway:
+```bash
+# These MUST produce identical output for same audio
+cargo run --features cli --bin whisper-apr-cli -- transcribe -f test.wav
+# vs WASM demo with same audio → IDENTICAL TEXT
+```
+
+If outputs differ, **STOP** - fix unified pathway before proceeding.
 
 ### Scoring Methodology
 
 Following Popper's falsificationism [2]: each check is designed to **disprove** a claim. Surviving checks indicate verified functionality.
 
-**Grading Scale**:
-- 95-100 points: A+ (Production Ready)
-- 90-94 points: A (Release Candidate)
-- 85-89 points: B (Beta Quality)
-- 80-84 points: C (Alpha Quality)
-- <80 points: F (Not Ready)
+**Grading Scale (210 points total)**:
+- 200-210 points: A+ (Production Ready)
+- 189-199 points: A (Release Candidate)
+- 168-188 points: B (Beta Quality)
+- 147-167 points: C (Alpha Quality)
+- <147 points: F (Not Ready)
+
+### Part I: CLI Infrastructure (110 points - Sections A-H)
 
 ---
 
@@ -1720,9 +1794,11 @@ Following Popper's falsificationism [2]: each check is designed to **disprove** 
 | F: Error Handling & Security | 15 | __ | __% |
 | G: Advanced Features | 5 | __ | __% |
 | H: Model Optimization | 10 | __ | __% |
-| **TOTAL** | **110** | **__** | **__%** |
+| **PART I SUBTOTAL** | **110** | **__** | **__%** |
 
-**Grade**: ___
+### Part II: Transcription Pipeline (100 points - Sections T1-T9)
+
+See detailed checks below in T1-T9 sections.
 
 ---
 
@@ -1984,6 +2060,31 @@ CVPR 2018. Google.
 **"The Lottery Ticket Hypothesis: Finding Sparse, Trainable Neural Networks"**
 ICLR 2019.
 *Justification*: Supports the verification of pruned/sparse model performance (§H.7), ensuring that structural optimization does not destroy model capabilities.
+
+### [18] Parnas, D.L. (1994)
+**"Software Aging"**
+Proceedings of ICSE 1994, pp. 279-287. DOI: 10.1109/ICSE.1994.296790.
+*Justification*: Mandates single inference pathway (§2.2) to prevent code duplication decay between WASM and CLI targets over time.
+
+### [19] Ba, J.L., Kiros, J.R., & Hinton, G.E. (2016)
+**"Layer Normalization"**
+arXiv:1607.06450.
+*Justification*: Defines LayerNorm behavior critical for diagnosing decoder saturation bugs (T4.11, validation §16.11).
+
+### [20] Gulati, A. et al. (2020)
+**"Conformer: Convolution-augmented Transformer for Speech Recognition"**
+Interspeech 2020. Google.
+*Justification*: Establishes encoder architecture patterns (Conv + Transformer) validated in Section T3.
+
+### [21] Chen, S. et al. (2022)
+**"WavLM: Large-Scale Self-Supervised Pre-Training for Full Stack Speech Processing"**
+IEEE Journal of Selected Topics in Signal Processing.
+*Justification*: Informs mel spectrogram computation validation (T2.1-T2.10) and audio preprocessing standards.
+
+### [22] Graves, A. et al. (2006)
+**"Connectionist Temporal Classification: Labelling Unsegmented Sequence Data with Recurrent Neural Networks"**
+ICML 2006.
+*Justification*: Provides theoretical grounding for timestamp alignment verification (T7.1-T7.10).
 
 ---
 
@@ -2730,17 +2831,26 @@ Submit feedback via GitHub Issues or PR comments.
 
 ---
 
-## §16. 100-Point CLI Transcription Falsification Checklist
+## §11 Part II: Transcription Pipeline Falsification (100 points)
 
-**Version**: 1.0.0
-**Created**: 2025-12-19
-**Methodology**: Popperian Falsification + Five-Whys Root Cause Analysis
-**Scope**: CLI `transcribe` command ONLY
+*(Continued from Part I above - Sections T1-T9)*
+
+**Scope**: CLI `transcribe` + WASM demo (MUST use unified pathway from §2.2)
 **Diagnostic Tooling**: renacer (tracing), pmat five-whys
 
-### Purpose
+### Unified Pathway Verification Check (T0)
 
-This checklist focuses exclusively on the `whisper-apr transcribe` command pipeline. Each check is designed to **falsify** a claim about transcription correctness. Failures indicate bugs requiring root cause analysis via **Toyota Way Five-Whys** methodology and **renacer tracing**.
+**MANDATORY PRE-CHECK**: Before running T1-T9, verify unified pathway:
+
+| # | Claim to Falsify | Verification | Expected | Pass | Fail |
+|---|------------------|--------------|----------|------|------|
+| T0.1 | CLI and WASM use same transcribe() | Code inspection | Single entry point | [ ] | [ ] |
+| T0.2 | Same mel.rs used by both | Grep for mel imports | No duplicate mel code | [ ] | [ ] |
+| T0.3 | Same encoder.rs used by both | Grep for encoder imports | No duplicate encoder | [ ] | [ ] |
+| T0.4 | Same decoder.rs used by both | Grep for decoder imports | No duplicate decoder | [ ] | [ ] |
+| T0.5 | Identical output for test audio | Run both, compare text | Text matches exactly | [ ] | [ ] |
+
+If ANY T0 check fails, **STOP** and fix unified pathway before proceeding.
 
 ### Diagnostic Protocol
 
@@ -2992,16 +3102,85 @@ cargo run --example compare_encoder -- test.wav
 
 | Ticket | Description | Status |
 |--------|-------------|--------|
-| WAPR-TRANS-001 | Decoder produces empty/whitespace (uninitialized weights) | **Fixed** |
-| WAPR-AUDIO-001 | Unsupported 24/32-bit audio depth in WAV parser | Open |
-| WAPR-CLI-003 | CLI args (offset, duration, regex) not integrated | Open |
+| WAPR-TRANS-001 | Decoder produces empty (uninitialized weights) | **Fixed** (54f3a8b) |
+| WAPR-AUDIO-001 | Unsupported 24/32-bit audio depth in WAV parser | **Fixed** (8928292) |
+| WAPR-MODEL-002 | Repetitive output (hallucination) due to high LN mean | **Open** |
+| WAPR-CLI-003 | CLI args (best-of, offset, duration, regex) not integrated | Open |
 | WAPR-MEL-001 | Mel spectrogram layout investigation | Open |
 | WAPR-ENC-001 | Encoder output validation | Open |
 
 ---
 
+### §11 UNIFIED MASTER SCORECARD
+
+**Status**: Baseline Validation (2025-12-19)
+
+#### Part I: CLI Infrastructure (110 points)
+
+| Section | Description | Score |
+|---------|-------------|-------|
+| A | Argument Parsing | __/15 |
+| B | Core Transcription | __/20 |
+| C | Output Formats | __/10 |
+| D | whisper.cpp Parity | __/20 |
+| E | Performance | __/15 |
+| F | Error Handling & Security | __/15 |
+| G | Advanced Features | __/5 |
+| H | Model Optimization | __/10 |
+| **PART I SUBTOTAL** | | **__/110** |
+
+#### Part II: Transcription Pipeline (100 points)
+
+| Section | ID Range | Description | Score |
+|---------|----------|-------------|-------|
+| T0 | T0.1-T0.5 | Unified Pathway Verification | __/5 |
+| T1 | T1.1-T1.15 | Audio Input Validation | 14/15 |
+| T2 | T2.1-T2.10 | Mel Spectrogram Generation | 10/10 |
+| T3 | T3.1-T3.15 | Encoder Forward Pass | 15/15 |
+| T4 | T4.1-T4.15 | Decoder Forward Pass | 15/15 |
+| T5 | T5.1-T5.10 | Token Sampling & Generation | 7/10 |
+| T6 | T6.1-T6.10 | Text Output & Formatting | 2/10 |
+| T7 | T7.1-T7.10 | Timestamp Generation | 5/10 |
+| T8 | T8.1-T8.10 | Ground Truth Parity | 0/10 |
+| T9 | T9.1-T9.5 | Edge Cases & Robustness | 0/5 |
+| **PART II SUBTOTAL** | | **68/100** |
+
+#### UNIFIED TOTAL
+
+| Component | Points |
+|-----------|--------|
+| Part I: CLI Infrastructure | __/110 |
+| Part II: Transcription Pipeline | 68/100 |
+| **GRAND TOTAL** | **__/210** |
+
+**UNIFIED GRADE**: **__** (Requires Part I completion)
+
+---
+
+### Diagnostic Findings (Latest: 2025-12-19)
+
+1. **Hallucination Loop (CRITICAL)**: Model stuck in repetitive `. . . .` generation. LayerNorm mean ~11.0. See [19] Ba et al. for expected LayerNorm behavior.
+2. **Unified Pathway**: NOT VERIFIED - T0 checks pending. Must confirm CLI and WASM use identical code path per §2.2.
+3. **Audio Fixes**: ✅ 24-bit PCM and 32-bit float (WAVE_FORMAT_EXTENSIBLE) now parse correctly.
+4. **Model Loading**: ✅ Auto-download from HuggingFace working, tensor naming fixed.
+5. **Wiring Gaps**: Advanced CLI args (--best-of, --offset-t) not wired to WhisperApr API.
+
+### Related Tickets
+
+| Ticket | Description | Status |
+|--------|-------------|--------|
+| WAPR-TRANS-001 | Model auto-download | **Fixed** |
+| WAPR-AUDIO-001 | WAVE_FORMAT_EXTENSIBLE support | **Fixed** |
+| WAPR-MODEL-002 | Tensor naming (model. prefix) | **Fixed** |
+| WAPR-INFER-001 | Decoder hallucination loop | **Open - Critical** |
+| WAPR-CLI-003 | Wire CLI args to core API | Open |
+
+---
+
 ### Changelog
 
+- **v2.0.0** (2025-12-19): UNIFIED 210-point checklist; merged §11+§16; added T0 unified pathway checks; added 5 citations [18-22]
+- **v1.0.3** (2025-12-19): Updated validation baseline (Score 68/100, Grade D); Verified WAPR-AUDIO-001
 - **v1.0.2** (2025-12-19): WAPR-TRANS-001 fixed - auto-download from HuggingFace
 - **v1.0.1** (2025-12-19): QA execution results - Score 62/100 (F), added tickets
 - **v1.0.0** (2025-12-19): Initial 100-point transcription checklist
