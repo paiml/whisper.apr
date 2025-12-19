@@ -23,7 +23,7 @@ simd = []
 parallel = ["rayon", "wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
 converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs", "zip"]
-cli = ["clap", "serde", "serde_json", "tracing-subscriber"]
+cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "half", "safetensors", "dirs"]
 benchmark-tui = ["ratatui", "crossterm"]
 tui = ["ratatui", "crossterm"]
 # Use realizar's world-class inference primitives (attention, quantization, caching)
@@ -82,6 +82,8 @@ zip = { version = "2", optional = true, default-features = false, features = ["d
 # Optional: CLI dependencies
 clap = { version = "4", features = ["derive"], optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+hf-hub = { version = "0.4", optional = true }
+half = { version = "2", optional = true }
 
 # Optional: TUI benchmark dependencies
 ratatui = { version = "0.29", optional = true }

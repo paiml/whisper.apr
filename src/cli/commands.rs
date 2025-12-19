@@ -13,8 +13,8 @@ use crate::{DecodingStrategy, Task, TranscribeOptions, WhisperApr};
 
 use super::args::{
     Args, BackendArg, BatchArgs, BenchmarkArgs, Command, CommandArgs, ModelAction, ModelArgs,
-    ModelSize, OutputFormatArg, ParityArgs, QuantizeArgs, RecordArgs, ServeArgs, StreamArgs,
-    TestArgs, TranscribeArgs, TranslateArgs, ValidateArgs, ValidateOutputFormat,
+    OutputFormatArg, ParityArgs, QuantizeArgs, RecordArgs, ServeArgs, StreamArgs, TestArgs,
+    TranscribeArgs, TranslateArgs, ValidateArgs, ValidateOutputFormat,
 };
 
 use super::output::{format_output, OutputFormat};
@@ -161,18 +161,12 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
     }
     let model_start = Instant::now();
 
-    let whisper = if let Some(path) = &args.model_path {
-        let bytes = fs::read(path)?;
-        WhisperApr::load_from_apr(&bytes)?
-    } else {
-        match args.model {
-            ModelSize::Tiny => WhisperApr::tiny(),
-            ModelSize::Base => WhisperApr::base(),
-            ModelSize::Small => WhisperApr::small(),
-            ModelSize::Medium => WhisperApr::medium(),
-            ModelSize::Large => WhisperApr::large(),
-        }
-    };
+    let whisper = super::model_loader::load_or_download_model(
+        args.model,
+        args.model_path.as_deref(),
+        global.verbose,
+    )
+    .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
 
     timings.model_load_ms = model_start.elapsed().as_secs_f64() * 1000.0;
 
@@ -861,18 +855,12 @@ pub fn run_parity(args: ParityArgs, global: &Args) -> CliResult<CommandResult> {
     let audio_data = fs::read(&args.input)?;
     let samples = load_audio_samples(&args.input, &audio_data)?;
 
-    let whisper = if let Some(path) = &args.model_path {
-        let bytes = fs::read(path)?;
-        WhisperApr::load_from_apr(&bytes)?
-    } else {
-        match args.model {
-            ModelSize::Tiny => WhisperApr::tiny(),
-            ModelSize::Base => WhisperApr::base(),
-            ModelSize::Small => WhisperApr::small(),
-            ModelSize::Medium => WhisperApr::medium(),
-            ModelSize::Large => WhisperApr::large(),
-        }
-    };
+    let whisper = super::model_loader::load_or_download_model(
+        args.model,
+        args.model_path.as_deref(),
+        args.verbose,
+    )
+    .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
 
     let options = crate::TranscribeOptions::default();
     let result = whisper.transcribe(&samples, options)?;
@@ -1159,9 +1147,8 @@ fn convert_format_arg(arg: OutputFormatArg) -> OutputFormat {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
+    use crate::cli::args::ModelSize;
     use std::path::PathBuf;
-    use tempfile::NamedTempFile;
 
     /// Helper to create default TranscribeArgs for testing
     fn default_transcribe_args(input: PathBuf) -> TranscribeArgs {

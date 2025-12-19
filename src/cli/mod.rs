@@ -24,6 +24,7 @@
 
 pub mod args;
 pub mod commands;
+pub mod model_loader;
 pub mod output;
 pub mod parity;
 
