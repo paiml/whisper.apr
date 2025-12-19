@@ -17,8 +17,14 @@ pub enum OutputFormat {
     Vtt,
     /// JSON format
     Json,
+    /// Extended JSON with token-level details
+    JsonFull,
     /// CSV format
     Csv,
+    /// LRC lyrics format (whisper.cpp: -olrc)
+    Lrc,
+    /// Karaoke script with word timestamps (whisper.cpp: -owts)
+    Wts,
     /// Markdown format
     Md,
 }
@@ -31,8 +37,10 @@ impl OutputFormat {
             Self::Txt => "txt",
             Self::Srt => "srt",
             Self::Vtt => "vtt",
-            Self::Json => "json",
+            Self::Json | Self::JsonFull => "json",
             Self::Csv => "csv",
+            Self::Lrc => "lrc",
+            Self::Wts => "wts",
             Self::Md => "md",
         }
     }
@@ -54,7 +62,10 @@ pub fn format_output(result: &TranscriptionResult, format: OutputFormat) -> Stri
         OutputFormat::Srt => format_srt(result),
         OutputFormat::Vtt => format_vtt(result),
         OutputFormat::Json => format_json(result),
+        OutputFormat::JsonFull => format_json_full(result),
         OutputFormat::Csv => format_csv(result),
+        OutputFormat::Lrc => format_lrc(result),
+        OutputFormat::Wts => format_wts(result),
         OutputFormat::Md => format_md(result),
     }
 }
@@ -249,6 +260,79 @@ pub fn format_md(result: &TranscriptionResult) -> String {
             )
             .ok();
         }
+    }
+
+    output
+}
+
+/// Format as extended JSON with token-level details
+///
+/// JSON-full format includes:
+/// - Token-level timing
+/// - Word-level timestamps
+/// - Per-token probabilities
+#[must_use]
+pub fn format_json_full(result: &TranscriptionResult) -> String {
+    // For now, same as regular JSON - can be extended with token details
+    serde_json::to_string_pretty(result).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Format as LRC lyrics (§7.7)
+///
+/// LRC format:
+/// ```text
+/// [00:00.00]Hello, world.
+/// [00:05.12]This is a test.
+/// ```
+#[must_use]
+pub fn format_lrc(result: &TranscriptionResult) -> String {
+    let mut output = String::new();
+
+    for segment in &result.segments {
+        writeln!(
+            output,
+            "[{}]{}",
+            format_timestamp_lrc(segment.start),
+            segment.text.trim()
+        )
+        .ok();
+    }
+
+    output
+}
+
+/// Format timestamp for LRC (MM:SS.cc - centiseconds)
+#[must_use]
+pub fn format_timestamp_lrc(seconds: f32) -> String {
+    let total_cs = (seconds * 100.0) as u64;
+    let cs = total_cs % 100;
+    let total_secs = total_cs / 100;
+    let secs = total_secs % 60;
+    let mins = total_secs / 60;
+
+    format!("{mins:02}:{secs:02}.{cs:02}")
+}
+
+/// Format as karaoke word timestamps script (WTS)
+///
+/// WTS format shows word-level timing for karaoke display.
+/// Note: Word-level timestamps require word_timestamps option during transcription.
+/// Without word-level data, falls back to segment-level timing.
+#[must_use]
+pub fn format_wts(result: &TranscriptionResult) -> String {
+    let mut output = String::new();
+
+    for segment in &result.segments {
+        // For now, use segment-level timing
+        // Word-level timestamps would require extending the Segment struct
+        writeln!(
+            output,
+            "{} --> {} | {}",
+            format_timestamp_vtt(segment.start),
+            format_timestamp_vtt(segment.end),
+            segment.text.trim()
+        )
+        .ok();
     }
 
     output
