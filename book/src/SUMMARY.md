@@ -69,6 +69,7 @@
 - [Benchmarking](./development/benchmarking.md)
 - [Quality Gates](./development/quality-gates.md)
 - [PMAT Integration](./development/pmat-integration.md)
+- [Debugging Models with Hex Dumps](./development/hex-debugging.md)
 
 # Advanced Topics
 
