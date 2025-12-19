@@ -181,7 +181,9 @@ mod tests {
         let suppressor = WhisperTokenSuppressor::default();
 
         // Should suppress SOT
-        assert!(suppressor.suppressed_tokens().contains(&special_tokens::SOT));
+        assert!(suppressor
+            .suppressed_tokens()
+            .contains(&special_tokens::SOT));
 
         // Should suppress language tokens
         assert!(suppressor

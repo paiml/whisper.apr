@@ -29,11 +29,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n_positions = pos_embed.len() / d_model;
 
     println!("[ENCODER POSITIONAL EMBEDDING]");
-    println!("  Shape: {} positions × {} dims = {} values", n_positions, d_model, pos_embed.len());
+    println!(
+        "  Shape: {} positions × {} dims = {} values",
+        n_positions,
+        d_model,
+        pos_embed.len()
+    );
 
     // Check overall stats
     let (pe_mean, pe_std, pe_min, pe_max) = stats(pos_embed);
-    println!("  Overall: mean={:.6}  std={:.6}  range=[{:.4}, {:.4}]", pe_mean, pe_std, pe_min, pe_max);
+    println!(
+        "  Overall: mean={:.6}  std={:.6}  range=[{:.4}, {:.4}]",
+        pe_mean, pe_std, pe_min, pe_max
+    );
 
     // Check per-position stats
     println!("\n  Per-position norms:");
@@ -50,8 +58,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let (mean, std, _, _) = stats(pos_vec);
 
             let label = if pos <= 75 { "AUDIO" } else { "PADDING" };
-            println!("    Pos {:4} [{}]: L2={:.4}  mean={:+.4}  std={:.4}",
-                     pos, label, norm, mean, std);
+            println!(
+                "    Pos {:4} [{}]: L2={:.4}  mean={:+.4}  std={:.4}",
+                pos, label, norm, mean, std
+            );
         }
     }
 
@@ -61,13 +71,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|pos| {
             let start = pos * d_model;
             let end = start + d_model;
-            let norm: f32 = pos_embed[start..end].iter().map(|&x| x * x).sum::<f32>().sqrt();
+            let norm: f32 = pos_embed[start..end]
+                .iter()
+                .map(|&x| x * x)
+                .sum::<f32>()
+                .sqrt();
             (pos, norm)
         })
         .collect();
 
     // Find positions with highest norms
-    norms.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    norms.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     println!("\n  Top-10 highest norm positions:");
     for (pos, norm) in norms.iter().take(10) {
         let label = if *pos <= 75 { "AUDIO" } else { "PADDING" };
@@ -85,14 +99,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Compute average embedding for audio region vs padding region
     let audio_avg: Vec<f32> = (0..d_model)
-        .map(|d| {
-            (0..75).map(|pos| pos_embed[pos * d_model + d]).sum::<f32>() / 75.0
-        })
+        .map(|d| (0..75).map(|pos| pos_embed[pos * d_model + d]).sum::<f32>() / 75.0)
         .collect();
 
     let padding_avg: Vec<f32> = (0..d_model)
         .map(|d| {
-            (1312..1500).map(|pos| pos_embed[pos * d_model + d]).sum::<f32>() / 188.0
+            (1312..1500)
+                .map(|pos| pos_embed[pos * d_model + d])
+                .sum::<f32>()
+                / 188.0
         })
         .collect();
 

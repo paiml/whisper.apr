@@ -14,7 +14,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Decoder Final Layer Norm ===\n");
 
     for tensor in &reader.tensors {
-        if tensor.name.contains("decoder") && tensor.name.contains("ln") && !tensor.name.contains("bias") {
+        if tensor.name.contains("decoder")
+            && tensor.name.contains("ln")
+            && !tensor.name.contains("bias")
+        {
             if let Ok(values) = reader.load_tensor(&tensor.name) {
                 let mean = values.iter().sum::<f32>() / values.len() as f32;
                 let min = values.iter().cloned().fold(f32::INFINITY, f32::min);
@@ -23,7 +26,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 println!("{}", tensor.name);
                 println!("  shape: {:?}, len: {}", tensor.shape, values.len());
-                println!("  mean: {:.6}, min: {:.4}, max: {:.4}, L2: {:.4}", mean, min, max, l2);
+                println!(
+                    "  mean: {:.6}, min: {:.4}, max: {:.4}, L2: {:.4}",
+                    mean, min, max, l2
+                );
 
                 // Check if it looks like weights (near 1.0) or bias (near 0.0)
                 if mean.abs() > 2.0 {
@@ -46,7 +52,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  len: {}", values.len());
         println!("  mean: {:.6}", mean);
         println!("  range: [{:.4}, {:.4}]", min, max);
-        println!("  first 10: {:?}", &values[..10].iter().map(|x| format!("{:.4}", x)).collect::<Vec<_>>());
+        println!(
+            "  first 10: {:?}",
+            &values[..10]
+                .iter()
+                .map(|x| format!("{:.4}", x))
+                .collect::<Vec<_>>()
+        );
 
         if mean.abs() > 2.0 {
             println!("\n  ERROR: Layer norm gamma should have mean ~1.0!");
@@ -79,8 +91,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== All LN weights (alt naming) ===\n");
 
     for tensor in &reader.tensors {
-        if (tensor.name.ends_with("_ln.weight") || tensor.name.contains(".ln.") || tensor.name.contains(".ln_"))
-           && !tensor.name.contains("bias") {
+        if (tensor.name.ends_with("_ln.weight")
+            || tensor.name.contains(".ln.")
+            || tensor.name.contains(".ln_"))
+            && !tensor.name.contains("bias")
+        {
             if let Ok(values) = reader.load_tensor(&tensor.name) {
                 let mean = values.iter().sum::<f32>() / values.len() as f32;
                 let flag = if mean.abs() > 2.0 { " <-- BAD!" } else { "" };

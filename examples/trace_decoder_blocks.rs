@@ -24,8 +24,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mel = model.compute_mel(&samples)?;
     let encoded = model.encode(&mel)?;
 
-    println!("Encoder output: mean={:.6}, std={:.4}, min={:.4}, max={:.4}",
-             stats_mean(&encoded), stats_std(&encoded), stats_min(&encoded), stats_max(&encoded));
+    println!(
+        "Encoder output: mean={:.6}, std={:.4}, min={:.4}, max={:.4}",
+        stats_mean(&encoded),
+        stats_std(&encoded),
+        stats_min(&encoded),
+        stats_max(&encoded)
+    );
 
     // Initial tokens
     let initial_tokens = vec![

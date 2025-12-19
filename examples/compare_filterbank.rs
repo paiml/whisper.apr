@@ -42,23 +42,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let our_filterbank = mel_filterbank.filters();
 
     println!("Filterbank Dimensions:");
-    println!("  whisper.cpp: {} x {} = {}", n_mels, n_freqs, whisper_cpp_filterbank.len());
-    println!("  ours:        {} x {} = {}", n_mels, mel_filterbank.n_freqs(), our_filterbank.len());
+    println!(
+        "  whisper.cpp: {} x {} = {}",
+        n_mels,
+        n_freqs,
+        whisper_cpp_filterbank.len()
+    );
+    println!(
+        "  ours:        {} x {} = {}",
+        n_mels,
+        mel_filterbank.n_freqs(),
+        our_filterbank.len()
+    );
 
     // Basic statistics
     let wcpp_sum: f64 = whisper_cpp_filterbank.iter().map(|&x| x as f64).sum();
-    let wcpp_nonzero = whisper_cpp_filterbank.iter().filter(|&&x| x > 1e-10).count();
+    let wcpp_nonzero = whisper_cpp_filterbank
+        .iter()
+        .filter(|&&x| x > 1e-10)
+        .count();
 
     let our_sum: f64 = our_filterbank.iter().map(|&x| x as f64).sum();
     let our_nonzero = our_filterbank.iter().filter(|&&x| x > 1e-10).count();
 
     println!("\nBasic Statistics:");
-    println!("  whisper.cpp sum: {:.6}, non-zero: {}", wcpp_sum, wcpp_nonzero);
-    println!("  our sum:         {:.6}, non-zero: {}", our_sum, our_nonzero);
+    println!(
+        "  whisper.cpp sum: {:.6}, non-zero: {}",
+        wcpp_sum, wcpp_nonzero
+    );
+    println!(
+        "  our sum:         {:.6}, non-zero: {}",
+        our_sum, our_nonzero
+    );
 
     // Compare row by row (each mel filter)
     println!("\nPer-Filter Comparison (first 10 mel bands):");
-    println!("  {:>5} {:>12} {:>12} {:>12} {:>12}", "Mel", "wcpp_sum", "our_sum", "diff", "pct_diff");
+    println!(
+        "  {:>5} {:>12} {:>12} {:>12} {:>12}",
+        "Mel", "wcpp_sum", "our_sum", "diff", "pct_diff"
+    );
 
     let mut total_diff = 0.0f64;
     let mut max_diff = 0.0f64;
@@ -71,7 +93,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .map(|&x| x as f64)
             .sum();
-        let our_row_sum: f64 = our_filterbank[our_row_start..our_row_start + mel_filterbank.n_freqs()]
+        let our_row_sum: f64 = our_filterbank
+            [our_row_start..our_row_start + mel_filterbank.n_freqs()]
             .iter()
             .map(|&x| x as f64)
             .sum();
@@ -101,7 +124,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Compare specific filter shapes
     println!("\nFilter Shape Comparison (Mel band 0, first 20 freq bins):");
-    println!("  {:>4} {:>12} {:>12} {:>12}", "Bin", "wcpp", "ours", "diff");
+    println!(
+        "  {:>4} {:>12} {:>12} {:>12}",
+        "Bin", "wcpp", "ours", "diff"
+    );
 
     for freq_idx in 0..20.min(n_freqs) {
         let wcpp_val = whisper_cpp_filterbank[freq_idx];
@@ -109,7 +135,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let diff = (wcpp_val - our_val).abs();
 
         if wcpp_val > 1e-10 || our_val > 1e-10 {
-            println!("  {:>4} {:>12.8} {:>12.8} {:>12.8}", freq_idx, wcpp_val, our_val, diff);
+            println!(
+                "  {:>4} {:>12.8} {:>12.8} {:>12.8}",
+                freq_idx, wcpp_val, our_val, diff
+            );
         }
     }
 
@@ -159,7 +188,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "\n✓ Conclusion (α={}): {} - {}",
         alpha,
-        if reject_null { "REJECT H0" } else { "FAIL TO REJECT H0" },
+        if reject_null {
+            "REJECT H0"
+        } else {
+            "FAIL TO REJECT H0"
+        },
         if reject_null {
             "Filterbanks are SIGNIFICANTLY DIFFERENT"
         } else {
@@ -172,7 +205,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut wcpp_norm_sq = 0.0f64;
     let mut our_norm_sq = 0.0f64;
 
-    for (i, (&wcpp_val, &our_val)) in whisper_cpp_filterbank.iter().zip(our_filterbank.iter()).enumerate() {
+    for (i, (&wcpp_val, &our_val)) in whisper_cpp_filterbank
+        .iter()
+        .zip(our_filterbank.iter())
+        .enumerate()
+    {
         if i < our_filterbank.len() {
             dot_product += (wcpp_val as f64) * (our_val as f64);
             wcpp_norm_sq += (wcpp_val as f64).powi(2);
@@ -205,7 +242,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn normal_cdf(x: f64) -> f64 {
     let t = 1.0 / (1.0 + 0.2316419 * x.abs());
     let d = 0.3989423 * (-x * x / 2.0).exp();
-    let p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+    let p =
+        d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
     if x > 0.0 {
         1.0 - p
     } else {

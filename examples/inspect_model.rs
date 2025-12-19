@@ -49,13 +49,19 @@ fn print_human(reader: &AprReader, path: &str) -> Result<(), Box<dyn std::error:
 
     println!("=== File Information ===");
     println!("  Path:           {}", path);
-    println!("  Size:           {} bytes ({:.2} MB)",
+    println!(
+        "  Size:           {} bytes ({:.2} MB)",
         std::fs::metadata(path)?.len(),
-        std::fs::metadata(path)?.len() as f64 / 1_000_000.0);
+        std::fs::metadata(path)?.len() as f64 / 1_000_000.0
+    );
 
     println!("\n=== Header ===");
     println!("  Version:        {}", header.version);
-    println!("  Model Type:     {} ({})", header.model_type, model_type_name(header.model_type));
+    println!(
+        "  Model Type:     {} ({})",
+        header.model_type,
+        model_type_name(header.model_type)
+    );
     println!("  Quantization:   {:?}", header.quantization);
     println!("  Compressed:     {}", header.compressed);
     println!("  Tensors:        {}", header.n_tensors);
@@ -72,8 +78,12 @@ fn print_human(reader: &AprReader, path: &str) -> Result<(), Box<dyn std::error:
 
     if header.has_filterbank {
         if let Some(fb) = reader.read_mel_filterbank() {
-            println!("  Filterbank:     {}x{} ({} values)",
-                fb.n_mels, fb.n_freqs, fb.data.len());
+            println!(
+                "  Filterbank:     {}x{} ({} values)",
+                fb.n_mels,
+                fb.n_freqs,
+                fb.data.len()
+            );
             let row_sum: f32 = fb.data[0..fb.n_freqs as usize].iter().sum();
             println!("  Row 0 Sum:      {:.6} (slaney: ~0.025)", row_sum);
         }
@@ -107,9 +117,21 @@ fn print_human(reader: &AprReader, path: &str) -> Result<(), Box<dyn std::error:
     }
 
     println!("  Total Tensors:  {}", reader.tensors.len());
-    println!("  Total Params:   {} ({:.2}M)", total_params, total_params as f64 / 1_000_000.0);
-    println!("  Encoder Params: {} ({:.2}M)", encoder_params, encoder_params as f64 / 1_000_000.0);
-    println!("  Decoder Params: {} ({:.2}M)", decoder_params, decoder_params as f64 / 1_000_000.0);
+    println!(
+        "  Total Params:   {} ({:.2}M)",
+        total_params,
+        total_params as f64 / 1_000_000.0
+    );
+    println!(
+        "  Encoder Params: {} ({:.2}M)",
+        encoder_params,
+        encoder_params as f64 / 1_000_000.0
+    );
+    println!(
+        "  Decoder Params: {} ({:.2}M)",
+        decoder_params,
+        decoder_params as f64 / 1_000_000.0
+    );
 
     // Show first few tensors
     println!("\n=== First 10 Tensors ===");
@@ -126,7 +148,10 @@ fn print_json(reader: &AprReader) -> Result<(), Box<dyn std::error::Error>> {
     println!("{{");
     println!("  \"version\": {},", header.version);
     println!("  \"model_type\": {},", header.model_type);
-    println!("  \"model_type_name\": \"{}\",", model_type_name(header.model_type));
+    println!(
+        "  \"model_type_name\": \"{}\",",
+        model_type_name(header.model_type)
+    );
     println!("  \"quantization\": \"{:?}\",", header.quantization);
     println!("  \"n_tensors\": {},", header.n_tensors);
     println!("  \"has_vocab\": {},", header.has_vocab);
@@ -165,7 +190,11 @@ fn compare_with_whisper_cpp(reader: &AprReader) -> Result<(), Box<dyn std::error
 
     if let Some(our_fb) = reader.read_mel_filterbank() {
         let cosine = cosine_similarity(&wcpp_fb, &our_fb.data);
-        let status = if cosine > 0.9999 { "✓ MATCH" } else { "✗ DIFFER" };
+        let status = if cosine > 0.9999 {
+            "✓ MATCH"
+        } else {
+            "✗ DIFFER"
+        };
 
         println!("  whisper.cpp: {} values", wcpp_fb.len());
         println!("  ours:        {} values", our_fb.data.len());

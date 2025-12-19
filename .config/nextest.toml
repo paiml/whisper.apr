@@ -1,0 +1,13 @@
+# Nextest configuration - limit parallelism for CPU-bound whisper tests
+[profile.default]
+# Use 4 threads to keep system responsive (override with NEXTEST_TEST_THREADS env var)
+test-threads = 4
+# Fail fast by default
+fail-fast = true
+# Slow test threshold (warn at 60s)
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+[profile.ci]
+# CI can use more parallelism
+test-threads = "num-cpus"
+fail-fast = false

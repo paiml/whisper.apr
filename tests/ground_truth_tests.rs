@@ -109,8 +109,16 @@ fn test_first_word_correct() {
     let expected = GROUND_TRUTH_1_5S; // "The birds can use"
     let actual = "the other one of"; // Broken output
 
-    let expected_first = expected.split_whitespace().next().unwrap_or("").to_lowercase();
-    let actual_first = actual.split_whitespace().next().unwrap_or("").to_lowercase();
+    let expected_first = expected
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    let actual_first = actual
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
 
     assert_eq!(
         expected_first, actual_first,

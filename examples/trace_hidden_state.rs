@@ -26,8 +26,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mel = model.compute_mel(&samples)?;
     let encoded = model.encode(&mel)?;
 
-    println!("Encoder output: mean={:.4}, std={:.4}",
-             stats_mean(&encoded), stats_std(&encoded));
+    println!(
+        "Encoder output: mean={:.4}, std={:.4}",
+        stats_mean(&encoded),
+        stats_std(&encoded)
+    );
 
     let n_vocab = 51865;
     let max_tokens = 448;
@@ -62,24 +65,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let emb_start = (token as usize) * d_model;
     let token_emb = &decoder.token_embedding()[emb_start..emb_start + d_model];
     println!("\n1. Token embedding (token={}):", token);
-    println!("   mean={:.4}, min={:.4}, max={:.4}, L2={:.4}",
-             stats_mean(token_emb), stats_min(token_emb), stats_max(token_emb), l2_norm(token_emb));
+    println!(
+        "   mean={:.4}, min={:.4}, max={:.4}, L2={:.4}",
+        stats_mean(token_emb),
+        stats_min(token_emb),
+        stats_max(token_emb),
+        l2_norm(token_emb)
+    );
 
     // 2. Get positional embedding
     let pos_emb = decoder.positional_embedding();
     let pos_start = pos * d_model;
     let pos_slice = &pos_emb[pos_start..pos_start + d_model];
     println!("\n2. Positional embedding (pos={}):", pos);
-    println!("   mean={:.4}, min={:.4}, max={:.4}, L2={:.4}",
-             stats_mean(pos_slice), stats_min(pos_slice), stats_max(pos_slice), l2_norm(pos_slice));
+    println!(
+        "   mean={:.4}, min={:.4}, max={:.4}, L2={:.4}",
+        stats_mean(pos_slice),
+        stats_min(pos_slice),
+        stats_max(pos_slice),
+        l2_norm(pos_slice)
+    );
 
     // 3. Sum: x = token_emb + pos_emb
-    let mut x: Vec<f32> = token_emb.iter().zip(pos_slice.iter())
+    let mut x: Vec<f32> = token_emb
+        .iter()
+        .zip(pos_slice.iter())
         .map(|(t, p)| t + p)
         .collect();
     println!("\n3. After token + positional:");
-    println!("   mean={:.4}, min={:.4}, max={:.4}, L2={:.4}",
-             stats_mean(&x), stats_min(&x), stats_max(&x), l2_norm(&x));
+    println!(
+        "   mean={:.4}, min={:.4}, max={:.4}, L2={:.4}",
+        stats_mean(&x),
+        stats_min(&x),
+        stats_max(&x),
+        l2_norm(&x)
+    );
 
     // The decoder blocks are private, so we can't trace through them directly
     // But we can look at what the forward function produces

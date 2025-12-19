@@ -123,7 +123,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let zero_logits_mean: f32 = zero_logits.iter().sum::<f32>() / n_vocab as f32;
-    println!("Zero vector -> logits mean: {:.10} (should be 0)", zero_logits_mean);
+    println!(
+        "Zero vector -> logits mean: {:.10} (should be 0)",
+        zero_logits_mean
+    );
 
     // Now let's try a constant vector
     println!("\n=== Constant Vector Projection Test ===\n");
@@ -139,7 +142,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let const_logits_mean: f32 = const_logits.iter().sum::<f32>() / n_vocab as f32;
     let const_logits_min = const_logits.iter().cloned().fold(f32::INFINITY, f32::min);
-    let const_logits_max = const_logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let const_logits_max = const_logits
+        .iter()
+        .cloned()
+        .fold(f32::NEG_INFINITY, f32::max);
 
     println!("Constant(1.0) vector -> logits:");
     println!("  Mean: {:.4}", const_logits_mean);
@@ -172,7 +178,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Encoder output mean (per dimension):");
     let enc_mean_mean: f32 = enc_mean.iter().sum::<f32>() / d_model as f32;
     println!("  Mean of means: {:.6}", enc_mean_mean);
-    println!("  First 10: {:?}", &enc_mean[..10].iter().map(|x| format!("{:.4}", x)).collect::<Vec<_>>());
+    println!(
+        "  First 10: {:?}",
+        &enc_mean[..10]
+            .iter()
+            .map(|x| format!("{:.4}", x))
+            .collect::<Vec<_>>()
+    );
 
     // Project encoder mean through embeddings
     let mut enc_mean_logits = vec![0.0f32; n_vocab];
@@ -191,7 +203,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let implied_constant = target_logit_mean / const_logits_mean;
 
     println!("\nTo get logit mean of {:.1}:", target_logit_mean);
-    println!("  Need hidden state with constant component: {:.4}", implied_constant);
+    println!(
+        "  Need hidden state with constant component: {:.4}",
+        implied_constant
+    );
     println!("  (if every hidden dim had this value)");
 
     // The key question: is there a bias term we're missing?

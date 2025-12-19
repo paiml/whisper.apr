@@ -38,7 +38,11 @@ fn inspect_apr_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let header = &reader.header;
 
     println!("Model Information:");
-    println!("  Type: {} ({})", header.model_type, model_type_name(header.model_type));
+    println!(
+        "  Type: {} ({})",
+        header.model_type,
+        model_type_name(header.model_type)
+    );
     println!("  Tensors: {}", header.n_tensors);
     println!("  Quantization: {:?}", header.quantization);
     println!("  n_mels: {}", header.n_mels);
@@ -80,8 +84,12 @@ fn inspect_apr_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
         // Create MelFilterbank from embedded data
         let mel = MelFilterbank::from_apr_data(fb, 16000);
-        println!("\n  Created MelFilterbank: {} mels, {} FFT, {} Hz",
-            mel.n_mels(), mel.n_fft(), mel.sample_rate());
+        println!(
+            "\n  Created MelFilterbank: {} mels, {} FFT, {} Hz",
+            mel.n_mels(),
+            mel.n_fft(),
+            mel.sample_rate()
+        );
     } else {
         println!("\n  ⚠️  No filterbank embedded in this model");
         println!("      Consider reconverting with the latest converter.");
@@ -107,7 +115,10 @@ fn demo_filterbank_embedding() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create MelFilterbankData
     let fb_data = MelFilterbankData::mel_80(filterbank_data.clone());
-    println!("  Created MelFilterbankData: {}x{}", fb_data.n_mels, fb_data.n_freqs);
+    println!(
+        "  Created MelFilterbankData: {}x{}",
+        fb_data.n_mels, fb_data.n_freqs
+    );
 
     // Create a minimal .apr file with filterbank
     println!("\nCreating .apr file with embedded filterbank...");
@@ -140,13 +151,19 @@ fn demo_filterbank_embedding() -> Result<(), Box<dyn std::error::Error>> {
 
         // Create MelFilterbank for use
         let mel = MelFilterbank::from_apr_data(fb, 16000);
-        println!("\n  Ready to use: MelFilterbank with {} mel bands", mel.n_mels());
+        println!(
+            "\n  Ready to use: MelFilterbank with {} mel bands",
+            mel.n_mels()
+        );
 
         // Compare with standard computed filterbank
         let computed = MelFilterbank::new(n_mels, 400, 16000);
         let cosine_sim = cosine_similarity(mel.filters(), computed.filters());
         println!("\n=== Filterbank Comparison ===");
-        println!("  Embedded (slaney) vs Computed: {:.4} cosine similarity", cosine_sim);
+        println!(
+            "  Embedded (slaney) vs Computed: {:.4} cosine similarity",
+            cosine_sim
+        );
 
         if cosine_sim < 0.99 {
             println!("  ⚠️  DIFFERENT! This is why embedded filterbank matters.");
@@ -197,7 +214,11 @@ fn create_slaney_filterbank(n_mels: usize, n_freqs: usize) -> Vec<f32> {
 
         // Slaney normalization: scale by 2 / (f_high - f_low)
         let bandwidth = hz_points[m + 2] - hz_points[m];
-        let norm = if bandwidth > 0.0 { 2.0 / bandwidth } else { 1.0 };
+        let norm = if bandwidth > 0.0 {
+            2.0 / bandwidth
+        } else {
+            1.0
+        };
 
         // Rising slope
         for k in f_m_minus..f_m {

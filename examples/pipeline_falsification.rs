@@ -170,7 +170,10 @@ fn step_a_audio() -> Result<bool, Box<dyn std::error::Error>> {
     println!("  Max diff:     {:.10}", max_diff);
 
     let pass = cosine > 0.9999 && our_audio.len() == gt_audio.len();
-    println!("  Status:       {}\n", if pass { "✓ PASS" } else { "✗ FAIL" });
+    println!(
+        "  Status:       {}\n",
+        if pass { "✓ PASS" } else { "✗ FAIL" }
+    );
 
     Ok(pass)
 }
@@ -208,7 +211,10 @@ fn step_b_filterbank() -> Result<bool, Box<dyn std::error::Error>> {
     println!("  Our row0 sum: {:.6}", our_row0_sum);
 
     let pass = cosine > 0.9999;
-    println!("  Status:       {}\n", if pass { "✓ PASS" } else { "✗ FAIL" });
+    println!(
+        "  Status:       {}\n",
+        if pass { "✓ PASS" } else { "✗ FAIL" }
+    );
 
     Ok(pass)
 }
@@ -233,8 +239,16 @@ fn step_c_mel() -> Result<bool, Box<dyn std::error::Error>> {
 
     let our_mel = model.compute_mel(&samples)?;
 
-    println!("  Ground truth: {} values ({} frames x 80 mels)", gt_mel.len(), gt_mel.len() / 80);
-    println!("  Our mel:      {} values ({} frames x 80 mels)", our_mel.len(), our_mel.len() / 80);
+    println!(
+        "  Ground truth: {} values ({} frames x 80 mels)",
+        gt_mel.len(),
+        gt_mel.len() / 80
+    );
+    println!(
+        "  Our mel:      {} values ({} frames x 80 mels)",
+        our_mel.len(),
+        our_mel.len() / 80
+    );
 
     // Stats
     let gt_mean: f32 = gt_mel.iter().sum::<f32>() / gt_mel.len() as f32;
@@ -245,8 +259,14 @@ fn step_c_mel() -> Result<bool, Box<dyn std::error::Error>> {
     let our_min = our_mel.iter().cloned().fold(f32::INFINITY, f32::min);
     let our_max = our_mel.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
 
-    println!("  GT stats:     min={:.4}, max={:.4}, mean={:.4}", gt_min, gt_max, gt_mean);
-    println!("  Our stats:    min={:.4}, max={:.4}, mean={:.4}", our_min, our_max, our_mean);
+    println!(
+        "  GT stats:     min={:.4}, max={:.4}, mean={:.4}",
+        gt_min, gt_max, gt_mean
+    );
+    println!(
+        "  Our stats:    min={:.4}, max={:.4}, mean={:.4}",
+        our_min, our_max, our_mean
+    );
 
     // Compare overlapping frames
     let min_len = gt_mel.len().min(our_mel.len());
@@ -280,7 +300,10 @@ fn step_c_mel() -> Result<bool, Box<dyn std::error::Error>> {
 
     // Mel passes if cosine > 0.99 (allowing for implementation differences)
     let pass = cosine > 0.95;
-    println!("\n  Status:       {}", if pass { "✓ PASS" } else { "✗ FAIL" });
+    println!(
+        "\n  Status:       {}",
+        if pass { "✓ PASS" } else { "✗ FAIL" }
+    );
 
     if !pass {
         println!("  WARNING: Mel spectrogram diverges significantly from ground truth!");
@@ -316,9 +339,8 @@ fn steps_encoder() -> Result<(bool, Vec<f32>), Box<dyn std::error::Error>> {
     let enc_mean: f32 = encoded.iter().sum::<f32>() / encoded.len() as f32;
     let enc_min = encoded.iter().cloned().fold(f32::INFINITY, f32::min);
     let enc_max = encoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    let enc_std = (encoded.iter().map(|x| (x - enc_mean).powi(2)).sum::<f32>()
-        / encoded.len() as f32)
-        .sqrt();
+    let enc_std =
+        (encoded.iter().map(|x| (x - enc_mean).powi(2)).sum::<f32>() / encoded.len() as f32).sqrt();
 
     let nonzero = encoded.iter().filter(|&&x| x.abs() > 1e-6).count();
     let nan_count = encoded.iter().filter(|x| x.is_nan()).count();
@@ -326,8 +348,15 @@ fn steps_encoder() -> Result<(bool, Vec<f32>), Box<dyn std::error::Error>> {
 
     println!("  Encoder output: {} values", encoded.len());
     println!("  Shape:          {} frames x 384 dim", encoded.len() / 384);
-    println!("  Stats:          min={:.4}, max={:.4}, mean={:.6}, std={:.4}", enc_min, enc_max, enc_mean, enc_std);
-    println!("  Non-zero:       {} ({:.2}%)", nonzero, 100.0 * nonzero as f32 / encoded.len() as f32);
+    println!(
+        "  Stats:          min={:.4}, max={:.4}, mean={:.6}, std={:.4}",
+        enc_min, enc_max, enc_mean, enc_std
+    );
+    println!(
+        "  Non-zero:       {} ({:.2}%)",
+        nonzero,
+        100.0 * nonzero as f32 / encoded.len() as f32
+    );
     println!("  NaN count:      {}", nan_count);
     println!("  Inf count:      {}", inf_count);
 
@@ -344,12 +373,18 @@ fn steps_encoder() -> Result<(bool, Vec<f32>), Box<dyn std::error::Error>> {
     }
 
     if enc_std < 0.01 {
-        println!("  ⚠ WARNING: Very low variance in encoder output (std={:.6})", enc_std);
+        println!(
+            "  ⚠ WARNING: Very low variance in encoder output (std={:.6})",
+            enc_std
+        );
         println!("    This may indicate encoder weights are wrong or all zeros");
     }
 
     // Check first few values
-    println!("\n  First 10 encoder values: {:?}", &encoded[..10.min(encoded.len())]);
+    println!(
+        "\n  First 10 encoder values: {:?}",
+        &encoded[..10.min(encoded.len())]
+    );
 
     // No ground truth for encoder yet, so just check sanity
     if pass {
@@ -409,12 +444,18 @@ fn steps_decoder(encoded: &[f32]) -> Result<bool, Box<dyn std::error::Error>> {
     let logits_mean: f32 = logits.iter().sum::<f32>() / logits.len() as f32;
     let logits_min = logits.iter().cloned().fold(f32::INFINITY, f32::min);
     let logits_max = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    let logits_std = (logits.iter().map(|x| (x - logits_mean).powi(2)).sum::<f32>()
+    let logits_std = (logits
+        .iter()
+        .map(|x| (x - logits_mean).powi(2))
+        .sum::<f32>()
         / logits.len() as f32)
         .sqrt();
 
     println!("\n  Logits (after initial tokens):");
-    println!("  Stats:          min={:.4}, max={:.4}, mean={:.4}, std={:.4}", logits_min, logits_max, logits_mean, logits_std);
+    println!(
+        "  Stats:          min={:.4}, max={:.4}, mean={:.4}, std={:.4}",
+        logits_min, logits_max, logits_mean, logits_std
+    );
 
     // Top 10 tokens (before suppression)
     let mut indexed: Vec<(usize, f32)> = logits.iter().enumerate().map(|(i, &v)| (i, v)).collect();
@@ -423,7 +464,13 @@ fn steps_decoder(encoded: &[f32]) -> Result<bool, Box<dyn std::error::Error>> {
     println!("\n  Top 10 tokens (before suppression):");
     for (i, (token, logit)) in indexed.iter().take(10).enumerate() {
         let token_type = categorize_token(*token as u32);
-        println!("    {:2}. token {:5} ({}) = {:.4}", i + 1, token, token_type, logit);
+        println!(
+            "    {:2}. token {:5} ({}) = {:.4}",
+            i + 1,
+            token,
+            token_type,
+            logit
+        );
     }
 
     // Expected first token from whisper.cpp
@@ -437,7 +484,11 @@ fn steps_decoder(encoded: &[f32]) -> Result<bool, Box<dyn std::error::Error>> {
 
     if !has_the {
         println!("\n  ⚠ WARNING: Expected 'The' token not in top 10!");
-        println!("  Actual argmax: token {} ({})", indexed[0].0, categorize_token(indexed[0].0 as u32));
+        println!(
+            "  Actual argmax: token {} ({})",
+            indexed[0].0,
+            categorize_token(indexed[0].0 as u32)
+        );
     }
 
     // Run greedy decoding
@@ -466,7 +517,10 @@ fn steps_decoder(encoded: &[f32]) -> Result<bool, Box<dyn std::error::Error>> {
 
         println!(
             "    Step {:2}: token {:5} ({}) logit={:.4}",
-            step, argmax_token, categorize_token(argmax_token), argmax_logit
+            step,
+            argmax_token,
+            categorize_token(argmax_token),
+            argmax_logit
         );
 
         if first_token.is_none() {

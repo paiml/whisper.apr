@@ -52,8 +52,8 @@ pub mod aprender {
 pub use checksum::{crc32, Crc32};
 pub use compress::Decompressor;
 pub use validation::{
-    AprValidator, TensorStats, ValidationCheck, ValidationReport, quick_validate,
-    validate_apr_bytes,
+    quick_validate, validate_apr_bytes, AprValidator, TensorStats, ValidationCheck,
+    ValidationReport,
 };
 
 use crate::error::{WhisperError, WhisperResult};
@@ -313,8 +313,8 @@ impl AprHeader {
         Self {
             version: FORMAT_VERSION,
             model_type,
-            n_tensors: 0,         // Set by writer when serializing
-            has_vocab: false,     // Set by writer when vocabulary is added
+            n_tensors: 0,          // Set by writer when serializing
+            has_vocab: false,      // Set by writer when vocabulary is added
             has_filterbank: false, // Set by writer when filterbank is added
             n_vocab: config.n_vocab,
             n_audio_ctx: config.n_audio_ctx,
@@ -1085,9 +1085,18 @@ impl AprWriter {
         let data_size: usize = self.tensors.iter().map(TensorData::byte_size).sum();
         let vocab_bytes = self.vocabulary.as_ref().map(|v| v.to_bytes());
         let vocab_section_size = vocab_bytes.as_ref().map_or(0, |b| 4 + b.len());
-        let filterbank_bytes = self.mel_filterbank.as_ref().map(MelFilterbankData::to_bytes);
+        let filterbank_bytes = self
+            .mel_filterbank
+            .as_ref()
+            .map(MelFilterbankData::to_bytes);
         let filterbank_section_size = filterbank_bytes.as_ref().map_or(0, |b| 4 + b.len());
-        let total_size = 4 + HEADER_SIZE + index_size + data_size + vocab_section_size + filterbank_section_size + 4;
+        let total_size = 4
+            + HEADER_SIZE
+            + index_size
+            + data_size
+            + vocab_section_size
+            + filterbank_section_size
+            + 4;
 
         let mut bytes = Vec::with_capacity(total_size);
 
@@ -1264,10 +1273,19 @@ impl AprWriterInt8 {
         let data_size: usize = self.tensors.iter().map(|t| t.data.len()).sum();
         let vocab_bytes = self.vocabulary.as_ref().map(|v| v.to_bytes());
         let vocab_section_size = vocab_bytes.as_ref().map_or(0, |b| 4 + b.len());
-        let filterbank_bytes = self.mel_filterbank.as_ref().map(MelFilterbankData::to_bytes);
+        let filterbank_bytes = self
+            .mel_filterbank
+            .as_ref()
+            .map(MelFilterbankData::to_bytes);
         let filterbank_section_size = filterbank_bytes.as_ref().map_or(0, |b| 4 + b.len());
-        let total_size =
-            4 + HEADER_SIZE + index_size + scale_table_size + data_size + vocab_section_size + filterbank_section_size + 4;
+        let total_size = 4
+            + HEADER_SIZE
+            + index_size
+            + scale_table_size
+            + data_size
+            + vocab_section_size
+            + filterbank_section_size
+            + 4;
 
         let mut bytes = Vec::with_capacity(total_size);
 

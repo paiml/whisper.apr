@@ -17,7 +17,11 @@ fn stats(data: &[f32]) -> (f32, f32, f32, f32) {
 }
 
 fn l1_distance(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum::<f32>() / a.len() as f32
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| (x - y).abs())
+        .sum::<f32>()
+        / a.len() as f32
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -46,7 +50,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n_heads = 6;
     let d_head = d_model / n_heads; // 64
     let seq_len = encoded.len() / d_model;
-    println!("  {} timesteps x {} dims ({} heads x {} per head)\n", seq_len, d_model, n_heads, d_head);
+    println!(
+        "  {} timesteps x {} dims ({} heads x {} per head)\n",
+        seq_len, d_model, n_heads, d_head
+    );
 
     // Get cross-attention K projection weight from decoder layer 0
     let decoder = model.decoder_mut();
@@ -57,7 +64,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[W_k WEIGHT]");
     let (wk_mean, wk_std, wk_min, wk_max) = stats(w_k);
     println!("  shape: {} values ({}x{})", w_k.len(), d_model, d_model);
-    println!("  mean={:.6}  std={:.6}  min={:.6}  max={:.6}", wk_mean, wk_std, wk_min, wk_max);
+    println!(
+        "  mean={:.6}  std={:.6}  min={:.6}  max={:.6}",
+        wk_mean, wk_std, wk_min, wk_max
+    );
 
     // Manually compute K = encoded @ W_k for a few timesteps
     println!("\n[K PROJECTION: K = encoder_output @ W_k]");
@@ -65,9 +75,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Extract encoder output for timestep 0 and 100
     let enc_t0: Vec<f32> = encoded[0..d_model].to_vec();
     let enc_t100: Vec<f32> = if seq_len > 100 {
-        encoded[100*d_model..(100+1)*d_model].to_vec()
+        encoded[100 * d_model..(100 + 1) * d_model].to_vec()
     } else {
-        encoded[(seq_len-1)*d_model..seq_len*d_model].to_vec()
+        encoded[(seq_len - 1) * d_model..seq_len * d_model].to_vec()
     };
 
     // Manual matmul: K[i] = sum_j(enc[j] * W_k[j, i])
@@ -86,8 +96,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (k0_mean, k0_std, k0_min, k0_max) = stats(&k_t0);
     let (k100_mean, k100_std, k100_min, k100_max) = stats(&k_t100);
 
-    println!("  K[t=0]:   mean={:+.4}  std={:.4}  min={:.4}  max={:.4}", k0_mean, k0_std, k0_min, k0_max);
-    println!("  K[t=100]: mean={:+.4}  std={:.4}  min={:.4}  max={:.4}", k100_mean, k100_std, k100_min, k100_max);
+    println!(
+        "  K[t=0]:   mean={:+.4}  std={:.4}  min={:.4}  max={:.4}",
+        k0_mean, k0_std, k0_min, k0_max
+    );
+    println!(
+        "  K[t=100]: mean={:+.4}  std={:.4}  min={:.4}  max={:.4}",
+        k100_mean, k100_std, k100_min, k100_max
+    );
 
     let k_dist = l1_distance(&k_t0, &k_t100);
     println!("\n  L1 distance K[t=0] vs K[t=100]: {:.6}", k_dist);
@@ -95,11 +111,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // H8 Verdict
     println!("\n=== H8 VERDICT ===");
     if k_dist < 0.01 {
-        println!("CONFIRMED: K vectors are IDENTICAL (dist={:.6} < 0.01)", k_dist);
+        println!(
+            "CONFIRMED: K vectors are IDENTICAL (dist={:.6} < 0.01)",
+            k_dist
+        );
         println!("  -> K projection is collapsing encoder signal");
         println!("  -> Check W_k weight initialization or loading");
     } else if k_dist > 0.1 {
-        println!("FALSIFIED: K vectors are DIFFERENTIATED (dist={:.6} > 0.1)", k_dist);
+        println!(
+            "FALSIFIED: K vectors are DIFFERENTIATED (dist={:.6} > 0.1)",
+            k_dist
+        );
         println!("  -> K projection is working correctly");
         println!("  -> Proceed to H9 (matmul dimensions) or H10 (scale factor)");
     } else {
