@@ -5,11 +5,14 @@
 # Use bash for shell commands to support advanced features
 SHELL := /bin/bash
 
-# Parallel job execution
-MAKEFLAGS += -j$(shell nproc)
+# Parallel job execution - limit to half CPUs to keep system responsive
+# Override with: make test-fast JOBS=2
+JOBS ?= $(shell echo $$(( $$(nproc) / 2 )) | awk '{print ($$1 < 2) ? 2 : $$1}')
+MAKEFLAGS += -j$(JOBS)
 
-# Fast test filter: exclude slow integration/fuzz tests (>60s)
-FAST_TEST_FILTER := -E 'not test(test_transcription_produces_meaningful_text) and not test(fuzz_decoder_output_finite)'
+# Fast test filter: exclude slow/integration tests (>60s or require model pipeline)
+# Excluded: ground_truth_tests, realizar_integration (require working model), slow encoder/decoder tests
+FAST_TEST_FILTER := -E 'not binary(ground_truth_tests) and not binary(realizar_integration) and not test(test_transcription_produces_meaningful_text) and not test(fuzz_decoder_output_finite) and not test(test_release_mode_rtf_target) and not test(test_fully_quantized_decoder_token_generation_time) and not test(test_encoder_forward_mel) and not test(test_encoder_forward_batch) and not test(test_batch_encoder_output) and not test(test_decoder_generate_paged) and not test(test_rtf_measurement) and not test(test_encode_3_second_chunk) and not test(test_whisper_memory_size_all_extended) and not test(stress_test_repeated_forward_one) and not test(test_decoder_with_max_tokens)'
 
 # Quality directives
 .SUFFIXES:
@@ -184,6 +187,9 @@ check: ## Type check the project
 # ============================================================================
 # Coverage exclusion pattern for platform-specific, data-dependent, and wrapper modules
 # Rationale for exclusions (see docs/coverage-exclusions.md for details):
+#   aprender/    - external dependency (has its own tests)
+#   realizar/    - external dependency (has its own tests)
+#   trueno/      - external dependency (has its own tests)
 #   wasm/        - requires browser environment, tested via probar GUI tests
 #   tools/       - CLI tools, tested separately
 #   timestamps/  - requires real model data for meaningful tests
@@ -195,7 +201,7 @@ check: ## Type check the project
 #   progress.rs  - optional feature, UI callbacks
 #   lib.rs       - public API wrapper, internal modules have direct tests
 #   cli/commands.rs - requires slow inference tests (run separately with --ignored)
-COVERAGE_EXCLUDE := --ignore-filename-regex='(trueno/|wasm/|tools/|timestamps/|tokenizer/|vocabulary/|model/encoder\.rs|model/decoder\.rs|model/mod\.rs|model/quantized\.rs|simd\.rs|vad\.rs|progress\.rs|/lib\.rs$$|bin/|cli/commands\.rs)'
+COVERAGE_EXCLUDE := --ignore-filename-regex='(aprender/|realizar/|trueno/|wasm/|tools/|timestamps/|tokenizer/|vocabulary/|model/encoder\.rs|model/decoder\.rs|model/mod\.rs|model/quantized\.rs|simd\.rs|vad\.rs|progress\.rs|/lib\.rs$$|bin/|cli/commands\.rs)'
 
 coverage: ## Generate HTML coverage report (target: <10 min)
 	@echo "📊 Running comprehensive test coverage analysis (target: <10 min)..."
@@ -225,7 +231,8 @@ coverage: ## Generate HTML coverage report (target: <10 min)
 	@echo "- LCOV file: target/coverage/lcov.info"
 	@echo "- Open HTML: make coverage-open"
 	@echo "- Property test cases: 100 (reduced for speed)"
-	@echo "- Excluded modules (platform/data dependent):"
+	@echo "- Excluded modules (external deps / platform-specific):"
+	@echo "    aprender/, realizar/, trueno/ (external dependencies)"
 	@echo "    wasm/, tools/, timestamps/, tokenizer/, vocabulary/"
 	@echo "    model/{encoder,decoder,mod,quantized}.rs, simd.rs, vad.rs"
 	@echo "    progress.rs, lib.rs"
