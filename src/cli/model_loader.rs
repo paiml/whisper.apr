@@ -222,13 +222,24 @@ fn convert_safetensors_to_apr(
 }
 
 /// Map HuggingFace tensor names to our internal format
+///
+/// HuggingFace Whisper uses names like:
+/// - `model.encoder.conv1.weight`
+/// - `model.decoder.layers.0.self_attn.k_proj.weight`
+///
+/// We strip the `model.` prefix to:
+/// 1. Keep tensor names under 48 bytes (APR format limit)
+/// 2. Match our loading code which expects `encoder.` / `decoder.` prefixes
+///
+/// The `find_tensor` function in format/mod.rs handles the reverse mapping
+/// by trying both with and without `model.` prefix when loading.
 fn map_tensor_name(hf_name: &str) -> String {
-    // HuggingFace uses names like:
-    // - encoder.conv1.weight
-    // - decoder.layers.0.self_attn.k_proj.weight
-    //
-    // We use similar naming, just pass through
-    hf_name.to_string()
+    // Strip "model." prefix if present (HuggingFace Whisper uses this)
+    if let Some(stripped) = hf_name.strip_prefix("model.") {
+        stripped.to_string()
+    } else {
+        hf_name.to_string()
+    }
 }
 
 /// Load a model, downloading from HuggingFace if not cached
