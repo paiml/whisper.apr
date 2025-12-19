@@ -4,6 +4,11 @@
 
 use crate::error::{WhisperError, WhisperResult};
 
+// WAVE format codes
+const WAVE_FORMAT_PCM: u16 = 1;
+const WAVE_FORMAT_IEEE_FLOAT: u16 = 3;
+const WAVE_FORMAT_EXTENSIBLE: u16 = 0xFFFE;
+
 /// WAV parsing error types
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WavError {
@@ -112,6 +117,7 @@ pub fn parse_wav(data: &[u8]) -> Result<WavData, WavError> {
     let mut channels = 0u16;
     let mut bits_per_sample = 0u16;
     let mut audio_format = 0u16;
+    let mut sub_format = 0u16; // For WAVE_FORMAT_EXTENSIBLE
 
     while pos + 8 <= data.len() {
         let chunk_id = &data[pos..pos + 4];
@@ -132,6 +138,22 @@ pub fn parse_wav(data: &[u8]) -> Result<WavData, WavError> {
                 data[pos + 15],
             ]);
             bits_per_sample = u16::from_le_bytes([data[pos + 22], data[pos + 23]]);
+
+            // Handle WAVE_FORMAT_EXTENSIBLE (0xFFFE)
+            // Extension starts at offset 24 from fmt chunk data:
+            // - cbSize (2 bytes) at offset 24
+            // - wValidBitsPerSample (2 bytes) at offset 26
+            // - dwChannelMask (4 bytes) at offset 28
+            // - SubFormat GUID (16 bytes) at offset 32, first 2 bytes are the actual format
+            if audio_format == WAVE_FORMAT_EXTENSIBLE && chunk_size >= 40 {
+                // SubFormat is at fmt_data[32:34] which is pos + 8 + 32
+                let sub_format_offset = pos + 8 + 24;
+                if sub_format_offset + 2 <= data.len() {
+                    sub_format =
+                        u16::from_le_bytes([data[sub_format_offset], data[sub_format_offset + 1]]);
+                }
+            }
+
             pos += 8 + chunk_size;
         } else if chunk_id == b"data" {
             // Found data chunk
@@ -139,8 +161,16 @@ pub fn parse_wav(data: &[u8]) -> Result<WavData, WavError> {
             let data_end = (data_start + chunk_size).min(data.len());
             let audio_data = &data[data_start..data_end];
 
+            // Determine effective format for conversion
+            // For WAVE_FORMAT_EXTENSIBLE, use the sub-format from the GUID
+            let effective_format = if audio_format == WAVE_FORMAT_EXTENSIBLE {
+                sub_format
+            } else {
+                audio_format
+            };
+
             // Validate format - only PCM (1) and float (3) supported
-            if audio_format != 1 && audio_format != 3 {
+            if effective_format != WAVE_FORMAT_PCM && effective_format != WAVE_FORMAT_IEEE_FLOAT {
                 return Err(WavError::UnsupportedFormat {
                     format: audio_format,
                     bits: bits_per_sample,
@@ -148,12 +178,12 @@ pub fn parse_wav(data: &[u8]) -> Result<WavData, WavError> {
             }
 
             // Convert to f32 based on format
-            let samples: Vec<f32> = match (audio_format, bits_per_sample) {
-                (1, 16) => convert_16bit_pcm(audio_data),
-                (1, 8) => convert_8bit_pcm(audio_data),
-                (1, 24) => convert_24bit_pcm(audio_data),
-                (1, 32) => convert_32bit_pcm(audio_data),
-                (3, 32) => convert_32bit_float(audio_data),
+            let samples: Vec<f32> = match (effective_format, bits_per_sample) {
+                (WAVE_FORMAT_PCM, 16) => convert_16bit_pcm(audio_data),
+                (WAVE_FORMAT_PCM, 8) => convert_8bit_pcm(audio_data),
+                (WAVE_FORMAT_PCM, 24) => convert_24bit_pcm(audio_data),
+                (WAVE_FORMAT_PCM, 32) => convert_32bit_pcm(audio_data),
+                (WAVE_FORMAT_IEEE_FLOAT, 32) => convert_32bit_float(audio_data),
                 _ => {
                     return Err(WavError::UnsupportedFormat {
                         format: audio_format,
@@ -697,5 +727,264 @@ mod proptests {
                 prop_assert!(s >= -1.0 && s <= 1.0);
             }
         }
+    }
+}
+
+// =============================================================================
+// WAVE_FORMAT_EXTENSIBLE TESTS (WAPR-AUDIO-001)
+// =============================================================================
+
+#[cfg(test)]
+mod extensible_tests {
+    use super::*;
+
+    /// Create a WAVE_FORMAT_EXTENSIBLE 24-bit PCM WAV file
+    fn create_extensible_24bit_wav(samples: &[[u8; 3]], sample_rate: u32) -> Vec<u8> {
+        let num_samples = samples.len();
+        let data_size = (num_samples * 3) as u32;
+        // Header: RIFF(4) + size(4) + WAVE(4) + fmt(4) + size(4) + fmt_data(40) + data(4) + size(4) = 68 bytes
+        let file_size = 60 + data_size;
+
+        let mut wav = Vec::with_capacity(68 + num_samples * 3);
+
+        // RIFF header
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&file_size.to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+
+        // fmt chunk - WAVE_FORMAT_EXTENSIBLE
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&40u32.to_le_bytes()); // fmt chunk size
+        wav.extend_from_slice(&0xFFFEu16.to_le_bytes()); // WAVE_FORMAT_EXTENSIBLE
+        wav.extend_from_slice(&1u16.to_le_bytes()); // channels
+        wav.extend_from_slice(&sample_rate.to_le_bytes()); // sample rate
+        wav.extend_from_slice(&(sample_rate * 3).to_le_bytes()); // byte rate
+        wav.extend_from_slice(&3u16.to_le_bytes()); // block align
+        wav.extend_from_slice(&24u16.to_le_bytes()); // bits per sample
+
+        // Extension
+        wav.extend_from_slice(&22u16.to_le_bytes()); // cbSize
+        wav.extend_from_slice(&24u16.to_le_bytes()); // valid bits per sample
+        wav.extend_from_slice(&4u32.to_le_bytes()); // channel mask (front center)
+
+        // SubFormat GUID for PCM: 00000001-0000-0010-8000-00aa00389b71
+        wav.extend_from_slice(&[
+            0x01, 0x00, 0x00, 0x00, // format type (1 = PCM)
+            0x00, 0x00, 0x10, 0x00, // -
+            0x80, 0x00, 0x00, 0xAA, // - GUID parts
+            0x00, 0x38, 0x9B, 0x71, // -
+        ]);
+
+        // data chunk
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_size.to_le_bytes());
+        for sample in samples {
+            wav.extend_from_slice(sample);
+        }
+
+        wav
+    }
+
+    /// Create a WAVE_FORMAT_EXTENSIBLE 32-bit float WAV file
+    fn create_extensible_32bit_float_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
+        let num_samples = samples.len();
+        let data_size = (num_samples * 4) as u32;
+        let file_size = 60 + data_size;
+
+        let mut wav = Vec::with_capacity(68 + num_samples * 4);
+
+        // RIFF header
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&file_size.to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+
+        // fmt chunk - WAVE_FORMAT_EXTENSIBLE
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&40u32.to_le_bytes());
+        wav.extend_from_slice(&0xFFFEu16.to_le_bytes()); // WAVE_FORMAT_EXTENSIBLE
+        wav.extend_from_slice(&1u16.to_le_bytes()); // channels
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&(sample_rate * 4).to_le_bytes()); // byte rate
+        wav.extend_from_slice(&4u16.to_le_bytes()); // block align
+        wav.extend_from_slice(&32u16.to_le_bytes()); // bits per sample
+
+        // Extension
+        wav.extend_from_slice(&22u16.to_le_bytes()); // cbSize
+        wav.extend_from_slice(&32u16.to_le_bytes()); // valid bits per sample
+        wav.extend_from_slice(&4u32.to_le_bytes()); // channel mask
+
+        // SubFormat GUID for IEEE Float: 00000003-0000-0010-8000-00aa00389b71
+        wav.extend_from_slice(&[
+            0x03, 0x00, 0x00, 0x00, // format type (3 = IEEE_FLOAT)
+            0x00, 0x00, 0x10, 0x00,
+            0x80, 0x00, 0x00, 0xAA,
+            0x00, 0x38, 0x9B, 0x71,
+        ]);
+
+        // data chunk
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_size.to_le_bytes());
+        for sample in samples {
+            wav.extend_from_slice(&sample.to_le_bytes());
+        }
+
+        wav
+    }
+
+    /// Create a WAVE_FORMAT_EXTENSIBLE 32-bit PCM WAV file
+    fn create_extensible_32bit_pcm_wav(samples: &[i32], sample_rate: u32) -> Vec<u8> {
+        let num_samples = samples.len();
+        let data_size = (num_samples * 4) as u32;
+        let file_size = 60 + data_size;
+
+        let mut wav = Vec::with_capacity(68 + num_samples * 4);
+
+        // RIFF header
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&file_size.to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+
+        // fmt chunk - WAVE_FORMAT_EXTENSIBLE
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&40u32.to_le_bytes());
+        wav.extend_from_slice(&0xFFFEu16.to_le_bytes()); // WAVE_FORMAT_EXTENSIBLE
+        wav.extend_from_slice(&1u16.to_le_bytes()); // channels
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&(sample_rate * 4).to_le_bytes()); // byte rate
+        wav.extend_from_slice(&4u16.to_le_bytes()); // block align
+        wav.extend_from_slice(&32u16.to_le_bytes()); // bits per sample
+
+        // Extension
+        wav.extend_from_slice(&22u16.to_le_bytes()); // cbSize
+        wav.extend_from_slice(&32u16.to_le_bytes()); // valid bits per sample
+        wav.extend_from_slice(&4u32.to_le_bytes()); // channel mask
+
+        // SubFormat GUID for PCM: 00000001-0000-0010-8000-00aa00389b71
+        wav.extend_from_slice(&[
+            0x01, 0x00, 0x00, 0x00, // format type (1 = PCM)
+            0x00, 0x00, 0x10, 0x00,
+            0x80, 0x00, 0x00, 0xAA,
+            0x00, 0x38, 0x9B, 0x71,
+        ]);
+
+        // data chunk
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_size.to_le_bytes());
+        for sample in samples {
+            wav.extend_from_slice(&sample.to_le_bytes());
+        }
+
+        wav
+    }
+
+    // =========================================================================
+    // RED PHASE: These tests MUST fail before implementation
+    // =========================================================================
+
+    #[test]
+    fn test_extensible_24bit_pcm_parses() {
+        // 24-bit samples: silence, max positive, max negative
+        let samples = [[0, 0, 0], [0xFF, 0xFF, 0x7F], [0x00, 0x00, 0x80]];
+        let wav = create_extensible_24bit_wav(&samples, 16000);
+
+        let result = parse_wav(&wav);
+
+        // This SHOULD succeed - currently fails with "Unsupported format: 24 bits, format 65534"
+        assert!(
+            result.is_ok(),
+            "WAVE_FORMAT_EXTENSIBLE 24-bit PCM should parse: {:?}",
+            result
+        );
+
+        let data = result.expect("should parse");
+        assert_eq!(data.sample_rate, 16000);
+        assert_eq!(data.bits_per_sample, 24);
+        assert_eq!(data.samples.len(), 3);
+    }
+
+    #[test]
+    fn test_extensible_32bit_float_parses() {
+        let samples = [0.0f32, 0.5, -0.5, 1.0, -1.0];
+        let wav = create_extensible_32bit_float_wav(&samples, 16000);
+
+        let result = parse_wav(&wav);
+
+        // This SHOULD succeed - currently fails with "Unsupported format: 32 bits, format 65534"
+        assert!(
+            result.is_ok(),
+            "WAVE_FORMAT_EXTENSIBLE 32-bit float should parse: {:?}",
+            result
+        );
+
+        let data = result.expect("should parse");
+        assert_eq!(data.sample_rate, 16000);
+        assert_eq!(data.bits_per_sample, 32);
+        for (i, &expected) in samples.iter().enumerate() {
+            assert!(
+                (data.samples[i] - expected).abs() < 0.0001,
+                "Sample {} mismatch: {} vs {}",
+                i,
+                data.samples[i],
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_extensible_32bit_pcm_parses() {
+        let samples = [0i32, 1_073_741_824, -1_073_741_824]; // 0, ~0.5, ~-0.5
+        let wav = create_extensible_32bit_pcm_wav(&samples, 16000);
+
+        let result = parse_wav(&wav);
+
+        // This SHOULD succeed - currently fails with "Unsupported format: 32 bits, format 65534"
+        assert!(
+            result.is_ok(),
+            "WAVE_FORMAT_EXTENSIBLE 32-bit PCM should parse: {:?}",
+            result
+        );
+
+        let data = result.expect("should parse");
+        assert_eq!(data.sample_rate, 16000);
+        assert_eq!(data.bits_per_sample, 32);
+        assert_eq!(data.samples.len(), 3);
+    }
+
+    #[test]
+    fn test_real_24bit_file_parses() {
+        // Test with actual 24-bit test file if it exists
+        let path = "demos/test-audio/test-24bit.wav";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("Skipping test: {} not found", path);
+            return;
+        }
+
+        let data = std::fs::read(path).expect("Should read file");
+        let result = parse_wav(&data);
+
+        assert!(
+            result.is_ok(),
+            "Real 24-bit file should parse: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_real_32bit_float_file_parses() {
+        // Test with actual 32-bit float test file if it exists
+        let path = "demos/test-audio/test-32f.wav";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("Skipping test: {} not found", path);
+            return;
+        }
+
+        let data = std::fs::read(path).expect("Should read file");
+        let result = parse_wav(&data);
+
+        assert!(
+            result.is_ok(),
+            "Real 32-bit float file should parse: {:?}",
+            result
+        );
     }
 }
