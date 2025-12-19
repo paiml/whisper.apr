@@ -191,7 +191,7 @@ fn test_decoder_generates_tokens_quickly() {
     let d_model = 384;
     let encoder_len = 10;
 
-    // Create fake encoder output
+    // Create synthetic encoder output for decoder-only test
     let encoder_output: Vec<f32> = (0..encoder_len * d_model)
         .map(|i| (i as f32 * 0.01).sin())
         .collect();
@@ -559,8 +559,8 @@ fn test_token_embeddings_vary() {
 
     for &token in &test_tokens {
         // Forward with just one token to get its embedding contribution
-        let fake_encoder = vec![0.0f32; 74 * d_model]; // encoder output
-        let logits = decoder.forward(&[token], &fake_encoder).expect("forward");
+        let zeroed_encoder = vec![0.0f32; 74 * d_model]; // encoder output for isolated test
+        let logits = decoder.forward(&[token], &zeroed_encoder).expect("forward");
 
         // The logits are affected by the embedding - capture first 10 values as fingerprint
         let fingerprint: Vec<f32> = logits.iter().take(100).copied().collect();
@@ -605,17 +605,17 @@ fn test_positional_embeddings_vary() {
     let decoder = model.decoder_mut();
 
     let d_model = 384;
-    let fake_encoder = vec![0.0f32; 74 * d_model];
+    let zeroed_encoder = vec![0.0f32; 74 * d_model];
 
     // Forward with different sequence lengths to see positional effects
     let tokens_1 = vec![50257_u32]; // just SOT
     let tokens_4 = vec![50257_u32, 50258, 50358, 50362]; // SOT + 3 more
 
     let logits_1 = decoder
-        .forward(&tokens_1, &fake_encoder)
+        .forward(&tokens_1, &zeroed_encoder)
         .expect("forward 1");
     let logits_4 = decoder
-        .forward(&tokens_4, &fake_encoder)
+        .forward(&tokens_4, &zeroed_encoder)
         .expect("forward 4");
 
     // The logits for position 0 should be different because of positional encoding

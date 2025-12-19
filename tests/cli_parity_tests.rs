@@ -1340,11 +1340,11 @@ mod benchmark_rtf_tests {
     #[test]
     fn test_rtf_target_tiny_model() {
         // Tiny model should achieve RTF ≤ 2.0x
-        let simulated_rtf = 1.8;
+        // Real RTF measurement done in ground_truth_tests.rs
+        // This test validates the TARGET constant is reasonable
         assert!(
-            simulated_rtf <= RTF_TARGET_TINY,
-            "Tiny model RTF {} exceeds target {}",
-            simulated_rtf,
+            RTF_TARGET_TINY >= 1.0 && RTF_TARGET_TINY <= 5.0,
+            "RTF target {} should be between 1.0x and 5.0x",
             RTF_TARGET_TINY
         );
     }
@@ -1352,11 +1352,10 @@ mod benchmark_rtf_tests {
     #[test]
     fn test_rtf_target_base_model() {
         // Base model should achieve RTF ≤ 2.5x
-        let simulated_rtf = 2.2;
+        // Real RTF measurement done in ground_truth_tests.rs
         assert!(
-            simulated_rtf <= RTF_TARGET_BASE,
-            "Base model RTF {} exceeds target {}",
-            simulated_rtf,
+            RTF_TARGET_BASE >= 1.0 && RTF_TARGET_BASE <= 5.0,
+            "RTF target {} should be between 1.0x and 5.0x",
             RTF_TARGET_BASE
         );
     }
@@ -1364,11 +1363,10 @@ mod benchmark_rtf_tests {
     #[test]
     fn test_rtf_target_small_model() {
         // Small model should achieve RTF ≤ 4.0x
-        let simulated_rtf = 3.5;
+        // Real RTF measurement done in ground_truth_tests.rs
         assert!(
-            simulated_rtf <= RTF_TARGET_SMALL,
-            "Small model RTF {} exceeds target {}",
-            simulated_rtf,
+            RTF_TARGET_SMALL >= 1.0 && RTF_TARGET_SMALL <= 10.0,
+            "RTF target {} should be between 1.0x and 10.0x",
             RTF_TARGET_SMALL
         );
     }
@@ -1540,7 +1538,7 @@ mod validate_command_tests {
 }
 
 // ============================================================================
-// Model Command Tests (§5 download/convert stubs)
+// Model Command Tests (§5 download/convert)
 // ============================================================================
 
 #[cfg(test)]
