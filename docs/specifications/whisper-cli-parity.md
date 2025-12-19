@@ -26,6 +26,7 @@
 - [§13. Peer-Reviewed Citations](#13-peer-reviewed-citations)
 - [§14. References](#14-references)
 - [§15. Ecosystem Dependencies](#15-ecosystem-dependencies)
+- [§16. 100-Point CLI Transcription Falsification Checklist](#16-100-point-cli-transcription-falsification-checklist)
 
 ---
 
@@ -2726,3 +2727,269 @@ Please verify:
 5. [ ] Quality gates are enforceable in CI/CD
 
 Submit feedback via GitHub Issues or PR comments.
+
+---
+
+## §16. 100-Point CLI Transcription Falsification Checklist
+
+**Version**: 1.0.0
+**Created**: 2025-12-19
+**Methodology**: Popperian Falsification + Five-Whys Root Cause Analysis
+**Scope**: CLI `transcribe` command ONLY
+**Diagnostic Tooling**: renacer (tracing), pmat five-whys
+
+### Purpose
+
+This checklist focuses exclusively on the `whisper-apr transcribe` command pipeline. Each check is designed to **falsify** a claim about transcription correctness. Failures indicate bugs requiring root cause analysis via **Toyota Way Five-Whys** methodology and **renacer tracing**.
+
+### Diagnostic Protocol
+
+When a check **FAILS**:
+
+1. **Document the failure** with exact command and output
+2. **Run renacer trace**: `renacer -s -- cargo test <failing_test>`
+3. **Apply Five-Whys**: `pmat five-whys "transcription failed for <check>"`
+4. **Create JIRA ticket**: `WAPR-TRANS-XXX`
+5. **Do NOT fix inline** - another team handles remediation
+
+### Grading Scale
+
+- 95-100 points: A+ (Transcription Production Ready)
+- 90-94 points: A (Release Candidate)
+- 85-89 points: B (Beta Quality)
+- 80-84 points: C (Alpha Quality)
+- <80 points: F (Critical Bugs)
+
+---
+
+### Section T1: Audio Input Pipeline (15 points)
+
+| # | Claim to Falsify | Command | Expected Result | Pass | Fail |
+|---|------------------|---------|-----------------|------|------|
+| T1.1 | 16kHz mono WAV transcribes correctly | `transcribe -f test-16k-mono.wav` | Non-empty text output | [ ] | [ ] |
+| T1.2 | 44.1kHz audio resamples without artifacts | `transcribe -f test-44k.wav` | Same text as 16kHz version | [ ] | [ ] |
+| T1.3 | 48kHz audio resamples correctly | `transcribe -f test-48k.wav` | Same text as 16kHz version | [ ] | [ ] |
+| T1.4 | 8kHz upsampling produces valid mel | `transcribe -f test-8k.wav` | Non-empty output | [ ] | [ ] |
+| T1.5 | Stereo→mono mixdown preserves content | `transcribe -f test-stereo.wav` | Same text as mono | [ ] | [ ] |
+| T1.6 | 24-bit audio depth handled | `transcribe -f test-24bit.wav` | Valid transcription | [ ] | [ ] |
+| T1.7 | 32-bit float audio handled | `transcribe -f test-32f.wav` | Valid transcription | [ ] | [ ] |
+| T1.8 | Very short audio (<0.5s) handled | `transcribe -f test-300ms.wav` | Output or "no speech" | [ ] | [ ] |
+| T1.9 | 30-second audio chunk boundary correct | `transcribe -f test-30s.wav` | No truncation at 30s | [ ] | [ ] |
+| T1.10 | 60-second audio multi-chunk works | `transcribe -f test-60s.wav` | Complete transcription | [ ] | [ ] |
+| T1.11 | Silent audio detected as no-speech | `transcribe -f silence-5s.wav` | Empty or "[BLANK_AUDIO]" | [ ] | [ ] |
+| T1.12 | Near-silent audio with speech detected | `transcribe -f whisper-5s.wav` | Detects faint speech | [ ] | [ ] |
+| T1.13 | DC offset in audio handled | `transcribe -f test-dc-offset.wav` | Valid transcription | [ ] | [ ] |
+| T1.14 | Clipped audio (saturation) handled | `transcribe -f test-clipped.wav` | Degrades gracefully | [ ] | [ ] |
+| T1.15 | Audio with leading silence handled | `transcribe -f test-lead-silence.wav` | Correct timestamp offset | [ ] | [ ] |
+
+---
+
+### Section T2: Mel Spectrogram Computation (10 points)
+
+| # | Claim to Falsify | Command | Expected Result | Pass | Fail |
+|---|------------------|---------|-----------------|------|------|
+| T2.1 | Mel filterbank produces 80 bins | `transcribe -v -f test.wav` | Log shows 80-mel | [ ] | [ ] |
+| T2.2 | Mel values in valid range | Internal check | Values in [-1, 4] range | [ ] | [ ] |
+| T2.3 | Mel matches whisper.cpp reference | `parity --mel test.wav` | MSE < 1e-4 | [ ] | [ ] |
+| T2.4 | FFT window size correct (400 samples) | Trace check | n_fft=400 | [ ] | [ ] |
+| T2.5 | Hop length correct (160 samples) | Trace check | hop=160 | [ ] | [ ] |
+| T2.6 | Log-mel scaling applied correctly | Trace check | log10 applied | [ ] | [ ] |
+| T2.7 | Padding to 30s handled | `transcribe -f 5s.wav` | Padded to 3000 frames | [ ] | [ ] |
+| T2.8 | No NaN/Inf in mel output | Internal check | All finite values | [ ] | [ ] |
+| T2.9 | Mel symmetric around DC removed | Trace check | No DC component | [ ] | [ ] |
+| T2.10 | Mel normalization applied | Trace check | Normalized to model range | [ ] | [ ] |
+
+---
+
+### Section T3: Encoder Forward Pass (15 points)
+
+| # | Claim to Falsify | Command | Expected Result | Pass | Fail |
+|---|------------------|---------|-----------------|------|------|
+| T3.1 | Conv1 output shape correct | Trace | [batch, 384, 1500] for tiny | [ ] | [ ] |
+| T3.2 | Conv2 output shape correct | Trace | [batch, 384, 1500] for tiny | [ ] | [ ] |
+| T3.3 | Positional embedding added | Trace | Non-zero pos embed | [ ] | [ ] |
+| T3.4 | Encoder block 0 attention works | Trace | Non-uniform attention | [ ] | [ ] |
+| T3.5 | Encoder block 0 FFN works | Trace | Output differs from input | [ ] | [ ] |
+| T3.6 | All encoder blocks execute | Trace | 4 blocks for tiny | [ ] | [ ] |
+| T3.7 | LayerNorm applied correctly | Trace | Mean≈0, Var≈1 | [ ] | [ ] |
+| T3.8 | Encoder output shape correct | Trace | [batch, 1500, 384] | [ ] | [ ] |
+| T3.9 | Encoder output not all zeros | Internal check | max(abs) > 0.01 | [ ] | [ ] |
+| T3.10 | Encoder output not all same | Internal check | std > 0.01 | [ ] | [ ] |
+| T3.11 | Encoder deterministic (same input) | Run twice | Identical output | [ ] | [ ] |
+| T3.12 | Encoder matches HF reference | `parity --encoder test.wav` | Cosine sim > 0.99 | [ ] | [ ] |
+| T3.13 | GELU activation applied | Trace | GELU pattern visible | [ ] | [ ] |
+| T3.14 | Attention softmax sums to 1 | Trace | Row sums = 1.0 | [ ] | [ ] |
+| T3.15 | No gradient explosion | Trace | max(abs) < 100 | [ ] | [ ] |
+
+---
+
+### Section T4: Decoder Forward Pass (15 points)
+
+| # | Claim to Falsify | Command | Expected Result | Pass | Fail |
+|---|------------------|---------|-----------------|------|------|
+| T4.1 | SOT token (50258) starts decode | Trace | First token = 50258 | [ ] | [ ] |
+| T4.2 | Language token correct | `transcribe -l en` | Token 50259 (English) | [ ] | [ ] |
+| T4.3 | Transcribe token present | Trace | Token 50359 | [ ] | [ ] |
+| T4.4 | No-timestamps token if disabled | `--no-timestamps` | Token 50363 | [ ] | [ ] |
+| T4.5 | Token embedding lookup works | Trace | Non-zero embeddings | [ ] | [ ] |
+| T4.6 | Positional embedding added | Trace | Pos embed applied | [ ] | [ ] |
+| T4.7 | Causal mask applied | Trace | Upper triangle masked | [ ] | [ ] |
+| T4.8 | Cross-attention uses encoder | Trace | KV from encoder output | [ ] | [ ] |
+| T4.9 | Cross-attention non-uniform | Trace | Attention varies | [ ] | [ ] |
+| T4.10 | Decoder blocks execute | Trace | 4 blocks for tiny | [ ] | [ ] |
+| T4.11 | Final LayerNorm applied | Trace | Pre-logits normalized | [ ] | [ ] |
+| T4.12 | Logits shape correct | Trace | [batch, seq, 51865] | [ ] | [ ] |
+| T4.13 | Logits not all same | Internal check | std > 0.01 | [ ] | [ ] |
+| T4.14 | EOT token (50257) terminates | Trace | Decoding stops at EOT | [ ] | [ ] |
+| T4.15 | Max tokens limit respected | `--max-tokens 10` | ≤10 tokens output | [ ] | [ ] |
+
+---
+
+### Section T5: Token Decoding & Sampling (10 points)
+
+| # | Claim to Falsify | Command | Expected Result | Pass | Fail |
+|---|------------------|---------|-----------------|------|------|
+| T5.1 | Greedy decoding selects argmax | `--temperature 0` | Argmax tokens | [ ] | [ ] |
+| T5.2 | Temperature 0.5 adds variance | `--temperature 0.5` | Varied outputs | [ ] | [ ] |
+| T5.3 | Temperature 1.0 more random | `--temperature 1.0` | High variance | [ ] | [ ] |
+| T5.4 | Beam search improves quality | `--beam-size 5` | Lower perplexity | [ ] | [ ] |
+| T5.5 | Best-of sampling works | `--best-of 3` | Best candidate chosen | [ ] | [ ] |
+| T5.6 | Suppress blank tokens | Default | No "[BLANK]" in output | [ ] | [ ] |
+| T5.7 | Suppress regex works | `--suppress-regex "\\[.*\\]"` | Brackets removed | [ ] | [ ] |
+| T5.8 | Timestamp tokens decoded | Default | Timestamps present | [ ] | [ ] |
+| T5.9 | Word-level timestamps | `--word-timestamps` | Per-word timing | [ ] | [ ] |
+| T5.10 | Token IDs map to valid text | Internal | All tokens decodable | [ ] | [ ] |
+
+---
+
+### Section T6: Text Output Generation (10 points)
+
+| # | Claim to Falsify | Command | Expected Result | Pass | Fail |
+|---|------------------|---------|-----------------|------|------|
+| T6.1 | Output is valid UTF-8 | `transcribe -f test.wav` | Valid UTF-8 string | [ ] | [ ] |
+| T6.2 | Leading/trailing whitespace trimmed | Default | No extra spaces | [ ] | [ ] |
+| T6.3 | Repeated words filtered | `--hallucination-filter` | No "the the the" | [ ] | [ ] |
+| T6.4 | Punctuation present | Speech with pauses | Periods/commas | [ ] | [ ] |
+| T6.5 | Capitalization correct | Sentence start | Capital letters | [ ] | [ ] |
+| T6.6 | Numbers as spoken | "one two three" | "one two three" | [ ] | [ ] |
+| T6.7 | Unicode preserved | Non-ASCII speech | Correct chars | [ ] | [ ] |
+| T6.8 | Empty audio → empty output | Silence only | "" or minimal | [ ] | [ ] |
+| T6.9 | Special tokens removed | Default | No <|...|> tokens | [ ] | [ ] |
+| T6.10 | Multi-segment joined | Long audio | Coherent text | [ ] | [ ] |
+
+---
+
+### Section T7: Timestamp Accuracy (10 points)
+
+| # | Claim to Falsify | Command | Expected Result | Pass | Fail |
+|---|------------------|---------|-----------------|------|------|
+| T7.1 | Start timestamp ≥ 0 | Any audio | start ≥ 0.0 | [ ] | [ ] |
+| T7.2 | End timestamp > start | Any audio | end > start | [ ] | [ ] |
+| T7.3 | Timestamps monotonic | Multi-segment | Each start ≥ prev end | [ ] | [ ] |
+| T7.4 | Timestamp matches audio position | Known speech at 5s | Timestamp ≈ 5.0s | [ ] | [ ] |
+| T7.5 | Timestamp resolution 20ms | Check values | Multiples of 0.02 | [ ] | [ ] |
+| T7.6 | Timestamp tokens parsed | `--print-special` | <\|X.XX\|> format | [ ] | [ ] |
+| T7.7 | Offset applied correctly | `--offset-t 5000` | Timestamps +5s | [ ] | [ ] |
+| T7.8 | Duration limits output | `--duration 10000` | Max timestamp ≤10s | [ ] | [ ] |
+| T7.9 | No timestamp mode works | `--no-timestamps` | No timing in output | [ ] | [ ] |
+| T7.10 | SRT timestamps correct | `--format srt` | HH:MM:SS,mmm format | [ ] | [ ] |
+
+---
+
+### Section T8: whisper.cpp Ground Truth Parity (10 points)
+
+| # | Claim to Falsify | Command | Expected Result | Pass | Fail |
+|---|------------------|---------|-----------------|------|------|
+| T8.1 | WER ≤ 5% vs whisper.cpp | jfk.wav tiny | WER ≤ 0.05 | [ ] | [ ] |
+| T8.2 | CER ≤ 3% vs whisper.cpp | jfk.wav tiny | CER ≤ 0.03 | [ ] | [ ] |
+| T8.3 | Semantic similarity ≥ 0.95 | Embedding comparison | Cosine ≥ 0.95 | [ ] | [ ] |
+| T8.4 | Same language detected | Auto-detect | Identical lang code | [ ] | [ ] |
+| T8.5 | Timestamp drift ≤ 100ms | Compare timings | max drift ≤ 0.1s | [ ] | [ ] |
+| T8.6 | Same segment count ±1 | Compare segments | count diff ≤ 1 | [ ] | [ ] |
+| T8.7 | Translate mode matches | `--translate` | Same English output | [ ] | [ ] |
+| T8.8 | Prompt effect matches | `--prompt "..."` | Similar behavior | [ ] | [ ] |
+| T8.9 | Beam search matches | `--beam-size 5` | Similar output | [ ] | [ ] |
+| T8.10 | Temperature fallback | Complex audio | Same recovery | [ ] | [ ] |
+
+---
+
+### Section T9: Edge Cases & Robustness (5 points)
+
+| # | Claim to Falsify | Command | Expected Result | Pass | Fail |
+|---|------------------|---------|-----------------|------|------|
+| T9.1 | Handles music/noise gracefully | Music file | No crash, minimal text | [ ] | [ ] |
+| T9.2 | Handles overlapping speech | Two speakers | Some transcription | [ ] | [ ] |
+| T9.3 | Handles accented speech | Non-native speaker | Reasonable accuracy | [ ] | [ ] |
+| T9.4 | Handles fast speech | Rapid speaking | Complete transcription | [ ] | [ ] |
+| T9.5 | Handles whispered speech | Quiet speech | Detects content | [ ] | [ ] |
+
+---
+
+### Scoring Summary: CLI Transcription
+
+| Section | Points | Description |
+|---------|--------|-------------|
+| T1 | 15 | Audio Input Pipeline |
+| T2 | 10 | Mel Spectrogram Computation |
+| T3 | 15 | Encoder Forward Pass |
+| T4 | 15 | Decoder Forward Pass |
+| T5 | 10 | Token Decoding & Sampling |
+| T6 | 10 | Text Output Generation |
+| T7 | 10 | Timestamp Accuracy |
+| T8 | 10 | whisper.cpp Ground Truth Parity |
+| T9 | 5 | Edge Cases & Robustness |
+| **TOTAL** | **100** | |
+
+---
+
+### Diagnostic Commands Reference
+
+```bash
+# Run all transcription tests
+cargo test --features cli transcription_ -- --nocapture
+
+# Trace specific failure with renacer
+renacer -s -- cargo test test_t3_encoder_output
+
+# Five-whys analysis
+pmat five-whys "T4.8 cross-attention not using encoder output"
+
+# Full pipeline trace
+RUST_LOG=trace ./target/release/whisper-apr-cli -v transcribe -f test.wav 2>&1 | tee trace.log
+
+# Compare with whisper.cpp
+./scripts/ground_truth_compare.sh test.wav
+
+# Mel spectrogram comparison
+cargo run --example compare_mel -- test.wav
+
+# Encoder output comparison
+cargo run --example compare_encoder -- test.wav
+```
+
+---
+
+### Failure Escalation Matrix
+
+| Severity | Sections | Action |
+|----------|----------|--------|
+| **Critical** | T3, T4 (encoder/decoder) | Block release, immediate fix |
+| **High** | T1, T2, T5 (pipeline) | Fix before RC |
+| **Medium** | T6, T7, T8 (output quality) | Fix before GA |
+| **Low** | T9 (edge cases) | Backlog for future |
+
+---
+
+### Related Tickets
+
+| Ticket | Description | Status |
+|--------|-------------|--------|
+| WAPR-TRANS-001 | Decoder produces empty/whitespace | Open |
+| WAPR-MEL-001 | Mel spectrogram layout investigation | Open |
+| WAPR-ENC-001 | Encoder output validation | Open |
+
+---
+
+### Changelog
+
+- **v1.0.0** (2025-12-19): Initial 100-point transcription checklist
