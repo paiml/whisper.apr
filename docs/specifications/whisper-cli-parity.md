@@ -2749,7 +2749,7 @@ When a check **FAILS**:
 1. **Document the failure** with exact command and output
 2. **Run renacer trace**: `renacer -s -- cargo test <failing_test>`
 3. **Apply Five-Whys**: `pmat five-whys "transcription failed for <check>"`
-4. **Create JIRA ticket**: `WAPR-TRANS-XXX`
+4. **Create pmat work ticket**: `pmat work start WAPR-TRANS-XXX`
 5. **Do NOT fix inline** - another team handles remediation
 
 ### Grading Scale
