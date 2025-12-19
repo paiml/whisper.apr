@@ -2992,7 +2992,7 @@ cargo run --example compare_encoder -- test.wav
 
 | Ticket | Description | Status |
 |--------|-------------|--------|
-| WAPR-TRANS-001 | Decoder produces empty/whitespace (uninitialized weights) | Open |
+| WAPR-TRANS-001 | Decoder produces empty/whitespace (uninitialized weights) | **Fixed** |
 | WAPR-AUDIO-001 | Unsupported 24/32-bit audio depth in WAV parser | Open |
 | WAPR-CLI-003 | CLI args (offset, duration, regex) not integrated | Open |
 | WAPR-MEL-001 | Mel spectrogram layout investigation | Open |
@@ -3002,5 +3002,6 @@ cargo run --example compare_encoder -- test.wav
 
 ### Changelog
 
+- **v1.0.2** (2025-12-19): WAPR-TRANS-001 fixed - auto-download from HuggingFace
 - **v1.0.1** (2025-12-19): QA execution results - Score 62/100 (F), added tickets
 - **v1.0.0** (2025-12-19): Initial 100-point transcription checklist
