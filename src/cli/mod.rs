@@ -25,7 +25,11 @@
 pub mod args;
 pub mod commands;
 pub mod output;
+pub mod parity;
 
 pub use args::{Args, Command};
 pub use commands::{run, CliError, CliResult};
 pub use output::OutputFormat;
+pub use parity::{
+    calculate_wer, ParityBenchmark, ParityConfig, ParityError, ParityResult, ParityTest,
+};

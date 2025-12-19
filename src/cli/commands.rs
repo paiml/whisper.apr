@@ -12,9 +12,9 @@ use crate::audio::wav::{parse_wav_file, resample};
 use crate::{DecodingStrategy, Task, TranscribeOptions, WhisperApr};
 
 use super::args::{
-    Args, BackendArg, BatchArgs, BenchmarkArgs, Command, ModelAction, ModelArgs, ModelSize,
-    OutputFormatArg, RecordArgs, TestArgs, TranscribeArgs, TranslateArgs, ValidateArgs,
-    ValidateOutputFormat,
+    Args, BackendArg, BatchArgs, BenchmarkArgs, Command, CommandArgs, ModelAction, ModelArgs,
+    ModelSize, OutputFormatArg, ParityArgs, QuantizeArgs, RecordArgs, ServeArgs, StreamArgs,
+    TestArgs, TranscribeArgs, TranslateArgs, ValidateArgs, ValidateOutputFormat,
 };
 
 use super::output::{format_output, OutputFormat};
@@ -126,6 +126,8 @@ pub fn run(args: Args) -> CliResult<CommandResult> {
     match &args.command {
         Command::Transcribe(t) => run_transcribe(t.clone(), &args),
         Command::Translate(t) => run_translate(t.clone(), &args),
+        Command::Stream(s) => run_stream(s.clone(), &args),
+        Command::Serve(s) => run_serve(s.clone(), &args),
         Command::Record(r) => run_record(r.clone(), &args),
         Command::Batch(b) => run_batch(b.clone(), &args),
         Command::Tui => run_tui(&args),
@@ -133,6 +135,9 @@ pub fn run(args: Args) -> CliResult<CommandResult> {
         Command::Model(m) => run_model(m.clone(), &args),
         Command::Benchmark(b) => run_benchmark(b.clone(), &args),
         Command::Validate(v) => run_validate(v.clone(), &args),
+        Command::Parity(p) => run_parity(p.clone(), &args),
+        Command::Quantize(q) => run_quantize(q.clone(), &args),
+        Command::Command(c) => run_command(c.clone(), &args),
     }
 }
 
@@ -155,7 +160,7 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
         }
     }
     let model_start = Instant::now();
-    
+
     let whisper = if let Some(path) = &args.model_path {
         let bytes = fs::read(path)?;
         WhisperApr::load_from_apr(&bytes)?
@@ -168,7 +173,7 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
             ModelSize::Large => WhisperApr::large(),
         }
     };
-    
+
     timings.model_load_ms = model_start.elapsed().as_secs_f64() * 1000.0;
 
     // Load and parse audio
@@ -194,16 +199,22 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
 
     // Transcribe
     let transcribe_start = Instant::now();
+    let task = if args.translate {
+        Task::Translate
+    } else {
+        Task::Transcribe
+    };
+
     let options = TranscribeOptions {
         language: if args.language == "auto" {
             None
         } else {
             Some(args.language.clone())
         },
-        task: Task::Transcribe,
-        strategy: if args.beam_size > 1 {
+        task,
+        strategy: if args.beam_size > 0 {
             DecodingStrategy::BeamSearch {
-                beam_size: args.beam_size,
+                beam_size: args.beam_size as usize,
                 temperature: args.temperature,
                 patience: 1.0,
             }
@@ -281,7 +292,10 @@ pub fn run_translate(args: TranslateArgs, global: &Args) -> CliResult<CommandRes
     Ok(CommandResult::success(result.text))
 }
 
-/// Run record command
+/// Run record command (audio capture to file)
+///
+/// When implemented, this will use:
+/// - `aprender::native` for audio capture from microphone
 pub fn run_record(args: RecordArgs, _global: &Args) -> CliResult<CommandResult> {
     if args.list_devices {
         // List audio devices (placeholder)
@@ -292,7 +306,7 @@ pub fn run_record(args: RecordArgs, _global: &Args) -> CliResult<CommandResult> 
 
     if args.live {
         return Err(CliError::NotImplemented(
-            "Live recording not yet implemented".to_string(),
+            "Live recording not yet implemented (requires aprender::native)".to_string(),
         ));
     }
 
@@ -302,9 +316,8 @@ pub fn run_record(args: RecordArgs, _global: &Args) -> CliResult<CommandResult> 
         ));
     }
 
-    // Recording implementation would use cpal
     Err(CliError::NotImplemented(
-        "Audio recording not yet implemented".to_string(),
+        "Audio recording not yet implemented (requires aprender::native)".to_string(),
     ))
 }
 
@@ -346,22 +359,60 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
             continue;
         }
 
-        // Transcribe
+        // Transcribe - construct minimal args, let defaults handle the rest
         let transcribe_args = TranscribeArgs {
             input: input.clone(),
             model: args.model,
-            model_path: None,
-            language: "auto".to_string(),
             output: Some(output_path),
             format: args.format,
-            timestamps: false,
-            word_timestamps: false,
-            vad: false,
-            vad_threshold: 0.5,
-            gpu: false,
-            threads: None,
-            beam_size: 5,
+            // Use defaults for all other fields
+            model_path: None,
+            language: "auto".to_string(),
+            detect_language: false,
+            offset_t: 0,
+            offset_n: 0,
+            duration: 0,
+            max_context: -1,
+            max_len: 0,
+            audio_ctx: 0,
+            best_of: 2,
+            beam_size: -1,
             temperature: 0.0,
+            temperature_inc: 0.2,
+            no_fallback: false,
+            split_on_word: false,
+            word_thold: 0.01,
+            word_timestamps: false,
+            timestamps: false,
+            no_timestamps: false,
+            entropy_thold: 2.40,
+            logprob_thold: -1.0,
+            no_speech_thold: 0.6,
+            prompt: String::new(),
+            suppress_regex: String::new(),
+            grammar: String::new(),
+            grammar_rule: String::new(),
+            grammar_penalty: 100.0,
+            vad: false,
+            vad_model: None,
+            vad_threshold: 0.5,
+            vad_min_speech_ms: 250,
+            vad_min_silence_ms: 100,
+            vad_max_speech_s: None,
+            vad_pad_ms: 30,
+            vad_overlap: 0.1,
+            threads: None,
+            processors: 1,
+            gpu: false,
+            no_gpu: false,
+            flash_attn: false,
+            no_flash_attn: false,
+            no_prints: false,
+            print_special: false,
+            colors: false,
+            confidence: false,
+            progress: false,
+            translate: false,
             hallucination_filter: false,
         };
 
@@ -381,10 +432,101 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
     )))
 }
 
-/// Run TUI command
+/// Run TUI command (interactive pipeline visualization)
+///
+/// Launches the interactive terminal dashboard for visualizing
+/// the Whisper ASR pipeline stages: waveform → mel → encoder → decoder → text.
+///
+/// # Keyboard Shortcuts
+/// - 1-7: Switch panels (Waveform, Mel, Encoder, Decoder, Attention, Transcription, Metrics)
+/// - ?: Show help
+/// - Space: Pause/resume
+/// - r: Reset
+/// - q: Quit
+#[cfg(feature = "tui")]
+pub fn run_tui(global: &Args) -> CliResult<CommandResult> {
+    use crossterm::{
+        event::{self, Event, KeyCode, KeyEventKind},
+        execute,
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    };
+    use ratatui::{backend::CrosstermBackend, Terminal};
+    use std::time::Duration;
+
+    use crate::tui::{render_whisper_dashboard, WhisperApp};
+
+    // Initialize terminal
+    enable_raw_mode().map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, e)))?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)
+        .map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, e)))?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal =
+        Terminal::new(backend).map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, e)))?;
+
+    // Create application state
+    let mut app = WhisperApp::new();
+
+    // Show initial status
+    app.status_message = Some("Press '?' for help, 'q' to quit".to_string());
+
+    // Event loop
+    let result = loop {
+        // Draw frame
+        terminal
+            .draw(|f| render_whisper_dashboard(f, &app))
+            .map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, e)))?;
+
+        // Poll for events with timeout
+        if event::poll(Duration::from_millis(100))
+            .map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, e)))?
+        {
+            if let Event::Key(key) = event::read()
+                .map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, e)))?
+            {
+                // Only handle key press events (not release)
+                if key.kind == KeyEventKind::Press {
+                    match key.code {
+                        KeyCode::Char('q') => break Ok(CommandResult::success("TUI closed")),
+                        KeyCode::Char('1') => app.handle_key('1'),
+                        KeyCode::Char('2') => app.handle_key('2'),
+                        KeyCode::Char('3') => app.handle_key('3'),
+                        KeyCode::Char('4') => app.handle_key('4'),
+                        KeyCode::Char('5') => app.handle_key('5'),
+                        KeyCode::Char('6') => app.handle_key('6'),
+                        KeyCode::Char('7') => app.handle_key('7'),
+                        KeyCode::Char('?') => app.handle_key('?'),
+                        KeyCode::Char(' ') => app.handle_key(' '),
+                        KeyCode::Char('r') => app.handle_key('r'),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // Check if we should quit
+        if app.should_quit {
+            break Ok(CommandResult::success("TUI closed"));
+        }
+    };
+
+    // Restore terminal
+    disable_raw_mode().ok();
+    execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
+    terminal.show_cursor().ok();
+
+    if global.verbose {
+        eprintln!("[INFO] TUI session ended");
+    }
+
+    result
+}
+
+/// Run TUI command - stub when TUI feature is disabled
+#[cfg(not(feature = "tui"))]
 pub fn run_tui(_global: &Args) -> CliResult<CommandResult> {
     Err(CliError::NotImplemented(
-        "TUI not yet implemented".to_string(),
+        "TUI requires the 'tui' feature. Rebuild with: cargo build --features tui".to_string(),
     ))
 }
 
@@ -544,7 +686,7 @@ pub fn run_benchmark(args: BenchmarkArgs, global: &Args) -> CliResult<CommandRes
 
 /// Run validate command
 pub fn run_validate(args: ValidateArgs, global: &Args) -> CliResult<CommandResult> {
-    use crate::format::{AprReader, AprValidator, quick_validate};
+    use crate::format::{quick_validate, AprReader, AprValidator};
 
     // Validate input file exists
     if !args.file.exists() {
@@ -572,7 +714,9 @@ pub fn run_validate(args: ValidateArgs, global: &Args) -> CliResult<CommandResul
                 if !global.quiet {
                     println!("✗ Quick validation failed: {e}");
                 }
-                return Ok(CommandResult::failure(format!("Quick validation failed: {e}")));
+                return Ok(CommandResult::failure(format!(
+                    "Quick validation failed: {e}"
+                )));
             }
         }
     }
@@ -610,11 +754,225 @@ pub fn run_validate(args: ValidateArgs, global: &Args) -> CliResult<CommandResul
     }
 }
 
-fn format_validation_text(
-    report: &crate::format::ValidationReport,
-    detailed: bool,
-    quiet: bool,
-) {
+/// Run stream command (real-time microphone transcription)
+///
+/// When implemented, this will use:
+/// - `aprender::native` for audio capture and preprocessing
+/// - `realizar::inference` for real-time model execution
+pub fn run_stream(_args: StreamArgs, _global: &Args) -> CliResult<CommandResult> {
+    Err(CliError::NotImplemented(
+        "Real-time streaming not yet implemented (requires aprender::native audio capture)"
+            .to_string(),
+    ))
+}
+
+/// Run serve command (HTTP API server)
+///
+/// When implemented, this will use:
+/// - `realizar::serve` for HTTP server and API endpoints
+/// - `realizar::api` for OpenAI-compatible API handlers
+pub fn run_serve(_args: ServeArgs, _global: &Args) -> CliResult<CommandResult> {
+    Err(CliError::NotImplemented(
+        "HTTP server not yet implemented (requires realizar::serve)".to_string(),
+    ))
+}
+
+/// Run parity command (whisper.cpp comparison)
+#[allow(clippy::too_many_lines)]
+pub fn run_parity(args: ParityArgs, global: &Args) -> CliResult<CommandResult> {
+    use super::parity::{ParityConfig, ParityTest};
+
+    // Validate input file exists
+    if !args.input.exists() {
+        return Err(CliError::FileNotFound(args.input.display().to_string()));
+    }
+
+    // Find whisper.cpp binary
+    let whisper_cpp_path = args.whisper_cpp.clone().unwrap_or_else(|| {
+        // Search common locations
+        let candidates = [
+            "/usr/local/bin/whisper-cli",
+            "/usr/bin/whisper-cli",
+            "whisper-cli",
+            "./whisper-cli",
+            "../whisper.cpp/main",
+        ];
+        for candidate in candidates {
+            let path = std::path::PathBuf::from(candidate);
+            if path.exists() {
+                return path;
+            }
+        }
+        std::path::PathBuf::from("whisper-cli")
+    });
+
+    if !global.quiet {
+        println!("whisper-apr Parity Test");
+        println!("═══════════════════════════════════════════════════════════════════");
+        println!("Audio: {}", args.input.display());
+        println!("whisper.cpp: {}", whisper_cpp_path.display());
+        println!("Max WER: {:.1}%", args.max_wer * 100.0);
+        println!();
+    }
+
+    // Run whisper.cpp
+    if args.verbose {
+        println!("Running whisper.cpp...");
+    }
+
+    let model_path = args.cpp_model.as_ref().map_or_else(
+        || format!("models/ggml-{}.bin", args.model),
+        |p| p.to_string_lossy().to_string(),
+    );
+    let cpp_output = std::process::Command::new(&whisper_cpp_path)
+        .args([
+            "-m",
+            model_path.as_str(),
+            "-f",
+            &args.input.to_string_lossy(),
+            "--no-prints",
+        ])
+        .output();
+
+    let cpp_text = match cpp_output {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).to_string()
+        }
+        Ok(output) => {
+            return Err(CliError::InvalidArgument(format!(
+                "whisper.cpp failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        Err(e) => {
+            return Err(CliError::InvalidArgument(format!(
+                "Failed to run whisper.cpp at {}: {}",
+                whisper_cpp_path.display(),
+                e
+            )));
+        }
+    };
+
+    // Run whisper-apr
+    if args.verbose {
+        println!("Running whisper-apr...");
+    }
+
+    let audio_data = fs::read(&args.input)?;
+    let samples = load_audio_samples(&args.input, &audio_data)?;
+
+    let whisper = if let Some(path) = &args.model_path {
+        let bytes = fs::read(path)?;
+        WhisperApr::load_from_apr(&bytes)?
+    } else {
+        match args.model {
+            ModelSize::Tiny => WhisperApr::tiny(),
+            ModelSize::Base => WhisperApr::base(),
+            ModelSize::Small => WhisperApr::small(),
+            ModelSize::Medium => WhisperApr::medium(),
+            ModelSize::Large => WhisperApr::large(),
+        }
+    };
+
+    let options = crate::TranscribeOptions::default();
+    let result = whisper.transcribe(&samples, options)?;
+    let apr_text = result.text;
+
+    // Compare outputs
+    let config = ParityConfig {
+        max_wer: args.max_wer,
+        timestamp_tolerance_ms: args.timestamp_tolerance_ms,
+        ..Default::default()
+    };
+
+    let test =
+        ParityTest::new(args.input.clone(), cpp_text.clone(), apr_text.clone()).with_config(config);
+
+    let parity_result = test.verify_text_parity();
+
+    // Output results
+    if args.json {
+        let json = serde_json::json!({
+            "input": args.input.display().to_string(),
+            "whisper_cpp_output": cpp_text.trim(),
+            "whisper_apr_output": apr_text.trim(),
+            "parity": parity_result.is_pass(),
+            "wer": match &parity_result {
+                super::parity::ParityResult::Pass { wer, .. }
+                | super::parity::ParityResult::Fail { wer, .. } => *wer,
+            },
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json).unwrap_or_default()
+        );
+    } else if !global.quiet {
+        println!("Results:");
+        println!("───────────────────────────────────────────────────────────────────");
+        println!("whisper.cpp: {}", cpp_text.trim());
+        println!("whisper-apr: {}", apr_text.trim());
+        println!();
+
+        match &parity_result {
+            super::parity::ParityResult::Pass { wer, .. } => {
+                println!("✓ PARITY ACHIEVED (WER: {:.2}%)", wer * 100.0);
+            }
+            super::parity::ParityResult::Fail { wer, .. } => {
+                println!(
+                    "✗ PARITY FAILED (WER: {:.2}%, max: {:.2}%)",
+                    wer * 100.0,
+                    args.max_wer * 100.0
+                );
+            }
+        }
+    }
+
+    if parity_result.is_pass() {
+        Ok(CommandResult::success("Parity achieved"))
+    } else {
+        Ok(CommandResult::failure("Parity failed"))
+    }
+}
+
+/// Run quantize command (model quantization)
+///
+/// When implemented, this will use:
+/// - `realizar::quantize` for quantization algorithms (int8, q4_0, q5_0, etc.)
+/// - `aprender::compute` for tensor operations during quantization
+pub fn run_quantize(args: QuantizeArgs, global: &Args) -> CliResult<CommandResult> {
+    // Validate input file exists
+    if !args.input.exists() {
+        return Err(CliError::FileNotFound(args.input.display().to_string()));
+    }
+
+    if !global.quiet {
+        println!("Model Quantization");
+        println!("═══════════════════════════════════════════════════════════════════");
+        println!("Input:  {}", args.input.display());
+        println!("Output: {}", args.output.display());
+        println!("Type:   {}", args.quantize);
+        println!();
+    }
+
+    Err(CliError::NotImplemented(
+        "Model quantization not yet implemented (requires realizar::quantize)".to_string(),
+    ))
+}
+
+/// Run command mode (voice command recognition)
+///
+/// When implemented, this will use:
+/// - `aprender::native` for audio capture
+/// - `realizar::inference` for real-time model execution
+/// - Pattern matching against configured command phrases
+pub fn run_command(_args: CommandArgs, _global: &Args) -> CliResult<CommandResult> {
+    Err(CliError::NotImplemented(
+        "Voice command recognition not yet implemented (requires aprender::native audio capture)"
+            .to_string(),
+    ))
+}
+
+fn format_validation_text(report: &crate::format::ValidationReport, detailed: bool, quiet: bool) {
     if quiet {
         return;
     }
@@ -642,7 +1000,10 @@ fn format_validation_text(
         if detailed {
             for check in checks {
                 let mark = if check.passed { "  ✓" } else { "  ✗" };
-                println!("  {} [{}] {}: {}", mark, check.id, check.name, check.message);
+                println!(
+                    "  {} [{}] {}: {}",
+                    mark, check.id, check.name, check.message
+                );
             }
         }
     }
@@ -687,7 +1048,10 @@ fn format_validation_json(report: &crate::format::ValidationReport) {
         "checks": checks
     });
 
-    println!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json).unwrap_or_default()
+    );
 }
 
 fn format_validation_markdown(report: &crate::format::ValidationReport, detailed: bool) {
@@ -696,7 +1060,11 @@ fn format_validation_markdown(report: &crate::format::ValidationReport, detailed
         "**Score:** {}/{} ({})\n",
         report.score,
         report.max_score,
-        if report.passed { "✅ PASS" } else { "❌ FAIL" }
+        if report.passed {
+            "✅ PASS"
+        } else {
+            "❌ FAIL"
+        }
     );
 
     if !report.critical_failures.is_empty() {
@@ -727,7 +1095,10 @@ fn format_validation_markdown(report: &crate::format::ValidationReport, detailed
             println!("|---|-------|--------|---------|");
             for check in checks {
                 let status = if check.passed { "✅" } else { "❌" };
-                println!("| {} | {} | {} | {} |", check.id, check.name, status, check.message);
+                println!(
+                    "| {} | {} | {} | {} |",
+                    check.id, check.name, status, check.message
+                );
             }
             println!();
         }
@@ -773,7 +1144,10 @@ fn convert_format_arg(arg: OutputFormatArg) -> OutputFormat {
         OutputFormatArg::Srt => OutputFormat::Srt,
         OutputFormatArg::Vtt => OutputFormat::Vtt,
         OutputFormatArg::Json => OutputFormat::Json,
+        OutputFormatArg::JsonFull => OutputFormat::JsonFull,
         OutputFormatArg::Csv => OutputFormat::Csv,
+        OutputFormatArg::Lrc => OutputFormat::Lrc,
+        OutputFormatArg::Wts => OutputFormat::Wts,
         OutputFormatArg::Md => OutputFormat::Md,
     }
 }
@@ -786,7 +1160,78 @@ fn convert_format_arg(arg: OutputFormatArg) -> OutputFormat {
 mod tests {
     use super::*;
     use std::io::Write as _;
+    use std::path::PathBuf;
     use tempfile::NamedTempFile;
+
+    /// Helper to create default TranscribeArgs for testing
+    fn default_transcribe_args(input: PathBuf) -> TranscribeArgs {
+        TranscribeArgs {
+            input,
+            model: ModelSize::Tiny,
+            model_path: None,
+            language: "auto".to_string(),
+            detect_language: false,
+            output: None,
+            format: OutputFormatArg::Txt,
+            offset_t: 0,
+            offset_n: 0,
+            duration: 0,
+            max_context: -1,
+            max_len: 0,
+            audio_ctx: 0,
+            best_of: 2,
+            beam_size: -1,
+            temperature: 0.0,
+            temperature_inc: 0.2,
+            no_fallback: false,
+            split_on_word: false,
+            word_thold: 0.01,
+            word_timestamps: false,
+            timestamps: false,
+            no_timestamps: false,
+            entropy_thold: 2.40,
+            logprob_thold: -1.0,
+            no_speech_thold: 0.6,
+            prompt: String::new(),
+            suppress_regex: String::new(),
+            grammar: String::new(),
+            grammar_rule: String::new(),
+            grammar_penalty: 100.0,
+            vad: false,
+            vad_model: None,
+            vad_threshold: 0.5,
+            vad_min_speech_ms: 250,
+            vad_min_silence_ms: 100,
+            vad_max_speech_s: None,
+            vad_pad_ms: 30,
+            vad_overlap: 0.1,
+            threads: None,
+            processors: 1,
+            gpu: false,
+            no_gpu: false,
+            flash_attn: false,
+            no_flash_attn: false,
+            no_prints: false,
+            print_special: false,
+            colors: false,
+            confidence: false,
+            progress: false,
+            translate: false,
+            hallucination_filter: false,
+        }
+    }
+
+    /// Helper to create default Args for testing
+    fn default_global_args() -> Args {
+        Args {
+            command: Command::Tui, // Dummy
+            verbose: false,
+            quiet: true,
+            json: false,
+            trace: None,
+            no_color: false,
+        }
+    }
 
     // -------------------------------------------------------------------------
     // CommandResult tests
@@ -886,31 +1331,8 @@ mod tests {
 
     #[test]
     fn test_run_transcribe_file_not_found() {
-        let args = TranscribeArgs {
-            input: "nonexistent.wav".into(),
-            model: ModelSize::Tiny,
-            model_path: None,
-            language: "auto".to_string(),
-            output: None,
-            format: OutputFormatArg::Txt,
-            timestamps: false,
-            word_timestamps: false,
-            vad: false,
-            vad_threshold: 0.5,
-            gpu: false,
-            threads: None,
-            beam_size: 5,
-            temperature: 0.0,
-            hallucination_filter: false,
-        };
-        let global = Args {
-            command: Command::Tui, // Dummy
-            verbose: false,
-            quiet: true,
-            json: false,
-            trace: None,
-            no_color: false,
-        };
+        let args = default_transcribe_args("nonexistent.wav".into());
+        let global = default_global_args();
 
         let result = run_transcribe(args, &global);
         assert!(result.is_err());
