@@ -10,12 +10,18 @@
 //! Multi-head attention splits Q, K, V into multiple heads,
 //! computes attention in parallel, and concatenates results.
 //!
+//! # Parallelization (§11.3.2)
+//!
+//! Each attention head is independent [31], enabling embarrassingly parallel
+//! computation. With `parallel` feature enabled, heads are computed via rayon.
+//!
 //! # References
 //!
-//! - Vaswani et al. (2017): "Attention Is All You Need"
+//! - [31] Vaswani et al. (2017): "Attention Is All You Need"
 //! - Radford et al. (2023): "Robust Speech Recognition via Large-Scale Weak Supervision"
 
 use crate::error::{WhisperError, WhisperResult};
+use crate::parallel::{parallel_map, parallel_try_map};
 use crate::simd;
 use trueno::Matrix;
 
@@ -825,17 +831,14 @@ impl MultiHeadAttention {
         let k = self.w_k.forward(context, kv_len)?;
         let v = self.w_v.forward(context, kv_len)?;
 
-        // Compute attention for each head
-        let mut head_outputs = Vec::with_capacity(self.n_heads);
-
-        for head in 0..self.n_heads {
+        // Compute attention for each head (parallel when feature enabled)
+        // Per §11.3.2: Each head is independent [31], enabling parallel computation
+        let head_outputs = parallel_try_map(0..self.n_heads, |head| {
             let q_head = self.extract_head(&q, seq_len, head);
             let k_head = self.extract_head(&k, kv_len, head);
             let v_head = self.extract_head(&v, kv_len, head);
-
-            let head_out = self.scaled_dot_product_attention(&q_head, &k_head, &v_head, mask)?;
-            head_outputs.push(head_out);
-        }
+            self.scaled_dot_product_attention(&q_head, &k_head, &v_head, mask)
+        })?;
 
         // Concatenate heads and project output
         let concat = self.concat_heads(&head_outputs, seq_len);
@@ -864,19 +867,16 @@ impl MultiHeadAttention {
         let k = self.w_k.forward_simd(context, kv_len)?;
         let v = self.w_v.forward_simd(context, kv_len)?;
 
-        // Compute attention for each head using SIMD
-        let mut head_outputs = Vec::with_capacity(self.n_heads);
-
-        for head in 0..self.n_heads {
+        // Compute attention for each head using SIMD (parallel when feature enabled)
+        // Per §11.3.2: Each head is independent [31], enabling parallel computation
+        let head_outputs = parallel_try_map(0..self.n_heads, |head| {
             let q_head = self.extract_head(&q, seq_len, head);
             let k_head = self.extract_head(&k, kv_len, head);
             let v_head = self.extract_head(&v, kv_len, head);
 
             // Use SIMD attention
-            let head_out =
-                self.scaled_dot_product_attention_simd(&q_head, &k_head, &v_head, mask)?;
-            head_outputs.push(head_out);
-        }
+            self.scaled_dot_product_attention_simd(&q_head, &k_head, &v_head, mask)
+        })?;
 
         // Concatenate heads and project output using SIMD
         let concat = self.concat_heads(&head_outputs, seq_len);
@@ -918,23 +918,21 @@ impl MultiHeadAttention {
         let k = self.w_k.forward_simd(context, kv_len)?;
         let v = self.w_v.forward_simd(context, kv_len)?;
 
-        // Compute attention for each head using Flash Attention
-        let mut head_outputs = Vec::with_capacity(self.n_heads);
-
-        for head in 0..self.n_heads {
+        // Compute attention for each head using Flash Attention (parallel when feature enabled)
+        // Per §11.3.2: Each head is independent [31], enabling parallel computation
+        let head_outputs = parallel_map(0..self.n_heads, |head| {
             let q_head = self.extract_head(&q, seq_len, head);
             let k_head = self.extract_head(&k, kv_len, head);
             let v_head = self.extract_head(&v, kv_len, head);
 
             // Use Flash Attention for O(n) memory
             let config = FlashAttentionConfig::new(seq_len, kv_len, self.d_head, block_size);
-            let head_out = if cfg!(feature = "simd") {
+            if cfg!(feature = "simd") {
                 flash_attention_simd(&q_head, &k_head, &v_head, config, mask)
             } else {
                 flash_attention(&q_head, &k_head, &v_head, config, mask)
-            };
-            head_outputs.push(head_out);
-        }
+            }
+        });
 
         // Concatenate heads and project output using SIMD
         let concat = self.concat_heads(&head_outputs, seq_len);
@@ -1001,10 +999,9 @@ impl MultiHeadAttention {
         let new_k = self.w_k.forward(x, seq_len)?;
         let new_v = self.w_v.forward(x, seq_len)?;
 
-        // Compute attention for each head
-        let mut head_outputs = Vec::with_capacity(self.n_heads);
-
-        for head in 0..self.n_heads {
+        // Compute attention for each head (parallel when feature enabled)
+        // Per §11.3.2: Each head is independent [31], enabling parallel computation
+        let head_outputs = parallel_try_map(0..self.n_heads, |head| {
             // Extract this head's query
             let head_q = self.extract_head(&q, seq_len, head);
 
@@ -1029,20 +1026,18 @@ impl MultiHeadAttention {
             };
 
             // Compute attention with optional Flash Attention
-            let head_output = if total_kv_len > FLASH_ATTENTION_THRESHOLD {
+            if total_kv_len > FLASH_ATTENTION_THRESHOLD {
                 let config = FlashAttentionConfig::new(
                     seq_len,
                     total_kv_len,
                     self.d_head,
                     FLASH_ATTENTION_BLOCK_SIZE,
                 );
-                flash_attention_simd(&head_q, &head_k, &head_v, config, mask)
+                Ok(flash_attention_simd(&head_q, &head_k, &head_v, config, mask))
             } else {
-                self.scaled_dot_product_attention(&head_q, &head_k, &head_v, mask)?
-            };
-
-            head_outputs.push(head_output);
-        }
+                self.scaled_dot_product_attention(&head_q, &head_k, &head_v, mask)
+            }
+        })?;
 
         // Concatenate head outputs
         let concat = self.concat_heads(&head_outputs, seq_len);

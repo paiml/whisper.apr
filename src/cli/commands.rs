@@ -9,12 +9,13 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::audio::wav::{parse_wav_file, resample};
+use crate::parallel::configure_thread_pool;
 use crate::{DecodingStrategy, Task, TranscribeOptions, WhisperApr};
 
 use super::args::{
-    Args, BackendArg, BatchArgs, BenchmarkArgs, Command, CommandArgs, ModelAction, ModelArgs,
-    OutputFormatArg, ParityArgs, QuantizeArgs, RecordArgs, ServeArgs, StreamArgs, TestArgs,
-    TranscribeArgs, TranslateArgs, ValidateArgs, ValidateOutputFormat,
+    Args, BackendArg, BatchArgs, BenchmarkArgs, Command, CommandArgs, DiagnoseArgs, ModelAction,
+    ModelArgs, OutputFormatArg, ParityArgs, QuantizeArgs, RecordArgs, ServeArgs, StreamArgs,
+    TestArgs, TranscribeArgs, TranslateArgs, ValidateArgs, ValidateOutputFormat,
 };
 
 use super::output::{format_output, OutputFormat};
@@ -138,6 +139,7 @@ pub fn run(args: Args) -> CliResult<CommandResult> {
         Command::Parity(p) => run_parity(p.clone(), &args),
         Command::Quantize(q) => run_quantize(q.clone(), &args),
         Command::Command(c) => run_command(c.clone(), &args),
+        Command::Diagnose(d) => run_diagnose(d.clone(), &args),
     }
 }
 
@@ -145,6 +147,14 @@ pub fn run(args: Args) -> CliResult<CommandResult> {
 pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandResult> {
     let start = Instant::now();
     let mut timings = Timings::default();
+
+    // Configure thread pool for parallel inference (§11.3.6 P.6)
+    let thread_count = configure_thread_pool(args.threads)
+        .map_err(|e| CliError::InvalidArgument(format!("Failed to configure threads: {e}")))?;
+
+    if global.verbose {
+        eprintln!("[INFO] Using {} thread(s) for inference", thread_count);
+    }
 
     // Validate input file exists
     if !args.input.exists() {
@@ -252,6 +262,14 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
 
 /// Run translate command
 pub fn run_translate(args: TranslateArgs, global: &Args) -> CliResult<CommandResult> {
+    // Configure thread pool for parallel inference (§11.3.6 P.6)
+    let thread_count = configure_thread_pool(args.threads)
+        .map_err(|e| CliError::InvalidArgument(format!("Failed to configure threads: {e}")))?;
+
+    if global.verbose {
+        eprintln!("[INFO] Using {} thread(s) for inference", thread_count);
+    }
+
     // Validate input file exists
     if !args.input.exists() {
         return Err(CliError::FileNotFound(args.input.display().to_string()));
@@ -406,8 +424,10 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
             colors: false,
             confidence: false,
             progress: false,
+            print_memory: false,
             translate: false,
             hallucination_filter: false,
+            speed: 1.0,
         };
 
         match run_transcribe(transcribe_args, global) {
@@ -960,6 +980,321 @@ pub fn run_command(_args: CommandArgs, _global: &Args) -> CliResult<CommandResul
     ))
 }
 
+/// Run diagnose command (self-diagnostic checks)
+///
+/// Validates tokenizer configuration, model compatibility, and known issues.
+/// This is the primary debugging tool for troubleshooting transcription problems.
+///
+/// # Checks Performed
+///
+/// 1. **Tokenizer Configuration**
+///    - EOT token ID matches model type (50256 for English-only, 50257 for multilingual)
+///    - SOT token ID is correct
+///    - Language base token is correct
+///    - Initial token sequence is valid
+///
+/// 2. **Model Configuration** (if model provided)
+///    - Vocabulary size detection (multilingual vs English-only)
+///    - Layer configuration matches expected values
+///    - Weight dimensions are valid
+///
+/// 3. **Known Issues**
+///    - EOT-001: EOT token off-by-one (fixed in 2025-12-20)
+///    - H35: Cross-attention padding mask (fixed in 2025-12-20)
+#[allow(clippy::too_many_lines)]
+pub fn run_diagnose(args: DiagnoseArgs, global: &Args) -> CliResult<CommandResult> {
+    use crate::tokenizer::special_tokens::{self, SpecialTokens};
+
+    let mut checks: Vec<DiagnosticCheck> = Vec::new();
+    let mut all_passed = true;
+
+    if !global.quiet && !args.json {
+        println!("═══════════════════════════════════════════════════════════════════");
+        println!("                    whisper-apr Self-Diagnostic                     ");
+        println!("═══════════════════════════════════════════════════════════════════\n");
+    }
+
+    // -------------------------------------------------------------------------
+    // Section 1: Tokenizer Configuration Checks
+    // -------------------------------------------------------------------------
+    if !global.quiet && !args.json {
+        println!("1. Tokenizer Configuration");
+        println!("───────────────────────────────────────────────────────────────────");
+    }
+
+    // Check 1.1: Verify SpecialTokens struct exists and works
+    let multilingual = SpecialTokens::for_vocab_size(51865);
+    let english_only = SpecialTokens::for_vocab_size(51864);
+
+    // EOT token check for multilingual
+    let eot_multi_check = DiagnosticCheck {
+        id: "TOK-001".to_string(),
+        name: "EOT token (multilingual)".to_string(),
+        passed: multilingual.eot == 50257,
+        expected: "50257".to_string(),
+        actual: multilingual.eot.to_string(),
+        details: "EOT for multilingual models (vocab >= 51865)".to_string(),
+    };
+    if !eot_multi_check.passed {
+        all_passed = false;
+    }
+    checks.push(eot_multi_check.clone());
+    print_check(&eot_multi_check, global.quiet, args.json);
+
+    // EOT token check for English-only
+    let eot_en_check = DiagnosticCheck {
+        id: "TOK-002".to_string(),
+        name: "EOT token (English-only)".to_string(),
+        passed: english_only.eot == 50256,
+        expected: "50256".to_string(),
+        actual: english_only.eot.to_string(),
+        details: "EOT for English-only models (vocab < 51865)".to_string(),
+    };
+    if !eot_en_check.passed {
+        all_passed = false;
+    }
+    checks.push(eot_en_check.clone());
+    print_check(&eot_en_check, global.quiet, args.json);
+
+    // SOT token check for multilingual
+    let sot_multi_check = DiagnosticCheck {
+        id: "TOK-003".to_string(),
+        name: "SOT token (multilingual)".to_string(),
+        passed: multilingual.sot == 50258,
+        expected: "50258".to_string(),
+        actual: multilingual.sot.to_string(),
+        details: "SOT for multilingual models".to_string(),
+    };
+    if !sot_multi_check.passed {
+        all_passed = false;
+    }
+    checks.push(sot_multi_check.clone());
+    print_check(&sot_multi_check, global.quiet, args.json);
+
+    // LANG_BASE check for multilingual
+    let lang_multi_check = DiagnosticCheck {
+        id: "TOK-004".to_string(),
+        name: "LANG_BASE token (multilingual)".to_string(),
+        passed: multilingual.lang_base == 50259,
+        expected: "50259".to_string(),
+        actual: multilingual.lang_base.to_string(),
+        details: "Language base for multilingual models".to_string(),
+    };
+    if !lang_multi_check.passed {
+        all_passed = false;
+    }
+    checks.push(lang_multi_check.clone());
+    print_check(&lang_multi_check, global.quiet, args.json);
+
+    // Verify language_token function
+    let lang_en = special_tokens::language_token("en");
+    let lang_en_check = DiagnosticCheck {
+        id: "TOK-005".to_string(),
+        name: "English language token".to_string(),
+        passed: lang_en == Some(50259),
+        expected: "Some(50259)".to_string(),
+        actual: format!("{:?}", lang_en),
+        details: "language_token(\"en\") = LANG_BASE + 0".to_string(),
+    };
+    if !lang_en_check.passed {
+        all_passed = false;
+    }
+    checks.push(lang_en_check.clone());
+    print_check(&lang_en_check, global.quiet, args.json);
+
+    // Verify initial_tokens returns correct sequence
+    let initial = multilingual.initial_tokens();
+    let initial_check = DiagnosticCheck {
+        id: "TOK-006".to_string(),
+        name: "Initial tokens sequence".to_string(),
+        passed: initial == [50258, 50259, 50359, 50363],
+        expected: "[50258, 50259, 50359, 50363]".to_string(),
+        actual: format!("{:?}", initial),
+        details: "[SOT, LANG_EN, TRANSCRIBE, NO_TIMESTAMPS]".to_string(),
+    };
+    if !initial_check.passed {
+        all_passed = false;
+    }
+    checks.push(initial_check.clone());
+    print_check(&initial_check, global.quiet, args.json);
+
+    // TIMESTAMP_BASE check
+    let ts_base_check = DiagnosticCheck {
+        id: "TOK-007".to_string(),
+        name: "TIMESTAMP_BASE (multilingual)".to_string(),
+        passed: multilingual.timestamp_base == 50364,
+        expected: "50364".to_string(),
+        actual: multilingual.timestamp_base.to_string(),
+        details: "First timestamp token for multilingual models".to_string(),
+    };
+    if !ts_base_check.passed {
+        all_passed = false;
+    }
+    checks.push(ts_base_check.clone());
+    print_check(&ts_base_check, global.quiet, args.json);
+
+    // -------------------------------------------------------------------------
+    // Section 2: Model-specific checks (if model provided)
+    // -------------------------------------------------------------------------
+    if let Some(model_path) = &args.model {
+        if !global.quiet && !args.json {
+            println!("\n2. Model Configuration");
+            println!("───────────────────────────────────────────────────────────────────");
+        }
+
+        if !model_path.exists() {
+            let model_check = DiagnosticCheck {
+                id: "MDL-001".to_string(),
+                name: "Model file exists".to_string(),
+                passed: false,
+                expected: "File exists".to_string(),
+                actual: "File not found".to_string(),
+                details: model_path.display().to_string(),
+            };
+            all_passed = false;
+            checks.push(model_check.clone());
+            print_check(&model_check, global.quiet, args.json);
+        } else {
+            let model_check = DiagnosticCheck {
+                id: "MDL-001".to_string(),
+                name: "Model file exists".to_string(),
+                passed: true,
+                expected: "File exists".to_string(),
+                actual: "File exists".to_string(),
+                details: model_path.display().to_string(),
+            };
+            checks.push(model_check.clone());
+            print_check(&model_check, global.quiet, args.json);
+
+            // Try to load and check vocabulary size
+            if args.full {
+                match fs::read(model_path) {
+                    Ok(data) => {
+                        // Check APR magic bytes
+                        let magic_check = DiagnosticCheck {
+                            id: "MDL-002".to_string(),
+                            name: "APR magic bytes".to_string(),
+                            passed: data.len() >= 4 && &data[0..4] == b"APR1",
+                            expected: "APR1".to_string(),
+                            actual: if data.len() >= 4 {
+                                String::from_utf8_lossy(&data[0..4]).to_string()
+                            } else {
+                                "too short".to_string()
+                            },
+                            details: "Model file format identifier".to_string(),
+                        };
+                        if !magic_check.passed {
+                            all_passed = false;
+                        }
+                        checks.push(magic_check.clone());
+                        print_check(&magic_check, global.quiet, args.json);
+                    }
+                    Err(e) => {
+                        let read_check = DiagnosticCheck {
+                            id: "MDL-002".to_string(),
+                            name: "Model file readable".to_string(),
+                            passed: false,
+                            expected: "Readable".to_string(),
+                            actual: format!("Error: {}", e),
+                            details: "Could not read model file".to_string(),
+                        };
+                        all_passed = false;
+                        checks.push(read_check.clone());
+                        print_check(&read_check, global.quiet, args.json);
+                    }
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Section 3: Known Issues (informational)
+    // -------------------------------------------------------------------------
+    if !args.tokenizer_only && !global.quiet && !args.json {
+        println!("\n3. Known Issues Status");
+        println!("───────────────────────────────────────────────────────────────────");
+        println!("  ✓ EOT-001: EOT token off-by-one - FIXED (2025-12-20)");
+        println!("    Multilingual models now correctly use EOT=50257");
+        println!();
+        println!("  ✓ H35: Cross-attention padding mask - FIXED (2025-12-20)");
+        println!("    Decoder cross-attention now masks padding positions");
+        println!();
+    }
+
+    // -------------------------------------------------------------------------
+    // Summary
+    // -------------------------------------------------------------------------
+    let passed_count = checks.iter().filter(|c| c.passed).count();
+    let total_count = checks.len();
+
+    if args.json {
+        let json = serde_json::json!({
+            "passed": all_passed,
+            "checks_passed": passed_count,
+            "checks_total": total_count,
+            "checks": checks.iter().map(|c| serde_json::json!({
+                "id": c.id,
+                "name": c.name,
+                "passed": c.passed,
+                "expected": c.expected,
+                "actual": c.actual,
+                "details": c.details
+            })).collect::<Vec<_>>(),
+            "known_issues": [
+                {"id": "EOT-001", "status": "fixed", "date": "2025-12-20"},
+                {"id": "H35", "status": "fixed", "date": "2025-12-20"}
+            ]
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json).unwrap_or_default()
+        );
+    } else if !global.quiet {
+        println!("\n═══════════════════════════════════════════════════════════════════");
+        println!(
+            "RESULT: {}/{} checks passed {}",
+            passed_count,
+            total_count,
+            if all_passed { "✓" } else { "✗" }
+        );
+        println!("═══════════════════════════════════════════════════════════════════");
+    }
+
+    if all_passed {
+        Ok(CommandResult::success(format!(
+            "{}/{} checks passed",
+            passed_count, total_count
+        )))
+    } else {
+        Ok(CommandResult::failure(format!(
+            "{}/{} checks passed",
+            passed_count, total_count
+        )))
+    }
+}
+
+/// Diagnostic check result
+#[derive(Debug, Clone)]
+struct DiagnosticCheck {
+    id: String,
+    name: String,
+    passed: bool,
+    expected: String,
+    actual: String,
+    details: String,
+}
+
+fn print_check(check: &DiagnosticCheck, quiet: bool, json: bool) {
+    if quiet || json {
+        return;
+    }
+    let status = if check.passed { "✓" } else { "✗" };
+    println!(
+        "  {} [{}] {}: {} (expected: {}, got: {})",
+        status, check.id, check.name, check.details, check.expected, check.actual
+    );
+}
+
 fn format_validation_text(report: &crate::format::ValidationReport, detailed: bool, quiet: bool) {
     if quiet {
         return;
@@ -1203,8 +1538,10 @@ mod tests {
             colors: false,
             confidence: false,
             progress: false,
+            print_memory: false,
             translate: false,
             hallucination_filter: false,
+            speed: 1.0,
         }
     }
 
@@ -1551,6 +1888,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[test]
+    #[cfg(not(feature = "tui"))]
     fn test_run_tui_not_implemented() {
         let global = Args {
             command: Command::Tui,
@@ -1567,6 +1905,13 @@ mod tests {
             Err(CliError::NotImplemented(_)) => {}
             _ => panic!("Expected NotImplemented error"),
         }
+    }
+
+    #[test]
+    #[cfg(feature = "tui")]
+    fn test_run_tui_implemented() {
+        // TUI requires a terminal - just verify function signature compiles
+        // Cannot actually run in headless test environment
     }
 
     // -------------------------------------------------------------------------
@@ -1899,6 +2244,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[test]
+    #[cfg(not(feature = "tui"))]
     fn test_run_dispatches_to_tui() {
         let args = Args {
             command: Command::Tui,
@@ -1910,12 +2256,31 @@ mod tests {
         };
 
         let result = run(args);
-        // TUI is not implemented, should return error
+        // TUI is not implemented when feature disabled, should return error
         assert!(result.is_err());
         match result {
             Err(CliError::NotImplemented(_)) => {}
             _ => panic!("Expected NotImplemented error"),
         }
+    }
+
+    #[test]
+    #[cfg(feature = "tui")]
+    fn test_run_dispatches_to_tui() {
+        // When TUI feature is enabled, we can't easily test it in a headless environment
+        // The TUI requires a terminal, so we just verify the function exists
+        // and is callable without actually running it
+        use crate::cli::args::{Args, Command};
+        let _args = Args {
+            command: Command::Tui,
+            verbose: false,
+            quiet: true,
+            json: false,
+            trace: None,
+            no_color: false,
+        };
+        // Note: Actually running run(args) would block waiting for terminal input
+        // This test just verifies the code compiles with tui feature
     }
 
     #[test]

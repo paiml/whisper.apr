@@ -19,6 +19,55 @@ fn parse_temperature(s: &str) -> Result<f32, String> {
     Ok(temp)
 }
 
+/// Expand response files in command-line arguments.
+///
+/// Arguments prefixed with `@` are treated as response files containing
+/// additional arguments, one per line. This allows passing many arguments
+/// via a file instead of the command line.
+///
+/// # Arguments
+/// * `args` - Command-line arguments to expand
+///
+/// # Returns
+/// Expanded arguments with response file contents inlined
+///
+/// # Errors
+/// Returns error if a response file cannot be read
+///
+/// # Example
+/// ```ignore
+/// // args.txt contains:
+/// // -f
+/// // input.wav
+/// // --language
+/// // en
+///
+/// let args = vec!["whisper-apr".into(), "transcribe".into(), "@args.txt".into()];
+/// let expanded = expand_response_files(args)?;
+/// // expanded = ["whisper-apr", "transcribe", "-f", "input.wav", "--language", "en"]
+/// ```
+pub fn expand_response_files(args: Vec<String>) -> Result<Vec<String>, std::io::Error> {
+    let mut result = Vec::with_capacity(args.len());
+
+    for arg in args {
+        if let Some(file_path) = arg.strip_prefix('@') {
+            // Read response file and add each line as an argument
+            let contents = std::fs::read_to_string(file_path)?;
+            for line in contents.lines() {
+                let trimmed = line.trim();
+                // Skip empty lines and comments
+                if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    result.push(trimmed.to_string());
+                }
+            }
+        } else {
+            result.push(arg);
+        }
+    }
+
+    Ok(result)
+}
+
 /// whisper-apr: WASM-first automatic speech recognition
 ///
 /// A high-performance speech recognition CLI that runs natively and in browsers.
@@ -101,6 +150,10 @@ pub enum Command {
 
     /// Voice command recognition (whisper.cpp: whisper-command)
     Command(CommandArgs),
+
+    /// Self-diagnostic checks (tokenizer, model config, known issues)
+    #[command(alias = "doctor")]
+    Diagnose(DiagnoseArgs),
 }
 
 /// Arguments for transcribe command
@@ -337,6 +390,10 @@ pub struct TranscribeArgs {
     #[arg(long = "progress")]
     pub progress: bool,
 
+    /// Print memory usage stats (whisper.cpp: -pm)
+    #[arg(long = "print-memory")]
+    pub print_memory: bool,
+
     // -------------------------------------------------------------------------
     // Other
     // -------------------------------------------------------------------------
@@ -347,6 +404,10 @@ pub struct TranscribeArgs {
     /// Filter hallucinated repetitions
     #[arg(long)]
     pub hallucination_filter: bool,
+
+    /// Audio playback speed multiplier (whisper.cpp: --speed)
+    #[arg(long = "speed", default_value = "1.0")]
+    pub speed: f32,
 }
 
 /// Arguments for translate command
@@ -371,6 +432,10 @@ pub struct TranslateArgs {
     /// Use GPU acceleration
     #[arg(long)]
     pub gpu: bool,
+
+    /// Number of CPU threads (default: auto) (whisper.cpp: -t)
+    #[arg(short = 't', long)]
+    pub threads: Option<u32>,
 }
 
 /// Arguments for stream command (§6.7 - whisper.cpp: whisper-stream)
@@ -785,6 +850,29 @@ pub enum ValidateOutputFormat {
     Json,
     /// Markdown format
     Markdown,
+}
+
+/// Arguments for diagnose command
+///
+/// Self-diagnostic checks for whisper.apr configuration and known issues.
+/// Validates tokenizer settings, model compatibility, and common pitfalls.
+#[derive(Parser, Debug, Clone)]
+pub struct DiagnoseArgs {
+    /// Optional APR model file to check
+    #[arg(short, long)]
+    pub model: Option<PathBuf>,
+
+    /// Check only tokenizer configuration
+    #[arg(long)]
+    pub tokenizer_only: bool,
+
+    /// Output as JSON
+    #[arg(long)]
+    pub json: bool,
+
+    /// Run all checks including slow ones
+    #[arg(long)]
+    pub full: bool,
 }
 
 /// Model size options
