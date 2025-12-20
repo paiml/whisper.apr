@@ -59,8 +59,6 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 [[package]]
 name = "aprender"
 version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c996d5e1fba70e6cfe1909831e3ffb10e24434c647a86b1b085a784db3302c1c"
 dependencies = [
  "bincode",
  "dirs",
@@ -71,9 +69,11 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rmp-serde",
+ "rustfft",
  "safetensors",
  "serde",
  "serde_json",
+ "thiserror 2.0.17",
  "trueno",
 ]
 

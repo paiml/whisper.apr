@@ -36,11 +36,6 @@ thiserror = "2"
 # SIMD acceleration (trueno integration)
 trueno = "0.8"
 
-# Model format (aprender is the canonical .apr format library)
-# Note: audio feature provides mel/resample/stream primitives; whisper.apr has its own
-# specialized mel.rs with SIMD and tracing, but uses aprender for capture/resample/stream
-aprender = { path = "../aprender", default-features = false, features = ["safetensors-compare", "audio"] }
-
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
 realizar = { version = "0.3", optional = true, default-features = false }
@@ -97,8 +92,16 @@ jugar-probar = { version = "0.2", default-features = false }
 # Tempfile for CLI tests
 tempfile = "3"
 
+# Model format (aprender is the canonical .apr format library)
+# For native: full safetensors-compare with HF hub
+# For WASM: audio only (no HF hub - uses ureq/socks which aren't WASM-compatible)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+aprender = { path = "../aprender", default-features = false, features = ["safetensors-compare", "audio"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.2", features = ["js"] }
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+aprender = { path = "../aprender", default-features = false, features = ["audio"] }
 
 [profile.release]
 lto = true

@@ -711,7 +711,7 @@ roadmap:
   priority: medium
   assigned_to: null
   created: 2025-12-19T07:51:18.596882404+00:00
-  updated: 2025-12-19T08:01:42.922661422+00:00
+  updated: 2025-12-20T20:34:04.855502152+00:00
   spec: null
   acceptance_criteria: []
   phases: []
@@ -728,6 +728,294 @@ roadmap:
   assigned_to: null
   created: 2025-12-19T08:23:54.757759469+00:00
   updated: 2025-12-19T08:28:36.874252994+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-PARITY-001
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-PARITY-001'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T08:05:25.218145345+00:00
+  updated: 2025-12-20T08:24:46.915068781+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-PARITY-002
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-PARITY-002'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T08:25:19.342293119+00:00
+  updated: 2025-12-20T08:25:19.342293119+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-PARITY-003
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-PARITY-003'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T09:31:29.604464196+00:00
+  updated: 2025-12-20T09:40:49.452900387+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-PARITY-004
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-PARITY-004'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T09:41:29.785153388+00:00
+  updated: 2025-12-20T09:53:39.676668950+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-PARITY-005
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-PARITY-005'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T09:55:02.807289423+00:00
+  updated: 2025-12-20T10:02:47.454242461+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-PARITY-006
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-PARITY-006'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T10:06:26.726147642+00:00
+  updated: 2025-12-20T10:15:47.764421241+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-PARITY-007
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-PARITY-007'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T10:16:28.059999247+00:00
+  updated: 2025-12-20T10:24:25.671514143+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-PARITY-008
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-PARITY-008'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T13:56:01.232557950+00:00
+  updated: 2025-12-20T14:08:51.994885063+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-PARITY-009
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-PARITY-009'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T14:09:00.523980638+00:00
+  updated: 2025-12-20T14:26:26.803889769+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-LN-DEBUG-001
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-LN-DEBUG-001'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T14:30:48.908804691+00:00
+  updated: 2025-12-20T14:41:56.231107585+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-PARITY-010
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-PARITY-010'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T14:48:45.869110599+00:00
+  updated: 2025-12-20T15:05:18.650962695+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-PARITY-011
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-PARITY-011'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T15:06:23.779771818+00:00
+  updated: 2025-12-20T15:15:34.783787193+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-PARITY-012
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-PARITY-012'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T15:16:43.844225310+00:00
+  updated: 2025-12-20T15:26:16.272669672+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-T10-D-FIVE-WHYS
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-T10-D-FIVE-WHYS'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T17:02:39.894899743+00:00
+  updated: 2025-12-20T17:06:29.045519829+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-WHISPER-CPP-TTEST
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-WHISPER-CPP-TTEST'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T17:07:25.454990257+00:00
+  updated: 2025-12-20T17:13:11.001827490+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-CLI-PARITY-IMPL
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-CLI-PARITY-IMPL'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T17:35:07.646219888+00:00
+  updated: 2025-12-20T17:51:04.844742835+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-PARALLEL-INFERENCE
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PARALLEL-INFERENCE'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T18:30:58.684517916+00:00
+  updated: 2025-12-20T18:30:58.684517916+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-QA-CHECKLIST
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-QA-CHECKLIST'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2025-12-20T20:36:05.558927093+00:00
+  updated: 2025-12-20T20:36:05.558927093+00:00
   spec: null
   acceptance_criteria: []
   phases: []

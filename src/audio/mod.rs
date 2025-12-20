@@ -4,6 +4,8 @@
 
 pub mod batch;
 mod mel;
+/// OpenAI reference mel filterbank data for exact numerical matching
+pub mod mel_filterbank_data;
 mod resampler;
 mod ring_buffer;
 mod streaming;
