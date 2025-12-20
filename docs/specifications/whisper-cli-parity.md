@@ -755,12 +755,9 @@ probar test test_wasm_fallback
 
 #### Manual Browser Test Checklist
 
-1. **Setup server with COOP/COEP headers**:
+1. **Start probar server** (handles COOP/COEP headers automatically):
    ```bash
-   # Start test server (adds required headers)
-   cd demos && python3 -m http.server 8080 --bind 127.0.0.1
-   # Or use the provided script:
-   ./scripts/serve-wasm.sh
+   cd demos && probar serve
    ```
 
 2. **Verify headers in browser DevTools** (Network tab):
@@ -781,10 +778,14 @@ probar test test_wasm_fallback
    - Expected output: "The birds can use"
    - Check console for timing info
 
-5. **Test fallback (without COOP/COEP)**:
-   - Serve without headers
+5. **Test fallback** (probar can simulate missing headers):
+   ```bash
+   probar serve --no-isolation
+   ```
    - Should see: "SharedArrayBuffer not available, using sequential mode"
    - Transcription should still work (slower)
+
+**PROHIBITED**: Do NOT use `python -m http.server` or any other server. Use probar only.
 
 ---
 

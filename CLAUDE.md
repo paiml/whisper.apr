@@ -189,7 +189,7 @@ make coverage-open
 
 When debugging issues, you MUST use the proper tooling:
 
-### For Browser/WASM Issues - Use Probar
+### For Browser/WASM Issues - Use Probar ONLY
 
 ```bash
 # Run GUI tests
@@ -203,12 +203,21 @@ cargo test --package whisper-apr-demo-tests
 
 # Pixel regression tests
 probar coverage
+
+# Serve WASM for testing (probar handles COOP/COEP headers)
+probar serve
 ```
 
-**PROHIBITED debugging approaches:**
-- Adding `console.log` / `info!()` statements and rebuilding
+**PROHIBITED - DO NOT USE:**
+- `python -m http.server` or any Python HTTP server
+- `npx serve` or any Node.js HTTP server
 - Manual browser testing without probar tests
-- Using `grep` to search for issues instead of probar's test framework
+- Adding `console.log` / `info!()` statements and rebuilding
+
+**Why probar only?**
+- Automatically sets required COOP/COEP headers for SharedArrayBuffer
+- Integrates with test framework for reproducible browser tests
+- Provides coverage tracking and pixel regression testing
 
 ### For Performance/Tracing - Use Renacer
 
