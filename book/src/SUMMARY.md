@@ -36,6 +36,7 @@
 # Performance
 
 - [Benchmarks Overview](./performance/benchmarks.md)
+- [Parallel Inference](./performance/parallel-inference.md)
 - [Format Comparison](./performance/format-comparison.md)
 - [Real-Time Factor Analysis](./performance/rtf-analysis.md)
 - [WASM SIMD Performance](./performance/wasm-simd.md)
