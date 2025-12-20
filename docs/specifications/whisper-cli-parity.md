@@ -1,7 +1,7 @@
 # whisper-apr CLI Parity Specification
 
-**Version**: 2.4.0
-**Status**: UNIFIED CHECKLIST (254/255 points) + PARALLEL INFERENCE + P0 ZERO MOCK + WASM VERIFIED
+**Version**: 2.5.0
+**Status**: UNIFIED CHECKLIST (255/255 points) + PARALLEL INFERENCE + P0 ZERO MOCK + WASM VERIFIED + TSAN VALIDATED
 **Created**: 2025-12-18
 **Last Updated**: 2025-12-20
 **Methodology**: EXTREME TDD + Toyota Way + Popperian Falsification + Amdahl's Law
@@ -362,17 +362,18 @@ The specification follows the **aprender ecosystem** conventions with apr-cli pa
 | **Part II** | Transcription Pipeline | 100 | **100** ✅ |
 | **T0** | Integration Verification | 5 | **5** ✅ |
 | **T10** | Self-Diagnostic | 25 | **25** ✅ (A:5, B:5, C:5, D:5, E:5) |
-| **P** | Performance Parity (§11.3.6) | 15 | **14** ✅ (93% verified) |
-| **TOTAL** | | **255** | **254** |
+| **P** | Performance Parity (§11.3.6) | 15 | **15** ✅ (100% verified) |
+| **TOTAL** | | **255** | **255** |
 
 **UNIFIED GRADE**: **A+** (Production Quality - Full CLI parity + parallel inference achieved)
 
-**Performance Parity Status**: 14/15 points verified - Implementation complete, 1 item pending (P.7 TSAN validation)
+**Performance Parity Status**: 15/15 points verified - ALL ITEMS COMPLETE
 
 **Recent Progress (2025-12-20)**:
+- ✅ **P.7 TSAN VALIDATED**: 75 tests passed with ThreadSanitizer, 0 data races detected
 - ✅ **WASM VERIFIED**: `probador test -v` - 536 browser tests passed in 568.44s
 - ✅ **P.2 + P.9 + W.1 + W.2**: All WASM parallel tests now passing (Chrome + Firefox)
-- ✅ **14/15 POINTS**: Only P.7 (TSAN data race check) pending
+- ✅ **15/15 POINTS**: All parallel inference items complete
 - ✅ **NEW**: Section P implemented - Parallel attention heads
 - ✅ **P.6 WIRED**: `--threads N` flag now configures rayon thread pool
 - ✅ **PARALLEL INFERENCE**: 1.15-1.27x speedup measured (30s: 0.61x→0.53x RTF)
@@ -643,7 +644,7 @@ Speedup = 1 / (0.75 + 0.25/4) = 1 / (0.75 + 0.0625) = 1 / 0.8125 = 1.23x
 | P.4 | Output equivalence | See script below | Identical text | [x] | [ ] |
 | P.5 | RTF improves | See benchmark below | Speedup > 1.1x | [x] | [ ] |
 | P.6 | --threads flag works | `--threads 1` vs `--threads 4` | Different RTF | [x] | [ ] |
-| P.7 | No data races | ThreadSanitizer test | No races | [ ] | [ ] |
+| P.7 | No data races | ThreadSanitizer test | No races | [x] | [ ] |
 | P.8 | Deterministic output | 10 runs same input | Identical | [x] | [ ] |
 | P.11 | Memory acceptable | Compare RSS | < 2x increase | [x] | [ ] |
 | P.12 | CPU scales | Monitor during run | > 100% CPU | [x] | [ ] |
@@ -816,7 +817,7 @@ probar test test_wasm_fallback
 | P.4 | Output equivalence | CLI | ✅ PASS | "The birds can use" |
 | P.5 | RTF improves | CLI | ✅ PASS | 0.61x→0.53x (1.15x) |
 | P.6 | --threads works | CLI | ✅ PASS | 1T=6.61x, 4T=5.42x |
-| P.7 | No data races | CLI | ⏳ PENDING | Needs TSAN |
+| P.7 | No data races | CLI | ✅ PASS | 75 tests, 0 races (TSAN) |
 | P.8 | Deterministic | CLI | ✅ PASS | 5 runs identical |
 | P.9 | Browser parallel | WASM | ✅ PASS | probador 536 tests pass |
 | P.10 | WASM fallback | WASM | ✅ PASS | Compiles + runs |
@@ -826,9 +827,9 @@ probar test test_wasm_fallback
 | P.14 | No regression | CLI | ✅ PASS | 7.20x unchanged |
 | P.15 | Clean shutdown | CLI | ✅ PASS | probador browser teardown clean |
 
-**CLI Verified**: 11/12 (92%)
+**CLI Verified**: 12/12 (100%)
 **WASM Verified**: 3/3 (100%)
-**Total Verified**: 14/15 (93%)
+**Total Verified**: 15/15 (100%)
 
 ---
 
