@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         special_tokens::NO_TIMESTAMPS, // 50362
     ];
 
-    println!("Initial tokens: {:?}", initial_tokens);
+    println!("Initial tokens: {initial_tokens:?}");
 
     let cache = RefCell::new(DecoderKVCache::new(n_layers, d_model, max_tokens));
     let processed_count = RefCell::new(0usize);
@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Manual greedy decoding
     let eot = special_tokens::EOT;
-    let mut tokens = initial_tokens.clone();
+    let mut tokens = initial_tokens;
 
     println!("\n=== DECODING WITH SUPPRESSION ===\n");
 
@@ -109,10 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|(idx, val)| (idx as u32, *val))
             .expect("assertion");
 
-        println!(
-            "Step {}: argmax token {} (logit {:.4})",
-            step, argmax_token, argmax_logit
-        );
+        println!("Step {step}: argmax token {argmax_token} (logit {argmax_logit:.4})");
 
         // Show top 5 AFTER suppression
         let mut indexed: Vec<(usize, f32)> =
@@ -123,15 +120,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             indexed
                 .iter()
                 .take(5)
-                .map(|(i, v)| (*i as u32, format!("{:.2}", v)))
+                .map(|(i, v)| (*i as u32, format!("{v:.2}")))
                 .collect::<Vec<_>>()
         );
 
         // Check if this token is in valid range for decoding
         if argmax_token > 255 && argmax_token < special_tokens::EOT {
             println!(
-                "  WARNING: Token {} is a BPE merge token (not in base vocabulary)",
-                argmax_token
+                "  WARNING: Token {argmax_token} is a BPE merge token (not in base vocabulary)"
             );
         }
 
@@ -145,7 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n=== FINAL TOKENS ===\n");
-    println!("All tokens: {:?}", tokens);
+    println!("All tokens: {tokens:?}");
 
     // Try to decode
     println!("\n=== TOKENIZER DECODE ===\n");
@@ -159,7 +155,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 char::from_u32(token).unwrap_or('?')
             );
         } else if token < special_tokens::EOT {
-            println!("  Token {}: BPE merge (NOT IN BASE VOCAB!)", token);
+            println!("  Token {token}: BPE merge (NOT IN BASE VOCAB!)");
         } else {
             let name = match token {
                 t if t == special_tokens::EOT => "<EOT>",
@@ -167,10 +163,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 t if t == special_tokens::TRANSLATE => "<translate>",
                 t if t == special_tokens::TRANSCRIBE => "<transcribe>",
                 t if t == special_tokens::NO_TIMESTAMPS => "<notimestamps>",
-                t if t >= special_tokens::LANG_BASE && t < special_tokens::TRANSLATE => "<lang>",
+                t if (special_tokens::LANG_BASE..special_tokens::TRANSLATE).contains(&t) => {
+                    "<lang>"
+                }
                 _ => "<special>",
             };
-            println!("  Token {}: {}", token, name);
+            println!("  Token {token}: {name}");
         }
     }
 

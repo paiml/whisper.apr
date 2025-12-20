@@ -1121,7 +1121,7 @@ fn test_cross_attention_weight_stats() {
 /// IGNORED: Model hallucination issue - produces repetitive output instead of
 /// meaningful transcription. See WAPR-MODEL-QUALITY for tracking.
 #[test]
-#[ignore]
+#[ignore = "Model hallucination issue - see WAPR-MODEL-QUALITY"]
 fn test_transcription_matches_reference() {
     // Skip if model not available
     let model_path = "models/whisper-tiny-int8.apr";

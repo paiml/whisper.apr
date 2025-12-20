@@ -103,7 +103,7 @@ fn download_model(size: ModelSize, verbose: bool) -> ModelLoaderResult<PathBuf> 
     let cache_path = get_model_cache_path(size);
 
     if verbose {
-        eprintln!("[INFO] Downloading model from HuggingFace: {}", repo_id);
+        eprintln!("[INFO] Downloading model from HuggingFace: {repo_id}");
     }
 
     // Ensure cache directory exists
@@ -118,7 +118,7 @@ fn download_model(size: ModelSize, verbose: bool) -> ModelLoaderResult<PathBuf> 
     // Download model.safetensors
     let safetensors_path = repo
         .get("model.safetensors")
-        .map_err(|e| ModelLoaderError::Download(format!("Failed to download model: {}", e)))?;
+        .map_err(|e| ModelLoaderError::Download(format!("Failed to download model: {e}")))?;
 
     if verbose {
         eprintln!(
@@ -192,7 +192,7 @@ fn convert_safetensors_to_apr(
                 .collect(),
             _ => {
                 if verbose {
-                    eprintln!("[WARN] Skipping tensor {} with unsupported dtype", name);
+                    eprintln!("[WARN] Skipping tensor {name} with unsupported dtype");
                 }
                 continue;
             }
@@ -211,7 +211,7 @@ fn convert_safetensors_to_apr(
     // Write to file
     let apr_data = writer
         .to_bytes()
-        .map_err(|e| ModelLoaderError::Download(format!("Failed to write APR: {}", e)))?;
+        .map_err(|e| ModelLoaderError::Download(format!("Failed to write APR: {e}")))?;
     fs::write(apr_path, apr_data)?;
 
     if verbose {

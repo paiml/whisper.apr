@@ -9,11 +9,12 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 /// Parse temperature value with range validation (0.0 to 1.0)
 fn parse_temperature(s: &str) -> Result<f32, String> {
-    let temp: f32 = s.parse().map_err(|_| format!("'{}' is not a valid number", s))?;
+    let temp: f32 = s
+        .parse()
+        .map_err(|_| format!("'{s}' is not a valid number"))?;
     if !(0.0..=1.0).contains(&temp) {
         return Err(format!(
-            "temperature {} is out of range (must be between 0.0 and 1.0)",
-            temp
+            "temperature {temp} is out of range (must be between 0.0 and 1.0)"
         ));
     }
     Ok(temp)

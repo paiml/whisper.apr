@@ -261,9 +261,7 @@ mod argument_parsing {
 
 #[cfg(test)]
 mod output_format {
-    use whisper_apr::cli::output::{
-        format_lrc, format_srt, format_vtt, format_wts, OutputFormat,
-    };
+    use whisper_apr::cli::output::{format_lrc, format_srt, format_vtt, format_wts, OutputFormat};
     use whisper_apr::{Segment, TranscriptionResult};
 
     fn sample_result() -> TranscriptionResult {
@@ -353,9 +351,7 @@ mod output_format {
 #[cfg(test)]
 mod parity_framework {
     use std::path::PathBuf;
-    use whisper_apr::cli::parity::{
-        calculate_wer, ParityBenchmark, ParityConfig, ParityTest,
-    };
+    use whisper_apr::cli::parity::{calculate_wer, ParityBenchmark, ParityConfig, ParityTest};
 
     #[test]
     fn test_wer_calculation_exact_match() {
@@ -506,8 +502,8 @@ mod statistics {
 mod probar_output_format {
     use whisper_apr::cli::output::{
         format_csv, format_json, format_lrc, format_md, format_output, format_srt,
-        format_timestamp_lrc, format_timestamp_srt, format_timestamp_vtt, format_txt,
-        format_vtt, format_wts, OutputFormat,
+        format_timestamp_lrc, format_timestamp_srt, format_timestamp_vtt, format_txt, format_vtt,
+        format_wts, OutputFormat,
     };
     use whisper_apr::{Segment, TranscriptionResult};
 
@@ -595,7 +591,9 @@ mod probar_output_format {
                     start: 5.12,
                     end: 8.96,
                     text: "The quick brown fox jumps over the lazy dog.".to_string(),
-                    tokens: vec![50620, 440, 2068, 3699, 6756, 16553, 670, 264, 15509, 3000, 13, 50811],
+                    tokens: vec![
+                        50620, 440, 2068, 3699, 6756, 16553, 670, 264, 15509, 3000, 13, 50811,
+                    ],
                 },
             ],
         }
@@ -710,7 +708,10 @@ mod probar_output_format {
         let parsed: serde_json::Value =
             serde_json::from_str(&json).expect("JSON output should be valid");
 
-        assert!(parsed.get("text").is_some(), "JSON should have 'text' field");
+        assert!(
+            parsed.get("text").is_some(),
+            "JSON should have 'text' field"
+        );
         assert!(
             parsed.get("language").is_some(),
             "JSON should have 'language' field"
@@ -811,7 +812,7 @@ mod probar_output_format {
 
         // Large value (24+ hours) - verify it handles overflow gracefully
         let ts = format_timestamp_srt(90061.5); // 25h 1m 1s 500ms
-        // Hours can exceed 24, milliseconds may have float rounding
+                                                // Hours can exceed 24, milliseconds may have float rounding
         assert!(
             ts.starts_with("25:01:01,"),
             "Large timestamp should preserve hours/minutes/seconds: {}",
@@ -963,7 +964,9 @@ mod probar_output_format {
 #[cfg(test)]
 mod proptest_timestamps {
     use proptest::prelude::*;
-    use whisper_apr::cli::output::{format_timestamp_lrc, format_timestamp_srt, format_timestamp_vtt};
+    use whisper_apr::cli::output::{
+        format_timestamp_lrc, format_timestamp_srt, format_timestamp_vtt,
+    };
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
@@ -1087,7 +1090,15 @@ mod e2e_parity {
 
         // Test SRT output parity
         let cpp_srt = Command::new("/home/noah/.local/bin/main")
-            .args(["-m", model_path, "-f", TEST_AUDIO_SHORT, "-osrt", "-of", "-"])
+            .args([
+                "-m",
+                model_path,
+                "-f",
+                TEST_AUDIO_SHORT,
+                "-osrt",
+                "-of",
+                "-",
+            ])
             .output()
             .expect("whisper.cpp SRT output");
 
@@ -1102,7 +1113,15 @@ mod e2e_parity {
 
         // Test VTT output parity
         let cpp_vtt = Command::new("/home/noah/.local/bin/main")
-            .args(["-m", model_path, "-f", TEST_AUDIO_SHORT, "-ovtt", "-of", "-"])
+            .args([
+                "-m",
+                model_path,
+                "-f",
+                TEST_AUDIO_SHORT,
+                "-ovtt",
+                "-of",
+                "-",
+            ])
             .output()
             .expect("whisper.cpp VTT output");
 
@@ -1172,8 +1191,7 @@ mod e2e_transcription {
         let data = std::fs::read(TEST_AUDIO_SHORT).expect("Should read test audio");
 
         // Sample rate is at bytes 24-27 (little-endian u32)
-        let sample_rate =
-            u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
+        let sample_rate = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
 
         assert_eq!(sample_rate, 16000, "Whisper requires 16kHz audio");
     }
@@ -1223,7 +1241,11 @@ mod e2e_transcription {
         // Acceptable variations
         let wer = calculate_wer(EXPECTED_SHORT, "The bird can use");
         // 1 substitution out of 4 words = 0.25
-        assert!(wer < 0.30, "Minor variation WER should be < 30%, got {}", wer);
+        assert!(
+            wer < 0.30,
+            "Minor variation WER should be < 30%, got {}",
+            wer
+        );
     }
 
     #[test]
@@ -1423,8 +1445,8 @@ mod benchmark_rtf_tests {
         /// Calculate coefficient of variation
         fn cv(samples: &[f64]) -> f64 {
             let mean = samples.iter().sum::<f64>() / samples.len() as f64;
-            let variance =
-                samples.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (samples.len() - 1) as f64;
+            let variance = samples.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
+                / (samples.len() - 1) as f64;
             variance.sqrt() / mean
         }
 
@@ -1468,8 +1490,8 @@ mod benchmark_rtf_tests {
 
 #[cfg(test)]
 mod validate_command_tests {
-    use whisper_apr::cli::args::{ValidateArgs, ValidateOutputFormat};
     use std::path::PathBuf;
+    use whisper_apr::cli::args::{ValidateArgs, ValidateOutputFormat};
 
     #[test]
     fn test_validate_args_defaults() {
@@ -1546,8 +1568,8 @@ mod validate_command_tests {
 
 #[cfg(test)]
 mod model_command_tests {
-    use whisper_apr::cli::args::{ModelArgs, ModelAction, ModelSize};
     use std::path::PathBuf;
+    use whisper_apr::cli::args::{ModelAction, ModelArgs, ModelSize};
 
     #[test]
     fn test_model_download_args() {
@@ -1835,10 +1857,30 @@ mod word_timestamp_tests {
     fn test_word_timestamps_sequence() {
         // Words should be in chronological order
         let words = vec![
-            WordTimestamp { word: "The".to_string(), start: 0.0, end: 0.2, probability: 0.98 },
-            WordTimestamp { word: "quick".to_string(), start: 0.2, end: 0.5, probability: 0.95 },
-            WordTimestamp { word: "brown".to_string(), start: 0.5, end: 0.8, probability: 0.92 },
-            WordTimestamp { word: "fox".to_string(), start: 0.8, end: 1.1, probability: 0.97 },
+            WordTimestamp {
+                word: "The".to_string(),
+                start: 0.0,
+                end: 0.2,
+                probability: 0.98,
+            },
+            WordTimestamp {
+                word: "quick".to_string(),
+                start: 0.2,
+                end: 0.5,
+                probability: 0.95,
+            },
+            WordTimestamp {
+                word: "brown".to_string(),
+                start: 0.5,
+                end: 0.8,
+                probability: 0.92,
+            },
+            WordTimestamp {
+                word: "fox".to_string(),
+                start: 0.8,
+                end: 1.1,
+                probability: 0.97,
+            },
         ];
 
         // Verify chronological order
@@ -1939,14 +1981,20 @@ mod statistical_methodology_tests {
         fn test_stop_before_min_samples() {
             let controller = BenchmarkController::default();
             let samples: Vec<f64> = (0..20).map(|i| 100.0 + i as f64 * 0.01).collect();
-            assert!(!controller.should_stop(&samples), "Should not stop before min_samples");
+            assert!(
+                !controller.should_stop(&samples),
+                "Should not stop before min_samples"
+            );
         }
 
         #[test]
         fn test_stop_at_max_samples() {
             let controller = BenchmarkController::default();
             let samples: Vec<f64> = (0..200).map(|i| 100.0 + (i as f64).sin() * 50.0).collect();
-            assert!(controller.should_stop(&samples), "Should stop at max_samples");
+            assert!(
+                controller.should_stop(&samples),
+                "Should stop at max_samples"
+            );
         }
 
         #[test]
@@ -1956,7 +2004,10 @@ mod statistical_methodology_tests {
             let samples: Vec<f64> = (0..50).map(|i| 100.0 + (i as f64) * 0.001).collect();
             let cv = coefficient_of_variation(&samples);
             assert!(cv < 0.05, "CV should be low: {}", cv);
-            assert!(controller.should_stop(&samples), "Should stop when CV is low");
+            assert!(
+                controller.should_stop(&samples),
+                "Should stop when CV is low"
+            );
         }
 
         #[test]
@@ -2118,10 +2169,16 @@ mod benchmark_schema_tests {
                 if latency_delta_pct <= 5.0 {
                     (VerdictStatus::Pass, "Parity achieved within 5%".to_string())
                 } else {
-                    (VerdictStatus::Warning, "Parity achieved but approaching limit".to_string())
+                    (
+                        VerdictStatus::Warning,
+                        "Parity achieved but approaching limit".to_string(),
+                    )
                 }
             } else {
-                (VerdictStatus::Fail, "Parity failed: exceeds 10% threshold".to_string())
+                (
+                    VerdictStatus::Fail,
+                    "Parity failed: exceeds 10% threshold".to_string(),
+                )
             };
 
             Self {
@@ -2369,7 +2426,10 @@ mod baseline_management_tests {
         assert_eq!(policy.benchmark_baseline_days, 90);
         assert_eq!(policy.pr_results_days, 30);
         assert_eq!(policy.nightly_results_days, 14);
-        assert!(policy.release_results_days.is_none(), "Release should be permanent");
+        assert!(
+            policy.release_results_days.is_none(),
+            "Release should be permanent"
+        );
     }
 
     #[test]
@@ -2519,7 +2579,11 @@ mod section_a_argument_parsing {
         let version = cmd.get_version().expect("Should have version");
         // Verify semver format (X.Y.Z)
         let parts: Vec<&str> = version.split('.').collect();
-        assert!(parts.len() >= 2, "Version should be semver format: {}", version);
+        assert!(
+            parts.len() >= 2,
+            "Version should be semver format: {}",
+            version
+        );
     }
 
     /// A.4: Unknown flag errors with non-zero exit code
@@ -2605,12 +2669,7 @@ mod section_a_argument_parsing {
     /// A.10: Audio file path validation
     #[test]
     fn test_a10_audio_file_path_accepted() {
-        let result = Args::try_parse_from([
-            "whisper-apr",
-            "transcribe",
-            "-f",
-            "any-path.wav",
-        ]);
+        let result = Args::try_parse_from(["whisper-apr", "transcribe", "-f", "any-path.wav"]);
         assert!(result.is_ok(), "Audio path should parse");
     }
 
@@ -2687,14 +2746,8 @@ mod section_a_argument_parsing {
     #[test]
     fn test_a12_quiet_and_verbose_conflict() {
         // --quiet and --verbose are mutually exclusive
-        let result = Args::try_parse_from([
-            "whisper-apr",
-            "-q",
-            "-v",
-            "transcribe",
-            "-f",
-            "test.wav",
-        ]);
+        let result =
+            Args::try_parse_from(["whisper-apr", "-q", "-v", "transcribe", "-f", "test.wav"]);
         // clap should reject conflicting flags
         assert!(result.is_err(), "--quiet and --verbose should conflict");
     }
@@ -2702,24 +2755,12 @@ mod section_a_argument_parsing {
     /// A.13: Language code validation
     #[test]
     fn test_a13_language_code_accepted() {
-        let result = Args::try_parse_from([
-            "whisper-apr",
-            "transcribe",
-            "-f",
-            "test.wav",
-            "-l",
-            "en",
-        ]);
+        let result =
+            Args::try_parse_from(["whisper-apr", "transcribe", "-f", "test.wav", "-l", "en"]);
         assert!(result.is_ok(), "Valid language code should parse");
 
-        let result = Args::try_parse_from([
-            "whisper-apr",
-            "transcribe",
-            "-f",
-            "test.wav",
-            "-l",
-            "auto",
-        ]);
+        let result =
+            Args::try_parse_from(["whisper-apr", "transcribe", "-f", "test.wav", "-l", "auto"]);
         assert!(result.is_ok(), "'auto' language should parse");
     }
 
@@ -2740,12 +2781,7 @@ mod section_a_argument_parsing {
     /// A.15: Batch command accepts multiple files via glob patterns
     #[test]
     fn test_a15_batch_accepts_patterns() {
-        let result = Args::try_parse_from([
-            "whisper-apr",
-            "batch",
-            "--pattern",
-            "*.wav",
-        ]);
+        let result = Args::try_parse_from(["whisper-apr", "batch", "--pattern", "*.wav"]);
         assert!(result.is_ok(), "Batch with pattern should parse");
     }
 }
@@ -2790,12 +2826,7 @@ mod section_b_core_transcription {
         use clap::Parser;
         use whisper_apr::cli::args::{Args, Command};
 
-        let result = Args::try_parse_from([
-            "whisper-apr",
-            "transcribe",
-            "-f",
-            "test.wav",
-        ]);
+        let result = Args::try_parse_from(["whisper-apr", "transcribe", "-f", "test.wav"]);
 
         match result.expect("Args should parse").command {
             Command::Transcribe(t) => {
@@ -2890,15 +2921,24 @@ mod section_b_core_transcription {
         const CHUNK_SIZE: usize = 30 * 16000; // 30 seconds
         const TEN_MINUTES: usize = 10 * 60 * 16000;
         let num_chunks = (TEN_MINUTES + CHUNK_SIZE - 1) / CHUNK_SIZE;
-        assert!(num_chunks >= 20, "10 min audio should have ~20+ chunks of 30s");
+        assert!(
+            num_chunks >= 20,
+            "10 min audio should have ~20+ chunks of 30s"
+        );
     }
 
     /// B.12: Unicode text output
     #[test]
     fn test_b12_unicode_supported() {
         let unicode_text = "日本語 中文 한국어 العربية";
-        assert!(unicode_text.is_ascii() == false, "Unicode text should be recognized");
-        assert!(unicode_text.chars().count() > 0, "Unicode should have chars");
+        assert!(
+            unicode_text.is_ascii() == false,
+            "Unicode text should be recognized"
+        );
+        assert!(
+            unicode_text.chars().count() > 0,
+            "Unicode should have chars"
+        );
     }
 
     /// B.14: Number transcription
@@ -2915,12 +2955,7 @@ mod section_b_core_transcription {
         use clap::Parser;
         use whisper_apr::cli::args::{Args, Command};
 
-        let result = Args::try_parse_from([
-            "whisper-apr",
-            "transcribe",
-            "-f",
-            "test.wav",
-        ]);
+        let result = Args::try_parse_from(["whisper-apr", "transcribe", "-f", "test.wav"]);
 
         match result.expect("Args should parse").command {
             Command::Transcribe(t) => {
@@ -2938,7 +2973,10 @@ mod section_b_core_transcription {
         let timestamp_1: f64 = 1.000;
         let timestamp_2: f64 = 1.045; // 45ms difference - within tolerance
         let diff_ms = (timestamp_2 - timestamp_1).abs() * 1000.0;
-        assert!(diff_ms < TIMESTAMP_TOLERANCE_MS, "45ms diff should be within tolerance");
+        assert!(
+            diff_ms < TIMESTAMP_TOLERANCE_MS,
+            "45ms diff should be within tolerance"
+        );
     }
 
     /// B.17: Word-level timestamps option
@@ -2978,9 +3016,19 @@ mod section_b_core_transcription {
             .map(|(l, r)| (l + r) / 2.0)
             .collect();
 
-        assert_eq!(mono.len(), left.len(), "B.3: Mono output same length as input");
-        assert!((mono[0] - 0.4).abs() < 0.001, "B.3: First sample averaged correctly");
-        assert!((mono[1] - (-0.4)).abs() < 0.001, "B.3: Negative samples averaged correctly");
+        assert_eq!(
+            mono.len(),
+            left.len(),
+            "B.3: Mono output same length as input"
+        );
+        assert!(
+            (mono[0] - 0.4).abs() < 0.001,
+            "B.3: First sample averaged correctly"
+        );
+        assert!(
+            (mono[1] - (-0.4)).abs() < 0.001,
+            "B.3: Negative samples averaged correctly"
+        );
     }
 
     /// B.4: 24-bit audio to 16-bit conversion
@@ -3012,7 +3060,10 @@ mod section_b_core_transcription {
         // Check punctuation markers are present
         assert!(transcription.contains(','), "B.13: Comma punctuation");
         assert!(transcription.contains('!'), "B.13: Exclamation punctuation");
-        assert!(transcription.contains('?'), "B.13: Question mark punctuation");
+        assert!(
+            transcription.contains('?'),
+            "B.13: Question mark punctuation"
+        );
         assert!(transcription.contains('.'), "B.13: Period punctuation");
         assert!(transcription.contains('\''), "B.13: Apostrophe punctuation");
     }
@@ -3021,7 +3072,7 @@ mod section_b_core_transcription {
 /// Section C: Output Formats (10 points)
 #[cfg(test)]
 mod section_c_output_formats {
-    use whisper_apr::cli::output::{format_srt, format_vtt, format_lrc};
+    use whisper_apr::cli::output::{format_lrc, format_srt, format_vtt};
     use whisper_apr::{Segment, TranscriptionResult};
 
     /// Create test result for testing
@@ -3067,16 +3118,14 @@ mod section_c_output_formats {
         use clap::Parser;
         use whisper_apr::cli::args::{Args, Command};
 
-        let result = Args::try_parse_from([
-            "whisper-apr",
-            "transcribe",
-            "-f",
-            "test.wav",
-        ]);
+        let result = Args::try_parse_from(["whisper-apr", "transcribe", "-f", "test.wav"]);
 
         match result.expect("Args should parse").command {
             Command::Transcribe(t) => {
-                assert!(t.output.is_none(), "Default should be stdout (no output file)");
+                assert!(
+                    t.output.is_none(),
+                    "Default should be stdout (no output file)"
+                );
             }
             _ => panic!("Expected Transcribe command"),
         }
@@ -3112,8 +3161,14 @@ mod section_c_output_formats {
         let result = test_result();
         let json = format_json(&result);
         assert!(json.contains("\"text\""), "JSON should have text field");
-        assert!(json.contains("\"language\""), "JSON should have language field");
-        assert!(json.contains("\"segments\""), "JSON should have segments field");
+        assert!(
+            json.contains("\"language\""),
+            "JSON should have language field"
+        );
+        assert!(
+            json.contains("\"segments\""),
+            "JSON should have segments field"
+        );
     }
 
     /// C.4: Output file creation flag
@@ -3174,12 +3229,21 @@ mod section_c_output_formats {
         let csv = format_csv(&result);
 
         // CSV must have header row
-        assert!(csv.starts_with("start,end,text"), "C.8: CSV should have header row");
+        assert!(
+            csv.starts_with("start,end,text"),
+            "C.8: CSV should have header row"
+        );
         // CSV should contain data rows
-        assert!(csv.contains("Hello, world."), "C.8: CSV should contain transcription text");
+        assert!(
+            csv.contains("Hello, world."),
+            "C.8: CSV should contain transcription text"
+        );
         // CSV should have proper line structure
         let lines: Vec<&str> = csv.lines().collect();
-        assert!(lines.len() >= 2, "C.8: CSV should have header + at least one data row");
+        assert!(
+            lines.len() >= 2,
+            "C.8: CSV should have header + at least one data row"
+        );
     }
 }
 
@@ -3305,13 +3369,8 @@ mod section_d_parity {
         use clap::Parser;
         use whisper_apr::cli::args::{Args, Command};
 
-        let result = Args::try_parse_from([
-            "whisper-apr",
-            "transcribe",
-            "-f",
-            "test.wav",
-            "--translate",
-        ]);
+        let result =
+            Args::try_parse_from(["whisper-apr", "transcribe", "-f", "test.wav", "--translate"]);
 
         match result.expect("Translate args should parse").command {
             Command::Transcribe(t) => {
@@ -3374,7 +3433,10 @@ mod section_d_parity {
 
         match result.expect("Prompt args should parse").command {
             Command::Transcribe(t) => {
-                assert_eq!(t.prompt, "This is a test prompt.", "Prompt should be captured");
+                assert_eq!(
+                    t.prompt, "This is a test prompt.",
+                    "Prompt should be captured"
+                );
             }
             _ => panic!("Expected Transcribe command"),
         }
@@ -3422,7 +3484,10 @@ mod section_d_parity {
             "0.7",
         ]);
 
-        match result.expect("No-speech threshold args should parse").command {
+        match result
+            .expect("No-speech threshold args should parse")
+            .command
+        {
             Command::Transcribe(t) => {
                 assert!((t.no_speech_thold - 0.7).abs() < f32::EPSILON);
             }
@@ -3675,13 +3740,7 @@ mod section_e_performance {
         use clap::Parser;
         use whisper_apr::cli::args::{Args, Command};
 
-        let result = Args::try_parse_from([
-            "whisper-apr",
-            "transcribe",
-            "-f",
-            "test.wav",
-            "--gpu",
-        ]);
+        let result = Args::try_parse_from(["whisper-apr", "transcribe", "-f", "test.wav", "--gpu"]);
 
         match result.expect("GPU args should parse").command {
             Command::Transcribe(t) => {
@@ -3697,14 +3756,8 @@ mod section_e_performance {
         use clap::Parser;
         use whisper_apr::cli::args::{Args, Command};
 
-        let result = Args::try_parse_from([
-            "whisper-apr",
-            "transcribe",
-            "-f",
-            "test.wav",
-            "-t",
-            "4",
-        ]);
+        let result =
+            Args::try_parse_from(["whisper-apr", "transcribe", "-f", "test.wav", "-t", "4"]);
 
         match result.expect("Threads args should parse").command {
             Command::Transcribe(t) => {
@@ -3754,7 +3807,10 @@ mod section_e_performance {
 
         match result.expect("Memory profiling args should parse").command {
             Command::Transcribe(t) => {
-                assert!(t.print_memory, "E.11: Memory profiling flag should be parsed");
+                assert!(
+                    t.print_memory,
+                    "E.11: Memory profiling flag should be parsed"
+                );
             }
             _ => panic!("Expected Transcribe command"),
         }
@@ -3867,9 +3923,9 @@ mod section_f_error_handling {
         for path_str in &malicious_paths {
             let path = Path::new(path_str);
             // Any path with ".." is suspicious
-            let has_traversal = path.components().any(|c| {
-                matches!(c, std::path::Component::ParentDir)
-            });
+            let has_traversal = path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir));
             let is_absolute = path.is_absolute();
 
             // Security check: flag suspicious paths
@@ -3931,7 +3987,10 @@ mod section_f_error_handling {
         // Large allocation that would cause OOM
         const HUGE_ALLOC_GB: usize = 1024;
         // We just document this - actual OOM testing is in integration tests
-        assert!(HUGE_ALLOC_GB > 100, "Should detect extremely large allocations");
+        assert!(
+            HUGE_ALLOC_GB > 100,
+            "Should detect extremely large allocations"
+        );
     }
 
     /// F.4: Ctrl+C handling (SIGINT)
@@ -4011,12 +4070,7 @@ mod section_g_advanced_features {
     /// G.1: Server command exists
     #[test]
     fn test_g1_serve_command_exists() {
-        let result = Args::try_parse_from([
-            "whisper-apr",
-            "serve",
-            "--port",
-            "8080",
-        ]);
+        let result = Args::try_parse_from(["whisper-apr", "serve", "--port", "8080"]);
         assert!(result.is_ok(), "serve command should exist");
 
         match result.expect("Serve args should parse").command {
@@ -4054,12 +4108,7 @@ mod section_g_advanced_features {
     /// G.4: Batch command exists
     #[test]
     fn test_g4_batch_command_exists() {
-        let result = Args::try_parse_from([
-            "whisper-apr",
-            "batch",
-            "--pattern",
-            "*.wav",
-        ]);
+        let result = Args::try_parse_from(["whisper-apr", "batch", "--pattern", "*.wav"]);
         assert!(result.is_ok(), "batch command should exist");
 
         match result.expect("Batch args should parse").command {
@@ -4123,7 +4172,11 @@ mod section_h_model_optimization {
                 "-Q",
                 qt,
             ]);
-            assert!(result.is_ok(), "Quantization type {} should be available", qt);
+            assert!(
+                result.is_ok(),
+                "Quantization type {} should be available",
+                qt
+            );
         }
     }
 
@@ -4148,7 +4201,10 @@ mod section_h_model_optimization {
         const FP16_WER: f64 = 0.05; // 5% baseline
         const MAX_DEGRADATION: f64 = 0.01; // 1% max degradation
         const INT8_MAX_WER: f64 = FP16_WER + MAX_DEGRADATION;
-        assert!(INT8_MAX_WER <= 0.07, "Int8 WER should be <= 7% (FP16 + 2% margin)");
+        assert!(
+            INT8_MAX_WER <= 0.07,
+            "Int8 WER should be <= 7% (FP16 + 2% margin)"
+        );
     }
 
     /// H.3: Int8 speedup requirement
@@ -4166,7 +4222,10 @@ mod section_h_model_optimization {
         // Int8 should use less memory than FP16
         const FP16_MEMORY_MB: usize = 500;
         const INT8_TARGET_MB: usize = 300; // 0.6x of FP16
-        assert!(INT8_TARGET_MB <= FP16_MEMORY_MB * 6 / 10, "Int8 should use less memory");
+        assert!(
+            INT8_TARGET_MB <= FP16_MEMORY_MB * 6 / 10,
+            "Int8 should use less memory"
+        );
     }
 
     /// H.5: Distilled model support
@@ -4182,7 +4241,10 @@ mod section_h_model_optimization {
     fn test_h6_distilled_semantic_target() {
         // Distilled model should have high cosine similarity with teacher
         const MIN_COSINE_SIM: f64 = 0.95;
-        assert!(MIN_COSINE_SIM >= 0.9, "Distilled should be semantically close");
+        assert!(
+            MIN_COSINE_SIM >= 0.9,
+            "Distilled should be semantically close"
+        );
     }
 
     /// H.7: Pruned model support
@@ -4226,12 +4288,8 @@ mod transcription_pipeline {
         use whisper_apr::cli::commands::run_transcribe;
 
         // Parse minimal args
-        let args = Args::try_parse_from([
-            "whisper-apr",
-            "transcribe",
-            "-f",
-            TEST_AUDIO_SHORT,
-        ]).expect("Args should parse");
+        let args = Args::try_parse_from(["whisper-apr", "transcribe", "-f", TEST_AUDIO_SHORT])
+            .expect("Args should parse");
 
         let transcribe_args = match &args.command {
             whisper_apr::cli::args::Command::Transcribe(t) => t.clone(),
@@ -4242,14 +4300,21 @@ mod transcription_pipeline {
         let result = run_transcribe(transcribe_args, &args);
 
         // Verify success
-        assert!(result.is_ok(), "Transcription should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Transcription should succeed: {:?}",
+            result.err()
+        );
         let result = result.expect("Transcription should succeed");
         assert!(result.success, "Result should indicate success");
 
         // Verify non-empty output (the key assertion for WAPR-TRANS-001)
         let text = result.message.trim();
         assert!(!text.is_empty(), "Transcription output should not be empty");
-        assert!(text.len() > 5, "Transcription should contain meaningful text");
+        assert!(
+            text.len() > 5,
+            "Transcription should contain meaningful text"
+        );
 
         // Verify it's not just whitespace or special tokens
         let has_letters = text.chars().any(|c| c.is_alphabetic());
@@ -4262,9 +4327,16 @@ mod transcription_pipeline {
     fn test_t1_1b_cli_binary_produces_output() {
         let output = Command::new("cargo")
             .args([
-                "run", "--release", "--features", "cli",
-                "--bin", "whisper-apr-cli", "--",
-                "transcribe", "-f", TEST_AUDIO_SHORT,
+                "run",
+                "--release",
+                "--features",
+                "cli",
+                "--bin",
+                "whisper-apr-cli",
+                "--",
+                "transcribe",
+                "-f",
+                TEST_AUDIO_SHORT,
             ])
             .output()
             .expect("Failed to execute CLI");
@@ -4272,11 +4344,18 @@ mod transcription_pipeline {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
 
-        assert!(output.status.success(), "CLI should exit successfully. stderr: {}", stderr);
+        assert!(
+            output.status.success(),
+            "CLI should exit successfully. stderr: {}",
+            stderr
+        );
 
         let text = stdout.trim();
         assert!(!text.is_empty(), "CLI output should not be empty");
-        assert!(text.chars().any(|c| c.is_alphabetic()), "Output should contain words");
+        assert!(
+            text.chars().any(|c| c.is_alphabetic()),
+            "Output should contain words"
+        );
     }
 
     /// Test that model_loader module exists and has required functions
@@ -4305,7 +4384,10 @@ mod transcription_pipeline {
 
         // Just verify the path format is sensible
         assert!(!home.is_empty(), "HOME should be set");
-        assert!(expected_cache.contains("whisper-apr"), "Cache should be in whisper-apr dir");
+        assert!(
+            expected_cache.contains("whisper-apr"),
+            "Cache should be in whisper-apr dir"
+        );
     }
 }
 
@@ -4425,7 +4507,7 @@ mod unified_pathway_verification {
     /// T0.5: Identical output for test audio
     /// Verify CLI and library produce identical text for same audio
     #[test]
-    #[ignore] // Requires model file - run with: cargo test --ignored
+    #[ignore = "Requires model file - run with --ignored"]
     fn test_t0_5_identical_output_for_test_audio() {
         use std::path::Path;
         use whisper_apr::{TranscribeOptions, WhisperApr};
@@ -4793,10 +4875,7 @@ mod audio_input_pipeline {
             normalized_max < 1.0 && normalized_max > 0.99,
             "T1.12: i16::MAX normalizes to ~1.0"
         );
-        assert!(
-            normalized_min >= -1.0,
-            "T1.12: i16::MIN normalizes to -1.0"
-        );
+        assert!(normalized_min >= -1.0, "T1.12: i16::MIN normalizes to -1.0");
     }
 
     /// T1.13: Audio chunk size for 30-second segments
@@ -4839,14 +4918,8 @@ mod audio_input_pipeline {
         let min_magnitude: f32 = 1e-10;
         let log_min = min_magnitude.log10();
 
-        assert!(
-            log_min.is_finite(),
-            "T1.15: log10(1e-10) must be finite"
-        );
-        assert!(
-            log_min < -5.0,
-            "T1.15: log10(1e-10) ≈ -10"
-        );
+        assert!(log_min.is_finite(), "T1.15: log10(1e-10) must be finite");
+        assert!(log_min < -5.0, "T1.15: log10(1e-10) ≈ -10");
 
         // Whisper clamps at approximately 1e-10
         let clamped = min_magnitude.max(1e-10);
@@ -5016,11 +5089,7 @@ mod encoder_pipeline {
         let n_state = 384; // tiny model dimension
 
         let pos_emb_size = max_positions * n_state;
-        assert_eq!(
-            pos_emb_size,
-            576000,
-            "T3.3: Pos embedding = 1500 * 384"
-        );
+        assert_eq!(pos_emb_size, 576000, "T3.3: Pos embedding = 1500 * 384");
     }
 
     /// T3.4: Encoder uses multi-head attention
@@ -5054,7 +5123,9 @@ mod encoder_pipeline {
     fn test_t3_7_gelu_activation() {
         // GELU(x) ≈ 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3)))
         let x = 1.0_f32;
-        let gelu_approx = 0.5 * x * (1.0 + ((2.0_f32 / std::f32::consts::PI).sqrt() * (x + 0.044715 * x.powi(3))).tanh());
+        let gelu_approx = 0.5
+            * x
+            * (1.0 + ((2.0_f32 / std::f32::consts::PI).sqrt() * (x + 0.044715 * x.powi(3))).tanh());
         assert!(
             (gelu_approx - 0.8413).abs() < 0.01,
             "T3.7: GELU(1.0) ≈ 0.84"
@@ -5123,7 +5194,10 @@ mod encoder_pipeline {
         // Encoder can process shorter sequences
         let short_frames = 1500;
         let long_frames = 3000;
-        assert!(short_frames < long_frames, "T3.14: Variable length supported");
+        assert!(
+            short_frames < long_frames,
+            "T3.14: Variable length supported"
+        );
     }
 
     /// T3.15: Encoder output used for cross-attention
@@ -5569,7 +5643,10 @@ mod output_formatting {
     fn test_t8_10_empty_output() {
         let empty = "";
         let no_speech = "[no speech detected]";
-        assert!(empty.is_empty() || !no_speech.is_empty(), "T8.10: Empty handled");
+        assert!(
+            empty.is_empty() || !no_speech.is_empty(),
+            "T8.10: Empty handled"
+        );
     }
 }
 
@@ -6310,10 +6387,7 @@ mod self_diagnostic {
         );
 
         // Minimum value should be reasonably above 0 (not near-dead neurons)
-        let min_gamma = gamma_values
-            .iter()
-            .cloned()
-            .fold(f32::INFINITY, f32::min);
+        let min_gamma = gamma_values.iter().cloned().fold(f32::INFINITY, f32::min);
         assert!(
             min_gamma > 0.1,
             "T10.D3-STAT: Min gamma should be > 0.1, got {}",
@@ -6370,27 +6444,23 @@ mod self_diagnostic {
         // Source: openai/whisper-tiny on HuggingFace
         // Verified via: cargo run --example verify_hf_weights
         let openai_reference: [f32; 10] = [
-            11.7109, 10.3359, 7.9414, 9.2734, 10.3516,
-            10.0703, 4.8594, 9.8203, 10.1562, 11.3672,
+            11.7109, 10.3359, 7.9414, 9.2734, 10.3516, 10.0703, 4.8594, 9.8203, 10.1562, 11.3672,
         ];
 
         // HuggingFace transformers (same as OpenAI)
         let huggingface_values: [f32; 10] = [
-            11.7109, 10.3359, 7.9414, 9.2734, 10.3516,
-            10.0703, 4.8594, 9.8203, 10.1562, 11.3672,
+            11.7109, 10.3359, 7.9414, 9.2734, 10.3516, 10.0703, 4.8594, 9.8203, 10.1562, 11.3672,
         ];
 
         // whisper-apr APR format (verified via check_ln_weights)
         let whisper_apr_values: [f32; 10] = [
-            11.7109, 10.3359, 7.9414, 9.2734, 10.3516,
-            10.0703, 4.8594, 9.8203, 10.1562, 11.3672,
+            11.7109, 10.3359, 7.9414, 9.2734, 10.3516, 10.0703, 4.8594, 9.8203, 10.1562, 11.3672,
         ];
 
         // whisper.cpp GGML format (derived from same HuggingFace source)
         // Note: GGML fp16 may have tiny rounding differences
         let whisper_cpp_values: [f32; 10] = [
-            11.7109, 10.3359, 7.9414, 9.2734, 10.3516,
-            10.0703, 4.8594, 9.8203, 10.1562, 11.3672,
+            11.7109, 10.3359, 7.9414, 9.2734, 10.3516, 10.0703, 4.8594, 9.8203, 10.1562, 11.3672,
         ];
 
         // T-test: HuggingFace vs whisper-apr
@@ -6398,7 +6468,8 @@ mod self_diagnostic {
         assert!(
             p1 > 0.99,
             "HuggingFace vs whisper-apr: p={:.4} should be ~1.0 (t={:.6})",
-            p1, t1
+            p1,
+            t1
         );
 
         // T-test: HuggingFace vs whisper.cpp
@@ -6406,7 +6477,8 @@ mod self_diagnostic {
         assert!(
             p2 > 0.99,
             "HuggingFace vs whisper.cpp: p={:.4} should be ~1.0 (t={:.6})",
-            p2, t2
+            p2,
+            t2
         );
 
         // T-test: whisper-apr vs whisper.cpp
@@ -6414,7 +6486,8 @@ mod self_diagnostic {
         assert!(
             p3 > 0.99,
             "whisper-apr vs whisper.cpp: p={:.4} should be ~1.0 (t={:.6})",
-            p3, t3
+            p3,
+            t3
         );
 
         // Verify mean matches across all (should be ~9.96)
@@ -6448,10 +6521,8 @@ mod self_diagnostic {
         // Full decoder.layer_norm.weight sample (first 20 values for better statistics)
         // These values are identical across HuggingFace, whisper.cpp, and whisper-apr
         let weights: [f32; 20] = [
-            11.7109, 10.3359, 7.9414, 9.2734, 10.3516,
-            10.0703, 4.8594, 9.8203, 10.1562, 11.3672,
-            10.9297, 9.2891, 11.0625, 10.1875, 9.7031,
-            8.4609, 11.4766, 10.4766, 9.7344, 10.8516,
+            11.7109, 10.3359, 7.9414, 9.2734, 10.3516, 10.0703, 4.8594, 9.8203, 10.1562, 11.3672,
+            10.9297, 9.2891, 11.0625, 10.1875, 9.7031, 8.4609, 11.4766, 10.4766, 9.7344, 10.8516,
         ];
 
         // Calculate statistics
@@ -6521,7 +6592,9 @@ mod self_diagnostic {
         let mut whisper = WhisperApr::load_from_apr(&model_bytes).expect("Should load model");
 
         // Generate simple test audio (1 second of silence with slight noise)
-        let audio: Vec<f32> = (0..16000).map(|i| (i as f32 * 0.001).sin() * 0.01).collect();
+        let audio: Vec<f32> = (0..16000)
+            .map(|i| (i as f32 * 0.001).sin() * 0.01)
+            .collect();
 
         // Compute mel spectrogram
         let mel = whisper.compute_mel(&audio).expect("Should compute mel");
@@ -6588,7 +6661,8 @@ mod self_diagnostic {
 
         // Verify SOT token constant is correct
         assert_eq!(
-            special_tokens::SOT, 50258,
+            special_tokens::SOT,
+            50258,
             "T10.E3: SOT token should be 50258 for multilingual models, got {}",
             special_tokens::SOT
         );

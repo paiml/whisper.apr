@@ -56,10 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mel_min = mel.iter().fold(f32::INFINITY, |a, &b| a.min(b));
     let mel_max = mel.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
     let mel_mean: f32 = mel.iter().sum::<f32>() / mel.len() as f32;
-    println!(
-        "  Mel stats: min={:.2}, max={:.2}, mean={:.2}",
-        mel_min, mel_max, mel_mean
-    );
+    println!("  Mel stats: min={mel_min:.2}, max={mel_max:.2}, mean={mel_mean:.2}");
 
     // Step 2: Encode
     println!("\nEncoding...");
@@ -75,10 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let enc_min = encoded.iter().fold(f32::INFINITY, |a, &b| a.min(b));
     let enc_max = encoded.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
     let enc_mean: f32 = encoded.iter().sum::<f32>() / encoded.len() as f32;
-    println!(
-        "  Encoded stats: min={:.2}, max={:.2}, mean={:.2}",
-        enc_min, enc_max, enc_mean
-    );
+    println!("  Encoded stats: min={enc_min:.2}, max={enc_max:.2}, mean={enc_mean:.2}");
 
     // Check if encoder output looks reasonable
     let non_zero_count = encoded.iter().filter(|&&x| x.abs() > 1e-6).count();
@@ -104,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let elapsed = t0.elapsed();
 
     println!("\n=== RESULTS ===");
-    println!("Time: {:?}", elapsed);
+    println!("Time: {elapsed:?}");
     println!("Text length: {} chars", result.text.len());
     println!(
         "Text (first 200 chars): {:?}",
@@ -120,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Check what the whitespace is
     let unique_chars: std::collections::HashSet<_> = result.text.chars().collect();
-    println!("Unique characters: {:?}", unique_chars);
+    println!("Unique characters: {unique_chars:?}");
 
     Ok(())
 }

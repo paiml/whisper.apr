@@ -41,12 +41,12 @@ pub mod format;
 pub mod inference;
 pub mod memory;
 pub mod model;
+/// Unified parallelism abstraction for CLI and WASM (§11.3.2)
+pub mod parallel;
 pub mod progress;
 pub mod simd;
 pub mod timestamps;
 pub mod tokenizer;
-/// Unified parallelism abstraction for CLI and WASM (§11.3.2)
-pub mod parallel;
 #[macro_use]
 pub mod trace;
 pub mod vad;
@@ -3653,7 +3653,7 @@ mod tests {
     // =========================================================================
 
     #[test]
-    #[ignore] // Run with: cargo test test_e2e_transcribe_with_int8_model -- --ignored
+    #[ignore = "Requires model file - run with --ignored"]
     fn test_e2e_transcribe_with_int8_model() {
         // Load the real int8 quantized model
         let model_path = std::path::Path::new("models/whisper-tiny-int8.apr");

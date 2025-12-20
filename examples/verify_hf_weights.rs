@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("APR tensors: {}\n", apr_tensor_names.len());
 
     // Download HF model
-    println!("Downloading HF model: {}", hf_repo);
+    println!("Downloading HF model: {hf_repo}");
     let hf_model = HfSafetensors::from_hub(hf_repo)
         .map_err(|e| format!("Failed to download HF model: {e}"))?;
 
@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let hf_tensor = match hf_model.tensor(hf_name) {
             Ok(t) => t,
             Err(e) => {
-                println!("  {} - HF load error: {}", hf_name, e);
+                println!("  {hf_name} - HF load error: {e}");
                 continue;
             }
         };
@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let apr_tensor = match apr_reader.load_tensor(apr_name) {
             Ok(t) => t,
             Err(e) => {
-                println!("  {} - APR not found (tried {}): {}", hf_name, apr_name, e);
+                println!("  {hf_name} - APR not found (tried {apr_name}): {e}");
                 continue;
             }
         };
@@ -77,7 +77,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let hf_mean = hf_tensor.data.iter().sum::<f32>() / hf_tensor.data.len() as f32;
         let apr_mean = apr_tensor.iter().sum::<f32>() / apr_tensor.len() as f32;
 
-        let status = if diff.max_diff < threshold { "✓" } else { "✗" };
+        let status = if diff.max_diff < threshold {
+            "✓"
+        } else {
+            "✗"
+        };
         let flag = if hf_name.ends_with(".weight") && (apr_mean - 1.0).abs() > 1.0 {
             " <-- BAD MEAN!"
         } else {
@@ -106,7 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut total_passed = 0;
 
     for pattern in &cross_attn_patterns {
-        println!("--- {} ---", pattern);
+        println!("--- {pattern} ---");
 
         // Find matching HF tensors
         for hf_name in hf_tensor_names {
@@ -121,7 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let hf_tensor = match hf_model.tensor(hf_name) {
                 Ok(t) => t,
                 Err(e) => {
-                    println!("  {} - HF load error: {}", hf_name, e);
+                    println!("  {hf_name} - HF load error: {e}");
                     continue;
                 }
             };
@@ -129,7 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let apr_tensor = match apr_reader.load_tensor(apr_name) {
                 Ok(t) => t,
                 Err(e) => {
-                    println!("  {} - APR not found (tried {}): {}", hf_name, apr_name, e);
+                    println!("  {hf_name} - APR not found (tried {apr_name}): {e}");
                     continue;
                 }
             };
@@ -155,8 +159,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Summary
     println!("=== Summary ===");
-    println!("Total comparisons: {}", total_comparisons);
-    println!("Passed (< {:.0e}): {}", threshold, total_passed);
+    println!("Total comparisons: {total_comparisons}");
+    println!("Passed (< {threshold:.0e}): {total_passed}");
 
     if total_passed == total_comparisons && total_comparisons > 0 {
         println!("\n✓ H6 PASSED: Weights match HuggingFace reference!");

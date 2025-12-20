@@ -629,6 +629,8 @@ mod tests {
         // Without webgpu feature, should be unavailable
         #[cfg(not(feature = "webgpu"))]
         assert!(!result.available);
+        #[cfg(feature = "webgpu")]
+        let _ = result; // Silence unused variable warning when feature enabled
     }
 
     #[test]

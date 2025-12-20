@@ -191,7 +191,10 @@ mod tests {
     fn test_parallel_try_map_success() {
         let results = parallel_try_map(0..4, |i| Ok(i * 2));
         assert!(results.is_ok());
-        assert_eq!(results.unwrap(), vec![0, 2, 4, 6]);
+        assert_eq!(
+            results.expect("parallel_try_map should succeed"),
+            vec![0, 2, 4, 6]
+        );
     }
 
     #[test]
@@ -224,6 +227,9 @@ mod tests {
         #[cfg(feature = "parallel")]
         assert!(available, "parallel feature enabled but not available");
         #[cfg(not(feature = "parallel"))]
-        assert!(!available, "parallel should not be available without feature");
+        assert!(
+            !available,
+            "parallel should not be available without feature"
+        );
     }
 }

@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== BIAS ANALYSIS ===\n");
 
     let model_bytes = std::fs::read("models/whisper-tiny-fb.apr")?;
-    let reader = AprReader::new(model_bytes.clone())?;
+    let reader = AprReader::new(model_bytes)?;
 
     // Find all decoder bias tensors
     println!("=== Decoder Tensors with 'bias' ===\n");
@@ -25,8 +25,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(values) = data {
                 let sum: f64 = values.iter().map(|&v| v as f64).sum::<f64>();
                 let mean = sum / values.len() as f64;
-                let min = values.iter().cloned().fold(f32::INFINITY, f32::min);
-                let max = values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                let min = values.iter().copied().fold(f32::INFINITY, f32::min);
+                let max = values.iter().copied().fold(f32::NEG_INFINITY, f32::max);
 
                 println!("{}", tensor.name);
                 println!(
@@ -49,10 +49,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n=== Bias Sum Totals (across all layers) ===\n");
-    println!("FFN fc1 bias sum:   {:.4}", total_fc1_bias_sum);
-    println!("FFN fc2 bias sum:   {:.4}", total_fc2_bias_sum);
-    println!("LayerNorm bias sum: {:.4}", total_ln_bias_sum);
-    println!("Attention bias sum: {:.4}", total_attn_bias_sum);
+    println!("FFN fc1 bias sum:   {total_fc1_bias_sum:.4}");
+    println!("FFN fc2 bias sum:   {total_fc2_bias_sum:.4}");
+    println!("LayerNorm bias sum: {total_ln_bias_sum:.4}");
+    println!("Attention bias sum: {total_attn_bias_sum:.4}");
 
     println!("\n=== Detailed fc2 biases (output projection) ===\n");
 
@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Show distribution
                 let positive = values.iter().filter(|&&v| v > 0.0).count();
                 let negative = values.iter().filter(|&&v| v < 0.0).count();
-                println!("  positive: {}, negative: {}", positive, negative);
+                println!("  positive: {positive}, negative: {negative}");
             }
         }
     }

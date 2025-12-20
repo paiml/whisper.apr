@@ -383,7 +383,7 @@ impl WhisperAprWasm {
     /// # Errors
     /// Returns error if .apr file is invalid
     #[wasm_bindgen(js_name = fromAprBytes)]
-    pub fn from_apr_bytes(data: &[u8]) -> Result<WhisperAprWasm, JsValue> {
+    pub fn from_apr_bytes(data: &[u8]) -> Result<Self, JsValue> {
         let inner =
             WhisperApr::load_from_apr(data).map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Self { inner })
@@ -1174,7 +1174,7 @@ impl Default for StreamingConfigWasm {
 
 impl From<StreamingConfigWasm> for StreamingConfig {
     fn from(wasm: StreamingConfigWasm) -> Self {
-        StreamingConfig::default()
+        Self::default()
             .chunk_duration(wasm.chunk_duration)
             .chunk_overlap(wasm.chunk_overlap)
             .vad_threshold(wasm.vad_threshold)
@@ -1727,12 +1727,12 @@ pub enum ProcessorStateWasm {
 impl From<ProcessorState> for ProcessorStateWasm {
     fn from(state: ProcessorState) -> Self {
         match state {
-            ProcessorState::WaitingForSpeech => ProcessorStateWasm::WaitingForSpeech,
-            ProcessorState::AccumulatingSpeech => ProcessorStateWasm::AccumulatingSpeech,
-            ProcessorState::PartialResultReady => ProcessorStateWasm::PartialResultReady,
-            ProcessorState::ChunkReady => ProcessorStateWasm::ChunkReady,
-            ProcessorState::Processing => ProcessorStateWasm::Processing,
-            ProcessorState::Error => ProcessorStateWasm::Error,
+            ProcessorState::WaitingForSpeech => Self::WaitingForSpeech,
+            ProcessorState::AccumulatingSpeech => Self::AccumulatingSpeech,
+            ProcessorState::PartialResultReady => Self::PartialResultReady,
+            ProcessorState::ChunkReady => Self::ChunkReady,
+            ProcessorState::Processing => Self::Processing,
+            ProcessorState::Error => Self::Error,
         }
     }
 }
