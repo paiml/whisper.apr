@@ -724,10 +724,9 @@ echo "=== CLI Tests Complete ==="
 | P.10 | WASM fallback works | Build without atomics | Runs sequentially | [x] | [ ] |
 | W.1 | Chrome parallel | Chrome 68+ with COOP/COEP | Transcription works | [ ] | [ ] |
 | W.2 | Firefox parallel | Firefox 79+ with COOP/COEP | Transcription works | [ ] | [ ] |
-| W.3 | Safari parallel | Safari 15.2+ with COOP/COEP | Transcription works | [ ] | [ ] |
-| W.4 | Fallback without COOP | Any browser, no headers | Sequential works | [ ] | [ ] |
-| W.5 | Thread count JS API | `optimalThreadCount()` | Returns > 0 | [ ] | [ ] |
-| W.6 | Thread pool init | `initThreadPool(N)` | No errors | [ ] | [ ] |
+| W.3 | Fallback without COOP | Any browser, no headers | Sequential works | [ ] | [ ] |
+| W.4 | Thread count JS API | `optimalThreadCount()` | Returns > 0 | [ ] | [ ] |
+| W.5 | Thread pool init | `initThreadPool(N)` | No errors | [ ] | [ ] |
 
 #### WASM Build Commands
 
@@ -789,17 +788,13 @@ probar test test_wasm_fallback
 
 ---
 
-### Part C: Cross-Platform Matrix
+### Part C: Platform Matrix
 
 | Platform | Build | Parallel | Sequential | Notes |
 |----------|-------|----------|------------|-------|
 | Linux x86_64 | ✅ | ✅ | ✅ | Primary dev platform |
-| macOS arm64 | ✅ | ✅ | ✅ | M1/M2 Macs |
-| macOS x86_64 | ✅ | ✅ | ✅ | Intel Macs |
-| Windows x86_64 | ⏳ | ⏳ | ⏳ | Untested |
 | WASM (Chrome) | ✅ | ⏳ | ✅ | Requires COOP/COEP |
 | WASM (Firefox) | ✅ | ⏳ | ✅ | Requires COOP/COEP |
-| WASM (Safari) | ✅ | ⏳ | ✅ | Requires COOP/COEP |
 
 ---
 
