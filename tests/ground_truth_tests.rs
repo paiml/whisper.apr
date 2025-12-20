@@ -48,8 +48,7 @@ fn test_real_transcription_no_hallucination() {
 
     // Load real model
     let model_bytes = fs::read(MODEL_TINY_FULL).expect("Failed to read model file");
-    let model = whisper_apr::WhisperApr::load_from_apr(&model_bytes)
-        .expect("Failed to load model");
+    let model = whisper_apr::WhisperApr::load_from_apr(&model_bytes).expect("Failed to load model");
 
     // Load real audio
     let audio_bytes = fs::read(TEST_AUDIO_1_5S).expect("Failed to read audio file");
@@ -58,7 +57,8 @@ fn test_real_transcription_no_hallucination() {
 
     // Run real inference
     let options = whisper_apr::TranscribeOptions::default();
-    let result = model.transcribe(&audio, options)
+    let result = model
+        .transcribe(&audio, options)
         .expect("Transcription failed");
 
     // Verify no hallucination pattern
@@ -85,11 +85,16 @@ fn test_real_transcription_token_count() {
     let audio_bytes = fs::read(TEST_AUDIO_1_5S).expect("read audio");
     let wav_data = parse_wav_file(&audio_bytes).expect("decode audio");
 
-    let result = model.transcribe(&wav_data.samples, whisper_apr::TranscribeOptions::default())
+    let result = model
+        .transcribe(&wav_data.samples, whisper_apr::TranscribeOptions::default())
         .expect("transcribe");
 
     // 1.5s audio should produce < 50 tokens, not 448 (max)
-    let token_count = result.segments.iter().map(|s| s.tokens.len()).sum::<usize>();
+    let token_count = result
+        .segments
+        .iter()
+        .map(|s| s.tokens.len())
+        .sum::<usize>();
     let expected_max = 50;
 
     assert!(
@@ -115,11 +120,13 @@ fn test_real_transcription_has_eot() {
     let audio_bytes = fs::read(TEST_AUDIO_1_5S).expect("read audio");
     let wav_data = parse_wav_file(&audio_bytes).expect("decode audio");
 
-    let result = model.transcribe(&wav_data.samples, whisper_apr::TranscribeOptions::default())
+    let result = model
+        .transcribe(&wav_data.samples, whisper_apr::TranscribeOptions::default())
         .expect("transcribe");
 
     // Collect all tokens from all segments
-    let all_tokens: Vec<u32> = result.segments
+    let all_tokens: Vec<u32> = result
+        .segments
         .iter()
         .flat_map(|s| s.tokens.iter().copied())
         .collect();
@@ -156,7 +163,8 @@ fn test_real_transcription_matches_ground_truth() {
     let audio_bytes = fs::read(TEST_AUDIO_1_5S).expect("read audio");
     let wav_data = parse_wav_file(&audio_bytes).expect("decode audio");
 
-    let result = model.transcribe(&wav_data.samples, whisper_apr::TranscribeOptions::default())
+    let result = model
+        .transcribe(&wav_data.samples, whisper_apr::TranscribeOptions::default())
         .expect("transcribe");
 
     let expected = GROUND_TRUTH_1_5S;
@@ -186,7 +194,8 @@ fn test_real_transcription_first_word() {
     let audio_bytes = fs::read(TEST_AUDIO_1_5S).expect("read audio");
     let wav_data = parse_wav_file(&audio_bytes).expect("decode audio");
 
-    let result = model.transcribe(&wav_data.samples, whisper_apr::TranscribeOptions::default())
+    let result = model
+        .transcribe(&wav_data.samples, whisper_apr::TranscribeOptions::default())
         .expect("transcribe");
 
     let expected_first = GROUND_TRUTH_1_5S
@@ -194,7 +203,8 @@ fn test_real_transcription_first_word() {
         .next()
         .unwrap_or("")
         .to_lowercase();
-    let actual_first = result.text
+    let actual_first = result
+        .text
         .split_whitespace()
         .next()
         .unwrap_or("")
@@ -229,7 +239,8 @@ fn test_real_transcription_rtf() {
     let audio_duration_secs = 1.5;
     let start = std::time::Instant::now();
 
-    let _result = model.transcribe(&wav_data.samples, whisper_apr::TranscribeOptions::default())
+    let _result = model
+        .transcribe(&wav_data.samples, whisper_apr::TranscribeOptions::default())
         .expect("transcribe");
 
     let processing_time_secs = start.elapsed().as_secs_f64();

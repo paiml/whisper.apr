@@ -14,7 +14,11 @@ fn f16_to_f32(bits: u16) -> f32 {
     if exp == 0 {
         // Subnormal or zero
         let val = (frac as f32) / 1024.0 * 2.0_f32.powi(-14);
-        if sign == 1 { -val } else { val }
+        if sign == 1 {
+            -val
+        } else {
+            val
+        }
     } else if exp == 31 {
         // Inf or NaN
         if frac == 0 {
@@ -29,7 +33,11 @@ fn f16_to_f32(bits: u16) -> f32 {
     } else {
         // Normal
         let val = (1.0 + (frac as f32) / 1024.0) * 2.0_f32.powi(exp as i32 - 15);
-        if sign == 1 { -val } else { val }
+        if sign == 1 {
+            -val
+        } else {
+            val
+        }
     }
 }
 

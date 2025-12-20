@@ -336,8 +336,7 @@ impl GpuDetectionWasm {
     pub fn backend_name(&self) -> String {
         self.capabilities
             .as_ref()
-            .map(|c| c.backend_name())
-            .unwrap_or_else(|| "None".to_string())
+            .map_or_else(|| "None".to_string(), |c| c.backend_name())
     }
 
     /// Get the device name
@@ -345,8 +344,7 @@ impl GpuDetectionWasm {
     pub fn device_name(&self) -> String {
         self.capabilities
             .as_ref()
-            .map(|c| c.device_name())
-            .unwrap_or_else(|| "No GPU".to_string())
+            .map_or_else(|| "No GPU".to_string(), |c| c.device_name())
     }
 
     /// Check if F16 is supported

@@ -470,13 +470,13 @@ pub enum DomainTypeWasm {
 impl From<DomainTypeWasm> for DomainType {
     fn from(wasm: DomainTypeWasm) -> Self {
         match wasm {
-            DomainTypeWasm::General => DomainType::General,
-            DomainTypeWasm::Medical => DomainType::Medical,
-            DomainTypeWasm::Legal => DomainType::Legal,
-            DomainTypeWasm::Technical => DomainType::Technical,
-            DomainTypeWasm::Financial => DomainType::Financial,
-            DomainTypeWasm::Scientific => DomainType::Scientific,
-            DomainTypeWasm::Custom => DomainType::Custom,
+            DomainTypeWasm::General => Self::General,
+            DomainTypeWasm::Medical => Self::Medical,
+            DomainTypeWasm::Legal => Self::Legal,
+            DomainTypeWasm::Technical => Self::Technical,
+            DomainTypeWasm::Financial => Self::Financial,
+            DomainTypeWasm::Scientific => Self::Scientific,
+            DomainTypeWasm::Custom => Self::Custom,
         }
     }
 }
@@ -484,13 +484,13 @@ impl From<DomainTypeWasm> for DomainType {
 impl From<DomainType> for DomainTypeWasm {
     fn from(domain: DomainType) -> Self {
         match domain {
-            DomainType::General => DomainTypeWasm::General,
-            DomainType::Medical => DomainTypeWasm::Medical,
-            DomainType::Legal => DomainTypeWasm::Legal,
-            DomainType::Technical => DomainTypeWasm::Technical,
-            DomainType::Financial => DomainTypeWasm::Financial,
-            DomainType::Scientific => DomainTypeWasm::Scientific,
-            DomainType::Custom => DomainTypeWasm::Custom,
+            DomainType::General => Self::General,
+            DomainType::Medical => Self::Medical,
+            DomainType::Legal => Self::Legal,
+            DomainType::Technical => Self::Technical,
+            DomainType::Financial => Self::Financial,
+            DomainType::Scientific => Self::Scientific,
+            DomainType::Custom => Self::Custom,
         }
     }
 }

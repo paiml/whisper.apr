@@ -31,9 +31,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let var = t.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / t.len() as f32;
                     var.sqrt()
                 };
-                let min = t.iter().cloned().fold(f32::INFINITY, f32::min);
-                let max = t.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                println!("{}", name);
+                let min = t.iter().copied().fold(f32::INFINITY, f32::min);
+                let max = t.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                println!("{name}");
                 println!(
                     "  len={}, mean={:.4}, std={:.4}, min={:.4}, max={:.4}",
                     t.len(),
@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     max
                 );
             }
-            Err(_) => println!("{}: NOT FOUND", name),
+            Err(_) => println!("{name}: NOT FOUND"),
         }
     }
 

@@ -140,8 +140,7 @@ impl Default for DiarizationConfigWasm {
 
 impl From<DiarizationConfigWasm> for DiarizationConfig {
     fn from(wasm: DiarizationConfigWasm) -> Self {
-        let mut config =
-            DiarizationConfig::default().with_min_segment_duration(wasm.min_segment_duration);
+        let mut config = Self::default().with_min_segment_duration(wasm.min_segment_duration);
         if let Some(max) = wasm.max_speakers {
             config = config.with_max_speakers(max);
         }
@@ -246,7 +245,7 @@ impl SpeakerEmbeddingWasm {
 
     /// Compute cosine similarity with another embedding
     #[wasm_bindgen(js_name = cosineSimilarity)]
-    pub fn cosine_similarity(&self, other: &SpeakerEmbeddingWasm) -> f32 {
+    pub fn cosine_similarity(&self, other: &Self) -> f32 {
         if self.vector.len() != other.vector.len() {
             return 0.0;
         }
