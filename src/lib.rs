@@ -45,6 +45,8 @@ pub mod progress;
 pub mod simd;
 pub mod timestamps;
 pub mod tokenizer;
+/// Unified parallelism abstraction for CLI and WASM (§11.3.2)
+pub mod parallel;
 #[macro_use]
 pub mod trace;
 pub mod vad;
@@ -463,26 +465,33 @@ impl WhisperApr {
     }
 
     /// Get initial tokens for decoding
-    #[allow(clippy::unused_self)]
+    ///
+    /// Uses dynamic token lookup based on vocabulary size to support both
+    /// English-only models (tiny.en, etc.) and multilingual models.
     fn get_initial_tokens(&self, language: &str, task: Task) -> Vec<u32> {
-        use tokenizer::special_tokens;
+        use tokenizer::special_tokens::{self, SpecialTokens};
 
-        let mut tokens = vec![special_tokens::SOT];
+        // Get correct special tokens for this model's vocabulary size
+        let specials = SpecialTokens::for_vocab_size(self.config.n_vocab as usize);
+
+        let mut tokens = vec![specials.sot];
 
         // Add language token (defaults to English if unknown)
-        let lang_token = special_tokens::language_token(language).unwrap_or_else(|| {
-            special_tokens::language_token("en").unwrap_or(special_tokens::LANG_BASE)
-        });
-        tokens.push(lang_token);
+        // For multilingual models, language tokens start at lang_base
+        // For English-only models, we skip the language token
+        if specials.is_multilingual {
+            let lang_offset = special_tokens::language_offset(language).unwrap_or(0);
+            tokens.push(specials.lang_base + lang_offset);
+        }
 
         // Add task token
         match task {
-            Task::Transcribe => tokens.push(special_tokens::TRANSCRIBE),
+            Task::Transcribe => tokens.push(specials.transcribe),
             Task::Translate => tokens.push(special_tokens::TRANSLATE),
         }
 
         // Add no timestamps token (for now)
-        tokens.push(special_tokens::NO_TIMESTAMPS);
+        tokens.push(specials.no_timestamps);
 
         tokens
     }
@@ -794,8 +803,11 @@ impl WhisperApr {
             target[..len].copy_from_slice(&bias[..len]);
         }
 
-        // Load positional embedding if available
-        if let Ok(pe) = reader.load_tensor("encoder.positional_embedding") {
+        // Load positional embedding if available (HF uses embed_positions.weight)
+        let pe_result = reader
+            .load_tensor("encoder.embed_positions.weight")
+            .or_else(|_| reader.load_tensor("encoder.positional_embedding"));
+        if let Ok(pe) = pe_result {
             let target = encoder.positional_embedding_mut();
             let len = pe.len().min(target.len());
             target[..len].copy_from_slice(&pe[..len]);
@@ -851,15 +863,21 @@ impl WhisperApr {
     ) {
         let n_layers = decoder.n_layers();
 
-        // Load token embedding if available
-        if let Ok(te) = reader.load_tensor("decoder.token_embedding") {
+        // Load token embedding if available (HF uses embed_tokens.weight)
+        let te_result = reader
+            .load_tensor("decoder.embed_tokens.weight")
+            .or_else(|_| reader.load_tensor("decoder.token_embedding"));
+        if let Ok(te) = te_result {
             let target = decoder.token_embedding_mut();
             let len = te.len().min(target.len());
             target[..len].copy_from_slice(&te[..len]);
         }
 
-        // Load positional embedding if available
-        if let Ok(pe) = reader.load_tensor("decoder.positional_embedding") {
+        // Load positional embedding if available (HF uses embed_positions.weight)
+        let pe_result = reader
+            .load_tensor("decoder.embed_positions.weight")
+            .or_else(|_| reader.load_tensor("decoder.positional_embedding"));
+        if let Ok(pe) = pe_result {
             let target = decoder.positional_embedding_mut();
             let len = pe.len().min(target.len());
             target[..len].copy_from_slice(&pe[..len]);
