@@ -15,29 +15,155 @@ use std::collections::HashMap;
 /// Special token IDs for Whisper
 ///
 /// These tokens control the decoder's behavior during transcription.
-/// Token IDs match whisper.cpp: token_eot=50256, token_sot=50257, etc.
+///
+/// IMPORTANT: Whisper has two tokenizer variants:
+/// - English-only models (tiny.en, base.en, etc.): GPT-2 tokenizer, EOT=50256
+/// - Multilingual models (tiny, base, etc.): Extended tokenizer, EOT=50257
+///
+/// Use `SpecialTokens::for_vocab_size(n_vocab)` to get correct token IDs.
 pub mod special_tokens {
-    /// End of text token - signals end of transcription (whisper.cpp: token_eot)
-    pub const EOT: u32 = 50256;
-    /// Start of transcript token - begins transcription (whisper.cpp: token_sot)
-    pub const SOT: u32 = 50257;
+    /// Vocabulary size threshold for multilingual models
+    /// Models with vocab >= 51865 are multilingual
+    pub const MULTILINGUAL_VOCAB_THRESHOLD: usize = 51865;
+
+    // =========================================================================
+    // English-only model tokens (GPT-2 tokenizer)
+    // =========================================================================
+
+    /// End of text token for English-only models
+    pub const EOT_ENGLISH: u32 = 50256;
+    /// Start of transcript token for English-only models
+    pub const SOT_ENGLISH: u32 = 50257;
+
+    // =========================================================================
+    // Multilingual model tokens (extended tokenizer)
+    // =========================================================================
+
+    /// End of text token for multilingual models
+    pub const EOT_MULTILINGUAL: u32 = 50257;
+    /// Start of transcript token for multilingual models
+    pub const SOT_MULTILINGUAL: u32 = 50258;
+    /// Language token base for multilingual - language ID is LANG_BASE + lang_offset
+    pub const LANG_BASE_MULTILINGUAL: u32 = 50259;
+    /// Transcribe task token for multilingual
+    pub const TRANSCRIBE_MULTILINGUAL: u32 = 50359;
+    /// No timestamps token for multilingual
+    pub const NO_TIMESTAMPS_MULTILINGUAL: u32 = 50363;
+
+    // =========================================================================
+    // Legacy constants (for backwards compatibility, assume multilingual)
+    // Use SpecialTokens::for_vocab_size() for new code
+    // =========================================================================
+
+    /// End of text token - signals end of transcription
+    /// WARNING: This is for multilingual models. Use SpecialTokens for English-only.
+    pub const EOT: u32 = EOT_MULTILINGUAL;
+    /// Start of transcript token - begins transcription
+    pub const SOT: u32 = SOT_MULTILINGUAL;
     /// Language token base - language ID is LANG_BASE + lang_offset
-    /// Languages start at token_sot + 1 = 50258
-    pub const LANG_BASE: u32 = 50258;
-    /// Translate task token - translate audio to English (whisper.cpp: token_translate)
-    pub const TRANSLATE: u32 = 50357;
-    /// Transcribe task token - transcribe audio in original language (whisper.cpp: token_transcribe)
-    pub const TRANSCRIBE: u32 = 50358;
-    /// Speaker turn marker - used by tinydiarize models (whisper.cpp: token_solm)
-    pub const SPEAKER_TURN: u32 = 50359;
-    /// Previous context token (whisper.cpp: token_prev)
-    pub const PREV: u32 = 50360;
-    /// No speech token - indicates silence/no speech detected (whisper.cpp: token_nosp)
-    pub const NO_SPEECH: u32 = 50361;
-    /// No timestamps token - disable timestamp generation (whisper.cpp: token_not)
-    pub const NO_TIMESTAMPS: u32 = 50362;
-    /// Begin timestamps token / Timestamp token base (whisper.cpp: token_beg)
-    pub const TIMESTAMP_BASE: u32 = 50363;
+    pub const LANG_BASE: u32 = LANG_BASE_MULTILINGUAL;
+    /// Translate task token - translate audio to English
+    pub const TRANSLATE: u32 = 50358;
+    /// Transcribe task token - transcribe audio in original language
+    pub const TRANSCRIBE: u32 = TRANSCRIBE_MULTILINGUAL;
+    /// Speaker turn marker - used by tinydiarize models
+    pub const SPEAKER_TURN: u32 = 50360;
+    /// Previous context token
+    pub const PREV: u32 = 50361;
+    /// No speech token - indicates silence/no speech detected
+    pub const NO_SPEECH: u32 = 50362;
+    /// No timestamps token - disable timestamp generation
+    pub const NO_TIMESTAMPS: u32 = NO_TIMESTAMPS_MULTILINGUAL;
+    /// Begin timestamps token / Timestamp token base
+    pub const TIMESTAMP_BASE: u32 = 50364;
+
+    /// Dynamic special token lookup based on vocabulary size
+    ///
+    /// Whisper has two tokenizer variants with different token IDs:
+    /// - English-only models use GPT-2 tokenizer (EOT=50256)
+    /// - Multilingual models use extended tokenizer (EOT=50257)
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct SpecialTokens {
+        /// End of text token
+        pub eot: u32,
+        /// Start of transcript token
+        pub sot: u32,
+        /// Language token base
+        pub lang_base: u32,
+        /// Transcribe task token
+        pub transcribe: u32,
+        /// No timestamps token
+        pub no_timestamps: u32,
+        /// Timestamp base token
+        pub timestamp_base: u32,
+        /// Whether this is a multilingual model
+        pub is_multilingual: bool,
+    }
+
+    impl SpecialTokens {
+        /// Create special tokens for the given vocabulary size
+        ///
+        /// # Arguments
+        /// * `n_vocab` - Vocabulary size of the model
+        ///
+        /// # Returns
+        /// Special tokens configured for the model type
+        #[must_use]
+        pub fn for_vocab_size(n_vocab: usize) -> Self {
+            if n_vocab >= MULTILINGUAL_VOCAB_THRESHOLD {
+                Self::multilingual()
+            } else {
+                Self::english_only()
+            }
+        }
+
+        /// Special tokens for multilingual models
+        #[must_use]
+        pub const fn multilingual() -> Self {
+            Self {
+                eot: EOT_MULTILINGUAL,
+                sot: SOT_MULTILINGUAL,
+                lang_base: LANG_BASE_MULTILINGUAL,
+                transcribe: TRANSCRIBE_MULTILINGUAL,
+                no_timestamps: NO_TIMESTAMPS_MULTILINGUAL,
+                timestamp_base: 50364,
+                is_multilingual: true,
+            }
+        }
+
+        /// Special tokens for English-only models
+        #[must_use]
+        pub const fn english_only() -> Self {
+            Self {
+                eot: EOT_ENGLISH,
+                sot: SOT_ENGLISH,
+                lang_base: 50258, // Same offset structure
+                transcribe: 50358,
+                no_timestamps: 50362,
+                timestamp_base: 50363,
+                is_multilingual: false,
+            }
+        }
+
+        /// Get initial tokens for transcription
+        ///
+        /// Returns [SOT, LANG_EN, TRANSCRIBE, NO_TIMESTAMPS]
+        #[must_use]
+        pub fn initial_tokens(&self) -> [u32; 4] {
+            [
+                self.sot,
+                self.lang_base, // English (lang_base + 0)
+                self.transcribe,
+                self.no_timestamps,
+            ]
+        }
+    }
+
+    impl Default for SpecialTokens {
+        fn default() -> Self {
+            Self::multilingual()
+        }
+    }
 
     /// Get language token ID for a language code
     ///
@@ -121,6 +247,61 @@ pub mod special_tokens {
             Some((token_id - TIMESTAMP_BASE) as f32 * 0.02)
         } else {
             None
+        }
+    }
+
+    /// Get language offset for a language code
+    ///
+    /// Returns the offset from LANG_BASE (0 for English, 1 for Chinese, etc.)
+    /// Use with SpecialTokens::lang_base to compute the actual token ID.
+    ///
+    /// # Arguments
+    /// * `lang_code` - Two-letter ISO 639-1 language code (e.g., "en", "es", "ja")
+    ///
+    /// # Returns
+    /// Language offset, or None if unsupported
+    #[must_use]
+    pub fn language_offset(lang_code: &str) -> Option<u32> {
+        match lang_code {
+            "en" => Some(0),
+            "zh" => Some(1),
+            "de" => Some(2),
+            "es" => Some(3),
+            "ru" => Some(4),
+            "ko" => Some(5),
+            "fr" => Some(6),
+            "ja" => Some(7),
+            "pt" => Some(8),
+            "tr" => Some(9),
+            "pl" => Some(10),
+            "ca" => Some(11),
+            "nl" => Some(12),
+            "ar" => Some(13),
+            "sv" => Some(14),
+            "it" => Some(15),
+            "id" => Some(16),
+            "hi" => Some(17),
+            "fi" => Some(18),
+            "vi" => Some(19),
+            "he" => Some(20),
+            "uk" => Some(21),
+            "el" => Some(22),
+            "ms" => Some(23),
+            "cs" => Some(24),
+            "ro" => Some(25),
+            "da" => Some(26),
+            "hu" => Some(27),
+            "ta" => Some(28),
+            "no" => Some(29),
+            "th" => Some(30),
+            "ur" => Some(31),
+            "hr" => Some(32),
+            "bg" => Some(33),
+            "lt" => Some(34),
+            "la" => Some(35),
+            "mi" => Some(36),
+            "ml" => Some(37),
+            _ => None,
         }
     }
 }
@@ -563,34 +744,60 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_special_tokens_values() {
-        // Token IDs match whisper.cpp exactly
-        assert_eq!(special_tokens::EOT, 50256);
-        assert_eq!(special_tokens::SOT, 50257);
-        assert_eq!(special_tokens::LANG_BASE, 50258);
-        assert_eq!(special_tokens::TRANSLATE, 50357);
-        assert_eq!(special_tokens::TRANSCRIBE, 50358);
-        assert_eq!(special_tokens::SPEAKER_TURN, 50359);
-        assert_eq!(special_tokens::PREV, 50360);
-        assert_eq!(special_tokens::NO_SPEECH, 50361);
-        assert_eq!(special_tokens::NO_TIMESTAMPS, 50362);
-        assert_eq!(special_tokens::TIMESTAMP_BASE, 50363);
+    fn test_special_tokens_values_multilingual() {
+        // Default constants are for multilingual models (whisper-tiny, whisper-base, etc.)
+        // These match whisper.cpp's multilingual token IDs
+        assert_eq!(special_tokens::EOT, 50257); // Multilingual EOT
+        assert_eq!(special_tokens::SOT, 50258); // Multilingual SOT
+        assert_eq!(special_tokens::LANG_BASE, 50259); // Multilingual lang base
+        assert_eq!(special_tokens::TRANSLATE, 50358);
+        assert_eq!(special_tokens::TRANSCRIBE, 50359); // Multilingual transcribe
+        assert_eq!(special_tokens::SPEAKER_TURN, 50360);
+        assert_eq!(special_tokens::PREV, 50361);
+        assert_eq!(special_tokens::NO_SPEECH, 50362);
+        assert_eq!(special_tokens::NO_TIMESTAMPS, 50363); // Multilingual no_timestamps
+        assert_eq!(special_tokens::TIMESTAMP_BASE, 50364); // Multilingual timestamp base
+    }
+
+    #[test]
+    fn test_special_tokens_english_only() {
+        // English-only models (whisper-tiny.en, whisper-base.en) use GPT-2 tokenizer
+        assert_eq!(special_tokens::EOT_ENGLISH, 50256);
+        assert_eq!(special_tokens::SOT_ENGLISH, 50257);
+    }
+
+    #[test]
+    fn test_special_tokens_for_vocab_size() {
+        use special_tokens::SpecialTokens;
+
+        // Multilingual model (vocab >= 51865)
+        let multi = SpecialTokens::for_vocab_size(51865);
+        assert!(multi.is_multilingual);
+        assert_eq!(multi.eot, 50257);
+        assert_eq!(multi.sot, 50258);
+
+        // English-only model (vocab < 51865)
+        let english = SpecialTokens::for_vocab_size(51864);
+        assert!(!english.is_multilingual);
+        assert_eq!(english.eot, 50256);
+        assert_eq!(english.sot, 50257);
     }
 
     #[test]
     fn test_language_token() {
-        // English is at LANG_BASE + 0 = 50258
-        assert_eq!(special_tokens::language_token("en"), Some(50258));
-        assert_eq!(special_tokens::language_token("zh"), Some(50259));
-        assert_eq!(special_tokens::language_token("es"), Some(50261)); // es is index 3
+        // English is at LANG_BASE_MULTILINGUAL + 0 = 50259
+        assert_eq!(special_tokens::language_token("en"), Some(50259));
+        assert_eq!(special_tokens::language_token("zh"), Some(50260));
+        assert_eq!(special_tokens::language_token("es"), Some(50262)); // es is index 3
         assert_eq!(special_tokens::language_token("invalid"), None);
     }
 
     #[test]
     fn test_is_timestamp() {
-        assert!(!special_tokens::is_timestamp(50362)); // NO_TIMESTAMPS
-        assert!(special_tokens::is_timestamp(50363)); // TIMESTAMP_BASE
-        assert!(special_tokens::is_timestamp(50364)); // First timestamp
+        assert!(!special_tokens::is_timestamp(50362)); // NO_SPEECH
+        assert!(!special_tokens::is_timestamp(50363)); // NO_TIMESTAMPS_MULTILINGUAL
+        assert!(special_tokens::is_timestamp(50364)); // TIMESTAMP_BASE (multilingual)
+        assert!(special_tokens::is_timestamp(50365)); // First timestamp after base
     }
 
     #[test]

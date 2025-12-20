@@ -10,9 +10,16 @@ SHELL := /bin/bash
 JOBS ?= $(shell echo $$(( $$(nproc) / 2 )) | awk '{print ($$1 < 2) ? 2 : $$1}')
 MAKEFLAGS += -j$(JOBS)
 
+# Test thread limit - prevent load average explosion
+# 4 threads allows two projects to test simultaneously
+# Override with: make test TEST_THREADS=8
+TEST_THREADS ?= 4
+export RUST_TEST_THREADS=$(TEST_THREADS)
+
 # Fast test filter: exclude slow/integration tests (>60s or require model pipeline)
 # Excluded: ground_truth_tests, realizar_integration (require working model), slow encoder/decoder tests
-FAST_TEST_FILTER := -E 'not binary(ground_truth_tests) and not binary(realizar_integration) and not test(test_transcription_produces_meaningful_text) and not test(fuzz_decoder_output_finite) and not test(test_release_mode_rtf_target) and not test(test_fully_quantized_decoder_token_generation_time) and not test(test_encoder_forward_mel) and not test(test_encoder_forward_batch) and not test(test_batch_encoder_output) and not test(test_decoder_generate_paged) and not test(test_rtf_measurement) and not test(test_encode_3_second_chunk) and not test(test_whisper_memory_size_all_extended) and not test(stress_test_repeated_forward_one) and not test(test_decoder_with_max_tokens)'
+# Also excludes: T0/T1 parity tests that load models, f32 model tests, decoder varied output tests
+FAST_TEST_FILTER := -E 'not binary(ground_truth_tests) and not binary(realizar_integration) and not test(test_transcription_produces_meaningful_text) and not test(fuzz_decoder_output_finite) and not test(test_release_mode_rtf_target) and not test(test_fully_quantized_decoder_token_generation_time) and not test(test_encoder_forward_mel) and not test(test_encoder_forward_batch) and not test(test_batch_encoder_output) and not test(test_decoder_generate_paged) and not test(test_rtf_measurement) and not test(test_encode_3_second_chunk) and not test(test_whisper_memory_size_all_extended) and not test(stress_test_repeated_forward_one) and not test(test_decoder_with_max_tokens) and not test(test_t0_1_) and not test(test_t0_2_) and not test(test_t0_3_) and not test(test_t0_5_) and not test(test_t1_1_) and not test(test_t1_3_) and not test(test_f32_model) and not test(test_decoder_produces_varied)'
 
 # Quality directives
 .SUFFIXES:
@@ -131,12 +138,12 @@ test-doc: ## Run documentation tests
 
 test-property: ## Run property-based tests (fast: 50 cases)
 	@echo "🎲 Running property-based tests (50 cases per property)..."
-	@PROPTEST_CASES=50 cargo test --all-features -- property_ --test-threads=$$(nproc)
+	@PROPTEST_CASES=50 cargo test --all-features -- property_ --test-threads=$(TEST_THREADS)
 	@echo "✅ Property tests completed (fast mode)!"
 
 test-property-comprehensive: ## Run property-based tests (500 cases)
 	@echo "🎲 Running property-based tests (500 cases per property)..."
-	@PROPTEST_CASES=500 cargo test --all-features -- property_ --test-threads=$$(nproc)
+	@PROPTEST_CASES=500 cargo test --all-features -- property_ --test-threads=$(TEST_THREADS)
 	@echo "✅ Property tests completed (comprehensive mode)!"
 
 test-all: test test-doc test-property-comprehensive ## Run ALL test styles

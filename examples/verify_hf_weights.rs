@@ -41,6 +41,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hf_tensor_names = hf_model.tensor_names();
     println!("HF tensors: {}\n", hf_tensor_names.len());
 
+    // Check layer norm weights first (the suspected issue)
+    println!("=== Layer Norm Weight Comparison ===\n");
+
+    let threshold = 1e-5;
+
+    for hf_name in hf_tensor_names {
+        if !hf_name.contains("layer_norm") {
+            continue;
+        }
+
+        // Map HF name to APR name
+        let apr_name = hf_name.strip_prefix("model.").unwrap_or(hf_name);
+
+        // Load both tensors
+        let hf_tensor = match hf_model.tensor(hf_name) {
+            Ok(t) => t,
+            Err(e) => {
+                println!("  {} - HF load error: {}", hf_name, e);
+                continue;
+            }
+        };
+
+        let apr_tensor = match apr_reader.load_tensor(apr_name) {
+            Ok(t) => t,
+            Err(e) => {
+                println!("  {} - APR not found (tried {}): {}", hf_name, apr_name, e);
+                continue;
+            }
+        };
+
+        // Compare
+        let diff = WeightDiff::from_slices(&hf_tensor.data, &apr_tensor);
+
+        let hf_mean = hf_tensor.data.iter().sum::<f32>() / hf_tensor.data.len() as f32;
+        let apr_mean = apr_tensor.iter().sum::<f32>() / apr_tensor.len() as f32;
+
+        let status = if diff.max_diff < threshold { "✓" } else { "✗" };
+        let flag = if hf_name.ends_with(".weight") && (apr_mean - 1.0).abs() > 1.0 {
+            " <-- BAD MEAN!"
+        } else {
+            ""
+        };
+
+        println!(
+            "  {} {} | HF_mean={:.4} APR_mean={:.4} | max_diff={:.4}{}",
+            status, hf_name, hf_mean, apr_mean, diff.max_diff, flag
+        );
+    }
+
+    println!();
+
     // Focus on cross-attention (the suspected culprit)
     let cross_attn_patterns = [
         "encoder_attn.q_proj",
@@ -53,7 +104,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut total_comparisons = 0;
     let mut total_passed = 0;
-    let threshold = 1e-5;
 
     for pattern in &cross_attn_patterns {
         println!("--- {} ---", pattern);
