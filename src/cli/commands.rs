@@ -153,7 +153,7 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
         .map_err(|e| CliError::InvalidArgument(format!("Failed to configure threads: {e}")))?;
 
     if global.verbose {
-        eprintln!("[INFO] Using {} thread(s) for inference", thread_count);
+        eprintln!("[INFO] Using {thread_count} thread(s) for inference");
     }
 
     // Validate input file exists
@@ -267,7 +267,7 @@ pub fn run_translate(args: TranslateArgs, global: &Args) -> CliResult<CommandRes
         .map_err(|e| CliError::InvalidArgument(format!("Failed to configure threads: {e}")))?;
 
     if global.verbose {
-        eprintln!("[INFO] Using {} thread(s) for inference", thread_count);
+        eprintln!("[INFO] Using {thread_count} thread(s) for inference");
     }
 
     // Validate input file exists
@@ -470,13 +470,11 @@ pub fn run_tui(global: &Args) -> CliResult<CommandResult> {
     use crate::tui::{render_whisper_dashboard, WhisperApp};
 
     // Initialize terminal
-    enable_raw_mode().map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, e)))?;
+    enable_raw_mode().map_err(|e| CliError::Io(io::Error::other(e)))?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)
-        .map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, e)))?;
+    execute!(stdout, EnterAlternateScreen).map_err(|e| CliError::Io(io::Error::other(e)))?;
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal =
-        Terminal::new(backend).map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, e)))?;
+    let mut terminal = Terminal::new(backend).map_err(|e| CliError::Io(io::Error::other(e)))?;
 
     // Create application state
     let mut app = WhisperApp::new();
@@ -489,15 +487,11 @@ pub fn run_tui(global: &Args) -> CliResult<CommandResult> {
         // Draw frame
         terminal
             .draw(|f| render_whisper_dashboard(f, &app))
-            .map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, e)))?;
+            .map_err(|e| CliError::Io(io::Error::other(e)))?;
 
         // Poll for events with timeout
-        if event::poll(Duration::from_millis(100))
-            .map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, e)))?
-        {
-            if let Event::Key(key) = event::read()
-                .map_err(|e| CliError::Io(io::Error::new(io::ErrorKind::Other, e)))?
-            {
+        if event::poll(Duration::from_millis(100)).map_err(|e| CliError::Io(io::Error::other(e)))? {
+            if let Event::Key(key) = event::read().map_err(|e| CliError::Io(io::Error::other(e)))? {
                 // Only handle key press events (not release)
                 if key.kind == KeyEventKind::Press {
                     match key.code {
@@ -1093,7 +1087,7 @@ pub fn run_diagnose(args: DiagnoseArgs, global: &Args) -> CliResult<CommandResul
         name: "English language token".to_string(),
         passed: lang_en == Some(50259),
         expected: "Some(50259)".to_string(),
-        actual: format!("{:?}", lang_en),
+        actual: format!("{lang_en:?}"),
         details: "language_token(\"en\") = LANG_BASE + 0".to_string(),
     };
     if !lang_en_check.passed {
@@ -1109,7 +1103,7 @@ pub fn run_diagnose(args: DiagnoseArgs, global: &Args) -> CliResult<CommandResul
         name: "Initial tokens sequence".to_string(),
         passed: initial == [50258, 50259, 50359, 50363],
         expected: "[50258, 50259, 50359, 50363]".to_string(),
-        actual: format!("{:?}", initial),
+        actual: format!("{initial:?}"),
         details: "[SOT, LANG_EN, TRANSCRIBE, NO_TIMESTAMPS]".to_string(),
     };
     if !initial_check.passed {
@@ -1142,19 +1136,7 @@ pub fn run_diagnose(args: DiagnoseArgs, global: &Args) -> CliResult<CommandResul
             println!("───────────────────────────────────────────────────────────────────");
         }
 
-        if !model_path.exists() {
-            let model_check = DiagnosticCheck {
-                id: "MDL-001".to_string(),
-                name: "Model file exists".to_string(),
-                passed: false,
-                expected: "File exists".to_string(),
-                actual: "File not found".to_string(),
-                details: model_path.display().to_string(),
-            };
-            all_passed = false;
-            checks.push(model_check.clone());
-            print_check(&model_check, global.quiet, args.json);
-        } else {
+        if model_path.exists() {
             let model_check = DiagnosticCheck {
                 id: "MDL-001".to_string(),
                 name: "Model file exists".to_string(),
@@ -1195,7 +1177,7 @@ pub fn run_diagnose(args: DiagnoseArgs, global: &Args) -> CliResult<CommandResul
                             name: "Model file readable".to_string(),
                             passed: false,
                             expected: "Readable".to_string(),
-                            actual: format!("Error: {}", e),
+                            actual: format!("Error: {e}"),
                             details: "Could not read model file".to_string(),
                         };
                         all_passed = false;
@@ -1204,6 +1186,18 @@ pub fn run_diagnose(args: DiagnoseArgs, global: &Args) -> CliResult<CommandResul
                     }
                 }
             }
+        } else {
+            let model_check = DiagnosticCheck {
+                id: "MDL-001".to_string(),
+                name: "Model file exists".to_string(),
+                passed: false,
+                expected: "File exists".to_string(),
+                actual: "File not found".to_string(),
+                details: model_path.display().to_string(),
+            };
+            all_passed = false;
+            checks.push(model_check.clone());
+            print_check(&model_check, global.quiet, args.json);
         }
     }
 
@@ -1262,13 +1256,11 @@ pub fn run_diagnose(args: DiagnoseArgs, global: &Args) -> CliResult<CommandResul
 
     if all_passed {
         Ok(CommandResult::success(format!(
-            "{}/{} checks passed",
-            passed_count, total_count
+            "{passed_count}/{total_count} checks passed"
         )))
     } else {
         Ok(CommandResult::failure(format!(
-            "{}/{} checks passed",
-            passed_count, total_count
+            "{passed_count}/{total_count} checks passed"
         )))
     }
 }
@@ -1800,7 +1792,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[test]
-    #[ignore] // Slow: runs full inference pipeline
+    #[ignore = "Slow: runs full inference pipeline"]
     fn test_run_test_simd() {
         let args = TestArgs {
             backend: BackendArg::Simd,
@@ -1821,7 +1813,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Slow: runs full inference pipeline
+    #[ignore = "Slow: runs full inference pipeline"]
     fn test_run_test_wasm() {
         let args = TestArgs {
             backend: BackendArg::Wasm,
@@ -1842,7 +1834,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Slow: runs full inference pipeline
+    #[ignore = "Slow: runs full inference pipeline"]
     fn test_run_test_cuda() {
         let args = TestArgs {
             backend: BackendArg::Cuda,
@@ -1863,7 +1855,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Slow: runs full inference pipeline for all backends
+    #[ignore = "Slow: runs full inference pipeline for all backends"]
     fn test_run_test_all_backends() {
         let args = TestArgs {
             backend: BackendArg::All,
@@ -1981,6 +1973,7 @@ mod tests {
             output: None,
             format: OutputFormatArg::Txt,
             gpu: false,
+            threads: None,
         };
         let global = Args {
             command: Command::Tui,
@@ -2057,7 +2050,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[test]
-    #[ignore] // Slow: runs full inference benchmark
+    #[ignore = "Slow: runs full inference benchmark"]
     fn test_run_benchmark() {
         let args = BenchmarkArgs {
             model: ModelSize::Tiny,
@@ -2081,7 +2074,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Slow: runs full inference benchmark
+    #[ignore = "Slow: runs full inference benchmark"]
     fn test_run_benchmark_verbose() {
         let args = BenchmarkArgs {
             model: ModelSize::Tiny,

@@ -797,7 +797,7 @@ mod property_tests {
         ) {
             // Attention rendering should never panic
             let attention: Vec<Vec<f32>> = (0..n_tokens)
-                .map(|_| (0..n_frames).map(|f| (f as f32 / n_frames as f32)).collect())
+                .map(|_| (0..n_frames).map(|f| f as f32 / n_frames as f32).collect())
                 .collect();
             let result = std::panic::catch_unwind(|| {
                 super::super::visualization::render_attention_heatmap(&attention, width, height)

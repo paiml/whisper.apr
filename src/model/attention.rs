@@ -1033,7 +1033,9 @@ impl MultiHeadAttention {
                     self.d_head,
                     FLASH_ATTENTION_BLOCK_SIZE,
                 );
-                Ok(flash_attention_simd(&head_q, &head_k, &head_v, config, mask))
+                Ok(flash_attention_simd(
+                    &head_q, &head_k, &head_v, config, mask,
+                ))
             } else {
                 self.scaled_dot_product_attention(&head_q, &head_k, &head_v, mask)
             }

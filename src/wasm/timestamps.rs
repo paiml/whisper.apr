@@ -117,7 +117,7 @@ impl Default for AlignmentConfigWasm {
 
 impl From<AlignmentConfigWasm> for AlignmentConfig {
     fn from(wasm: AlignmentConfigWasm) -> Self {
-        AlignmentConfig {
+        Self {
             layers: wasm.layers,
             heads: None,
             min_attention: wasm.min_attention,
