@@ -17,39 +17,69 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: whisper.apr
+      - uses: actions/checkout@v4
+        with:
+          repository: paiml/aprender
+          path: aprender
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: whisper.apr -> target
       - run: cargo check --all-features
+        working-directory: whisper.apr
 
   fmt:
     name: Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: whisper.apr
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
+        working-directory: whisper.apr
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: whisper.apr
+      - uses: actions/checkout@v4
+        with:
+          repository: paiml/aprender
+          path: aprender
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: whisper.apr -> target
       - run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: whisper.apr
 
   test:
     name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: whisper.apr
+      - uses: actions/checkout@v4
+        with:
+          repository: paiml/aprender
+          path: aprender
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: whisper.apr -> target
       - run: cargo test --all-features
+        working-directory: whisper.apr
 
   # Demo crates
   demos:
@@ -57,16 +87,26 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: demos
+        working-directory: whisper.apr/demos
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: whisper.apr
+      - uses: actions/checkout@v4
+        with:
+          repository: paiml/aprender
+          path: aprender
+      - uses: actions/checkout@v4
+        with:
+          repository: paiml/probar
+          path: probar
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: demos -> target
+          workspaces: whisper.apr/demos -> target
 
       - name: Check demos
         run: cargo check --all-features
@@ -90,18 +130,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: whisper.apr
+      - uses: actions/checkout@v4
+        with:
+          repository: paiml/aprender
+          path: aprender
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: whisper.apr -> target
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate coverage
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+        working-directory: whisper.apr
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
-          files: lcov.info
+          files: whisper.apr/lcov.info
           fail_ci_if_error: false
 
   # Demo coverage
@@ -110,15 +159,25 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: demos
+        working-directory: whisper.apr/demos
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: whisper.apr
+      - uses: actions/checkout@v4
+        with:
+          repository: paiml/aprender
+          path: aprender
+      - uses: actions/checkout@v4
+        with:
+          repository: paiml/probar
+          path: probar
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: demos -> target
+          workspaces: whisper.apr/demos -> target
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate demo coverage
@@ -138,11 +197,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: whisper.apr
+      - uses: actions/checkout@v4
+        with:
+          repository: paiml/aprender
+          path: aprender
       - uses: dtolnay/rust-toolchain@stable
       - name: Install cargo-audit
         run: cargo install cargo-audit
       - name: Run audit
         run: cargo audit
+        working-directory: whisper.apr
         continue-on-error: true
 
   # Documentation
@@ -151,10 +217,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: whisper.apr
+      - uses: actions/checkout@v4
+        with:
+          repository: paiml/aprender
+          path: aprender
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: whisper.apr -> target
       - name: Build docs
         run: cargo doc --no-deps --all-features
+        working-directory: whisper.apr
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -164,15 +239,25 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: demos
+        working-directory: whisper.apr/demos
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: whisper.apr
+      - uses: actions/checkout@v4
+        with:
+          repository: paiml/aprender
+          path: aprender
+      - uses: actions/checkout@v4
+        with:
+          repository: paiml/probar
+          path: probar
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: demos -> target
+          workspaces: whisper.apr/demos -> target
 
       - name: Build release WASM
         run: |
