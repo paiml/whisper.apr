@@ -207,8 +207,19 @@ impl ParityTest {
 /// where S = substitutions, D = deletions, I = insertions, N = reference length
 #[must_use]
 pub fn calculate_wer(reference: &str, hypothesis: &str) -> f64 {
-    let ref_words: Vec<&str> = reference.split_whitespace().collect();
-    let hyp_words: Vec<&str> = hypothesis.split_whitespace().collect();
+    // Normalize: lowercase and strip punctuation for fair comparison (D.2, D.3)
+    let normalize = |s: &str| -> Vec<String> {
+        s.to_lowercase()
+            .chars()
+            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+            .collect::<String>()
+            .split_whitespace()
+            .map(|w| w.to_string())
+            .collect()
+    };
+
+    let ref_words = normalize(reference);
+    let hyp_words = normalize(hypothesis);
 
     if ref_words.is_empty() {
         return if hyp_words.is_empty() { 0.0 } else { 1.0 };

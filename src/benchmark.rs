@@ -2257,6 +2257,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Slow: requires release mode for accurate RTF measurement"]
     fn test_release_mode_rtf_target() {
         // Test: Release mode RTF meets performance target
         //

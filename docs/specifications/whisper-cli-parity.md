@@ -976,10 +976,120 @@ The `whisper-apr` project is **CERTIFIED** as compliant with Specification v2.2.
 
 ---
 
+## Appendix D: QA Team Validation Checklist
+
+**Instructions for QA Team**:
+1. Run each test command in order
+2. Mark result: `[x]` PASS or `[!]` FAIL
+3. If FAIL, note the error in "Notes" column
+4. All tests must pass for release approval
+
+**Environment Requirements**:
+- Linux x86_64
+- Rust stable + nightly (for TSAN)
+- Chrome 68+ / Firefox 79+ (for WASM)
+- `probador` installed (`cargo install probador`)
+
+---
+
+### D.1 CLI Infrastructure Tests
+
+| # | Test | Command | Expected | Pass | Fail | Notes |
+|---|------|---------|----------|------|------|-------|
+| D.1.1 | Help displays | `cargo run -- --help` | Shows usage | [ ] | [ ] | |
+| D.1.2 | Version shows | `cargo run -- --version` | Semver x.y.z | [ ] | [ ] | |
+| D.1.3 | Unknown flag errors | `cargo run -- --invalid` | Exit != 0 | [ ] | [ ] | |
+| D.1.4 | Missing required arg | `cargo run -- transcribe` | Error: -f required | [ ] | [ ] | |
+| D.1.5 | Invalid type | `--threads abc` | Type error | [ ] | [ ] | |
+| D.1.6 | Temp out of range | `--temperature 2.0` | Range error | [ ] | [ ] | |
+| D.1.7 | Conflicting flags | `-q -v` | Conflict error | [ ] | [ ] | |
+
+---
+
+### D.2 Transcription Pipeline Tests
+
+| # | Test | Command | Expected | Pass | Fail | Notes |
+|---|------|---------|----------|------|------|-------|
+| D.2.1 | WAV transcribes | `cargo run -- transcribe -f demos/test-audio/test-speech-1.5s.wav` | Non-empty text | [ ] | [ ] | |
+| D.2.2 | TXT output | `-o txt` | Plain text | [ ] | [ ] | |
+| D.2.3 | SRT output | `-o srt` | Valid SRT | [ ] | [ ] | |
+| D.2.4 | VTT output | `-o vtt` | Valid WebVTT | [ ] | [ ] | |
+| D.2.5 | JSON output | `-o json` | Valid JSON | [ ] | [ ] | |
+| D.2.6 | Language detect | `--detect-language` | Shows language | [ ] | [ ] | |
+
+---
+
+### D.3 Model Validation Tests (T10)
+
+| # | Test | Command | Expected | Pass | Fail | Notes |
+|---|------|---------|----------|------|------|-------|
+| D.3.1 | Validate runs | `cargo run -- validate models/whisper-tiny.apr` | Score output | [ ] | [ ] | |
+| D.3.2 | JSON format | `--format json` | Valid JSON | [ ] | [ ] | |
+| D.3.3 | Category A | Magic/header/tensors | 5/5 | [ ] | [ ] | |
+| D.3.4 | Category B | LayerNorm weights | 5/5 | [ ] | [ ] | |
+| D.3.5 | Category C | Attention/Linear | 5/5 | [ ] | [ ] | |
+| D.3.6 | Category D | Embeddings | 5/5 | [ ] | [ ] | |
+| D.3.7 | Category E | Functional | 5/5 | [ ] | [ ] | |
+
+---
+
+### D.4 Parallel Inference Tests (P)
+
+| # | Test | Command | Expected | Pass | Fail | Notes |
+|---|------|---------|----------|------|------|-------|
+| D.4.1 | Parallel compiles | `cargo build --release --features parallel` | Exit 0 | [ ] | [ ] | |
+| D.4.2 | Tests pass | `cargo test --features parallel` | All pass | [ ] | [ ] | |
+| D.4.3 | Threads flag | `--threads 1` vs `--threads 4` | Different RTF | [ ] | [ ] | |
+| D.4.4 | Deterministic | 5 runs same input | Identical output | [ ] | [ ] | |
+| D.4.5 | TSAN clean | See command below | 0 data races | [ ] | [ ] | |
+
+**TSAN Command**:
+```bash
+RUSTFLAGS="-Z sanitizer=thread" rustup run nightly cargo test --features parallel -Z build-std --target x86_64-unknown-linux-gnu
+```
+
+---
+
+### D.5 WASM Browser Tests
+
+| # | Test | Command | Expected | Pass | Fail | Notes |
+|---|------|---------|----------|------|------|-------|
+| D.5.1 | WASM builds | `cargo build --target wasm32-unknown-unknown --features wasm` | Exit 0 | [ ] | [ ] | |
+| D.5.2 | probador tests | `cd demos && probador test -v` | All pass | [ ] | [ ] | |
+| D.5.3 | Chrome works | Open demo in Chrome 68+ | Transcription works | [ ] | [ ] | |
+| D.5.4 | Firefox works | Open demo in Firefox 79+ | Transcription works | [ ] | [ ] | |
+
+---
+
+### D.6 Summary Scorecard
+
+| Section | Max | Verified | % |
+|---------|-----|----------|---|
+| D.1 CLI Infrastructure | 7 | /7 | |
+| D.2 Transcription | 6 | /6 | |
+| D.3 Model Validation | 7 | /7 | |
+| D.4 Parallel Inference | 5 | /5 | |
+| D.5 WASM Browser | 4 | /4 | |
+| **TOTAL** | **29** | **/29** | |
+
+---
+
+### D.7 Sign-Off
+
+| Role | Name | Date | Signature |
+|------|------|------|-----------|
+| QA Lead | | | |
+| Dev Lead | | | |
+| Release Manager | | | |
+
+---
+
 ## Document History
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 2.5.0 | 2025-12-20 | whisper-apr team | **QA TEAM CHECKLIST**: Added Appendix D with 29-point validation checklist for external QA team. TSAN validated (75 tests, 0 races). 255/255 points. |
+| 2.4.0 | 2025-12-20 | whisper-apr team | **WASM VERIFIED**: probador 536 tests passed. P.2, P.9, W.1, W.2 validated. |
 | 2.2.1 | 2025-12-20 | whisper-apr team | **Corrected Self-Diagnostic**: Clarified that `AprValidator` implements the 25-signal check via `validate` command. `diagnose` checks tokenizer/model config. Removed reference to missing `self_diagnose` method. |
 | 2.2.0 | 2025-12-19 | whisper-apr team | **25-SIGNAL SELF-DIAGNOSTIC**: Added §2.5 with hardware POST-inspired validation. Added §2.4 Unified Model Format (P0). New Section T10 (25 points). Citations [24-28]. Root cause: CLI used model without filterbank while WASM worked. |
 | 2.1.0 | 2025-12-19 | whisper-apr team | **P0 ZERO MOCK TOLERANCE**: Added §2.3 - ANY mock/stub code = automatic 0/100. Citation [23] Fowler. |

@@ -17,8 +17,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("╚════════════════════════════════════════════════════════════════╝\n");
 
     // Load model
-    let model_bytes = std::fs::read("models/whisper-tiny-fb.apr")?;
+    let model_bytes = std::fs::read("models/whisper-tiny-new.apr")?;
     let mut model = WhisperApr::load_from_apr(&model_bytes)?;
+
+    // Check token embedding stats
+    let te = model.decoder_mut().token_embedding();
+    let te_stats = compute_stats(te);
+    println!("=== Token Embedding ===");
+    println!(
+        "  Shape: {} values ({} vocab x {} dim)",
+        te.len(),
+        te.len() / 384,
+        384
+    );
+    println!(
+        "  Stats: min={:.4}, max={:.4}, mean={:.6}, std={:.4}",
+        te_stats.0, te_stats.1, te_stats.2, te_stats.3
+    );
+    let te_zero = te.iter().filter(|&&x| x == 0.0).count();
+    let te_nonzero = te.len() - te_zero;
+    println!("  Zero: {}, NonZero: {}", te_zero, te_nonzero);
+    if te_nonzero == 0 {
+        println!("  ERROR: Token embedding is all zeros!");
+    }
+    println!();
 
     // Load audio and compute mel
     let audio_bytes = std::fs::read("demos/test-audio/test-speech-1.5s.wav")?;

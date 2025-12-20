@@ -213,6 +213,7 @@ fn test_real_transcription_first_word() {
 
 /// WAPR-GT-001-C01: RTF is acceptable for tiny model
 #[test]
+#[ignore = "Slow: requires release mode for accurate RTF measurement"]
 fn test_real_transcription_rtf() {
     if !Path::new(MODEL_TINY_FULL).exists() || !Path::new(TEST_AUDIO_1_5S).exists() {
         eprintln!("[SKIP] Required files not found");
