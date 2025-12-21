@@ -27,8 +27,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: whisper.apr -> target
-      - name: Update path dependencies
-        run: cargo update -p aprender
+      - name: Fix path dependencies
+        run: |
+          rm -f Cargo.lock
+          cargo generate-lockfile
         working-directory: whisper.apr
       - run: cargo check --all-features
         working-directory: whisper.apr
@@ -63,8 +65,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: whisper.apr -> target
-      - name: Update path dependencies
-        run: cargo update -p aprender
+      - name: Fix path dependencies
+        run: |
+          rm -f Cargo.lock
+          cargo generate-lockfile
         working-directory: whisper.apr
       - run: cargo clippy --all-targets --all-features -- -D warnings
         working-directory: whisper.apr
@@ -84,8 +88,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: whisper.apr -> target
-      - name: Update path dependencies
-        run: cargo update -p aprender
+      - name: Fix path dependencies
+        run: |
+          rm -f Cargo.lock
+          cargo generate-lockfile
         working-directory: whisper.apr
       - run: cargo test --all-features
         working-directory: whisper.apr
@@ -116,8 +122,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: whisper.apr/demos -> target
-      - name: Update path dependencies
-        run: cargo update -p aprender -p jugar-probar
+      - name: Fix path dependencies
+        run: |
+          rm -f Cargo.lock
+          cargo generate-lockfile
 
       - name: Check demos
         run: cargo check --all-features
@@ -155,8 +163,10 @@ jobs:
           workspaces: whisper.apr -> target
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Update path dependencies
-        run: cargo update -p aprender
+      - name: Fix path dependencies
+        run: |
+          rm -f Cargo.lock
+          cargo generate-lockfile
         working-directory: whisper.apr
       - name: Generate coverage
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
@@ -194,8 +204,10 @@ jobs:
           workspaces: whisper.apr/demos -> target
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Update path dependencies
-        run: cargo update -p aprender -p jugar-probar
+      - name: Fix path dependencies
+        run: |
+          rm -f Cargo.lock
+          cargo generate-lockfile
       - name: Generate demo coverage
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
       - name: Check coverage threshold
@@ -222,8 +234,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install cargo-audit
         run: cargo install cargo-audit
-      - name: Update path dependencies
-        run: cargo update -p aprender
+      - name: Fix path dependencies
+        run: |
+          rm -f Cargo.lock
+          cargo generate-lockfile
         working-directory: whisper.apr
       - name: Run audit
         run: cargo audit
@@ -246,8 +260,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: whisper.apr -> target
-      - name: Update path dependencies
-        run: cargo update -p aprender
+      - name: Fix path dependencies
+        run: |
+          rm -f Cargo.lock
+          cargo generate-lockfile
         working-directory: whisper.apr
       - name: Build docs
         run: cargo doc --no-deps --all-features
@@ -280,8 +296,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: whisper.apr/demos -> target
-      - name: Update path dependencies
-        run: cargo update -p aprender -p jugar-probar
+      - name: Fix path dependencies
+        run: |
+          rm -f Cargo.lock
+          cargo generate-lockfile
 
       - name: Build release WASM
         run: |
