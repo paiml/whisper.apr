@@ -27,6 +27,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: whisper.apr -> target
+      - name: Debug directory structure
+        run: |
+          echo "Current dir: $(pwd)"
+          echo "Workspace: $GITHUB_WORKSPACE"
+          ls -la
+          ls -la whisper.apr || true
+          ls -la aprender || true
+          cat whisper.apr/Cargo.toml | grep -A 5 aprender || true
       - name: Fix path dependencies
         run: |
           rm -f Cargo.lock
