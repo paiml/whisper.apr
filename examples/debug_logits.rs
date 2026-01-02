@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  NO_TIMESTAMPS: {}", special_tokens::NO_TIMESTAMPS);
 
     // Do a single forward pass with all initial tokens
-    let logits = model.decoder_mut().forward(&initial_tokens, &encoded)?;
+    let logits = model.decoder_mut().forward(&initial_tokens, &encoded, None)?;
 
     println!("\nLogits from decoder.forward():");
     println!("  Total elements: {}", logits.len());

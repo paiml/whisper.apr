@@ -213,7 +213,7 @@ fn bench_first_token(c: &mut Criterion) {
         b.iter(|| {
             let logits = model
                 .decoder_mut()
-                .forward(&initial_tokens, &encoder_output)
+                .forward(&initial_tokens, &encoder_output, None)
                 .expect("decode");
             black_box(logits.len())
         });

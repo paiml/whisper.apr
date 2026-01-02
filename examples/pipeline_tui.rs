@@ -171,14 +171,14 @@ fn run_with_model(model: &mut whisper_apr::WhisperApr) {
 
         // Warmup
         for _ in 0..3 {
-            let _ = model.decoder_mut().forward(&tokens, &enc_output);
+            let _ = model.decoder_mut().forward(&tokens, &enc_output, None);
         }
 
         let start = Instant::now();
         for _ in 0..iterations {
             let _ = model
                 .decoder_mut()
-                .forward(&tokens, &enc_output)
+                .forward(&tokens, &enc_output, None)
                 .expect("dec");
         }
         let dec_time = start.elapsed().as_secs_f64() * 1000.0 / iterations as f64;
@@ -207,7 +207,7 @@ fn run_with_model(model: &mut whisper_apr::WhisperApr) {
     let start = Instant::now();
     let _ = model
         .decoder_mut()
-        .forward_one(50258, &enc_output, &mut cache)
+        .forward_one(50258, &enc_output, &mut cache, None)
         .expect("dec");
     let first_token_time = start.elapsed().as_secs_f64() * 1000.0;
 
@@ -225,7 +225,7 @@ fn run_with_model(model: &mut whisper_apr::WhisperApr) {
         let start = Instant::now();
         let _ = model
             .decoder_mut()
-            .forward_one(50259 + i, &enc_output, &mut cache)
+            .forward_one(50259 + i, &enc_output, &mut cache, None)
             .expect("dec");
         subsequent_times.push(start.elapsed().as_secs_f64() * 1000.0);
     }
@@ -326,7 +326,7 @@ fn run_with_model(model: &mut whisper_apr::WhisperApr) {
     let tokens = vec![50258_u32];
     let dec_output = model
         .decoder_mut()
-        .forward(&tokens, &enc_output)
+        .forward(&tokens, &enc_output, None)
         .expect("dec");
     let dec_finite = dec_output.iter().all(|x| x.is_finite());
     println!(
@@ -378,7 +378,7 @@ fn run_with_model(model: &mut whisper_apr::WhisperApr) {
     for i in 0..num_tokens {
         let _ = model
             .decoder_mut()
-            .forward_one(50258 + i, &enc_output, &mut cache)
+            .forward_one(50258 + i, &enc_output, &mut cache, None)
             .expect("dec");
     }
     let total_gen_time = start.elapsed().as_secs_f64() * 1000.0;

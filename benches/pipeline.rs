@@ -257,7 +257,7 @@ fn bench_step_h_decoder(c: &mut Criterion) {
         b.iter(|| {
             let result = model
                 .decoder_mut()
-                .forward(black_box(&initial_tokens), black_box(&encoder_output));
+                .forward(black_box(&initial_tokens), black_box(&encoder_output), None);
             black_box(result)
         });
     });
@@ -314,7 +314,7 @@ fn bench_e2e_transcription(c: &mut Criterion) {
                 let initial_tokens = vec![50258_u32, 50259, 50359, 50363];
                 let _ = model
                     .decoder_mut()
-                    .forward(&initial_tokens, &encoder_output);
+                    .forward(&initial_tokens, &encoder_output, None);
 
                 total += start.elapsed();
             }

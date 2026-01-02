@@ -90,7 +90,7 @@ proptest! {
             .map(|i| (i as f32 * 0.01).sin())
             .collect();
 
-        let result = decoder.forward(&tokens, &encoder_output);
+        let result = decoder.forward(&tokens, &encoder_output, None);
         prop_assert!(result.is_ok(), "Decoder forward failed");
 
         let logits = result.expect("test assertion");
@@ -338,7 +338,7 @@ fn test_decoder_with_max_tokens() {
     let tokens: Vec<u32> = (0..max_len.min(100)).map(|i| i as u32).collect();
     let encoder_output: Vec<f32> = vec![0.1; 10 * d_model];
 
-    let result = decoder.forward(&tokens, &encoder_output);
+    let result = decoder.forward(&tokens, &encoder_output, None);
     assert!(result.is_ok());
     let logits = result.expect("test assertion");
     assert!(logits.iter().all(|x| x.is_finite()));
@@ -355,7 +355,7 @@ fn test_decoder_kv_cache_consistency() {
     // Generate with batch forward
     let tokens = vec![100_u32, 101, 102];
     let batch_result = decoder
-        .forward(&tokens, &encoder_output)
+        .forward(&tokens, &encoder_output, None)
         .expect("test assertion");
 
     // Generate with forward_one
@@ -363,7 +363,7 @@ fn test_decoder_kv_cache_consistency() {
     let mut incremental_result = Vec::new();
     for (i, &token) in tokens.iter().enumerate() {
         let logits = decoder
-            .forward_one(token, &encoder_output, &mut cache)
+            .forward_one(token, &encoder_output, &mut cache, None)
             .expect("test assertion");
         if i == tokens.len() - 1 {
             incremental_result = logits;
@@ -408,7 +408,7 @@ fn stress_test_repeated_forward_one() {
 
     // Generate 50 tokens
     for i in 0..50 {
-        let result = decoder.forward_one(i as u32, &encoder_output, &mut cache);
+        let result = decoder.forward_one(i as u32, &encoder_output, &mut cache, None);
         assert!(result.is_ok(), "Failed at token {}", i);
         let logits = result.expect("test assertion");
         assert!(

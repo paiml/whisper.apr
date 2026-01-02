@@ -28,7 +28,7 @@ fn main() {
 
     // Warmup
     for _ in 0..3 {
-        let _ = model.decoder_mut().forward(&single_token, &encoder_output);
+        let _ = model.decoder_mut().forward(&single_token, &encoder_output, None);
     }
 
     // Measure batch forward (1 token)
@@ -37,7 +37,7 @@ fn main() {
     for _ in 0..iterations {
         let _ = model
             .decoder_mut()
-            .forward(&single_token, &encoder_output)
+            .forward(&single_token, &encoder_output, None)
             .expect("decode");
     }
     let total = start.elapsed();
@@ -56,7 +56,7 @@ fn main() {
         cache.clear();
         let _ = model
             .decoder_mut()
-            .forward_one(50258, &encoder_output, &mut cache);
+            .forward_one(50258, &encoder_output, &mut cache, None);
     }
 
     // Measure forward_one (first token)
@@ -64,7 +64,7 @@ fn main() {
     let start = Instant::now();
     let _ = model
         .decoder_mut()
-        .forward_one(50258, &encoder_output, &mut cache)
+        .forward_one(50258, &encoder_output, &mut cache, None)
         .expect("decode");
     let first_token_time = start.elapsed();
 
@@ -73,7 +73,7 @@ fn main() {
     for _ in 1..iterations {
         let _ = model
             .decoder_mut()
-            .forward_one(50259, &encoder_output, &mut cache)
+            .forward_one(50259, &encoder_output, &mut cache, None)
             .expect("decode");
     }
     let subsequent_total = start.elapsed();

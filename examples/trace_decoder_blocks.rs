@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (logits, trace) = model
         .decoder_mut()
-        .forward_traced(&initial_tokens, &encoded)?;
+        .forward_traced(&initial_tokens, &encoded, None)?;
 
     // Print trace
     println!("L2 norms at each stage:");
