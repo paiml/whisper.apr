@@ -6,20 +6,15 @@
 use crate::error::WhisperResult;
 
 /// Memory mapping mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MmapMode {
     /// Read-only mapping (most common for inference)
+    #[default]
     ReadOnly,
     /// Read-write mapping (for training/fine-tuning)
     ReadWrite,
     /// Copy-on-write mapping
     CopyOnWrite,
-}
-
-impl Default for MmapMode {
-    fn default() -> Self {
-        Self::ReadOnly
-    }
 }
 
 impl MmapMode {

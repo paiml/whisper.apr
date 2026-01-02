@@ -85,7 +85,7 @@ use whisper_apr::{WhisperApr, TranscribeOptions, Task};
 fn main() -> whisper_apr::WhisperResult<()> {
     // Load model
     let model_data = std::fs::read("base.apr")?;
-    let whisper = WhisperApr::load(&model_data)?;
+    let whisper = WhisperApr::load_from_apr(&model_data)?;
 
     // Load audio (must be 16kHz mono f32)
     let audio: Vec<f32> = load_audio("speech.wav")?;

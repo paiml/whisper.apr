@@ -6,10 +6,18 @@
 
 #![allow(clippy::unwrap_used)]
 
+#[cfg(not(feature = "tui"))]
+fn main() {
+    eprintln!("This example requires the 'tui' feature.");
+    eprintln!("Run: cargo run --example tui_demo --features tui");
+}
+
+#[cfg(feature = "tui")]
 use whisper_apr::tui::{
     render_attention_heatmap, render_mel_spectrogram, render_waveform, WhisperApp,
 };
 
+#[cfg(feature = "tui")]
 fn main() {
     println!("╔══════════════════════════════════════════════════════════════════╗");
     println!("║       WHISPER PIPELINE TUI VISUALIZATION DEMO (WAPR-TUI-001)     ║");

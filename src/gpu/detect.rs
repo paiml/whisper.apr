@@ -308,7 +308,7 @@ impl SimulatedGpuConfig {
 }
 
 /// Query specific GPU features
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct GpuFeatureQuery {
     /// Requires compute shader support
     pub compute: bool,
@@ -320,18 +320,6 @@ pub struct GpuFeatureQuery {
     pub min_buffer_size: u64,
     /// Minimum VRAM needed
     pub min_vram: u64,
-}
-
-impl Default for GpuFeatureQuery {
-    fn default() -> Self {
-        Self {
-            compute: false,
-            f16: false,
-            timestamp_query: false,
-            min_buffer_size: 0,
-            min_vram: 0,
-        }
-    }
 }
 
 impl GpuFeatureQuery {

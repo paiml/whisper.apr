@@ -176,7 +176,7 @@ fn main() {
         let start = Instant::now();
         let _ = model
             .decoder_mut()
-            .forward(&initial_tokens, &encoder_output, None)
+            .forward(&initial_tokens, &encoder_output)
             .expect("decode");
         let decoder_time = start.elapsed();
 

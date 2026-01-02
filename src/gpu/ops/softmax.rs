@@ -6,20 +6,15 @@
 use crate::gpu::error::{GpuError, GpuResult};
 
 /// Softmax computation dimension
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SoftmaxDimension {
     /// Apply softmax along rows (last dimension)
+    #[default]
     Row,
     /// Apply softmax along columns
     Column,
     /// Apply softmax to entire tensor (flattened)
     All,
-}
-
-impl Default for SoftmaxDimension {
-    fn default() -> Self {
-        Self::Row
-    }
 }
 
 impl SoftmaxDimension {

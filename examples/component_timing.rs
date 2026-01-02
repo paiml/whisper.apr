@@ -53,7 +53,7 @@ fn main() {
 
     // Warmup batch forward
     for _ in 0..3 {
-        let _ = model.decoder_mut().forward(&tokens, &encoder_output, None);
+        let _ = model.decoder_mut().forward(&tokens, &encoder_output);
     }
 
     // Time batch forward
@@ -61,7 +61,7 @@ fn main() {
     for _ in 0..iterations {
         let _ = model
             .decoder_mut()
-            .forward(&tokens, &encoder_output, None)
+            .forward(&tokens, &encoder_output)
             .expect("dec");
     }
     let batch_time = start.elapsed().as_secs_f64() * 1000.0 / iterations as f64;
@@ -75,7 +75,7 @@ fn main() {
         cache.clear();
         let _ = model
             .decoder_mut()
-            .forward_one(50258, &encoder_output, &mut cache, None);
+            .forward_one(50258, &encoder_output, &mut cache);
     }
 
     // Time forward_one first token
@@ -83,7 +83,7 @@ fn main() {
     let start = Instant::now();
     let _ = model
         .decoder_mut()
-        .forward_one(50258, &encoder_output, &mut cache, None)
+        .forward_one(50258, &encoder_output, &mut cache)
         .expect("dec");
     let first_token_time = start.elapsed().as_secs_f64() * 1000.0;
     println!("forward_one (first token): {first_token_time:.1}ms");
@@ -93,7 +93,7 @@ fn main() {
     for _ in 0..(iterations - 1) {
         let _ = model
             .decoder_mut()
-            .forward_one(50259, &encoder_output, &mut cache, None)
+            .forward_one(50259, &encoder_output, &mut cache)
             .expect("dec");
     }
     let subsequent_time = start.elapsed().as_secs_f64() * 1000.0 / (iterations - 1) as f64;

@@ -6,20 +6,15 @@
 use crate::gpu::error::{GpuError, GpuResult};
 
 /// GELU approximation method
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GeluApproximation {
     /// Exact GELU: x * 0.5 * (1 + erf(x / sqrt(2)))
     Exact,
     /// Tanh approximation: x * 0.5 * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+    #[default]
     Tanh,
     /// Sigmoid approximation: x * sigmoid(1.702 * x) (fastest)
     Sigmoid,
-}
-
-impl Default for GeluApproximation {
-    fn default() -> Self {
-        Self::Tanh // Most common in transformers
-    }
 }
 
 impl GeluApproximation {

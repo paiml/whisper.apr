@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test 1: Use forward() (batch mode)
     println!("=== TEST 1: forward() (batch mode) ===\n");
-    let batch_logits = model.decoder_mut().forward(&initial_tokens, &encoded, None)?;
+    let batch_logits = model.decoder_mut().forward(&initial_tokens, &encoded)?;
     let n_vocab = 51865;
     let seq_len = initial_tokens.len();
     let last_logits_start = (seq_len - 1) * n_vocab;
@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  Processing token {}: {}", i, token);
         let logits = model
             .decoder_mut()
-            .forward_one(token, &encoded, &mut cache, None)?;
+            .forward_one(token, &encoded, &mut cache)?;
 
         // Check logits stats
         let sum: f32 = logits.iter().sum();

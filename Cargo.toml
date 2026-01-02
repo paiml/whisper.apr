@@ -14,6 +14,11 @@ categories = ["multimedia::audio", "wasm", "science"]
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "whisper-apr-cli"
+path = "src/bin/whisper-apr-cli.rs"
+required-features = ["cli"]
+
 [features]
 default = ["std", "simd", "realizar-inference"]
 std = []
@@ -24,7 +29,7 @@ simd = []
 parallel = ["rayon", "wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
 converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs", "zip"]
-cli = ["clap", "serde", "serde_json", "tracing-subscriber"]
+cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "half"]
 benchmark-tui = ["ratatui", "crossterm"]
 tui = ["ratatui", "crossterm"]
 # Use realizar's world-class inference primitives (attention, quantization, caching)
@@ -83,6 +88,8 @@ zip = { version = "2", optional = true, default-features = false, features = ["d
 # Optional: CLI dependencies
 clap = { version = "4", features = ["derive"], optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+hf-hub = { version = "0.3", optional = true }
+half = { version = "2", optional = true }
 
 # Optional: TUI benchmark dependencies
 ratatui = { version = "0.29", optional = true }
@@ -140,89 +147,3 @@ harness = false
 name = "cli_benchmarks"
 harness = false
 
-[[example]]
-name = "format_comparison"
-path = "examples/format_comparison.rs"
-
-[[example]]
-name = "basic_transcription"
-path = "examples/basic_transcription.rs"
-
-[[example]]
-name = "streaming_audio"
-path = "examples/streaming_audio.rs"
-
-[[example]]
-name = "mel_spectrogram"
-path = "examples/mel_spectrogram.rs"
-
-[[example]]
-name = "language_detection"
-path = "examples/language_detection.rs"
-
-[[example]]
-name = "simd_operations"
-path = "examples/simd_operations.rs"
-
-[[example]]
-name = "benchmark_pipeline"
-path = "examples/benchmark_pipeline.rs"
-
-[[example]]
-name = "benchmark_tui"
-path = "examples/benchmark_tui.rs"
-required-features = ["benchmark-tui"]
-
-[[example]]
-name = "tui_demo"
-path = "examples/tui_demo.rs"
-required-features = ["tui"]
-
-[[example]]
-name = "cli_usage"
-path = "examples/cli_usage.rs"
-required-features = ["cli"]
-
-[[bin]]
-name = "whisper-convert"
-path = "tools/convert.rs"
-required-features = ["converter"]
-
-[[bin]]
-name = "whisper-apr-cli"
-path = "src/bin/whisper-apr-cli.rs"
-required-features = ["cli"]
-
-[lints.rust]
-unsafe_code = "warn"
-missing_docs = "warn"
-
-[lints.clippy]
-all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
-nursery = { level = "warn", priority = -1 }
-cargo = { level = "warn", priority = -1 }
-unwrap_used = "deny"
-expect_used = "warn"
-panic = "warn"
-# DSP/Audio code allows
-cast_precision_loss = "allow"     # Intentional in DSP code
-cast_possible_truncation = "allow" # Intentional in DSP code
-cast_sign_loss = "allow"          # Intentional in DSP code
-cast_lossless = "allow"           # Readability preference
-cast_possible_wrap = "allow"      # Intentional index conversions
-# Development allows (will be fixed as code matures)
-missing_const_for_fn = "allow"    # Will be added incrementally
-must_use_candidate = "allow"      # Will be added incrementally
-missing_errors_doc = "allow"      # Will be documented incrementally
-derivable_impls = "allow"         # Some manual impls are intentional
-doc_markdown = "allow"            # Will be fixed incrementally
-redundant_closure_for_method_calls = "allow"  # Readability preference
-needless_pass_by_value = "allow"  # Sometimes intentional for clarity
-# Cargo lints
-multiple_crate_versions = "allow"  # Transitive deps out of our control
-
-# WASM-pack configuration for threaded builds
-# wasm-opt doesn't understand atomics by default, so disable for parallel builds
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false

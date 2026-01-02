@@ -6,7 +6,7 @@
 use crate::error::WhisperResult;
 
 /// Compute backend type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum BackendType {
     /// CPU with SIMD acceleration
     Simd,
@@ -15,13 +15,8 @@ pub enum BackendType {
     /// CPU fallback (no SIMD)
     Cpu,
     /// Automatic selection based on workload
+    #[default]
     Auto,
-}
-
-impl Default for BackendType {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 impl BackendType {

@@ -122,7 +122,7 @@ dependencies = [
  "dirs 6.0.0",
  "getrandom 0.2.16",
  "half",
- "hf-hub",
+ "hf-hub 0.4.3",
  "memmap2",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -1364,6 +1364,23 @@ name = "hexf-parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
+
+[[package]]
+name = "hf-hub"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b780635574b3d92f036890d8373433d6f9fc7abb320ee42a5c25897fc8ed732"
+dependencies = [
+ "dirs 5.0.1",
+ "indicatif",
+ "log",
+ "native-tls",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "ureq",
+]
 
 [[package]]
 name = "hf-hub"
@@ -3903,6 +3920,7 @@ dependencies = [
  "base64",
  "flate2",
  "log",
+ "native-tls",
  "once_cell",
  "rustls",
  "rustls-pki-types",
@@ -4428,6 +4446,8 @@ dependencies = [
  "dirs 5.0.1",
  "getrandom 0.2.16",
  "getrandom 0.3.4",
+ "half",
+ "hf-hub 0.3.2",
  "indicatif",
  "js-sys",
  "jugar-probar",
