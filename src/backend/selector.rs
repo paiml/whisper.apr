@@ -7,25 +7,20 @@ use super::traits::{BackendCapabilities, BackendType, ComputeOp};
 use crate::gpu::{detect_gpu, DetectionOptions};
 
 /// Backend selection strategy
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SelectionStrategy {
     /// Always use GPU if available
     PreferGpu,
     /// Always use SIMD
     PreferSimd,
     /// Automatic selection based on workload
+    #[default]
     Automatic,
     /// Use GPU for large workloads, SIMD for small
     Threshold {
         /// Minimum FLOPs to use GPU
         min_flops: u64,
     },
-}
-
-impl Default for SelectionStrategy {
-    fn default() -> Self {
-        Self::Automatic
-    }
 }
 
 impl SelectionStrategy {

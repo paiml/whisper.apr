@@ -229,20 +229,15 @@ impl SpeakerEmbedding {
 }
 
 /// Speaker embedding model types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpeakerEmbeddingModel {
     /// Simple MFCC-based model (lightweight, WASM-friendly)
+    #[default]
     MfccSimple,
     /// X-vector model (more accurate, heavier)
     XVector,
     /// ECAPA-TDNN model (state-of-the-art, heavy)
     EcapaTdnn,
-}
-
-impl Default for SpeakerEmbeddingModel {
-    fn default() -> Self {
-        Self::MfccSimple
-    }
 }
 
 /// Speaker embedding extractor

@@ -6,20 +6,15 @@
 use crate::gpu::error::{GpuError, GpuResult};
 
 /// Tile size for matrix multiplication
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TileSize {
     /// 8x8 tiles (small matrices, limited hardware)
     Tile8x8,
     /// 16x16 tiles (medium matrices)
+    #[default]
     Tile16x16,
     /// 32x32 tiles (large matrices, high-end hardware)
     Tile32x32,
-}
-
-impl Default for TileSize {
-    fn default() -> Self {
-        Self::Tile16x16
-    }
 }
 
 impl TileSize {

@@ -132,9 +132,10 @@ pub enum ModelType {
 }
 
 /// Decoding strategy for transcription
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum DecodingStrategy {
     /// Fast, memory-efficient greedy decoding
+    #[default]
     Greedy,
     /// Higher quality beam search
     BeamSearch {
@@ -156,12 +157,6 @@ pub enum DecodingStrategy {
     },
 }
 
-impl Default for DecodingStrategy {
-    fn default() -> Self {
-        Self::Greedy
-    }
-}
-
 /// Task type for transcription
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Task {
@@ -173,7 +168,7 @@ pub enum Task {
 }
 
 /// Options for transcription
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TranscribeOptions {
     /// Language code (e.g., "en", "es") or "auto" for detection
     pub language: Option<String>,
@@ -183,17 +178,6 @@ pub struct TranscribeOptions {
     pub strategy: DecodingStrategy,
     /// Whether to include word-level timestamps
     pub word_timestamps: bool,
-}
-
-impl Default for TranscribeOptions {
-    fn default() -> Self {
-        Self {
-            language: None,
-            task: Task::default(),
-            strategy: DecodingStrategy::default(),
-            word_timestamps: false,
-        }
-    }
 }
 
 /// A timestamped segment of transcription

@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut tokens = initial_tokens.clone();
 
     for step in 0..20 {
-        let logits = model.decoder_mut().forward(&tokens, &hf_enc, None)?;
+        let logits = model.decoder_mut().forward(&tokens, &hf_enc)?;
         let last_logits = &logits[(tokens.len() - 1) * 51865..tokens.len() * 51865];
 
         // Argmax

@@ -341,7 +341,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for &token in &initial_tokens {
         raw_logits = model
             .decoder_mut()
-            .forward_one(token, &enc_data, &mut cache.borrow_mut(), None)?;
+            .forward_one(token, &enc_data, &mut cache.borrow_mut())?;
     }
 
     // Logit statistics

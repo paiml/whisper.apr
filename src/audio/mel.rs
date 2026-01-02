@@ -279,6 +279,7 @@ impl MelFilterbank {
             fft.process(&mut fft_input);
 
             // Compute power spectrum (magnitude squared)
+            // Note: We don't normalize here; the normalization happens in the max-8/+4/4 step
             let power_spec: Vec<f32> = fft_input
                 .iter()
                 .take(self.n_freqs)
@@ -483,6 +484,7 @@ impl MelFilterbank {
             fft.process(&mut fft_input);
 
             // Compute power spectrum (magnitude squared)
+            // Note: We don't normalize here; the normalization happens in the max-8/+4/4 step
             let power_spec: Vec<f32> = fft_input
                 .iter()
                 .take(self.n_freqs)

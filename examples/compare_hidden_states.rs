@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (logits, trace) = model
         .decoder_mut()
-        .forward_traced(&initial_tokens, &encoded, None)?;
+        .forward_traced(&initial_tokens, &encoded)?;
 
     println!("\nOur implementation:");
     for (name, value) in &trace {

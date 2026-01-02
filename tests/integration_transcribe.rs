@@ -204,7 +204,13 @@ fn test_decoder_generates_tokens_quickly() {
     let max_tokens = 5;
     let eos_token = 50256_u32;
 
-    let result = decoder.generate(&encoder_output, &initial_tokens, max_tokens, eos_token, None);
+    let result = decoder.generate(
+        &encoder_output,
+        &initial_tokens,
+        max_tokens,
+        eos_token,
+        None,
+    );
 
     let elapsed = start.elapsed();
 
@@ -560,7 +566,9 @@ fn test_token_embeddings_vary() {
     for &token in &test_tokens {
         // Forward with just one token to get its embedding contribution
         let fake_encoder = vec![0.0f32; 74 * d_model]; // encoder output
-        let logits = decoder.forward(&[token], &fake_encoder, None).expect("forward");
+        let logits = decoder
+            .forward(&[token], &fake_encoder, None)
+            .expect("forward");
 
         // The logits are affected by the embedding - capture first 10 values as fingerprint
         let fingerprint: Vec<f32> = logits.iter().take(100).copied().collect();
@@ -735,7 +743,9 @@ fn test_decoder_produces_varied_output() {
     // Generate 10 tokens and track what we get
     let mut generated = Vec::new();
     for step in 0..10 {
-        let logits = decoder.forward(&tokens, &encoder_output, None).expect("forward");
+        let logits = decoder
+            .forward(&tokens, &encoder_output, None)
+            .expect("forward");
         let n_vocab = decoder.n_vocab();
         let last_logits = &logits[(logits.len() / n_vocab - 1) * n_vocab..];
 
@@ -912,8 +922,12 @@ fn test_cross_attention_varies_with_encoder() {
     let tokens = vec![50258_u32, 50259, 50359, 50363]; // SOT, en, transcribe, notimestamps
 
     // Compute decoder output with zeros encoder
-    let logits_zeros = decoder.forward(&tokens, &enc_zeros, None).expect("forward zeros");
-    let logits_rand = decoder.forward(&tokens, &enc_rand, None).expect("forward rand");
+    let logits_zeros = decoder
+        .forward(&tokens, &enc_zeros, None)
+        .expect("forward zeros");
+    let logits_rand = decoder
+        .forward(&tokens, &enc_rand, None)
+        .expect("forward rand");
 
     // The outputs should be different if cross-attention is working
     let diff: f32 = logits_zeros
@@ -1375,7 +1389,9 @@ fn test_f32_model_generation() {
 
     println!("\nF32 model generation:");
     for step in 0..10 {
-        let logits = decoder.forward(&tokens, &encoder_output, None).expect("forward");
+        let logits = decoder
+            .forward(&tokens, &encoder_output, None)
+            .expect("forward");
         let n_vocab = decoder.n_vocab();
         let last_logits = &logits[(logits.len() / n_vocab - 1) * n_vocab..];
 

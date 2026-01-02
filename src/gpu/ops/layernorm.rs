@@ -6,20 +6,15 @@
 use crate::gpu::error::{GpuError, GpuResult};
 
 /// Layer normalization mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LayerNormMode {
     /// Standard layer norm: (x - mean) / sqrt(var + eps)
+    #[default]
     Standard,
     /// RMS norm: x / sqrt(mean(x^2) + eps) (no centering)
     RmsNorm,
     /// Pre-norm variant (normalize before, not after)
     PreNorm,
-}
-
-impl Default for LayerNormMode {
-    fn default() -> Self {
-        Self::Standard
-    }
 }
 
 impl LayerNormMode {

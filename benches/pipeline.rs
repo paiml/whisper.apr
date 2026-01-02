@@ -255,9 +255,11 @@ fn bench_step_h_decoder(c: &mut Criterion) {
 
     group.bench_function("tiny_int8_single_step", |b| {
         b.iter(|| {
-            let result = model
-                .decoder_mut()
-                .forward(black_box(&initial_tokens), black_box(&encoder_output), None);
+            let result = model.decoder_mut().forward(
+                black_box(&initial_tokens),
+                black_box(&encoder_output),
+                None,
+            );
             black_box(result)
         });
     });
