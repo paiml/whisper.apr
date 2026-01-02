@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for &token in &initial_tokens {
         let _ = model
             .decoder_mut()
-            .forward_one(token, &encoded, &mut cache.borrow_mut())?;
+            .forward_one(token, &encoded, &mut cache.borrow_mut(), None)?;
     }
 
     // Get the decoder's token embeddings

@@ -19,11 +19,12 @@ default = ["std", "simd", "realizar-inference"]
 std = []
 wasm = ["wasm-bindgen", "js-sys", "web-sys", "console_error_panic_hook"]
 webgpu = ["wgpu"]
+cuda = ["trueno/gpu"]
 simd = []
 parallel = ["rayon", "wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
 converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs", "zip"]
-cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "half", "safetensors", "dirs"]
+cli = ["clap", "serde", "serde_json", "tracing-subscriber"]
 benchmark-tui = ["ratatui", "crossterm"]
 tui = ["ratatui", "crossterm"]
 # Use realizar's world-class inference primitives (attention, quantization, caching)
@@ -34,7 +35,12 @@ realizar-inference = ["dep:realizar"]
 thiserror = "2"
 
 # SIMD acceleration (trueno integration)
-trueno = "0.8"
+trueno = "0.8.8"
+
+# Model format (aprender is the canonical .apr format library)
+# Note: safetensors-compare pulls hf-hub which doesn't support WASM
+# Use target-specific deps below to enable it only for native builds
+aprender = { version = "0.19", default-features = false }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
@@ -77,8 +83,6 @@ zip = { version = "2", optional = true, default-features = false, features = ["d
 # Optional: CLI dependencies
 clap = { version = "4", features = ["derive"], optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
-hf-hub = { version = "0.4", optional = true }
-half = { version = "2", optional = true }
 
 # Optional: TUI benchmark dependencies
 ratatui = { version = "0.29", optional = true }
@@ -92,16 +96,14 @@ jugar-probar = { version = "0.2", default-features = false }
 # Tempfile for CLI tests
 tempfile = "3"
 
-# Model format (aprender is the canonical .apr format library)
-# For native: full safetensors-compare with HF hub
-# For WASM: audio only (no HF hub - uses ureq/socks which aren't WASM-compatible)
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-aprender = { path = "../aprender", default-features = false, features = ["safetensors-compare", "audio"] }
-
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# Both getrandom versions need js/wasm_js feature for WASM
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
-getrandom = { version = "0.3", features = ["wasm_js"] }
-aprender = { path = "../aprender", default-features = false, features = ["audio"] }
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Enable safetensors-compare only for native builds (pulls hf-hub which doesn't support WASM)
+aprender = { version = "0.19", default-features = false, features = ["safetensors-compare"] }
 
 [profile.release]
 lto = true
@@ -181,26 +183,6 @@ name = "cli_usage"
 path = "examples/cli_usage.rs"
 required-features = ["cli"]
 
-[[example]]
-name = "backend_test"
-path = "examples/backend_test.rs"
-
-[[example]]
-name = "component_timing"
-path = "examples/component_timing.rs"
-
-[[example]]
-name = "pipeline_tui"
-path = "examples/pipeline_tui.rs"
-
-[[example]]
-name = "inspect_model"
-path = "examples/inspect_model.rs"
-
-[[example]]
-name = "pipeline_ground_truth"
-path = "examples/pipeline_ground_truth.rs"
-
 [[bin]]
 name = "whisper-convert"
 path = "tools/convert.rs"
@@ -213,12 +195,7 @@ required-features = ["cli"]
 
 [lints.rust]
 unsafe_code = "warn"
-missing_docs = "allow"  # Benchmarks/examples don't need docs
-dead_code = "allow"  # Feature-gated fields appear unused
-unused_variables = "allow"  # Debug/example code may have unused vars
-unused_mut = "allow"  # Sometimes mut is for future use
-unused_imports = "allow"  # Example imports may be unused
-unused_must_use = "allow"  # Benchmark black_box doesn't need handling
+missing_docs = "warn"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -226,8 +203,8 @@ pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
 unwrap_used = "deny"
-expect_used = "allow"  # Test code uses expect() intentionally
-panic = "allow"        # Test code uses panic!() intentionally
+expect_used = "warn"
+panic = "warn"
 # DSP/Audio code allows
 cast_precision_loss = "allow"     # Intentional in DSP code
 cast_possible_truncation = "allow" # Intentional in DSP code
@@ -242,75 +219,6 @@ derivable_impls = "allow"         # Some manual impls are intentional
 doc_markdown = "allow"            # Will be fixed incrementally
 redundant_closure_for_method_calls = "allow"  # Readability preference
 needless_pass_by_value = "allow"  # Sometimes intentional for clarity
-# Test/example code style allows
-similar_names = "allow"           # segment1/segment2 is clear
-many_single_char_names = "allow"  # DSP/math code uses x,y,z,i,j,k
-unreadable_literal = "allow"      # 480000 is clear without separators
-option_if_let_else = "allow"      # if let is often clearer than map_or_else
-uninlined_format_args = "allow"   # format!("{}", x) is fine
-# Additional allows for test/example code
-match_same_arms = "allow"         # Explicit arms can be clearer
-struct_field_names = "allow"      # max_* prefix is standard for limits
-should_implement_trait = "allow"  # from_str naming is intentional
-return_self_not_must_use = "allow" # Builder patterns don't need must_use
-assigning_clones = "allow"        # clone() is clearer than clone_from()
-unnecessary_map_or = "allow"      # map_or is clearer than is_ok_and
-identity_op = "allow"             # 80 * 1 shows intent in tests
-never_loop = "allow"              # Example code demonstrates API
-cloned_instead_of_copied = "allow" # cloned() is clearer in some contexts
-needless_range_loop = "allow"     # Index loops can be clearer
-too_many_lines = "allow"          # Examples can be long for clarity
-needless_collect = "allow"        # collect() sometimes clearer
-items_after_statements = "allow"  # Helper fns near usage is clearer
-needless_raw_string_hashes = "allow" # r#""# is clearer for multiline
-if_same_then_else = "allow"       # Explicit branches can be clearer
-unnecessary_debug_formatting = "allow" # {:?} is fine for paths
-print_literal = "allow"           # ANSI codes in format args is clearer
-unnecessary_wraps = "allow"       # Result return in main() is idiomatic
-manual_let_else = "allow"         # match with early return is clearer
-single_match_else = "allow"       # match with early return is clearer
-suboptimal_flops = "allow"        # mul_add not always clearer
-unchecked_time_subtraction = "allow" # Duration subtraction is safe in context
-manual_range_contains = "allow"   # >= && <= is clearer than contains()
-explicit_iter_loop = "allow"      # .iter() is clearer than &
-map_unwrap_or = "allow"           # map().unwrap_or() is clearer
-redundant_clone = "allow"         # Sometimes clone for clarity
-manual_contains = "allow"         # iter().any() can be clearer
-trivially_copy_pass_by_ref = "allow" # &self is idiomatic for methods
-use_self = "allow"                # Type::Variant is clearer than Self::Variant
-derive_partial_eq_without_eq = "allow" # Eq not always needed
-if_not_else = "allow"             # if !cond is clearer sometimes
-useless_let_if_seq = "allow"      # let mut + if is clearer
-float_cmp = "allow"               # Strict f32 comparison sometimes ok
-wrong_self_convention = "allow"   # to_* naming is ok with &self
-ptr_arg = "allow"                 # &PathBuf is clearer sometimes
-map_clone = "allow"               # .map(|&x| x) is clearer
-needless_borrow = "allow"         # Explicit & can be clearer
-bool_to_int_with_if = "allow"     # if cond { 1 } else { 0 } is clearer
-len_zero = "allow"                # .len() >= 1 is clearer than !is_empty()
-needless_for_each = "allow"       # for_each is clearer sometimes
-collection_is_never_read = "allow" # Debug/example collections may be unused
-expect_fun_call = "allow"         # expect(&format!()) is clearer
-manual_assert = "allow"           # if !cond { panic!() } is clearer
-assertions_on_constants = "allow" # Constant assertions are intentional
-no_effect_underscore_binding = "allow" # _var bindings are intentional
-manual_div_ceil = "allow"         # (n + d - 1) / d is clearer
-bool_comparison = "allow"         # == false can be clearer
-single_char_pattern = "allow"     # "," is clearer than ','
-excessive_precision = "allow"     # Math constants may need precision
-field_reassign_with_default = "allow" # let mut + assign is clearer
-op_ref = "allow"                  # &[1, 2] is clearer
-format_collect = "allow"          # map(format!()).collect() is clearer
-manual_clamp = "allow"            # max().min() is clearer
-let_and_return = "allow"          # let + return is clearer
-manual_string_new = "allow"       # "".to_string() is clearer
-drop_non_drop = "allow"           # Explicit drop shows intent
-erasing_op = "allow"              # 0 * n shows dimension intent
-needless_update = "allow"         # ..Default::default() for future-proofing
-large_stack_arrays = "allow"      # Test arrays are fine on stack
-clone_on_copy = "allow"           # .clone() shows intent
-unused_enumerate_index = "allow"  # _i for debugging
-useless_vec = "allow"             # vec![] is clearer for test data
 # Cargo lints
 multiple_crate_versions = "allow"  # Transitive deps out of our control
 

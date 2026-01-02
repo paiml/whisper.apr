@@ -674,9 +674,84 @@ cargo run --release --example debug_enc_pos_embed     # H18
 cargo run --release --example debug_k_q_dot           # H19
 ```
 
+---
+
+## H35: Positional Singularity (December 16, 2025)
+
+**Status**: ✅ CONFIRMED - ROOT CAUSE FOUND
+
+### Hypothesis
+
+End-of-sequence positional embeddings create attention attractors that cause
+decoder cross-attention to attend to padding positions instead of audio content.
+
+### Evidence
+
+```
+[TEST 1: WITHOUT MASK (BROKEN)]
+  Audio attention (0-75):   0.0000 (0.0%)
+  Padding attention (76-1499): 1.0000 (100.0%)
+
+[TEST 2: WITH MASK (FIXED)]
+  Audio attention (0-75):   1.0000 (100.0%)
+  Padding attention (76-1499): 0.0000 (0.0%)
+
+✓ FIX VERIFIED!
+  Before: 0.0% audio / 100.0% padding (BROKEN)
+  After:  100.0% audio / 0.0% padding (FIXED)
+```
+
+### Fix Implemented
+
+Added `audio_encoder_len: Option<usize>` parameter to create cross-attention masks:
+
+```rust
+// In lib.rs
+pub fn compute_audio_encoder_len(audio_samples: usize) -> usize {
+    audio_samples.div_ceil(320)  // HOP_LENGTH=160, stride-2 conv
+}
+
+// In decoder.rs - creates mask with -inf for padding positions
+fn encoder_padding_mask(batch_size: usize, enc_len: usize, audio_len: usize) -> Vec<f32>
+```
+
+**Files Modified**: ~50+ call sites (decoder.rs, lib.rs, tests, examples, benches)
+
+### Remaining Issue
+
+Attention masking works, but **separate repetition bug** remains:
+- Without mask: "........." (periods from padding)
+- With mask: " sword..." then garbage repetition
+
+EOT token is never selected → model hits max_tokens limit.
+
+---
+
+## Hypothesis Summary (Final)
+
+| Hypothesis | Status | Finding |
+|------------|--------|---------|
+| H6 | ❌ FALSIFIED | Weights match HuggingFace |
+| H7 | ❌ FALSIFIED | Encoder output healthy |
+| H8 | ❌ FALSIFIED | K projection correct |
+| H16 | ❌ FALSIFIED | Attention IS peaked |
+| H17 | ✅ CONFIRMED | Attends to padding not audio |
+| H19 | ✅ CONFIRMED | Q·K alignment prefers padding |
+| **H35** | ✅ **CONFIRMED** | **Positional embeddings = attractor** |
+
+---
+
+## Next Steps (TODO)
+
+1. **Fix repetition/EOT bug** - Separate from attention masking
+2. **Re-enable ground_truth_tests** - 7 tests marked `#[ignore]`
+3. **Compare with whisper.cpp** - Verify encoder output matches
+4. **Output projection** - Check vocab projection weights
+
 ## References
 
 - WAPR-MEL-001: Filterbank embedding (completed, verified identical)
 - WAPR-BENCH-001: Pipeline benchmark spec
 - whisper.cpp: https://github.com/ggerganov/whisper.cpp
 - aprender GH-121: HuggingFace weight comparison feature
+- docs/qa/decode-qa-bug.md: Full bug report with fix details

@@ -60,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let token = tokens[i];
             logits = model
                 .decoder_mut()
-                .forward_one(token, &encoded, &mut cache.borrow_mut())?;
+                .forward_one(token, &encoded, &mut cache.borrow_mut(), None)?;
         }
 
         *processed_count.borrow_mut() = seq_len;
