@@ -176,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (logits, _trace) = model
         .decoder_mut()
-        .forward_traced(&initial_tokens, &encoded, None)?;
+        .forward_traced(&initial_tokens, &encoded)?;
 
     // Get last position logits
     let last_logits: &[f32] = &logits[3 * 51865..];

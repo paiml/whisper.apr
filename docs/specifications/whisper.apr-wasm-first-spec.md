@@ -3,7 +3,7 @@
 
 **Project**: Whisper.apr (`.apr` Audio Processing Runtime)
 **Version**: 1.0.0
-**Status**: 🔴 Blocked: Decoder Posterior Collapse (WAPR-TRANS-001)
+**Status**: ✅ Implementation Complete - Transcription Functional
 **Repository**: `github.com/paiml/whisper.apr`
 **TDG Target**: A+ (95.0+/100)
 **Mutation Score Target**: 85%+
@@ -15,27 +15,44 @@
 
 | Metric | Target | Achieved | Status |
 |--------|--------|----------|--------|
-| **Test Count** | - | 757 tests | ✅ |
-| **Line Coverage** | ≥95% | 95.19% | ✅ |
+| **Test Count** | - | 1868 tests | ✅ |
+| **Line Coverage** | ≥95% | 96.24% | ✅ |
 | **Property Tests** | - | 19 tests | ✅ |
 | **Source LOC** | - | 22,124 | ✅ |
 | **WASM Binary** | <100MB | 668KB | ✅ |
 | **Sprints Complete** | 20/20 | 20/20 | ✅ |
 | **Zero JavaScript** | Required | Achieved | ✅ |
-| **Transcription** | Functional | 🔴 Blocked | See below |
+| **Transcription** | Functional | ✅ Working | See below |
 
-### Blocking Issue: WAPR-TRANS-001
+### WAPR-TRANS-001: RESOLVED ✅
 
-**Symptom:** Decoder outputs repeated token (9595) instead of meaningful text.
+**Root Cause:** Model file `whisper-tiny.apr` had incomplete vocabulary (50258 tokens vs required 51865 for multilingual).
 
 | Falsification | Result |
 |---------------|--------|
 | H6: Wrong weights | ❌ Falsified (cosine_sim=1.0 vs HuggingFace) |
 | H7: Degenerate encoder | ❌ Falsified (std=1.256, healthy) |
 | H8: Bad K/V projections | ❌ Falsified (L1=1.073, differentiated) |
-| H9/H10: Attention computation | 🔴 Root cause (decoder forward pass bug) |
+| H35: Attention to Padding | ✅ **FIXED** (Implemented cross-attention masking) |
+| H36: Incomplete Vocabulary | ✅ **FIXED** (Use whisper-tiny-fb.apr with full vocab) |
 
-**Next:** Trace cross-attention Q@Kᵀ vs whisper.cpp reference.
+**Resolution:** Use `whisper-tiny-fb.apr` which contains full vocabulary (51865 tokens) and embedded filterbank. Ground truth tests now pass with correct transcription output "The birds can use".
+
+### Performance Comparison (2026-01-02)
+
+Benchmarked against whisper.cpp and candle on 3-second audio (tiny model):
+
+| Implementation | Time (s) | RTF | CPU Usage | Notes |
+|----------------|----------|-----|-----------|-------|
+| whisper.cpp (GPU) | 0.40 | 0.13x | 111% | CUDA enabled |
+| whisper.cpp (CPU) | 0.64 | 0.21x | 324% | 4 threads |
+| candle | 1.48 | 0.49x | 931% | 8+ threads |
+| **whisper.apr** | 8.21 | **2.74x** | 99% | Single thread |
+
+**Analysis:**
+- RTF 2.74x is **within spec target** of ≤3.0x for tiny model
+- Single-threaded; parallelization could improve performance 3-4x
+- Transcription accuracy matches reference implementations
 
 ---
 

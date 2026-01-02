@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (logits_hf_enc, trace) = model
         .decoder_mut()
-        .forward_traced(&initial_tokens, &hf_encoder, None)?;
+        .forward_traced(&initial_tokens, &hf_encoder)?;
 
     let last_logits_hf_enc = &logits_hf_enc[3 * 51865..];
     let our_mean_hf_enc: f32 =
@@ -133,7 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (logits_our_enc, trace2) = model
         .decoder_mut()
-        .forward_traced(&initial_tokens, &our_encoder, None)?;
+        .forward_traced(&initial_tokens, &our_encoder)?;
 
     let last_logits_our_enc = &logits_our_enc[3 * 51865..];
     let our_mean_our_enc: f32 =
