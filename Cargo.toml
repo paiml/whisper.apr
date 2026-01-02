@@ -40,16 +40,16 @@ realizar-inference = ["dep:realizar"]
 thiserror = "2"
 
 # SIMD acceleration (trueno integration)
-trueno = "0.8.8"
+trueno = "0.10.1"
 
 # Model format (aprender is the canonical .apr format library)
 # Note: safetensors-compare pulls hf-hub which doesn't support WASM
 # Use target-specific deps below to enable it only for native builds
-aprender = { version = "0.19", default-features = false }
+aprender = { version = "0.20", default-features = false }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
-realizar = { version = "0.3", optional = true, default-features = false }
+realizar = { version = "0.3.3", optional = true, default-features = false }
 
 # FFT for mel spectrogram computation
 rustfft = "6.2"
@@ -110,7 +110,7 @@ getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] 
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Enable safetensors-compare only for native builds (pulls hf-hub which doesn't support WASM)
-aprender = { version = "0.19", default-features = false, features = ["safetensors-compare"] }
+aprender = { version = "0.20", default-features = false, features = ["safetensors-compare"] }
 
 [profile.release]
 lto = true
@@ -121,7 +121,10 @@ opt-level = 3  # Use full optimization for native (was "z" for size - killed SIM
 
 [profile.release-wasm]
 inherits = "release"
-opt-level = "z"  # Size optimization only for WASM builds
+opt-level = 3  # Full optimization for WASM (was "z" - kills SIMD!)
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
 
 [[bench]]
 name = "inference"
