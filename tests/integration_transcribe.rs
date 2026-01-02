@@ -191,7 +191,7 @@ fn test_decoder_generates_tokens_quickly() {
     let d_model = 384;
     let encoder_len = 10;
 
-    // Create synthetic encoder output for decoder-only test
+    // Create fake encoder output
     let encoder_output: Vec<f32> = (0..encoder_len * d_model)
         .map(|i| (i as f32 * 0.01).sin())
         .collect();
@@ -204,7 +204,7 @@ fn test_decoder_generates_tokens_quickly() {
     let max_tokens = 5;
     let eos_token = 50256_u32;
 
-    let result = decoder.generate(&encoder_output, &initial_tokens, max_tokens, eos_token);
+    let result = decoder.generate(&encoder_output, &initial_tokens, max_tokens, eos_token, None);
 
     let elapsed = start.elapsed();
 
@@ -353,7 +353,7 @@ fn test_encoder_produces_meaningful_output() {
 
     // First check the logits directly
     let logits = decoder
-        .forward(&initial_tokens, &encoder_output)
+        .forward(&initial_tokens, &encoder_output, None)
         .expect("Forward failed");
     let n_vocab = decoder.n_vocab();
     let n_positions = logits.len() / n_vocab;
@@ -438,7 +438,7 @@ fn test_logits_vary_across_vocabulary() {
 
     let tokens = vec![50257_u32]; // SOT
     let output = decoder
-        .forward(&tokens, &encoder_output)
+        .forward(&tokens, &encoder_output, None)
         .expect("Forward failed");
 
     // Output should be logits over vocabulary
@@ -510,10 +510,10 @@ fn test_cross_attention_forward_varies_with_encoder() {
 
     // Run decoder forward with each encoder output
     let output_a = decoder
-        .forward(&tokens, &encoder_a)
+        .forward(&tokens, &encoder_a, None)
         .expect("Forward A failed");
     let output_b = decoder
-        .forward(&tokens, &encoder_b)
+        .forward(&tokens, &encoder_b, None)
         .expect("Forward B failed");
 
     // Outputs should be different if cross-attention is working
@@ -559,8 +559,8 @@ fn test_token_embeddings_vary() {
 
     for &token in &test_tokens {
         // Forward with just one token to get its embedding contribution
-        let zeroed_encoder = vec![0.0f32; 74 * d_model]; // encoder output for isolated test
-        let logits = decoder.forward(&[token], &zeroed_encoder).expect("forward");
+        let fake_encoder = vec![0.0f32; 74 * d_model]; // encoder output
+        let logits = decoder.forward(&[token], &fake_encoder, None).expect("forward");
 
         // The logits are affected by the embedding - capture first 10 values as fingerprint
         let fingerprint: Vec<f32> = logits.iter().take(100).copied().collect();
@@ -605,17 +605,17 @@ fn test_positional_embeddings_vary() {
     let decoder = model.decoder_mut();
 
     let d_model = 384;
-    let zeroed_encoder = vec![0.0f32; 74 * d_model];
+    let fake_encoder = vec![0.0f32; 74 * d_model];
 
     // Forward with different sequence lengths to see positional effects
     let tokens_1 = vec![50257_u32]; // just SOT
     let tokens_4 = vec![50257_u32, 50258, 50358, 50362]; // SOT + 3 more
 
     let logits_1 = decoder
-        .forward(&tokens_1, &zeroed_encoder)
+        .forward(&tokens_1, &fake_encoder, None)
         .expect("forward 1");
     let logits_4 = decoder
-        .forward(&tokens_4, &zeroed_encoder)
+        .forward(&tokens_4, &fake_encoder, None)
         .expect("forward 4");
 
     // The logits for position 0 should be different because of positional encoding
@@ -735,7 +735,7 @@ fn test_decoder_produces_varied_output() {
     // Generate 10 tokens and track what we get
     let mut generated = Vec::new();
     for step in 0..10 {
-        let logits = decoder.forward(&tokens, &encoder_output).expect("forward");
+        let logits = decoder.forward(&tokens, &encoder_output, None).expect("forward");
         let n_vocab = decoder.n_vocab();
         let last_logits = &logits[(logits.len() / n_vocab - 1) * n_vocab..];
 
@@ -912,8 +912,8 @@ fn test_cross_attention_varies_with_encoder() {
     let tokens = vec![50258_u32, 50259, 50359, 50363]; // SOT, en, transcribe, notimestamps
 
     // Compute decoder output with zeros encoder
-    let logits_zeros = decoder.forward(&tokens, &enc_zeros).expect("forward zeros");
-    let logits_rand = decoder.forward(&tokens, &enc_rand).expect("forward rand");
+    let logits_zeros = decoder.forward(&tokens, &enc_zeros, None).expect("forward zeros");
+    let logits_rand = decoder.forward(&tokens, &enc_rand, None).expect("forward rand");
 
     // The outputs should be different if cross-attention is working
     let diff: f32 = logits_zeros
@@ -1121,7 +1121,7 @@ fn test_cross_attention_weight_stats() {
 /// IGNORED: Model hallucination issue - produces repetitive output instead of
 /// meaningful transcription. See WAPR-MODEL-QUALITY for tracking.
 #[test]
-#[ignore = "Model hallucination issue - see WAPR-MODEL-QUALITY"]
+#[ignore]
 fn test_transcription_matches_reference() {
     // Skip if model not available
     let model_path = "models/whisper-tiny-int8.apr";
@@ -1216,7 +1216,7 @@ fn test_decoder_hidden_state_trace() {
 
     // 4 tokens
     let (logits_4, trace_4) = decoder
-        .forward_traced(&initial_tokens, &encoder_output)
+        .forward_traced(&initial_tokens, &encoder_output, None)
         .expect("forward 4");
     println!("4 tokens:");
     for (name, l2) in &trace_4 {
@@ -1239,7 +1239,7 @@ fn test_decoder_hidden_state_trace() {
     tokens_5.push(220);
 
     let (logits_5, trace_5) = decoder
-        .forward_traced(&tokens_5, &encoder_output)
+        .forward_traced(&tokens_5, &encoder_output, None)
         .expect("forward 5");
     println!("\n5 tokens (+220):");
     for (name, l2) in &trace_5 {
@@ -1361,7 +1361,7 @@ fn test_f32_model_generation() {
     // Check layer norm weights
     println!("F32 model layer norm check:");
     let (_, trace) = decoder
-        .forward_traced(&[50258_u32, 50259, 50359, 50363], &encoder_output)
+        .forward_traced(&[50258_u32, 50259, 50359, 50363], &encoder_output, None)
         .expect("forward");
     for (name, val) in &trace {
         if name.contains("ln_") {
@@ -1375,7 +1375,7 @@ fn test_f32_model_generation() {
 
     println!("\nF32 model generation:");
     for step in 0..10 {
-        let logits = decoder.forward(&tokens, &encoder_output).expect("forward");
+        let logits = decoder.forward(&tokens, &encoder_output, None).expect("forward");
         let n_vocab = decoder.n_vocab();
         let last_logits = &logits[(logits.len() / n_vocab - 1) * n_vocab..];
 

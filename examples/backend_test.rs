@@ -291,6 +291,16 @@ fn run_wasm_test(args: &Args) -> BackendTestResult {
 }
 
 /// Run CUDA backend test
+#[cfg(not(feature = "cuda"))]
+fn run_cuda_test(_args: &Args) -> BackendTestResult {
+    BackendTestResult::skipped(
+        BackendType::Cuda,
+        "CUDA feature not enabled (compile with --features cuda)".to_string(),
+    )
+}
+
+/// Run CUDA backend test
+#[cfg(feature = "cuda")]
 fn run_cuda_test(args: &Args) -> BackendTestResult {
     use trueno::backends::gpu::GpuBackend;
 

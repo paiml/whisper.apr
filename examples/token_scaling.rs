@@ -19,12 +19,12 @@ fn main() {
 
         // Warmup
         for _ in 0..3 {
-            let _ = model.decoder_mut().forward(&tokens, &enc);
+            let _ = model.decoder_mut().forward(&tokens, &enc, None);
         }
 
         let start = Instant::now();
         for _ in 0..5 {
-            let _ = model.decoder_mut().forward(&tokens, &enc).expect("dec");
+            let _ = model.decoder_mut().forward(&tokens, &enc, None).expect("dec");
         }
         let total = start.elapsed().as_secs_f64() * 1000.0 / 5.0;
 

@@ -11,6 +11,22 @@ Whisper.apr is a WASM-first automatic speech recognition (ASR) engine implementi
 - `thiserror` for error handling
 - `wasm-bindgen` for WASM bindings (optional)
 
+## ⚠️ CRITICAL: NO PYTHON - RUST ONLY
+
+**This project is 100% Rust. Python is NEVER used.**
+
+- ❌ **NEVER** create Python scripts for any purpose
+- ❌ **NEVER** use `uv run`, `pip`, `torch`, `transformers`, or any Python tooling
+- ❌ **NEVER** suggest "just use Python for ground truth extraction"
+- ✅ **ALWAYS** use Rust for all tooling, extraction, and verification
+- ✅ **ALWAYS** use existing JSON ground truth files in `test_data/*.json`
+- ✅ **ALWAYS** load reference data via `aprender::verify::GroundTruth`
+
+**Ground Truth is pre-extracted in:**
+- `test_data/ref_c_mel_numpy.json` - Mel spectrogram reference (mean=-0.2148, std=0.4479)
+- `test_data/ref_a_audio.json` - Audio input reference
+- `test_data/reference_summary.json` - All stages summary
+
 ## Build Commands
 
 ```bash
