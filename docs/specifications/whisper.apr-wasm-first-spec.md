@@ -3,12 +3,12 @@
 
 **Project**: Whisper.apr (`.apr` Audio Processing Runtime)
 **Version**: 1.0.0
-**Status**: ✅ Implementation Complete
+**Status**: 🔴 Blocked: Decoder Posterior Collapse (WAPR-TRANS-001)
 **Repository**: `github.com/paiml/whisper.apr`
 **TDG Target**: A+ (95.0+/100)
 **Mutation Score Target**: 85%+
 **Test Coverage Target**: 95%+
-**Last Updated**: 2025-12-13
+**Last Updated**: 2026-01-02
 **Reviewers**: Expert Systems Engineer (Toyota Way Methodology)
 
 ### Implementation Status Summary
@@ -22,6 +22,20 @@
 | **WASM Binary** | <100MB | 668KB | ✅ |
 | **Sprints Complete** | 20/20 | 20/20 | ✅ |
 | **Zero JavaScript** | Required | Achieved | ✅ |
+| **Transcription** | Functional | 🔴 Blocked | See below |
+
+### Blocking Issue: WAPR-TRANS-001
+
+**Symptom:** Decoder outputs repeated token (9595) instead of meaningful text.
+
+| Falsification | Result |
+|---------------|--------|
+| H6: Wrong weights | ❌ Falsified (cosine_sim=1.0 vs HuggingFace) |
+| H7: Degenerate encoder | ❌ Falsified (std=1.256, healthy) |
+| H8: Bad K/V projections | ❌ Falsified (L1=1.073, differentiated) |
+| H9/H10: Attention computation | 🔴 Root cause (decoder forward pass bug) |
+
+**Next:** Trace cross-attention Q@Kᵀ vs whisper.cpp reference.
 
 ---
 
