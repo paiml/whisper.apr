@@ -17,35 +17,17 @@ all: build test
 # Build Targets
 # ============================================================================
 
-## Build all demos for WASM
+## Build demo for WASM
 build:
-	@echo "🔨 Building all demos for WASM..."
-	@for demo in realtime-transcription upload-transcription realtime-translation upload-translation; do \
-		echo "  Building $$demo..."; \
-		cd $$demo && wasm-pack build --target web --release && cd ..; \
-	done
-	@echo "✅ All demos built successfully"
+	@echo "🔨 Building www-demo for WASM..."
+	@cd www-demo && wasm-pack build --target web --release --out-dir ../www/pkg
+	@echo "✅ Demo built successfully"
 
-## Build parallel worker-transcription demo (with Web Workers)
-build-parallel:
-	@echo "🔨 Building parallel worker-transcription demo..."
-	@cd worker-transcription && \
-		RUSTFLAGS='-C target-feature=+atomics,+bulk-memory,+mutable-globals' \
-		wasm-pack build --target web --release --features parallel
-	@echo "✅ Parallel worker demo built successfully"
-	@echo "Note: Requires COOP/COEP headers for SharedArrayBuffer support"
-
-## Build demos in development mode (faster, with debug info)
+## Build demo in development mode (faster, with debug info)
 build-dev:
-	@echo "🔨 Building demos (dev mode)..."
-	@for demo in realtime-transcription upload-transcription realtime-translation upload-translation; do \
-		cd $$demo && wasm-pack build --target web --dev && cd ..; \
-	done
-
-## Build specific demo
-build-%:
-	@echo "🔨 Building $*..."
-	@cd $* && wasm-pack build --target web --release
+	@echo "🔨 Building www-demo (dev mode)..."
+	@cd www-demo && wasm-pack build --target web --dev --out-dir ../www/pkg
+	@echo "✅ Dev build complete"
 
 # ============================================================================
 # Test Targets (EXTREME TDD)
@@ -273,14 +255,11 @@ clean:
 
 DEPLOY_PATH := whisper-apr
 
-## Package demos for deployment (output to dist/)
+## Package demo for deployment (output to dist/)
 package: build
-	@echo "📦 Packaging demos for deployment..."
+	@echo "📦 Packaging demo for deployment..."
 	@mkdir -p dist/$(DEPLOY_PATH)
-	@for demo in realtime-transcription upload-transcription realtime-translation upload-translation; do \
-		mkdir -p dist/$(DEPLOY_PATH)/$$demo; \
-		cp -r $$demo/pkg dist/$(DEPLOY_PATH)/$$demo/; \
-	done
+	@cp -r www/pkg dist/$(DEPLOY_PATH)/
 	@cp www/*.html dist/$(DEPLOY_PATH)/
 	@echo "✅ Package ready at: dist/$(DEPLOY_PATH)/"
 	@echo ""
@@ -292,34 +271,26 @@ package: build
 
 ## Show this help
 help:
-	@echo "Whisper.apr Demo Applications"
+	@echo "Whisper.apr Demo (Zero-JS)"
 	@echo ""
-	@echo "EXTREME TDD Commands:"
-	@echo "  make build        - Build all demos for WASM"
+	@echo "Build Commands:"
+	@echo "  make build        - Build demo for WASM (release)"
+	@echo "  make build-dev    - Build demo for WASM (dev mode)"
+	@echo "  make package      - Build and package for deployment"
+	@echo "  make clean        - Clean artifacts"
+	@echo ""
+	@echo "Test Commands:"
 	@echo "  make test         - Run unit tests"
 	@echo "  make test-probar  - Run Probar GUI tests"
 	@echo "  make test-browser - Run browser E2E tests"
 	@echo "  make coverage     - Generate unified coverage report"
 	@echo ""
-	@echo "Playbook Testing (Prevents Whack-a-Mole Bugs):"
-	@echo "  make playbook-validate  - Validate state machine playbooks"
-	@echo "  make playbook-mutate    - Run M1-M5 mutation testing"
-	@echo "  make playbook-diagrams  - Export state diagrams as SVG"
-	@echo "  make playbook-test      - Full playbook test suite"
-	@echo "  make playbook-quick     - Quick validation (for CI)"
-	@echo ""
 	@echo "Quality Gates:"
 	@echo "  make tier1        - Fast feedback (<1s)"
-	@echo "  make tier2        - Pre-commit (<5s, includes playbook)"
+	@echo "  make tier2        - Pre-commit (<5s)"
 	@echo "  make tier3        - Pre-push (1-5 min)"
 	@echo "  make tier4        - CI/CD (5-60 min)"
 	@echo ""
-	@echo "Packaging:"
-	@echo "  make package      - Build and package for deployment"
-	@echo ""
-	@echo "Development (via probar):"
+	@echo "Development:"
 	@echo "  make serve        - Start probar dev server (port 8080)"
-	@echo "  make serve-test   - Start probar test server (port 8090)"
 	@echo "  make watch        - Watch and rebuild with probar"
-	@echo "  make serve-legacy - Legacy python server (fallback)"
-	@echo "  make clean        - Clean artifacts"
