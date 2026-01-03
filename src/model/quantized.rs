@@ -181,7 +181,7 @@ impl QuantizedTensorQ4K {
 /// Q4_K quantized linear layer using realizar's K-quantization
 ///
 /// Stores weights in Q4_K format (~4.5 bits per weight) for ~7x memory
-/// reduction vs f32. Forward pass dequantizes to f32 for computation.
+/// reduction vs f32. Forward pass uses cached dequantized weights for performance.
 ///
 /// # Example
 ///
@@ -189,7 +189,8 @@ impl QuantizedTensorQ4K {
 /// use whisper_apr::model::quantized::QuantizedLinearQ4K;
 ///
 /// let raw_weights = load_q4k_weights(path);
-/// let linear = QuantizedLinearQ4K::from_raw(raw_weights, Some(&bias), 512, 512);
+/// let mut linear = QuantizedLinearQ4K::from_raw(raw_weights, Some(&bias), 512, 512);
+/// linear.finalize_weights(); // Cache dequantized weights for fast forward
 /// let output = linear.forward(&input)?;
 /// ```
 #[cfg(feature = "realizar-inference")]
@@ -203,6 +204,9 @@ pub struct QuantizedLinearQ4K {
     in_features: usize,
     /// Output features
     out_features: usize,
+    /// Cached dequantized + transposed weights for fast forward
+    /// This trades memory for speed - call finalize_weights() after loading
+    cached_weights_t: Option<Vec<f32>>,
 }
 
 #[cfg(feature = "realizar-inference")]
@@ -232,7 +236,32 @@ impl QuantizedLinearQ4K {
             bias: bias.map(|b| b.to_vec()),
             in_features,
             out_features,
+            cached_weights_t: None,
         }
+    }
+
+    /// Finalize weights by pre-computing dequantized + transposed weights.
+    ///
+    /// Call this after loading the model to trade memory for speed.
+    /// The cached weights avoid repeated dequantization on every forward pass.
+    pub fn finalize_weights(&mut self) {
+        if self.cached_weights_t.is_some() {
+            return; // Already finalized
+        }
+
+        // Dequantize weights [out_features, in_features]
+        let weights = self.weight.dequantize();
+
+        // Transpose to [in_features, out_features] for efficient matmul
+        let weights_t = simd::transpose(&weights, self.out_features, self.in_features);
+
+        self.cached_weights_t = Some(weights_t);
+    }
+
+    /// Check if weights are finalized (cached)
+    #[must_use]
+    pub fn is_finalized(&self) -> bool {
+        self.cached_weights_t.is_some()
     }
 
     /// Get input features
@@ -257,7 +286,8 @@ impl QuantizedLinearQ4K {
 
     /// Forward pass with dequantization
     ///
-    /// Dequantizes weights to f32, then performs matmul.
+    /// Uses cached dequantized weights if available (call `finalize_weights()` first),
+    /// otherwise dequantizes on-the-fly.
     ///
     /// # Arguments
     /// * `input` - Input tensor (batch_size × in_features)
@@ -277,11 +307,20 @@ impl QuantizedLinearQ4K {
             )));
         }
 
-        // Dequantize weights [out_features, in_features]
-        let weights = self.weight.dequantize();
-
-        // Transpose weights to [in_features, out_features] for matmul
-        let weights_t = simd::transpose(&weights, self.out_features, self.in_features);
+        // Use cached weights if available, otherwise dequantize on-the-fly
+        let weights_t: std::borrow::Cow<'_, [f32]> = if let Some(ref cached) = self.cached_weights_t
+        {
+            std::borrow::Cow::Borrowed(cached)
+        } else {
+            // Dequantize weights [out_features, in_features]
+            let weights = self.weight.dequantize();
+            // Transpose weights to [in_features, out_features] for matmul
+            std::borrow::Cow::Owned(simd::transpose(
+                &weights,
+                self.out_features,
+                self.in_features,
+            ))
+        };
 
         // SIMD matrix multiply: input [batch, in] @ weights_t [in, out] = output [batch, out]
         let mut output = simd::matmul(
@@ -292,13 +331,9 @@ impl QuantizedLinearQ4K {
             self.out_features,
         );
 
-        // Add bias if present
+        // Add bias if present using SIMD broadcast add
         if let Some(ref bias) = self.bias {
-            for b in 0..batch_size {
-                for o in 0..self.out_features {
-                    output[b * self.out_features + o] += bias[o];
-                }
-            }
+            simd::broadcast_add_inplace(&mut output, bias, batch_size, self.out_features);
         }
 
         Ok(output)
@@ -772,6 +807,14 @@ impl QuantizedFeedForward {
 
         // fc2: [seq_len, d_ff] → [seq_len, d_model]
         self.fc2.forward_fused(&activated)
+    }
+
+    /// Finalize weights by pre-computing dequantized + transposed weights
+    ///
+    /// Call this after loading to trade memory for inference speed.
+    pub fn finalize_weights(&mut self) {
+        self.fc1.finalize_weights();
+        self.fc2.finalize_weights();
     }
 }
 

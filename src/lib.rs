@@ -714,6 +714,8 @@ impl WhisperApr {
         callback(&tracker.to_progress());
         let mut encoder = model::Encoder::new(&config);
         Self::load_encoder_weights(&reader, &mut encoder, &mut tracker, callback);
+        // Finalize encoder - cache transposed weights for fast forward
+        encoder.finalize_weights();
         tracker.next_phase();
 
         // Phase 3: Loading decoder
