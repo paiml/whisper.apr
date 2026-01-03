@@ -359,6 +359,12 @@ impl EncoderBlock {
 
         Ok(residual)
     }
+
+    /// Finalize weights by caching transposed/pre-computed data
+    pub fn finalize_weights(&mut self) {
+        self.self_attn.finalize_weights();
+        self.ffn.finalize_weights();
+    }
 }
 
 /// Transformer encoder for audio features
@@ -651,6 +657,16 @@ impl Encoder {
             batch_size,
             d_model: self.d_model,
         })
+    }
+
+    /// Finalize all weights by caching transposed/pre-computed data
+    ///
+    /// Call this after loading weights to trade memory for speed.
+    /// This pre-computes transposed weight matrices and caches them.
+    pub fn finalize_weights(&mut self) {
+        for block in &mut self.blocks {
+            block.finalize_weights();
+        }
     }
 }
 

@@ -125,14 +125,8 @@ pub fn variance(a: &[f32]) -> f32 {
     if a.is_empty() {
         return 0.0;
     }
-    let m = mean(a);
-    // Compute (x - mean)^2 and sum
-    let mut sum_sq = 0.0;
-    for &x in a {
-        let diff = x - m;
-        sum_sq += diff * diff;
-    }
-    sum_sq / a.len() as f32
+    let va = Vector::from_slice(a);
+    va.variance().unwrap_or(0.0)
 }
 
 /// SIMD-accelerated standard deviation
@@ -209,6 +203,22 @@ pub fn add_inplace(x: &[f32], y: &mut [f32]) {
 
     for (yi, &xi) in y.iter_mut().zip(x.iter()) {
         *yi += xi;
+    }
+}
+
+/// Broadcast add: Add vector to each row of a matrix in-place
+///
+/// For matrix (rows x cols) and vector (cols), adds vector to each row.
+/// Equivalent to: for i in 0..rows { row[i] += vec; }
+///
+/// This is the hot path for bias addition in linear layers.
+pub fn broadcast_add_inplace(matrix: &mut [f32], vec: &[f32], rows: usize, cols: usize) {
+    debug_assert_eq!(matrix.len(), rows * cols, "matrix dimensions mismatch");
+    debug_assert_eq!(vec.len(), cols, "vector dimension mismatch");
+
+    for row in 0..rows {
+        let row_start = row * cols;
+        add_inplace(vec, &mut matrix[row_start..row_start + cols]);
     }
 }
 
@@ -316,21 +326,9 @@ pub fn softmax(x: &[f32]) -> Vec<f32> {
         return vec![];
     }
 
-    // Find max for numerical stability
-    let max_val = max(x);
-
-    // Compute exp(x - max)
-    let mut exp_vals: Vec<f32> = x.iter().map(|&v| (v - max_val).exp()).collect();
-
-    // Normalize
-    let sum_exp: f32 = exp_vals.iter().sum();
-    if sum_exp > 0.0 {
-        for v in &mut exp_vals {
-            *v /= sum_exp;
-        }
-    }
-
-    exp_vals
+    let vx = Vector::from_slice(x);
+    vx.softmax()
+        .map_or_else(|_| vec![0.0; x.len()], |v| v.as_slice().to_vec())
 }
 
 /// SIMD-accelerated log-softmax with numerical stability
@@ -340,11 +338,9 @@ pub fn log_softmax(x: &[f32]) -> Vec<f32> {
         return vec![];
     }
 
-    let max_val = max(x);
-    let shifted: Vec<f32> = x.iter().map(|&v| v - max_val).collect();
-    let log_sum_exp = shifted.iter().map(|&v| v.exp()).sum::<f32>().ln();
-
-    shifted.iter().map(|&v| v - log_sum_exp).collect()
+    let vx = Vector::from_slice(x);
+    vx.log_softmax()
+        .map_or_else(|_| vec![0.0; x.len()], |v| v.as_slice().to_vec())
 }
 
 /// SIMD-accelerated GELU activation
@@ -352,34 +348,49 @@ pub fn log_softmax(x: &[f32]) -> Vec<f32> {
 /// GELU(x) = x * Φ(x) ≈ 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))
 #[must_use]
 pub fn gelu(x: &[f32]) -> Vec<f32> {
-    const SQRT_2_PI: f32 = 0.797_884_6; // sqrt(2/π)
-    const COEF: f32 = 0.044_715;
+    if x.is_empty() {
+        return vec![];
+    }
 
-    x.iter()
-        .map(|&v| {
-            let x3 = v * v * v;
-            let inner = SQRT_2_PI * COEF.mul_add(x3, v);
-            0.5 * v * (1.0 + inner.tanh())
-        })
-        .collect()
+    let vx = Vector::from_slice(x);
+    vx.gelu()
+        .map_or_else(|_| vec![0.0; x.len()], |v| v.as_slice().to_vec())
 }
 
 /// SIMD-accelerated ReLU activation
 #[must_use]
 pub fn relu(x: &[f32]) -> Vec<f32> {
-    x.iter().map(|&v| v.max(0.0)).collect()
+    if x.is_empty() {
+        return vec![];
+    }
+
+    let vx = Vector::from_slice(x);
+    vx.relu()
+        .map_or_else(|_| vec![0.0; x.len()], |v| v.as_slice().to_vec())
 }
 
 /// SIMD-accelerated sigmoid activation
 #[must_use]
 pub fn sigmoid(x: &[f32]) -> Vec<f32> {
-    x.iter().map(|&v| 1.0 / (1.0 + (-v).exp())).collect()
+    if x.is_empty() {
+        return vec![];
+    }
+
+    let vx = Vector::from_slice(x);
+    vx.sigmoid()
+        .map_or_else(|_| vec![0.0; x.len()], |v| v.as_slice().to_vec())
 }
 
 /// SIMD-accelerated tanh activation
 #[must_use]
 pub fn tanh_activation(x: &[f32]) -> Vec<f32> {
-    x.iter().map(|&v| v.tanh()).collect()
+    if x.is_empty() {
+        return vec![];
+    }
+
+    let vx = Vector::from_slice(x);
+    vx.tanh()
+        .map_or_else(|_| vec![0.0; x.len()], |v| v.as_slice().to_vec())
 }
 
 // ============================================================================
@@ -393,15 +404,16 @@ pub fn layer_norm(x: &[f32], gamma: &[f32], beta: &[f32], eps: f32) -> Vec<f32> 
     debug_assert_eq!(x.len(), gamma.len(), "gamma dimension mismatch");
     debug_assert_eq!(x.len(), beta.len(), "beta dimension mismatch");
 
-    let m = mean(x);
-    let v = variance(x);
-    let std = (v + eps).sqrt();
+    if x.is_empty() {
+        return vec![];
+    }
 
-    x.iter()
-        .zip(gamma.iter())
-        .zip(beta.iter())
-        .map(|((&xi, &g), &b)| ((xi - m) / std).mul_add(g, b))
-        .collect()
+    let vx = Vector::from_slice(x);
+    let vgamma = Vector::from_slice(gamma);
+    let vbeta = Vector::from_slice(beta);
+
+    vx.layer_norm(&vgamma, &vbeta, eps)
+        .map_or_else(|_| vec![0.0; x.len()], |v| v.as_slice().to_vec())
 }
 
 /// SIMD-accelerated batch layer normalization
@@ -531,12 +543,11 @@ fn scaled_dot_product_attention_single(
     let weights = softmax(&scores);
 
     // Weights @ V: for single query, this is weighted sum of value vectors
+    // Use SIMD axpy: output += weight * V[pos]
     let mut output = vec![0.0_f32; d_head];
     for (pos, &weight) in weights.iter().enumerate() {
         let v_start = pos * d_head;
-        for d in 0..d_head {
-            output[d] += weight * value[v_start + d];
-        }
+        axpy(weight, &value[v_start..v_start + d_head], &mut output);
     }
 
     output

@@ -255,11 +255,9 @@ fn bench_step_h_decoder(c: &mut Criterion) {
 
     group.bench_function("tiny_int8_single_step", |b| {
         b.iter(|| {
-            let result = model.decoder_mut().forward(
-                black_box(&initial_tokens),
-                black_box(&encoder_output),
-                None,
-            );
+            let result = model
+                .decoder_mut()
+                .forward(black_box(&initial_tokens), black_box(&encoder_output));
             black_box(result)
         });
     });
@@ -316,7 +314,7 @@ fn bench_e2e_transcription(c: &mut Criterion) {
                 let initial_tokens = vec![50258_u32, 50259, 50359, 50363];
                 let _ = model
                     .decoder_mut()
-                    .forward(&initial_tokens, &encoder_output, None);
+                    .forward(&initial_tokens, &encoder_output);
 
                 total += start.elapsed();
             }

@@ -607,34 +607,38 @@ pub fn benchmark_simd_operation(
     for _ in 0..iterations {
         match operation {
             SimdOperation::DotProduct => {
-                let _: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+                let r: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+                std::hint::black_box(r);
             }
             SimdOperation::MatVec => {
-                let _: Vec<f32> = (0..dimension)
+                let r: Vec<f32> = (0..dimension)
                     .map(|row| {
                         (0..dimension)
                             .map(|col| matrix[row * dimension + col] * a[col])
                             .sum()
                     })
                     .collect();
+                std::hint::black_box(r);
             }
             SimdOperation::Softmax => {
                 let max_val = a.iter().copied().fold(f32::NEG_INFINITY, f32::max);
                 let exp_sum: f32 = a.iter().map(|x| (x - max_val).exp()).sum();
-                let _: Vec<f32> = a.iter().map(|x| (x - max_val).exp() / exp_sum).collect();
+                let r: Vec<f32> = a.iter().map(|x| (x - max_val).exp() / exp_sum).collect();
+                std::hint::black_box(r);
             }
             SimdOperation::LayerNorm => {
                 let mean: f32 = a.iter().sum::<f32>() / dimension as f32;
                 let var: f32 = a.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / dimension as f32;
                 let std = (var + 1e-5).sqrt();
-                let _: Vec<f32> = a
+                let r: Vec<f32> = a
                     .iter()
                     .zip(gamma.iter().zip(beta.iter()))
                     .map(|(x, (g, b))| (x - mean) / std * g + b)
                     .collect();
+                std::hint::black_box(r);
             }
             SimdOperation::Gelu => {
-                let _: Vec<f32> = a
+                let r: Vec<f32> = a
                     .iter()
                     .map(|x| {
                         0.5 * x
@@ -644,6 +648,7 @@ pub fn benchmark_simd_operation(
                                 .tanh())
                     })
                     .collect();
+                std::hint::black_box(r);
             }
         }
     }
@@ -655,20 +660,20 @@ pub fn benchmark_simd_operation(
     for _ in 0..iterations {
         match operation {
             SimdOperation::DotProduct => {
-                let _ = crate::simd::dot(&a, &b);
+                std::hint::black_box(crate::simd::dot(&a, &b));
             }
             SimdOperation::MatVec => {
                 // trueno matvec - use our simd module's matvec
-                let _ = crate::simd::matvec(&matrix, &a, dimension, dimension);
+                std::hint::black_box(crate::simd::matvec(&matrix, &a, dimension, dimension));
             }
             SimdOperation::Softmax => {
-                let _ = crate::simd::softmax(&a);
+                std::hint::black_box(crate::simd::softmax(&a));
             }
             SimdOperation::LayerNorm => {
-                let _ = crate::simd::layer_norm(&a, &gamma, &beta, 1e-5);
+                std::hint::black_box(crate::simd::layer_norm(&a, &gamma, &beta, 1e-5));
             }
             SimdOperation::Gelu => {
-                let _ = crate::simd::gelu(&a);
+                std::hint::black_box(crate::simd::gelu(&a));
             }
         }
     }
