@@ -389,38 +389,27 @@ export interface TranscribeResult {
 
 ## Demo Applications
 
-Four production-ready demo applications showcase whisper.apr capabilities:
-
-### 1. Real-Time Transcription
-Live microphone transcription with streaming results.
+Zero-JavaScript demos showcasing whisper.apr capabilities. All demos are pure Rust/WASM with Probar serving (handles required COOP/COEP headers for SharedArrayBuffer):
 
 ```bash
-cd demos/realtime-transcription
-npm install && npm run dev
+cd demos && probar serve
+# Open http://localhost:8080
 ```
 
-### 2. File Upload Transcription
-Upload audio/video files for transcription with timeline visualization.
+### Available Demos
+
+| Demo | Description |
+|------|-------------|
+| **Real-Time Transcription** | Live microphone transcription with streaming results |
+| **File Upload Transcription** | Upload audio/video files with timeline visualization |
+| **Real-Time Translation** | Live speech-to-English translation (99 languages) |
+| **File Upload Translation** | Batch translation of uploaded media files |
+
+### Running Tests
 
 ```bash
-cd demos/upload-transcription
-npm install && npm run dev
-```
-
-### 3. Real-Time Translation
-Live speech-to-English translation for any supported language.
-
-```bash
-cd demos/realtime-translation
-npm install && npm run dev
-```
-
-### 4. File Upload Translation
-Batch translation of uploaded media files.
-
-```bash
-cd demos/upload-translation
-npm install && npm run dev
+cd demos && probar test -v    # Run all demo tests
+probar coverage               # Pixel regression tests
 ```
 
 ---
@@ -489,8 +478,8 @@ whisper.apr follows **EXTREME TDD** methodology with comprehensive quality gates
 
 | Metric | Target | Achieved |
 |--------|--------|----------|
-| **Test Count** | 800+ | 949 |
-| **Line Coverage** | 95% | 95.19% |
+| **Test Count** | 1500+ | 1868 |
+| **Line Coverage** | 95% | 95% |
 | **Property Tests** | 15+ | 19 |
 | **WASM Binary** | <700 KB | 668 KB |
 | **Clippy Warnings** | 0 | 0 |
@@ -502,10 +491,10 @@ whisper.apr follows **EXTREME TDD** methodology with comprehensive quality gates
 # .pmat/comply.toml
 [metrics]
 total_tickets = 64
-completed_tickets = 60
-completion_rate = 93.8
-test_count = 949
-line_coverage = 95.19
+completed_tickets = 64
+completion_rate = 100.0
+test_count = 1868
+line_coverage = 95.0
 property_tests = 19
 source_loc = 24500
 wasm_binary_kb = 668
@@ -521,20 +510,20 @@ wasm_binary_kb = 668
 
 ## Roadmap
 
-### v1.1 (Current)
-- [x] Medium/Large model support
-- [x] Int4 quantization
-- [x] Batch preprocessing
-- [x] Batched encoder
-- [ ] Batched decoder with shared KV cache
-- [ ] Batch transcription API
+### v0.1.0 (Current Release)
+- [x] Full Whisper architecture (encoder-decoder transformer)
+- [x] Int4/Int8 quantization with .apr format
+- [x] WASM SIMD acceleration
+- [x] Streaming transcription
+- [x] 99 language support with auto-detection
+- [x] Greedy and beam search decoding
 
-### v1.2 (Planned)
+### v0.2.0 (Planned)
+- [ ] Batched decoder with shared KV cache
 - [ ] WebGPU acceleration
 - [ ] Turbo model support
 - [ ] Word-level timestamps
 - [ ] Voice activity detection
-- [ ] Speaker diarization
 
 ---
 
