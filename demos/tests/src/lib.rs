@@ -22,6 +22,8 @@ pub mod browser_tests;
 pub mod performance_tests;
 pub mod benchmark_tui_tests;
 pub mod tui_render_tests;
+pub mod zero_js_tests;
+pub mod transcription_test;
 
 /// Base URL for local testing
 pub const BASE_URL: &str = "http://localhost:8090/www";

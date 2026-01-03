@@ -1,0 +1,56 @@
+[package]
+name = "whisper-apr-demo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Zero-JS Whisper.apr Demo - All Logic in Rust"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+whisper-apr.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+tracing.workspace = true
+tracing-wasm.workspace = true
+console_error_panic_hook = "0.1"
+
+[dependencies.web-sys]
+workspace = true
+features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "HtmlButtonElement",
+    "HtmlDivElement",
+    "Node",
+    "Text",
+    "Event",
+    "MouseEvent",
+    "CssStyleDeclaration",
+    "DomTokenList",
+    "Navigator",
+    "MediaDevices",
+    "MediaStream",
+    "MediaStreamTrack",
+    "MediaStreamConstraints",
+    "AudioContext",
+    "AudioContextState",
+    "AudioDestinationNode",
+    "AudioNode",
+    "BaseAudioContext",
+    "MediaStreamAudioSourceNode",
+    "ScriptProcessorNode",
+    "AudioProcessingEvent",
+    "AudioBuffer",
+    "Response",
+    "console",
+]
+
+[lints]
+workspace = true

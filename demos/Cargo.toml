@@ -1,11 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "realtime-transcription",
-    "upload-transcription",
-    "realtime-translation",
-    "upload-translation",
-    "worker-transcription",
+    "www-demo",
     "tests",
 ]
 
