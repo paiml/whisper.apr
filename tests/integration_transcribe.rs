@@ -21,12 +21,19 @@ use whisper_apr::{TranscribeOptions, WhisperApr};
 /// If no vocabulary is present, the test will skip.
 #[test]
 fn test_transcription_produces_meaningful_text() {
-    // Skip if model not available
-    let model_path = "models/whisper-tiny-int8.apr";
+    // Use whisper-tiny-fb.apr which has correct weights
+    let model_path = if std::path::Path::new("models/whisper-tiny-fb.apr").exists() {
+        "models/whisper-tiny-fb.apr"
+    } else if std::path::Path::new("models/whisper-tiny.apr").exists() {
+        "models/whisper-tiny.apr"
+    } else {
+        "models/whisper-tiny-int8.apr"
+    };
     if !std::path::Path::new(model_path).exists() {
-        eprintln!("Skipping test: model not found at {}", model_path);
+        eprintln!("Skipping test: no model found");
         return;
     }
+    println!("Using model: {}", model_path);
 
     // Check if vocabulary is embedded in APR file
     let model_bytes = std::fs::read(model_path).expect("Failed to read model");
@@ -60,6 +67,11 @@ fn test_transcription_produces_meaningful_text() {
     let result = model
         .transcribe(&samples, TranscribeOptions::default())
         .expect("Transcription should not fail");
+
+    // Debug: print the raw transcription
+    println!("Raw transcription: {:?}", result.text);
+    println!("Text bytes: {:?}", result.text.as_bytes());
+    println!("Text length: {} chars", result.text.len());
 
     // ASSERTION 1: Output is not empty
     assert!(
@@ -204,13 +216,7 @@ fn test_decoder_generates_tokens_quickly() {
     let max_tokens = 5;
     let eos_token = 50256_u32;
 
-    let result = decoder.generate(
-        &encoder_output,
-        &initial_tokens,
-        max_tokens,
-        eos_token,
-        None,
-    );
+    let result = decoder.generate(&encoder_output, &initial_tokens, max_tokens, eos_token);
 
     let elapsed = start.elapsed();
 
@@ -275,7 +281,10 @@ fn test_apr_has_vocabulary() {
 
             // Print what key tokens decode to
             println!("Token mappings:");
-            for token_id in [11, 13, 60, 257, 485, 262, 383, 460, 779, 1936, 3549, 50257] {
+            for token_id in [
+                11, 13, 60, 257, 264, 281, 286, 291, 293, 295, 309, 359, 393, 407, 440, 485, 503,
+                542, 550, 764, 779, 1904, 1936, 2159, 3549, 5255, 9009, 50257,
+            ] {
                 if let Some(bytes) = vocab.get_bytes(token_id) {
                     let text = String::from_utf8_lossy(bytes);
                     println!("  Token {}: {:?} -> \"{}\"", token_id, bytes, text);
@@ -291,6 +300,94 @@ fn test_apr_has_vocabulary() {
 }
 
 /// Test encoder produces non-trivial output for real audio
+/// Compare batch forward() vs incremental forward_one() to find the bug
+#[test]
+fn test_batch_vs_incremental_logits() {
+    // Try fp32 model first, fall back to int8
+    let model_path = if std::path::Path::new("models/whisper-tiny.apr").exists() {
+        "models/whisper-tiny.apr"
+    } else {
+        "models/whisper-tiny-int8.apr"
+    };
+    println!("Using model: {}", model_path);
+    let model_path = model_path;
+    if !std::path::Path::new(model_path).exists() {
+        return;
+    }
+    let audio_path = "demos/test-audio/test-speech-1.5s.wav";
+    if !std::path::Path::new(audio_path).exists() {
+        return;
+    }
+
+    let model_bytes = std::fs::read(model_path).expect("read");
+    let mut model = WhisperApr::load_from_apr(&model_bytes).expect("load");
+    let audio_bytes = std::fs::read(audio_path).expect("read audio");
+    let samples: Vec<f32> = audio_bytes[44..]
+        .chunks_exact(2)
+        .map(|chunk| {
+            let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
+            sample as f32 / 32768.0
+        })
+        .collect();
+
+    let mel = model.compute_mel(&samples).expect("mel");
+    let encoder_output = model.encoder_mut().forward_mel(&mel).expect("encode");
+
+    // Multilingual tokens: SOT=50258, LANG_EN=50259, TRANSCRIBE=50359, NO_TIMESTAMPS=50363
+    let initial_tokens = vec![50258_u32, 50259, 50359, 50363];
+    println!("Using initial_tokens: {:?}", initial_tokens);
+
+    // BATCH path
+    let batch_logits = model
+        .decoder_mut()
+        .forward(&initial_tokens, &encoder_output)
+        .expect("batch forward");
+    let n_vocab = model.decoder_mut().n_vocab();
+    let last_batch_logits = &batch_logits[(initial_tokens.len() - 1) * n_vocab..];
+    let mut batch_indexed: Vec<(usize, f32)> = last_batch_logits
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| (i, v))
+        .collect();
+    batch_indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    println!("[BATCH] top5: {:?}", &batch_indexed[..5]);
+
+    // INCREMENTAL path
+    let d_model = 384; // tiny model
+    let n_layers = 4;
+    let max_tokens = 448;
+    let mut cache = whisper_apr::model::DecoderKVCache::new(n_layers, d_model, max_tokens);
+    let mut incr_logits = vec![];
+    for &token in &initial_tokens {
+        incr_logits = model
+            .decoder_mut()
+            .forward_one(token, &encoder_output, &mut cache)
+            .expect("forward_one");
+    }
+    let mut incr_indexed: Vec<(usize, f32)> = incr_logits
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| (i, v))
+        .collect();
+    incr_indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    println!("[INCREMENTAL] top5: {:?}", &incr_indexed[..5]);
+
+    // Compare
+    let batch_top = batch_indexed[0].0;
+    let incr_top = incr_indexed[0].0;
+    println!(
+        "Batch top token: {}, score: {}",
+        batch_top, batch_indexed[0].1
+    );
+    println!("Incr top token: {}, score: {}", incr_top, incr_indexed[0].1);
+
+    assert_eq!(
+        batch_top, incr_top,
+        "MISMATCH: batch predicts {} but incremental predicts {}",
+        batch_top, incr_top
+    );
+}
+
 #[test]
 fn test_encoder_produces_meaningful_output() {
     // Skip if model not available
@@ -359,7 +456,7 @@ fn test_encoder_produces_meaningful_output() {
 
     // First check the logits directly
     let logits = decoder
-        .forward(&initial_tokens, &encoder_output, None)
+        .forward(&initial_tokens, &encoder_output)
         .expect("Forward failed");
     let n_vocab = decoder.n_vocab();
     let n_positions = logits.len() / n_vocab;
@@ -444,7 +541,7 @@ fn test_logits_vary_across_vocabulary() {
 
     let tokens = vec![50257_u32]; // SOT
     let output = decoder
-        .forward(&tokens, &encoder_output, None)
+        .forward(&tokens, &encoder_output)
         .expect("Forward failed");
 
     // Output should be logits over vocabulary
@@ -516,10 +613,10 @@ fn test_cross_attention_forward_varies_with_encoder() {
 
     // Run decoder forward with each encoder output
     let output_a = decoder
-        .forward(&tokens, &encoder_a, None)
+        .forward(&tokens, &encoder_a)
         .expect("Forward A failed");
     let output_b = decoder
-        .forward(&tokens, &encoder_b, None)
+        .forward(&tokens, &encoder_b)
         .expect("Forward B failed");
 
     // Outputs should be different if cross-attention is working
@@ -566,9 +663,7 @@ fn test_token_embeddings_vary() {
     for &token in &test_tokens {
         // Forward with just one token to get its embedding contribution
         let fake_encoder = vec![0.0f32; 74 * d_model]; // encoder output
-        let logits = decoder
-            .forward(&[token], &fake_encoder, None)
-            .expect("forward");
+        let logits = decoder.forward(&[token], &fake_encoder).expect("forward");
 
         // The logits are affected by the embedding - capture first 10 values as fingerprint
         let fingerprint: Vec<f32> = logits.iter().take(100).copied().collect();
@@ -620,10 +715,10 @@ fn test_positional_embeddings_vary() {
     let tokens_4 = vec![50257_u32, 50258, 50358, 50362]; // SOT + 3 more
 
     let logits_1 = decoder
-        .forward(&tokens_1, &fake_encoder, None)
+        .forward(&tokens_1, &fake_encoder)
         .expect("forward 1");
     let logits_4 = decoder
-        .forward(&tokens_4, &fake_encoder, None)
+        .forward(&tokens_4, &fake_encoder)
         .expect("forward 4");
 
     // The logits for position 0 should be different because of positional encoding
@@ -743,9 +838,7 @@ fn test_decoder_produces_varied_output() {
     // Generate 10 tokens and track what we get
     let mut generated = Vec::new();
     for step in 0..10 {
-        let logits = decoder
-            .forward(&tokens, &encoder_output, None)
-            .expect("forward");
+        let logits = decoder.forward(&tokens, &encoder_output).expect("forward");
         let n_vocab = decoder.n_vocab();
         let last_logits = &logits[(logits.len() / n_vocab - 1) * n_vocab..];
 
@@ -922,12 +1015,8 @@ fn test_cross_attention_varies_with_encoder() {
     let tokens = vec![50258_u32, 50259, 50359, 50363]; // SOT, en, transcribe, notimestamps
 
     // Compute decoder output with zeros encoder
-    let logits_zeros = decoder
-        .forward(&tokens, &enc_zeros, None)
-        .expect("forward zeros");
-    let logits_rand = decoder
-        .forward(&tokens, &enc_rand, None)
-        .expect("forward rand");
+    let logits_zeros = decoder.forward(&tokens, &enc_zeros).expect("forward zeros");
+    let logits_rand = decoder.forward(&tokens, &enc_rand).expect("forward rand");
 
     // The outputs should be different if cross-attention is working
     let diff: f32 = logits_zeros
@@ -1230,7 +1319,7 @@ fn test_decoder_hidden_state_trace() {
 
     // 4 tokens
     let (logits_4, trace_4) = decoder
-        .forward_traced(&initial_tokens, &encoder_output, None)
+        .forward_traced(&initial_tokens, &encoder_output)
         .expect("forward 4");
     println!("4 tokens:");
     for (name, l2) in &trace_4 {
@@ -1253,7 +1342,7 @@ fn test_decoder_hidden_state_trace() {
     tokens_5.push(220);
 
     let (logits_5, trace_5) = decoder
-        .forward_traced(&tokens_5, &encoder_output, None)
+        .forward_traced(&tokens_5, &encoder_output)
         .expect("forward 5");
     println!("\n5 tokens (+220):");
     for (name, l2) in &trace_5 {
@@ -1375,7 +1464,7 @@ fn test_f32_model_generation() {
     // Check layer norm weights
     println!("F32 model layer norm check:");
     let (_, trace) = decoder
-        .forward_traced(&[50258_u32, 50259, 50359, 50363], &encoder_output, None)
+        .forward_traced(&[50258_u32, 50259, 50359, 50363], &encoder_output)
         .expect("forward");
     for (name, val) in &trace {
         if name.contains("ln_") {
@@ -1389,9 +1478,7 @@ fn test_f32_model_generation() {
 
     println!("\nF32 model generation:");
     for step in 0..10 {
-        let logits = decoder
-            .forward(&tokens, &encoder_output, None)
-            .expect("forward");
+        let logits = decoder.forward(&tokens, &encoder_output).expect("forward");
         let n_vocab = decoder.n_vocab();
         let last_logits = &logits[(logits.len() / n_vocab - 1) * n_vocab..];
 

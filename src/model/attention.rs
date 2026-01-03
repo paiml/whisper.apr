@@ -212,13 +212,8 @@ impl LinearWeights {
             )
         };
 
-        // Add bias to each token
-        for t in 0..total_tokens {
-            let offset = t * self.out_features;
-            for o in 0..self.out_features {
-                output[offset + o] += self.bias[o];
-            }
-        }
+        // Add bias to each token using SIMD broadcast add
+        simd::broadcast_add_inplace(&mut output, &self.bias, total_tokens, self.out_features);
 
         Ok(output)
     }

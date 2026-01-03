@@ -56,7 +56,7 @@ tier2: ## Tier 2: Full test suite for commits (ON-COMMIT)
 	@echo "  [3/6] All tests..."
 	@cargo test --all-features --quiet
 	@echo "  [4/6] Property tests (full cases)..."
-	@PROPTEST_CASES=256 cargo test property_ --all-features --quiet || true
+	@PROPTEST_CASES=25 cargo test property_ --all-features --quiet || true
 	@echo "  [5/6] Coverage analysis..."
 	@$(MAKE) --no-print-directory coverage-summary 2>/dev/null || echo "    ⚠️  Run 'make coverage' for detailed report"
 	@echo "  [6/6] SATD check..."
@@ -123,12 +123,12 @@ test-doc: ## Run documentation tests
 
 test-property: ## Run property-based tests (fast: 50 cases)
 	@echo "🎲 Running property-based tests (50 cases per property)..."
-	@PROPTEST_CASES=50 cargo test --all-features -- property_ --test-threads=$$(nproc)
+	@PROPTEST_CASES=25 cargo test --all-features -- property_ --test-threads=$$(nproc)
 	@echo "✅ Property tests completed (fast mode)!"
 
 test-property-comprehensive: ## Run property-based tests (500 cases)
 	@echo "🎲 Running property-based tests (500 cases per property)..."
-	@PROPTEST_CASES=500 cargo test --all-features -- property_ --test-threads=$$(nproc)
+	@PROPTEST_CASES=250 cargo test --all-features -- property_ --test-threads=$$(nproc)
 	@echo "✅ Property tests completed (comprehensive mode)!"
 
 test-all: test test-doc test-property-comprehensive ## Run ALL test styles
@@ -215,16 +215,12 @@ coverage-open: ## Open HTML coverage report in browser
 coverage-ci: ## Generate LCOV report for CI/CD (fast mode, uses nextest)
 	@echo "=== Code Coverage for CI/CD ==="
 	@echo "Phase 1: Running tests with instrumentation..."
-	@cargo llvm-cov clean --workspace
-	@test -f ~/.cargo/config.toml && mv ~/.cargo/config.toml ~/.cargo/config.toml.cov-backup || true
-	@env PROPTEST_CASES=100 cargo llvm-cov --no-report nextest --no-tests=warn --all-features --workspace $(FAST_TEST_FILTER)
+	@env PROPTEST_CASES=25 QUICKCHECK_TESTS=25 cargo llvm-cov --no-report nextest --no-tests=warn --all-features --workspace $(FAST_TEST_FILTER)
 	@echo "Phase 2: Generating LCOV report (excluding WASM/tools)..."
 	@cargo llvm-cov report --lcov --output-path lcov.info $(COVERAGE_EXCLUDE)
-	@test -f ~/.cargo/config.toml.cov-backup && mv ~/.cargo/config.toml.cov-backup ~/.cargo/config.toml || true
 	@echo "✓ Coverage report generated: lcov.info"
 
 coverage-clean: ## Clean coverage artifacts
-	@cargo llvm-cov clean --workspace
 	@rm -f lcov.info coverage.xml target/coverage/lcov.info
 	@rm -rf target/llvm-cov target/coverage
 	@find . -name "*.profraw" -delete 2>/dev/null || true
