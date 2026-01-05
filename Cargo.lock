@@ -114,9 +114,9 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
 name = "aprender"
-version = "0.20.2"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f846cd5143d27f1b31b0068fb0124b026a236a30894b171f7a82f64641b69b9f"
+checksum = "4e2ce7eda2fdbba4cf761daed7f0e22df24c54d3b192d0d0328d572f9e15eed2"
 dependencies = [
  "bincode",
  "dirs 6.0.0",
@@ -2372,6 +2372,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num_cpus"
+version = "1.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91df4bbde75afed763b708b7eee1e8e7651e02d97f6d5dd763e89367e957b23b"
+dependencies = [
+ "hermit-abi",
+ "libc",
+]
+
+[[package]]
 name = "number_prefix"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2897,9 +2907,9 @@ dependencies = [
 
 [[package]]
 name = "realizar"
-version = "0.3.3"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abf1f176633d8795c1033c3fb161c62350966c30937efab896f7a321d956e7d4"
+checksum = "12583eaccb1c90525cecb8931fbf19a2d5a6ed93547a10f93d1507d32f842919"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3829,12 +3839,14 @@ dependencies = [
 
 [[package]]
 name = "trueno"
-version = "0.10.1"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27f3dcb4168729183188125bd1c4591b7e435b68a9527c6b6258e42d955b2cad"
+checksum = "4a0756605a19a0b79f5dca9b61fba7e428c497abe9ebeac2ef91b39d90b6da91"
 dependencies = [
+ "anyhow",
  "bytemuck",
  "futures-intrusive",
+ "num_cpus",
  "pollster",
  "thiserror 2.0.17",
  "wgpu 27.0.1",

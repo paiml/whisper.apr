@@ -1,0 +1,108 @@
+# Whisper End-to-End Pipeline Playbook
+# WAPR-PERF-002: Performance Optimization Validation
+#
+# Run: probador playbook demos/playbooks/whisper-e2e.yaml
+#
+# This playbook validates the full transcription pipeline with state machine
+# transitions and performance benchmarks.
+
+version: "1.0"
+name: "Whisper End-to-End Pipeline"
+description: "WAPR-PERF-002: Full transcription pipeline validation"
+
+machine:
+  id: "whisper_e2e_pipeline"
+  initial: "idle"
+
+  states:
+    idle:
+      id: "idle"
+      invariants:
+        - description: "System ready"
+          condition: "system_initialized()"
+
+    audio_loaded:
+      id: "audio_loaded"
+      invariants:
+        - description: "Audio buffer ready"
+          condition: "audio_loaded()"
+        - description: "Memory under limit"
+          condition: "memory_mb() < 50"
+
+    mel_ready:
+      id: "mel_ready"
+      invariants:
+        - description: "Mel spectrogram computed"
+          condition: "mel_ready()"
+        - description: "Mel shape valid"
+          condition: "mel_shape() == [80, 3000]"
+        - description: "No NaN values"
+          condition: "mel_finite()"
+
+    encoded:
+      id: "encoded"
+      invariants:
+        - description: "Encoder output ready"
+          condition: "encoder_ready()"
+        - description: "Encoder shape valid"
+          condition: "encoder_shape() == [1, 1500, 384]"
+
+    decoding:
+      id: "decoding"
+      invariants:
+        - description: "Decoder generating tokens"
+          condition: "decoder_active()"
+        - description: "No repetition"
+          condition: "no_repetition_pattern()"
+        - description: "Under max tokens"
+          condition: "token_count() < 448"
+
+    complete:
+      id: "complete"
+      invariants:
+        - description: "Transcription output exists"
+          condition: "output_exists()"
+        - description: "RTF within target"
+          condition: "rtf() < 2.0"
+
+  transitions:
+    - id: "load_audio"
+      from: "idle"
+      to: "audio_loaded"
+      event: "audio_file_loaded"
+
+    - id: "compute_mel"
+      from: "audio_loaded"
+      to: "mel_ready"
+      event: "mel_computed"
+
+    - id: "encode"
+      from: "mel_ready"
+      to: "encoded"
+      event: "encoding_complete"
+
+    - id: "decode"
+      from: "encoded"
+      to: "decoding"
+      event: "decoding_started"
+
+    - id: "finish"
+      from: "decoding"
+      to: "complete"
+      event: "eot_detected"
+
+    - id: "max_tokens"
+      from: "decoding"
+      to: "complete"
+      event: "max_tokens_reached"
+
+    - id: "reset"
+      from: "complete"
+      to: "idle"
+      event: "pipeline_reset"
+
+performance:
+  max_duration_ms: 10000
+  first_transcript_latency_ms: 3000
+  rtf_target: 2.0
+  memory_limit_mb: 150

@@ -1,0 +1,155 @@
+# Memory Stress Test Playbook
+# WAPR-PERF-002: Memory Leak Detection and Stability
+#
+# Run: probador playbook demos/playbooks/memory-stress.yaml
+#
+# This playbook validates memory behavior under sustained load.
+
+version: "1.0"
+name: "Memory Stress Testing"
+description: "WAPR-PERF-002: Memory leak detection and stability validation"
+
+machine:
+  id: "memory_stress"
+  initial: "idle"
+
+  states:
+    idle:
+      id: "idle"
+      invariants:
+        - description: "System ready for stress testing"
+          condition: "system_initialized()"
+
+    baseline:
+      id: "baseline"
+      invariants:
+        - description: "Baseline memory recorded"
+          condition: "baseline_recorded()"
+        - description: "Initial memory under limit"
+          condition: "memory_mb() < 150"
+
+    loading:
+      id: "loading"
+      invariants:
+        - description: "Loading model"
+          condition: "model_loading()"
+
+    warming:
+      id: "warming"
+      invariants:
+        - description: "Warming up caches"
+          condition: "warmup_running()"
+
+    stressing:
+      id: "stressing"
+      invariants:
+        - description: "Running stress iterations"
+          condition: "stress_running()"
+        - description: "No memory leaks"
+          condition: "memory_growth_mb() < 10"
+        - description: "Peak memory under limit"
+          condition: "peak_memory_mb() < 150"
+
+    analyzing:
+      id: "analyzing"
+      invariants:
+        - description: "Analyzing memory patterns"
+          condition: "analysis_running()"
+
+    complete:
+      id: "complete"
+      invariants:
+        - description: "Stress test passed"
+          condition: "stress_passed()"
+        - description: "No leaks detected"
+          condition: "no_leaks()"
+        - description: "Memory stable"
+          condition: "memory_stable()"
+
+  transitions:
+    - id: "record_baseline"
+      from: "idle"
+      to: "baseline"
+      event: "baseline_recorded"
+
+    - id: "start_loading"
+      from: "baseline"
+      to: "loading"
+      event: "load_model"
+
+    - id: "start_warmup"
+      from: "loading"
+      to: "warming"
+      event: "model_loaded"
+
+    - id: "start_stress"
+      from: "warming"
+      to: "stressing"
+      event: "warmup_complete"
+
+    - id: "analyze"
+      from: "stressing"
+      to: "analyzing"
+      event: "stress_complete"
+
+    - id: "finish"
+      from: "analyzing"
+      to: "complete"
+      event: "analysis_complete"
+
+    - id: "reset"
+      from: "complete"
+      to: "idle"
+      event: "reset_stress"
+
+performance:
+  max_duration_ms: 300000
+  iterations: 100
+  peak_memory_mb: 150
+  max_growth_mb: 10
+
+# Memory targets
+specifications:
+  targets:
+    tiny:
+      peak_mb: 150
+      stable_growth_mb: 10
+    base:
+      peak_mb: 350
+      stable_growth_mb: 20
+
+  leak_tests:
+    - name: "Repeated transcription"
+      iterations: 100
+      max_growth_mb: 10
+
+    - name: "KV cache leak"
+      iterations: 50
+      focus: kv_cache
+      assertions:
+        - kv_cache_size_constant: true
+        - kv_cache_released: true
+
+    - name: "Encoder output leak"
+      iterations: 50
+      focus: encoder_output
+      assertions:
+        - encoder_output_released_after_decode: true
+
+  allocation_tests:
+    - max_allocations_per_transcription: 1000
+    - buffer_reuse_rate: 0.9
+    - arena_efficiency: 0.85
+
+  alignment_tests:
+    - simd_buffer_alignment: 16
+    - cache_line_alignment: 64
+
+  streaming_tests:
+    - duration_seconds: 600
+    - chunk_size_seconds: 30
+    - memory_tolerance_mb: 20
+
+  fragmentation:
+    max_fragmentation: 0.10
+    max_page_fragmentation: 0.10
