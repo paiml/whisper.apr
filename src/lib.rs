@@ -87,6 +87,19 @@ pub mod realizar_inference {
     };
 
     pub use realizar::tensor::Tensor;
+
+    // Speculative decoding (Points 66-80)
+    pub use realizar::speculative::{
+        SpeculativeConfig, SpeculativeError, SpeculativeResult, SpeculativeStats, TokenProb,
+    };
+
+    // GPU backend detection (Points 26-50)
+    #[cfg(feature = "realizar-gpu")]
+    pub fn gpu_available() -> bool {
+        // Check if CUDA/GPU backend is available
+        // This is a runtime check - feature enables compile-time support
+        realizar::gpu::is_available()
+    }
 }
 
 #[cfg(feature = "wasm")]

@@ -1,9 +1,14 @@
 name: WASM 50x Performance Validation
-version: "1.1"
+version: "1.2"
 description: |
   Validates performance and model size targets.
   Tests current INT8 baseline and future Q4K/Q2K targets.
   100 falsification points across compression, WebGPU, and metrics.
+
+  Phases:
+  - Phase 1 (Current): INT8 baseline ~37MB
+  - Phase 2 (Target): Q2K ~10MB
+  - Phase 3 (Target): Q2K+Pruning ~4MB
 
 target: http://localhost:8766
 
@@ -144,9 +149,47 @@ states:
 
     transitions:
       - event: pass
-        target: success
+        target: q2k_future_targets
       - event: fail
         target: failed
+
+  # Section E: Future Q2K Targets (Phase 2-3)
+  # These tests are skipped until Q2K model is generated
+  q2k_future_targets:
+    tests:
+      # Phase 2: Q2K model (~10 MB)
+      - name: "Phase 2: Q2K model exists (FUTURE)"
+        head: /models/whisper-tiny-q2k.apr
+        skip_if_missing: true
+        assert:
+          status: 200
+
+      - name: "Phase 2: Q2K model size ≤10 MB (FUTURE)"
+        head: /models/whisper-tiny-q2k.apr
+        skip_if_missing: true
+        assert:
+          content_length:
+            lte: 10500000
+
+      # Phase 3: Q2K + Pruning (~4 MB)
+      - name: "Phase 3: Q2K+Pruned model exists (FUTURE)"
+        head: /models/whisper-tiny-q2k-pruned.apr
+        skip_if_missing: true
+        assert:
+          status: 200
+
+      - name: "Phase 3: Q2K+Pruned size ≤4 MB (FUTURE)"
+        head: /models/whisper-tiny-q2k-pruned.apr
+        skip_if_missing: true
+        assert:
+          content_length:
+            lte: 4200000
+
+    transitions:
+      - event: pass
+        target: success
+      - event: fail
+        target: success  # Don't fail on future targets
 
   success:
     on_enter:
