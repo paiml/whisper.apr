@@ -1,10 +1,11 @@
 //! Memory management for Whisper inference
 //!
-//! Provides efficient memory allocation via pooling and memory-mapped file access
-//! for large model weights.
+//! Provides efficient memory allocation via pooling, memory-mapped file access
+//! for large model weights, and ZRAM integration for optimized memory usage.
 
 pub mod mmap;
 mod pool;
+pub mod zram;
 
 pub use mmap::{
     MemoryRegion, MmapConfig, MmapHandle, MmapMode, WeightDtype, WeightRegion, WeightType,

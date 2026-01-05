@@ -428,6 +428,8 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
             translate: false,
             hallucination_filter: false,
             speed: 1.0,
+            cache_dir: args.cache_dir.clone(),
+            zram_optimized: args.zram_optimized,
         };
 
         match run_transcribe(transcribe_args, global) {
@@ -1534,6 +1536,8 @@ mod tests {
             translate: false,
             hallucination_filter: false,
             speed: 1.0,
+            cache_dir: None,
+            zram_optimized: false,
         }
     }
 
@@ -1727,6 +1731,8 @@ mod tests {
             skip_existing: false,
             model: ModelSize::Tiny,
             format: OutputFormatArg::Txt,
+            cache_dir: None,
+            zram_optimized: false,
         };
         let global = Args {
             command: Command::Tui,
@@ -2179,6 +2185,8 @@ mod tests {
             skip_existing: false,
             model: ModelSize::Tiny,
             format: OutputFormatArg::Txt,
+            cache_dir: None,
+            zram_optimized: false,
         };
         let global = Args {
             command: Command::Tui,

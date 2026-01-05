@@ -54,7 +54,7 @@ echo ""
 if [ "$SKIP_WASM" = false ]; then
     echo "[1/6] Building WASM..."
     cd "$PROJECT_DIR"
-    wasm-pack build --target web --release
+    wasm-pack build --target web --release --features wasm
 
     if [ ! -f "pkg/whisper_apr_bg.wasm" ]; then
         echo "ERROR: WASM build failed - pkg/whisper_apr_bg.wasm not found"
@@ -213,21 +213,33 @@ else
 fi
 
 # Step 6: Create DMG
-if [ "$SKIP_DMG" = false ] && [[ "$(uname)" == "Darwin" ]] && command -v create-dmg &> /dev/null; then
+if [ "$SKIP_DMG" = false ] && [[ "$(uname)" == "Darwin" ]]; then
     echo "[6/6] Creating DMG..."
     DMG_PATH="$TARGET_DIR/${APP_NAME}-${VERSION}.dmg"
     rm -f "$DMG_PATH"
 
-    create-dmg \
-        --volname "${APP_NAME}" \
-        --window-pos 200 120 \
-        --window-size 600 400 \
-        --icon-size 100 \
-        --icon "${APP_NAME}.app" 150 185 \
-        --app-drop-link 450 185 \
-        "$DMG_PATH" \
-        "$APP_DIR" 2>/dev/null || \
-        echo "    WARNING: DMG creation failed"
+    if command -v create-dmg &> /dev/null; then
+        # Use create-dmg for fancy DMG with app-drop link
+        create-dmg \
+            --volname "${APP_NAME}" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "${APP_NAME}.app" 150 185 \
+            --app-drop-link 450 185 \
+            "$DMG_PATH" \
+            "$APP_DIR" 2>/dev/null || \
+            echo "    WARNING: create-dmg failed, trying hdiutil..."
+    fi
+
+    # Fallback to hdiutil if create-dmg failed or not available
+    if [ ! -f "$DMG_PATH" ]; then
+        hdiutil create -volname "${APP_NAME}" \
+            -srcfolder "$APP_DIR" \
+            -ov -format UDZO \
+            "$DMG_PATH" 2>/dev/null || \
+            echo "    WARNING: DMG creation failed"
+    fi
 
     if [ -f "$DMG_PATH" ]; then
         DMG_SIZE=$(du -h "$DMG_PATH" | cut -f1)
