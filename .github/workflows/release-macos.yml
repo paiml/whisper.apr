@@ -38,6 +38,8 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build WASM
+        env:
+          CARGO_TARGET_DIR: target
         run: |
           # Build main WASM library (not demos workspace which has local deps)
           wasm-pack build --target web --release --features wasm
@@ -45,6 +47,8 @@ jobs:
 
       - name: Build demo WASM (if possible)
         continue-on-error: true
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: |
           # Try to build demo - may fail if probar not available
           cd demos/www-demo
@@ -230,6 +234,8 @@ jobs:
 
       - name: Build CLI
         continue-on-error: true
+        env:
+          CARGO_TARGET_DIR: target
         run: |
           cargo build --release --features cli --target ${{ matrix.target }} || exit 0
           mkdir -p dist
