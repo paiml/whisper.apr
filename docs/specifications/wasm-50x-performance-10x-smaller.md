@@ -28,13 +28,16 @@ Achieve **50x faster** inference and **10x smaller** model for browser-based spe
 | **Memory peak** | 150 MB | **30 MB** | 5x smaller |
 | **Load time (100Mbps)** | 3s | **300ms** | 10x faster |
 
-### Key Technologies
+### Key Technologies (via realizar 0.4.0)
 
-1. **Q2K Quantization** - 2-bit weights with learned scales (10x compression)
-2. **WebGPU Compute Shaders** - GPU acceleration in browser (50x speedup)
-3. **Speculative Decoding** - Parallel token generation (3-5x speedup)
-4. **Flash Attention 2** - O(n) memory attention (10x memory reduction)
-5. **Structured Pruning** - Remove redundant neurons (2x speedup)
+1. **Q4K/Q6K Quantization** - realizar::quantize (10x compression)
+2. **GPU/WASM Backend** - realizar::gpu + apr_transformer (50x speedup)
+3. **Speculative Decoding** - realizar::speculative (3-5x speedup)
+4. **Flash Attention** - realizar::layers::Attention (10x memory reduction)
+5. **PagedKVCache** - realizar::paged_kv (efficient memory)
+
+**Note:** The batuta stack (trueno + aprender + realizar) provides unified CPU/GPU/WASM
+support. We leverage these existing primitives rather than reimplementing.
 
 ---
 
