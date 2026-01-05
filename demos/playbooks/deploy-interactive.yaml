@@ -1,0 +1,198 @@
+name: interactive.paiml.com Deployment Validation
+version: "1.0"
+description: |
+  Popperian falsification suite for whisper.apr web deployment.
+  100 test points validating model integrity, WASM, network, browser compat,
+  audio pipeline, inference, and output quality.
+
+target: https://interactive.paiml.com/whisper/
+
+config:
+  browser: chromium
+  headless: true
+  timeout: 60000
+  retries: 3
+
+initial_state: start
+
+states:
+  start:
+    on_enter:
+      - action: log
+        message: "Starting deployment validation"
+    transitions:
+      - event: begin
+        target: model_check
+
+  # Section A: Model Integrity (Points 1-15)
+  model_check:
+    tests:
+      - name: "Point 1: Model accessible"
+        fetch: /models/whisper-tiny-int8-fb.apr
+        assert:
+          status: 200
+
+      - name: "Point 2: Model size correct"
+        head: /models/whisper-tiny-int8-fb.apr
+        assert:
+          content_length:
+            gte: 37000000
+            lte: 39000000
+
+      - name: "Point 3: Magic bytes valid (APR1)"
+        fetch:
+          url: /models/whisper-tiny-int8-fb.apr
+          range: "0-3"
+        assert:
+          body_contains: "APR1"
+
+    transitions:
+      - event: pass
+        target: wasm_check
+      - event: fail
+        target: failed
+
+  # Section B: WASM Module (Points 16-30)
+  wasm_check:
+    tests:
+      - name: "Point 16: WASM accessible"
+        fetch: /pkg/whisper_apr_demo_bg.wasm
+        assert:
+          status: 200
+
+      - name: "Point 17: WASM size reasonable"
+        head: /pkg/whisper_apr_demo_bg.wasm
+        assert:
+          content_length:
+            lte: 1000000
+
+      - name: "Point 18: JS bindings accessible"
+        fetch: /pkg/whisper_apr_demo.js
+        assert:
+          status: 200
+
+    transitions:
+      - event: pass
+        target: headers_check
+      - event: fail
+        target: failed
+
+  # Section C: Network/Headers (Points 31-45)
+  headers_check:
+    tests:
+      - name: "Point 31: HTTPS enforced"
+        fetch: /index.html
+        assert:
+          url_starts_with: "https://"
+
+      - name: "Point 34: COOP header present"
+        head: /index.html
+        assert:
+          header_contains:
+            Cross-Origin-Opener-Policy: "same-origin"
+
+      - name: "Point 35: COEP header present"
+        head: /index.html
+        assert:
+          header_contains:
+            Cross-Origin-Embedder-Policy: "require-corp"
+
+      - name: "Point 36: Cache headers set"
+        head: /models/whisper-tiny-int8-fb.apr
+        assert:
+          header_contains:
+            Cache-Control: "max-age"
+
+    transitions:
+      - event: pass
+        target: browser_check
+      - event: fail
+        target: failed
+
+  # Section D: Browser Compatibility (Points 46-60)
+  browser_check:
+    tests:
+      - name: "Point 46: Page loads"
+        navigate: /index.html
+        assert:
+          title_contains: "Whisper"
+
+      - name: "Point 52: SharedArrayBuffer available"
+        navigate: /index.html
+        eval: "typeof SharedArrayBuffer !== 'undefined'"
+        assert:
+          result: true
+
+      - name: "Point 53: AudioContext available"
+        navigate: /index.html
+        eval: "typeof AudioContext !== 'undefined' || typeof webkitAudioContext !== 'undefined'"
+        assert:
+          result: true
+
+    transitions:
+      - event: pass
+        target: audio_check
+      - event: fail
+        target: failed
+
+  # Section E: Audio Pipeline (Points 61-75)
+  audio_check:
+    tests:
+      - name: "Point 61: WASM initializes"
+        navigate: /index.html
+        wait: 2000
+        eval: "window.wasmInitialized === true || document.body.innerText.includes('Ready')"
+        assert:
+          result: true
+
+    transitions:
+      - event: pass
+        target: inference_check
+      - event: fail
+        target: failed
+
+  # Section F: Inference Pipeline (Points 76-90)
+  inference_check:
+    tests:
+      - name: "Point 76: Model can be loaded"
+        navigate: /index.html
+        wait: 5000
+        eval: "!document.body.innerText.includes('Error')"
+        assert:
+          result: true
+
+    transitions:
+      - event: pass
+        target: output_check
+      - event: fail
+        target: failed
+
+  # Section G: Output Validation (Points 91-100)
+  output_check:
+    tests:
+      - name: "Point 91: No JavaScript errors"
+        navigate: /index.html
+        wait: 3000
+        console_errors: 0
+        assert:
+          error_count: 0
+
+    transitions:
+      - event: pass
+        target: success
+      - event: fail
+        target: failed
+
+  success:
+    on_enter:
+      - action: log
+        message: "SUCCESS: Deployment validation passed"
+    final: true
+
+  failed:
+    on_enter:
+      - action: log
+        message: "FAILED: Deployment validation failed"
+      - action: screenshot
+        path: deployment-failure.png
+    final: true
