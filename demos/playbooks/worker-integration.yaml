@@ -1,0 +1,399 @@
+# Worker Integration Validation Playbook
+# WAPR-WORKER: Validates Web Worker architecture for non-blocking inference
+#
+# Run: probador playbook demos/playbooks/worker-integration.yaml
+#
+# References:
+# - Kocher et al. (2019) "Spectre Attacks" - SharedArrayBuffer security
+# - Herlihy & Shavit (2008) "Art of Multiprocessor Programming" - SPSC queues
+# - W3C Web Audio API (2021) - AudioWorklet specification
+
+version: "1.0"
+name: "Worker Integration Validation"
+description: "WAPR-WORKER: Validates Web Worker architecture with SPARTA enforcement"
+
+# =============================================================================
+# STATE MACHINE: Worker Lifecycle
+# =============================================================================
+
+machine:
+  id: "worker_integration"
+  initial: "uninitialized"
+
+  states:
+    # -------------------------------------------------------------------------
+    # Initial State: No worker exists
+    # -------------------------------------------------------------------------
+    uninitialized:
+      id: "uninitialized"
+      invariants:
+        - description: "No worker spawned yet"
+          condition: "worker_count() == 0"
+        - description: "No SharedArrayBuffer allocated"
+          condition: "!shared_buffer_exists()"
+
+    # -------------------------------------------------------------------------
+    # Worker Spawning: Loading WASM module
+    # -------------------------------------------------------------------------
+    worker_spawning:
+      id: "worker_spawning"
+      invariants:
+        - description: "Worker script loading"
+          condition: "worker_state() == 'loading'"
+        - description: "SharedArrayBuffer created"
+          condition: "shared_buffer_exists()"
+        - description: "COOP/COEP headers verified"
+          condition: "cross_origin_isolated()"
+
+    # -------------------------------------------------------------------------
+    # Worker Ready: Model loaded, ready for inference
+    # -------------------------------------------------------------------------
+    worker_ready:
+      id: "worker_ready"
+      invariants:
+        - description: "Worker reports ready"
+          condition: "worker_state() == 'ready'"
+        - description: "Ring buffer initialized"
+          condition: "ring_buffer_capacity() >= 48000"
+        - description: "Main thread not blocked"
+          condition: "main_thread_fps() >= 30"
+        - description: "Model loaded in worker"
+          condition: "worker_model_loaded()"
+
+    # -------------------------------------------------------------------------
+    # Audio Streaming: AudioWorklet capturing audio
+    # -------------------------------------------------------------------------
+    audio_streaming:
+      id: "audio_streaming"
+      invariants:
+        - description: "AudioWorklet active (not ScriptProcessorNode)"
+          condition: "audio_worklet_running()"
+        - description: "Ring buffer receiving samples"
+          condition: "ring_buffer_write_count() > 0"
+        - description: "No buffer underruns"
+          condition: "buffer_underrun_count() == 0"
+        - description: "Main thread responsive"
+          condition: "main_thread_fps() >= 30"
+        - description: "Audio level detected"
+          condition: "audio_level() > 0.0 || elapsed_ms() < 500"
+
+    # -------------------------------------------------------------------------
+    # Transcribing: Worker processing audio chunk
+    # -------------------------------------------------------------------------
+    transcribing:
+      id: "transcribing"
+      invariants:
+        - description: "Worker in transcribing state"
+          condition: "worker_state() == 'transcribing'"
+        - description: "UI remains responsive (CRITICAL)"
+          condition: "main_thread_fps() >= 30"
+        - description: "Partial results flowing"
+          condition: "partial_result_count() > 0 || transcription_elapsed_ms() < 1000"
+        - description: "No dropped audio during inference"
+          condition: "buffer_underrun_count() == 0"
+
+    # -------------------------------------------------------------------------
+    # Error State: Recovery required
+    # -------------------------------------------------------------------------
+    error:
+      id: "error"
+      invariants:
+        - description: "Error message available"
+          condition: "error_message().is_some()"
+        - description: "Worker terminated or reset"
+          condition: "worker_state() == 'error' || worker_state() == 'uninitialized'"
+
+  # ===========================================================================
+  # TRANSITIONS: Valid state changes
+  # ===========================================================================
+
+  transitions:
+    # Happy path: Init -> Spawn -> Ready -> Stream -> Transcribe -> Stream
+    - id: "init_to_spawning"
+      from: "uninitialized"
+      to: "worker_spawning"
+      event: "init_called"
+      description: "Start worker initialization"
+
+    - id: "spawning_to_ready"
+      from: "worker_spawning"
+      to: "worker_ready"
+      event: "worker_ready_message"
+      timeout_ms: 10000
+      description: "Worker loaded and ready"
+
+    - id: "ready_to_streaming"
+      from: "worker_ready"
+      to: "audio_streaming"
+      event: "start_recording"
+      description: "Begin audio capture"
+
+    - id: "streaming_to_transcribing"
+      from: "audio_streaming"
+      to: "transcribing"
+      event: "chunk_ready"
+      description: "Audio chunk ready for inference"
+
+    - id: "transcribing_to_streaming"
+      from: "transcribing"
+      to: "audio_streaming"
+      event: "result_received"
+      description: "Transcription complete, continue streaming"
+
+    - id: "streaming_to_ready"
+      from: "audio_streaming"
+      to: "worker_ready"
+      event: "stop_recording"
+      description: "Stop recording, return to ready"
+
+    # Error transitions
+    - id: "spawning_to_error"
+      from: "worker_spawning"
+      to: "error"
+      event: "worker_error"
+      description: "Worker failed to initialize"
+
+    - id: "streaming_to_error"
+      from: "audio_streaming"
+      to: "error"
+      event: "audio_error"
+      description: "Audio capture failed"
+
+    - id: "transcribing_to_error"
+      from: "transcribing"
+      to: "error"
+      event: "inference_error"
+      description: "Inference failed"
+
+    # Recovery
+    - id: "error_to_uninitialized"
+      from: "error"
+      to: "uninitialized"
+      event: "reset"
+      description: "Reset after error"
+
+  # ===========================================================================
+  # FORBIDDEN TRANSITIONS: These indicate bugs
+  # ===========================================================================
+
+  forbidden:
+    - from: "uninitialized"
+      to: "transcribing"
+      reason: "Cannot transcribe without worker - would block main thread"
+
+    - from: "uninitialized"
+      to: "audio_streaming"
+      reason: "Cannot stream without worker - ring buffer not initialized"
+
+    - from: "transcribing"
+      to: "uninitialized"
+      reason: "Cannot reset during transcription - would lose data"
+
+    - from: "worker_spawning"
+      to: "transcribing"
+      reason: "Cannot transcribe while worker loading - model not ready"
+
+    - from: "error"
+      to: "transcribing"
+      reason: "Cannot transcribe from error state - must reset first"
+
+  # ===========================================================================
+  # INVARIANT VIOLATIONS: Runtime bug detection
+  # ===========================================================================
+
+  invariant_violations:
+    - state: "transcribing"
+      condition: "main_thread_fps() < 15"
+      reason: "UI blocked during inference - worker not properly offloading"
+
+    - state: "audio_streaming"
+      condition: "buffer_underrun_count() > 0"
+      reason: "Ring buffer underrun - worker consuming too slowly"
+
+    - state: "transcribing"
+      condition: "transcription_elapsed_ms() > 3000 && partial_result_count() == 0"
+      reason: "No partials after 3s - inference hung or deadlocked"
+
+    - state: "worker_ready"
+      condition: "worker_memory_mb() > 500"
+      reason: "Worker using excessive memory - possible leak"
+
+# =============================================================================
+# PERFORMANCE REQUIREMENTS (SPARTA-enforced)
+# =============================================================================
+
+performance:
+  # Session constraints
+  max_duration_ms: 60000  # 60 second test sessions
+  max_memory_mb: 400      # 400MB total (main + worker)
+
+  # UI responsiveness - CRITICAL
+  main_thread_fps_min: 30         # Minimum acceptable
+  main_thread_fps_target: 60      # Target
+  main_thread_fps_critical: 15    # Below this = test failure
+
+  # Worker latency
+  worker_spawn_ms: 5000           # Worker ready within 5s
+  worker_spawn_critical_ms: 10000
+  first_partial_ms: 500           # First partial within 500ms of speech
+  first_partial_critical_ms: 1000
+
+  # Ring buffer health
+  ring_buffer_capacity_samples: 48000  # 3 seconds @ 16kHz
+  max_buffer_fullness_percent: 80
+  underrun_tolerance: 0                # ZERO tolerance
+
+  # Chunk processing (1.5s audio chunks)
+  chunk_processing_ms: 1500
+  chunk_processing_critical_ms: 3000
+
+  # Real-Time Factor
+  rtf_target: 1.5
+  rtf_critical: 2.0
+
+# =============================================================================
+# PERFORMANCE ASSERTIONS
+# =============================================================================
+
+performance_assertions:
+  - name: "ui_responsiveness"
+    condition: "main_thread_fps() >= 30"
+    critical: "main_thread_fps() >= 15"
+    failure_reason: "Main thread blocked - worker not offloading inference"
+
+  - name: "worker_spawn_latency"
+    condition: "worker_spawn_ms() <= 5000"
+    critical: "worker_spawn_ms() <= 10000"
+    failure_reason: "Worker initialization too slow"
+
+  - name: "first_partial_latency"
+    condition: "first_partial_ms() <= 500"
+    critical: "first_partial_ms() <= 1000"
+    failure_reason: "First partial result too slow - check worker communication"
+
+  - name: "no_buffer_underruns"
+    condition: "buffer_underrun_count() == 0"
+    failure_reason: "Audio buffer underruns - ring buffer too small or worker too slow"
+
+  - name: "realtime_factor"
+    condition: "rtf() <= 1.5"
+    critical: "rtf() <= 2.0"
+    failure_reason: "Processing slower than realtime - model too slow for device"
+
+  - name: "chunk_processing"
+    condition: "chunk_processing_ms() <= 1500"
+    critical: "chunk_processing_ms() <= 3000"
+    failure_reason: "Chunk processing exceeds audio duration"
+
+  - name: "memory_bounded"
+    condition: "total_memory_mb() <= 400"
+    failure_reason: "Excessive memory usage - possible leak"
+
+# =============================================================================
+# RENACER TRACING CONFIGURATION
+# =============================================================================
+
+tracing:
+  enabled: true
+  spans:
+    - name: "whisper.session"
+      description: "Top-level session span"
+
+    - name: "whisper.worker.spawn"
+      description: "Worker initialization"
+      target_ms: 5000
+
+    - name: "whisper.audio.capture"
+      description: "Audio capture duration"
+
+    - name: "audio.worklet.process"
+      description: "AudioWorklet process callback"
+      target_ms: 0.5
+
+    - name: "whisper.ring_buffer.write"
+      description: "Ring buffer write operation"
+      target_ms: 0.1
+
+    - name: "whisper.ring_buffer.read"
+      description: "Ring buffer read operation"
+      target_ms: 0.1
+
+    - name: "whisper.inference"
+      description: "Full inference pass"
+      target_ms: 1500
+
+    - name: "whisper.mel"
+      description: "Mel spectrogram computation"
+      target_ms: 50
+
+    - name: "whisper.encoder"
+      description: "Encoder forward pass"
+      target_ms: 400
+
+    - name: "whisper.decoder"
+      description: "Decoder forward pass"
+      target_ms: 800
+
+  # Performance assertions via renacer
+  assertions:
+    - span: "audio.worklet.process"
+      condition: "duration_ms < 0.5"
+      reason: "AudioWorklet must complete within audio quantum budget"
+
+    - span: "whisper.ring_buffer.write"
+      condition: "allocations == 0"
+      reason: "Ring buffer write must be allocation-free"
+
+    - span: "whisper.inference"
+      condition: "duration_ms < 1500"
+      reason: "Inference must complete faster than audio chunk duration"
+
+# =============================================================================
+# TEST SCENARIOS
+# =============================================================================
+
+scenarios:
+  - name: "basic_transcription"
+    description: "Record 5 seconds of audio and verify transcription"
+    steps:
+      - action: "init"
+        expect_state: "worker_ready"
+        timeout_ms: 10000
+      - action: "start_recording"
+        expect_state: "audio_streaming"
+      - action: "wait"
+        duration_ms: 5000
+      - action: "stop_recording"
+        expect_state: "worker_ready"
+      - assert: "transcript_length() > 0"
+      - assert: "main_thread_fps_avg() >= 30"
+      - assert: "buffer_underrun_count() == 0"
+
+  - name: "continuous_recording"
+    description: "Record for 30 seconds to test sustained performance"
+    steps:
+      - action: "init"
+        expect_state: "worker_ready"
+      - action: "start_recording"
+        expect_state: "audio_streaming"
+      - action: "wait"
+        duration_ms: 30000
+      - action: "stop_recording"
+      - assert: "chunk_count() >= 10"
+      - assert: "main_thread_fps_min() >= 15"
+      - assert: "buffer_underrun_count() == 0"
+      - assert: "memory_growth_mb() < 50"
+
+  - name: "error_recovery"
+    description: "Verify recovery from worker errors"
+    steps:
+      - action: "init"
+        expect_state: "worker_ready"
+      - action: "inject_error"
+        error_type: "worker_crash"
+        expect_state: "error"
+      - action: "reset"
+        expect_state: "uninitialized"
+      - action: "init"
+        expect_state: "worker_ready"
+      - assert: "worker_state() == 'ready'"

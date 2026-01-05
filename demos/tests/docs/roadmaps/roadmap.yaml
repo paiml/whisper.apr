@@ -1,0 +1,36 @@
+roadmap_version: '1.0'
+github_enabled: true
+github_repo: null
+roadmap:
+- id: WAPR-SPARTA
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-SPARTA'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-05T22:05:47.532602942+00:00
+  updated: 2026-01-05T22:12:58.054418344+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-WORKER
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-WORKER'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-05T22:23:37.747438951+00:00
+  updated: 2026-01-05T22:23:37.747438951+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
