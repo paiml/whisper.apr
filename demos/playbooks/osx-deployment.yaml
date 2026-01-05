@@ -1,0 +1,136 @@
+# macOS Deployment Playbook
+# WAPR-PERF-002: Click-to-Run WASM Package Validation
+#
+# Run: probador playbook demos/playbooks/osx-deployment.yaml
+#
+# This playbook validates the macOS .app bundle deployment pipeline.
+
+version: "1.0"
+name: "macOS Deployment Validation"
+description: "WAPR-PERF-002: Click-to-run WASM package for macOS"
+
+machine:
+  id: "osx_deployment"
+  initial: "idle"
+
+  states:
+    idle:
+      id: "idle"
+      invariants:
+        - description: "Build system ready"
+          condition: "system_initialized()"
+
+    wasm_built:
+      id: "wasm_built"
+      invariants:
+        - description: "WASM package compiled"
+          condition: "wasm_exists()"
+        - description: "WASM size under 5MB"
+          condition: "wasm_size_mb() < 5"
+
+    bundle_created:
+      id: "bundle_created"
+      invariants:
+        - description: "App bundle structure valid"
+          condition: "bundle_valid()"
+        - description: "Info.plist present"
+          condition: "plist_exists()"
+
+    signed:
+      id: "signed"
+      invariants:
+        - description: "Code signature valid"
+          condition: "signature_valid()"
+
+    packaged:
+      id: "packaged"
+      invariants:
+        - description: "DMG created"
+          condition: "dmg_exists()"
+        - description: "DMG size reasonable"
+          condition: "dmg_size_mb() < 100"
+
+    verified:
+      id: "verified"
+      invariants:
+        - description: "App launches successfully"
+          condition: "app_launches()"
+        - description: "WASM loads in WebView"
+          condition: "wasm_loads()"
+        - description: "Transcription works"
+          condition: "transcription_works()"
+
+  transitions:
+    - id: "build_wasm"
+      from: "idle"
+      to: "wasm_built"
+      event: "wasm_compiled"
+
+    - id: "create_bundle"
+      from: "wasm_built"
+      to: "bundle_created"
+      event: "bundle_created"
+
+    - id: "sign_app"
+      from: "bundle_created"
+      to: "signed"
+      event: "signing_complete"
+
+    - id: "create_dmg"
+      from: "signed"
+      to: "packaged"
+      event: "dmg_created"
+
+    - id: "verify_deployment"
+      from: "packaged"
+      to: "verified"
+      event: "verification_passed"
+
+    - id: "reset"
+      from: "verified"
+      to: "idle"
+      event: "reset_deployment"
+
+performance:
+  build_timeout_ms: 300000
+  max_wasm_size_mb: 5
+  max_dmg_size_mb: 100
+
+# Deployment configuration (for reference)
+deployment:
+  ssh_host: mac
+  bundle_id: "com.paiml.whisper-apr"
+  min_macos: "10.15"
+  architectures:
+    - x86_64-apple-darwin
+    - aarch64-apple-darwin
+
+  entitlements:
+    - com.apple.security.cs.allow-jit
+    - com.apple.security.cs.allow-unsigned-executable-memory
+    - com.apple.security.device.audio-input
+
+  resources:
+    - whisper-apr.wasm
+    - whisper_apr.js
+    - whisper-tiny.apr
+    - index.html
+
+# Verification specifications
+specifications:
+  bundle_structure:
+    - "Contents/MacOS/whisper-apr-launcher"
+    - "Contents/Resources/whisper-apr.wasm"
+    - "Contents/Resources/whisper-tiny.apr"
+    - "Contents/Resources/index.html"
+    - "Contents/Info.plist"
+
+  plist_validation:
+    CFBundleIdentifier: "com.paiml.whisper-apr"
+    LSMinimumSystemVersion: "10.15"
+    NSHighResolutionCapable: true
+
+  ux_metrics:
+    cold_start_target_s: 5
+    model_load_target_s: 10
+    first_transcription_target_s: 30
