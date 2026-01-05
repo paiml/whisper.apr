@@ -179,11 +179,11 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'New task: WAPR-PERF-003'
-  status: inprogress
+  status: completed
   priority: medium
   assigned_to: null
   created: 2025-12-15T07:40:11.910949840+00:00
-  updated: 2026-01-05T13:54:27.660034329+00:00
+  updated: 2026-01-05T15:00:08.074738590+00:00
   spec: null
   acceptance_criteria: []
   phases: []
@@ -728,6 +728,22 @@ roadmap:
   assigned_to: null
   created: 2026-01-05T09:41:03.842504058+00:00
   updated: 2026-01-05T10:00:54.267536381+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-PERF-003-GPU
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PERF-003-GPU'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-05T15:01:21.633360667+00:00
+  updated: 2026-01-05T15:01:21.633360667+00:00
   spec: null
   acceptance_criteria: []
   phases: []

@@ -95,10 +95,12 @@ pub mod realizar_inference {
 
     // GPU backend detection (Points 26-50)
     #[cfg(feature = "realizar-gpu")]
+    pub use realizar::cuda::CudaExecutor;
+
+    /// Check if CUDA GPU is available at runtime
+    #[cfg(feature = "realizar-gpu")]
     pub fn gpu_available() -> bool {
-        // Check if CUDA/GPU backend is available
-        // This is a runtime check - feature enables compile-time support
-        realizar::gpu::is_available()
+        CudaExecutor::is_available()
     }
 }
 
