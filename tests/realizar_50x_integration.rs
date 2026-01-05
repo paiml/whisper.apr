@@ -170,7 +170,7 @@ fn test_encoder_construction() {
 // Section 5: Model Size Calculations (10x smaller target)
 // =============================================================================
 
-/// RED: Q4K model size calculation
+/// GREEN: Q4K model size calculation
 #[test]
 fn test_q4k_model_size_target() {
     // whisper-tiny: ~39M params
@@ -185,6 +185,30 @@ fn test_q4k_model_size_target() {
 
     // Target: <10MB for Q4K+pruned tiny
     assert!(size_mb < 10.0, "Expected <10MB, got {size_mb:.1}MB");
+}
+
+/// GREEN: QuantizedLinearQ4K compression ratio validation
+#[test]
+fn test_q4k_linear_compression() {
+    use whisper_apr::model::QuantizedLinearQ4K;
+
+    let in_features: usize = 384; // tiny d_model
+    let out_features: usize = 384;
+    let n_values = in_features * out_features;
+
+    // Q4K: 144 bytes per 256 values
+    let super_block_bytes = 144;
+    let n_blocks = n_values.div_ceil(256);
+    let q4k_bytes = super_block_bytes * n_blocks;
+
+    let raw_data = vec![0u8; q4k_bytes];
+    let linear = QuantizedLinearQ4K::from_raw(raw_data, None, in_features, out_features);
+
+    let f32_bytes = n_values * 4;
+    let compression = f32_bytes as f64 / linear.memory_size() as f64;
+
+    // Q4K should achieve ~7x compression (32/4.5 = 7.1x theoretical)
+    assert!(compression > 6.0, "Q4K compression should be >6x, got {compression:.1}x");
 }
 
 /// RED: Compression ratio from spec
