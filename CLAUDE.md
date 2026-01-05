@@ -307,27 +307,31 @@ done
 
 ## Python Usage Policy
 
-**CRITICAL: uv-only transient execution**
+**CRITICAL: Python is rarely used in this project**
 
-Python packages are used ONLY via `uv run` for single-shot transient execution. No persistent package installation is permitted.
+This is a Rust-first codebase. Python is only used in exceptional cases for one-shot ground truth extraction against upstream Whisper. Even then, prefer Rust alternatives.
 
-**ALLOWED:**
+**RARELY ALLOWED (ground truth only):**
 ```bash
-# Single-shot script execution with inline dependencies
-uv run --with openai-whisper scripts/ground_truth.py
-
-# Transient tool execution
-uvx ruff check .
+# One-shot reference extraction (exceptional use only)
+uv run --with openai-whisper scripts/hf_transcribe.py audio.wav
 ```
 
 **PROHIBITED - DO NOT USE:**
-- `pip install` - No persistent package installation
-- `pip3 install` - No persistent package installation
-- `conda install` - No conda environments
-- `python -m venv` - No virtual environments
-- Any persistent Python environment
+- `python -m http.server` - Use `probar serve` instead
+- `pip install` / `pip3 install` - No persistent installation
+- `conda` / `venv` - No Python environments
+- Python for any tooling, scripts, or utilities
+- Python HTTP servers for WASM testing
 
-**Rationale:** Transient execution ensures reproducibility, avoids dependency conflicts, and keeps the system clean. All Python dependencies are declared inline in scripts or via `--with` flags.
+**For local WASM serving, ALWAYS use probar:**
+```bash
+# Correct: probar handles COOP/COEP headers automatically
+probar serve
+
+# WRONG: Never use Python servers
+# python -m http.server  # ❌ NO
+```
 
 ## Ground Truth Validation
 
