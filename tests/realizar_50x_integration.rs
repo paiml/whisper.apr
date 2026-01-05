@@ -103,6 +103,56 @@ fn test_decoder_kv_cache() {
     assert_eq!(kv_cache.cross_attn_cache.len(), config.n_text_layer as usize);
 }
 
+/// RED: Decoder PAGED KV cache creation (realizar integration)
+#[test]
+fn test_decoder_paged_kv_cache() {
+    let config = ModelConfig::tiny();
+    let decoder = Decoder::new(&config);
+
+    // Create paged cache with 64 pages
+    let paged_cache = decoder.create_paged_kv_cache(64);
+
+    // Should have correct number of layers
+    assert_eq!(paged_cache.num_layers(), config.n_text_layer as usize);
+    assert_eq!(paged_cache.total_pages(), 64);
+}
+
+/// RED: Paged cache sequence allocation
+#[test]
+fn test_paged_cache_sequence_allocation() {
+    let config = ModelConfig::tiny();
+    let decoder = Decoder::new(&config);
+    let mut paged_cache = decoder.create_paged_kv_cache(64);
+
+    // Allocate a sequence
+    let result = paged_cache.allocate_sequence(32);
+    assert!(result.is_ok(), "Sequence allocation should succeed");
+}
+
+/// GREEN: Decoder forward with paged cache (50x memory target)
+#[test]
+fn test_decoder_forward_paged() {
+    let config = ModelConfig::tiny();
+    let decoder = Decoder::new(&config);
+    let mut paged_cache = decoder.create_paged_kv_cache(64);
+
+    // Allocate sequence with 0 initial tokens (fresh sequence)
+    let seq_id = paged_cache.allocate_sequence(0).unwrap();
+
+    // Mock encoder output (seq_len=1500, d_model=384 for tiny)
+    let encoder_output = vec![0.1f32; 1500 * 384];
+
+    // Single token input
+    let token = 50258u32; // <|startoftranscript|>
+
+    // Forward with paged cache - should append to cache
+    let result = decoder.forward_one_paged(token, &encoder_output, &mut paged_cache, seq_id);
+
+    assert!(result.is_ok(), "Paged forward should succeed: {:?}", result.err());
+    let logits = result.unwrap();
+    assert_eq!(logits.len(), config.n_vocab as usize);
+}
+
 // =============================================================================
 // Section 4: Encoder Integration
 // =============================================================================
