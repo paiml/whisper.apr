@@ -34,8 +34,8 @@ benchmark-tui = ["ratatui", "crossterm"]
 tui = ["ratatui", "crossterm"]
 # Use realizar's world-class inference primitives (attention, quantization, caching)
 realizar-inference = ["dep:realizar"]
-# Enable realizar's GPU backend (50x speedup via trueno-gpu)
-realizar-gpu = ["dep:realizar", "realizar/gpu"]
+# Enable realizar's CUDA backend (50x speedup via trueno-gpu)
+realizar-gpu = ["dep:realizar", "realizar/cuda"]
 
 [dependencies]
 # Core dependencies
