@@ -40,16 +40,19 @@ realizar-inference = ["dep:realizar"]
 thiserror = "2"
 
 # SIMD acceleration (trueno integration)
-trueno = "0.10.1"
+# Updated per WAPR-PERF-002: 0.11.0 has enhanced WASM SIMD, fused_layernorm_linear
+trueno = "0.11.0"
 
 # Model format (aprender is the canonical .apr format library)
 # Note: safetensors-compare pulls hf-hub which doesn't support WASM
 # Use target-specific deps below to enable it only for native builds
-aprender = { version = "0.20", default-features = false }
+# Updated per WAPR-PERF-002: 0.21.0 has embedded mel filterbank support
+aprender = { version = "0.21", default-features = false }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
-realizar = { version = "0.3.3", optional = true, default-features = false }
+# Updated per WAPR-PERF-002: 0.4.0 has PagedKvCache improvements for WASM
+realizar = { version = "0.4", optional = true, default-features = false }
 
 # FFT for mel spectrogram computation
 rustfft = "6.2"
@@ -110,7 +113,8 @@ getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] 
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Enable safetensors-compare only for native builds (pulls hf-hub which doesn't support WASM)
-aprender = { version = "0.20", default-features = false, features = ["safetensors-compare"] }
+# Updated per WAPR-PERF-002: 0.21.0 has embedded mel filterbank support
+aprender = { version = "0.21", default-features = false, features = ["safetensors-compare"] }
 
 [profile.release]
 lto = true
