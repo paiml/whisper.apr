@@ -527,6 +527,93 @@ fn validate_worker_performance(metrics: &WorkerMetrics) {
 - [ ] Performance benchmark results
 - [ ] Deployment guide for COOP/COEP headers
 
+---
+
+## JIDOKA: Mandatory Testing Gates (Stop-The-Line)
+
+**CRITICAL**: No phase can be marked complete without passing these gates.
+This section was added after a Five Whys analysis revealed that code was
+marked "complete" based on compilation alone, without runtime verification.
+
+### Gate 1: Compilation (Necessary but NOT Sufficient)
+
+```bash
+# These must pass but DO NOT indicate the feature works
+cargo check
+cargo build --target wasm32-unknown-unknown --features wasm --release
+make build
+```
+
+### Gate 2: Browser Runtime Tests (MANDATORY)
+
+```bash
+# MUST pass before ANY task completion
+probar test -v
+
+# If probar tests don't exist for a feature, they must be written FIRST
+```
+
+### Gate 3: Manual Browser Verification (MANDATORY for new features)
+
+```markdown
+## Manual Test Checklist
+
+1. [ ] Open http://localhost:8081 in browser
+2. [ ] Open browser DevTools console (F12)
+3. [ ] Click "Record" button
+4. [ ] Verify: Console shows "[Worker] Initialized" (no errors)
+5. [ ] Verify: Console shows "[AudioWorklet] Setup complete"
+6. [ ] Verify: VU meter responds to audio input
+7. [ ] Speak for 3+ seconds
+8. [ ] Verify: Partial transcription appears
+9. [ ] Click "Stop" button
+10. [ ] Verify: Final transcription appears
+11. [ ] Screenshot console output (must show NO red errors)
+```
+
+### Gate 4: Evidence Attachment
+
+Before marking complete, attach:
+- [ ] Screenshot of working demo
+- [ ] Console output showing successful initialization
+- [ ] `probar test -v` output
+
+### Forbidden Practices (Poka-Yoke)
+
+**NEVER**:
+1. Mark a task complete based solely on `cargo check` passing
+2. Claim "build successful" without opening the demo in a browser
+3. Skip `probar test` for browser-related code changes
+4. Treat embedded JavaScript constants as "just strings"
+5. Use `--no-verify` on commits without first running browser tests
+
+### Definition of "Complete"
+
+A task is ONLY complete when ALL of the following are true:
+
+| Criterion | Verification Method | Required |
+|-----------|---------------------|----------|
+| Rust compiles | `cargo check` | YES |
+| WASM builds | `make build` | YES |
+| Browser tests pass | `probar test -v` | YES |
+| No console errors | Manual browser check | YES |
+| Feature works | Manual test checklist | YES |
+| Evidence attached | Screenshot/logs | YES |
+
+### Andon: Test Status Board
+
+Update this board as you complete each component:
+
+| Component | cargo check | probar test | Manual Verified | Evidence |
+|-----------|-------------|-------------|-----------------|----------|
+| ring_buffer.rs | [ ] | [ ] | [ ] | [ ] |
+| audio_worklet.rs | [ ] | [ ] | [ ] | [ ] |
+| worker.rs | [ ] | [ ] | [ ] | [ ] |
+| worker_manager.rs | [ ] | [ ] | [ ] | [ ] |
+| lib.rs integration | [ ] | [ ] | [ ] | [ ] |
+
+---
+
 ## Success Criteria
 
 1. **UI Responsiveness**: Main thread maintains 60 FPS during transcription
