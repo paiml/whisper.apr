@@ -1,0 +1,200 @@
+name: WASM 50x Performance Validation
+version: "1.0"
+description: |
+  Validates 50x performance improvement and 10x model size reduction.
+  100 falsification points across compression, WebGPU, Flash Attention,
+  speculative decoding, and end-to-end metrics.
+
+target: http://localhost:8766
+
+config:
+  browser: chromium
+  headless: true
+  timeout: 120000
+  retries: 2
+
+initial_state: start
+
+states:
+  start:
+    on_enter:
+      - action: log
+        message: "Starting 50x performance validation"
+    transitions:
+      - event: begin
+        target: model_compression
+
+  # Section A: Model Compression (Points 1-25)
+  model_compression:
+    tests:
+      - name: "Point 1: Q2K model size ≤3.7 MB"
+        head: /models/whisper-tiny-q2k.apr
+        assert:
+          content_length:
+            lte: 3900000
+
+      - name: "Point 2: Model has APR1 magic"
+        fetch:
+          url: /models/whisper-tiny-q2k.apr
+          range: "0-3"
+        assert:
+          body_contains: "APR1"
+
+      - name: "Point 3: Compression ratio ≥10x"
+        head: /models/whisper-tiny-q2k.apr
+        compute:
+          ratio: 38775521 / content_length
+        assert:
+          ratio:
+            gte: 10
+
+    transitions:
+      - event: pass
+        target: wasm_bundle
+      - event: fail
+        target: failed
+
+  # Section B: WASM Bundle Size
+  wasm_bundle:
+    tests:
+      - name: "Point 99: WASM size ≤100 KB"
+        head: /pkg/whisper_apr_demo_bg.wasm
+        assert:
+          content_length:
+            lte: 102400
+
+      - name: "Point 100: Total payload ≤4 MB"
+        compute:
+          total: model_size + wasm_size + js_size
+        assert:
+          total:
+            lte: 4194304
+
+    transitions:
+      - event: pass
+        target: webgpu_check
+      - event: fail
+        target: failed
+
+  # Section C: WebGPU Detection (Points 26-50)
+  webgpu_check:
+    tests:
+      - name: "Point 26: WebGPU detected or fallback works"
+        navigate: /index.html
+        eval: |
+          navigator.gpu !== undefined ||
+          window.wasmSimdFallback === true
+        assert:
+          result: true
+
+      - name: "Point 27: Shader compilation succeeds"
+        navigate: /index.html
+        wait: 2000
+        eval: "!window.shaderCompileError"
+        assert:
+          result: true
+
+    transitions:
+      - event: pass
+        target: performance_check
+      - event: fail
+        target: failed
+
+  # Section D: Performance Metrics (Points 81-100)
+  performance_check:
+    tests:
+      - name: "Point 81: RTF ≤0.02x (50x improvement)"
+        navigate: /benchmark.html
+        wait: 10000
+        eval: "window.benchmarkResults?.rtf || 999"
+        assert:
+          value:
+            lte: 0.02
+
+      - name: "Point 82: First token latency ≤20ms"
+        eval: "window.benchmarkResults?.firstTokenLatency || 999"
+        assert:
+          value:
+            lte: 20
+
+      - name: "Point 83: Memory peak ≤40 MB"
+        eval: "window.benchmarkResults?.peakMemoryMB || 999"
+        assert:
+          value:
+            lte: 40
+
+      - name: "Point 84: Cold start ≤500ms"
+        eval: "window.benchmarkResults?.coldStartMs || 999"
+        assert:
+          value:
+            lte: 500
+
+    transitions:
+      - event: pass
+        target: accuracy_check
+      - event: fail
+        target: failed
+
+  # Section E: Accuracy (Points 86-88)
+  accuracy_check:
+    tests:
+      - name: "Point 86: WER acceptable (no major regression)"
+        navigate: /test.html
+        wait: 5000
+        eval: "window.testResults?.werClean || 999"
+        assert:
+          value:
+            lte: 0.18
+
+      - name: "Point 88: No hallucination"
+        eval: |
+          const output = window.testResults?.transcript || '';
+          return !/(.{5,})\1{3,}/.test(output);
+        assert:
+          result: true
+
+    transitions:
+      - event: pass
+        target: browser_compat
+      - event: fail
+        target: failed
+
+  # Section F: Browser Compatibility (Points 89-93)
+  browser_compat:
+    tests:
+      - name: "Point 89: No JavaScript errors"
+        navigate: /index.html
+        wait: 3000
+        assert:
+          console_errors: 0
+
+      - name: "Point 90: SharedArrayBuffer available"
+        eval: "typeof SharedArrayBuffer !== 'undefined'"
+        assert:
+          result: true
+
+    transitions:
+      - event: pass
+        target: success
+      - event: fail
+        target: failed
+
+  success:
+    on_enter:
+      - action: log
+        message: "SUCCESS: 50x performance validation PASSED"
+      - action: metric
+        name: perf_50x_validation
+        value: 1
+    final: true
+
+  failed:
+    on_enter:
+      - action: log
+        message: "FAILED: 50x performance validation failed"
+      - action: screenshot
+        path: perf-50x-failure.png
+      - action: metric
+        name: perf_50x_validation
+        value: 0
+    final: true

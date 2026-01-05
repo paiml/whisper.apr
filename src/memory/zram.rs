@@ -169,10 +169,8 @@ pub fn is_trueno_ublk_mount(_path: &[u8]) -> bool {
 pub fn optimal_buffer_size() -> usize {
     if is_gpu_zram_available() {
         ZRAM_BUFFER_SIZE // 4 MB for GPU batch compression
-    } else if is_zram_available_impl() {
-        DEFAULT_BUFFER_SIZE // 64 KB for CPU ZRAM
     } else {
-        DEFAULT_BUFFER_SIZE
+        DEFAULT_BUFFER_SIZE // 64 KB for CPU ZRAM or fallback
     }
 }
 
