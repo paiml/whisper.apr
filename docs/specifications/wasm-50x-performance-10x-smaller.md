@@ -53,18 +53,37 @@ Achieve **50x faster** inference and **10x smaller** model for browser-based spe
 
 ### 1.2 Q2K Quantization Algorithm
 
+**Current Implementation (6-bit precision, ~5.2x compression):**
 ```
 Q2K Super-Block Structure (256 weights):
 ┌────────────────────────────────────────┐
 │ Scale (fp16)      │ 2 bytes            │
 │ Min (fp16)        │ 2 bytes            │
 │ Weights (2-bit)   │ 64 bytes (256/4)   │
-│ High-bits (4-bit) │ 32 bytes (256/8)   │
+│ Outliers (4-bit)  │ 128 bytes (256/2)  │
+├────────────────────────────────────────┤
+│ Total: 196 bytes / 256 weights         │
+│ = 6.125 bits/weight effective          │
+│ = ~5.2x compression vs FP32            │
+└────────────────────────────────────────┘
+```
+
+**Target (llama.cpp Q2_K style, ~10x compression):**
+```
+Q2K Super-Block Structure (256 weights):
+┌────────────────────────────────────────┐
+│ Scale (fp16)      │ 2 bytes            │
+│ Min (fp16)        │ 2 bytes            │
+│ Weights (2-bit)   │ 64 bytes (256/4)   │
+│ High-bits (4-bit) │ 32 bytes (first 64)│
 ├────────────────────────────────────────┤
 │ Total: 100 bytes / 256 weights         │
 │ = 3.125 bits/weight effective          │
+│ = ~10x compression vs FP32             │
 └────────────────────────────────────────┘
 ```
+
+**Status:** Phase 1 implemented (`src/model/quantized.rs`). Phase 2 requires sub-block scales for improved accuracy at lower bit widths.
 
 **Implementation via realizar 0.4.0:**
 ```rust
