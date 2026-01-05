@@ -190,6 +190,90 @@ cargo bench --bench inference -- rtf
 # If reported RTF > 2.0x, the claim is falsified
 ```
 
+## ML/AI Reproducibility
+
+### Determinism Guarantees
+
+whisper.apr provides **full inference determinism**:
+
+| Component | Determinism | Notes |
+|-----------|-------------|-------|
+| Greedy decoding | ✅ Bit-identical | No randomness |
+| Beam search | ✅ Deterministic | Fixed beam order |
+| Mel spectrogram | ✅ Bit-identical | Embedded filterbank |
+| SIMD operations | ✅ Deterministic | IEEE 754 compliant |
+| Quantized inference | ✅ Deterministic | Fixed-point arithmetic |
+
+### No Random Seeds Required
+
+Unlike training-based ML systems, whisper.apr inference:
+- Uses **no random sampling** (greedy/beam are deterministic)
+- Has **no dropout** (inference mode only)
+- Has **no data augmentation** (raw audio processing)
+- Uses **fixed quantization** (no stochastic rounding)
+
+### Model Versioning
+
+Models are versioned with cryptographic checksums:
+
+| Model | Version | Format | SHA-256 |
+|-------|---------|--------|---------|
+| whisper-tiny.apr | 1.0.0 | APR v1 | `TBD` |
+| whisper-tiny-int8-fb.apr | 1.0.0 | APR v1 (Q8) | `TBD` |
+| whisper-base.apr | 1.0.0 | APR v1 | `TBD` |
+
+Verify model integrity:
+```bash
+sha256sum models/whisper-tiny.apr
+# Compare with expected checksum from releases page
+```
+
+### Pre-trained Model Provenance
+
+All weights originate from OpenAI's official Whisper release:
+- Source: https://github.com/openai/whisper
+- HuggingFace: https://huggingface.co/openai/whisper-tiny
+- License: MIT
+
+No fine-tuning or retraining is performed. Weights are converted directly from PyTorch to APR format with bit-exact precision for fp32 and documented quantization for int8.
+
+### Data Pipeline Determinism
+
+Audio preprocessing is fully deterministic:
+
+```
+Audio File → WAV Decode → Resample (16kHz) → Mel Spectrogram → Model Input
+     │             │              │                  │
+     │             │              │                  └── Embedded filterbank
+     │             │              └── Linear interpolation
+     │             └── Standard WAV parsing
+     └── File read (no stochastic processing)
+```
+
+### Floating-Point Reproducibility
+
+IEEE 754 compliance ensures:
+- Same f32 operations produce same results across x86_64/ARM64/WASM
+- SIMD operations use deterministic reduction order
+- No fast-math flags that break associativity
+
+To verify:
+```bash
+# Run numeric precision tests
+cargo test numerical_stability
+```
+
+### Reproduction Checklist
+
+Before reporting a reproducibility issue, verify:
+
+- [ ] Same model file (check SHA-256)
+- [ ] Same audio file (check file hash)
+- [ ] Same software version (`cargo --version`, `whisper-apr-cli --version`)
+- [ ] Same decoding strategy (greedy vs beam)
+- [ ] Same quantization mode (fp32 vs int8)
+- [ ] Same platform (native vs WASM)
+
 ## Contact
 
 For reproducibility issues, open a GitHub issue with:
