@@ -225,7 +225,11 @@ pub fn create_audio_worklet_blob_url() -> Result<String, JsValue> {
     let blob_parts = js_sys::Array::new();
     blob_parts.push(&JsValue::from_str(AUDIO_WORKLET_JS));
 
-    let blob = web_sys::Blob::new_with_str_sequence(&blob_parts)?;
+    // AudioWorklet requires JavaScript MIME type
+    let options = web_sys::BlobPropertyBag::new();
+    options.set_type("application/javascript");
+
+    let blob = web_sys::Blob::new_with_str_sequence_and_options(&blob_parts, &options)?;
     let url = web_sys::Url::create_object_url_with_blob(&blob)?;
 
     Ok(url)

@@ -87,9 +87,14 @@ impl WorkerManager {
         let ring_buffer = SharedRingBuffer::new(48000 * 3)?;
         self.ring_buffer = Some(ring_buffer);
 
-        // Create worker from blob URL
+        // Create worker from blob URL with ES module type
+        // CRITICAL: wasm-bindgen generates ES modules, so type: 'module' is REQUIRED
         let worker_url = create_worker_blob_url()?;
-        let worker = web_sys::Worker::new(&worker_url)?;
+
+        let worker_options = web_sys::WorkerOptions::new();
+        worker_options.set_type(web_sys::WorkerType::Module);
+
+        let worker = web_sys::Worker::new_with_options(&worker_url, &worker_options)?;
 
         // Clean up blob URL
         web_sys::Url::revoke_object_url(&worker_url)?;

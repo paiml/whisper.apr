@@ -71,6 +71,8 @@ features = [
     "AudioWorkletNodeOptions",
     "MessagePort",
     "Location",
+    "WorkerOptions",
+    "WorkerType",
 ]
 
 [lints]

@@ -437,10 +437,15 @@ pub fn init_worker() -> TranscriptionWorker {
     TranscriptionWorker::new()
 }
 
-/// JavaScript code for worker bootstrap
+/// JavaScript code for worker bootstrap (ES Module)
+///
+/// CRITICAL: This worker MUST be loaded with { type: 'module' } option.
+/// wasm-bindgen generates ES modules, so importScripts() does NOT work.
 pub const WORKER_JS: &str = r#"
-// Whisper.apr Transcription Worker
+// Whisper.apr Transcription Worker (ES Module)
 // Loads WASM and processes audio from SharedArrayBuffer
+//
+// NOTE: This is an ES module worker - uses dynamic import(), not importScripts()
 
 let wasm;
 let worker;
@@ -455,19 +460,24 @@ self.onmessage = async function(e) {
     if (msg.type === 'bootstrap') {
         const baseUrl = msg.baseUrl || '';
         try {
-            // Import WASM module using absolute URL
-            importScripts(baseUrl + '/pkg/whisper_apr_demo.js');
+            console.log('[Worker] Bootstrap received, loading WASM from:', baseUrl);
 
-            // Initialize WASM
-            wasm = await wasm_bindgen(baseUrl + '/pkg/whisper_apr_demo_bg.wasm');
+            // Use dynamic import() for ES modules (NOT importScripts)
+            const wasmModule = await import(baseUrl + '/pkg/whisper_apr_demo.js');
 
-            // Create worker instance
-            worker = wasm.initWorker();
+            // Initialize WASM - the default export is the init function
+            wasm = await wasmModule.default(baseUrl + '/pkg/whisper_apr_demo_bg.wasm');
+
+            // Create worker instance using the exported function
+            worker = wasmModule.initWorker();
             initialized = true;
+
+            console.log('[Worker] WASM initialized successfully');
 
             // Notify main thread we're ready
             self.postMessage({ type: 'ready' });
         } catch (e) {
+            console.error('[Worker] Init failed:', e);
             self.postMessage({ type: 'error', message: 'Worker init failed: ' + e.toString() });
         }
         return;
@@ -481,22 +491,27 @@ self.onmessage = async function(e) {
 
     switch (msg.type) {
         case 'init':
+            console.log('[Worker] Processing init message');
             // Attach ring buffer from SharedArrayBuffer
             if (msg.buffer) {
                 ringBuffer = wasm.SharedRingBuffer.fromBuffer(msg.buffer);
                 worker.setRingBuffer(ringBuffer);
+                console.log('[Worker] Ring buffer attached');
             }
 
             // Load model
             try {
+                console.log('[Worker] Loading model from:', msg.modelUrl);
                 const result = await worker.loadModel(msg.modelUrl);
                 self.postMessage(result);
             } catch (e) {
+                console.error('[Worker] Model load failed:', e);
                 self.postMessage({ type: 'error', message: e.toString() });
             }
             break;
 
         case 'start':
+            console.log('[Worker] Starting processing at sample rate:', msg.sampleRate);
             worker.startProcessing(msg.sampleRate);
 
             // Start processing loop
@@ -509,6 +524,7 @@ self.onmessage = async function(e) {
             break;
 
         case 'stop':
+            console.log('[Worker] Stopping processing');
             if (processingInterval) {
                 clearInterval(processingInterval);
                 processingInterval = null;
@@ -525,6 +541,7 @@ self.onmessage = async function(e) {
             break;
 
         case 'shutdown':
+            console.log('[Worker] Shutting down');
             if (processingInterval) {
                 clearInterval(processingInterval);
             }
@@ -532,6 +549,8 @@ self.onmessage = async function(e) {
             break;
     }
 };
+
+console.log('[Worker] Module loaded, waiting for bootstrap message');
 "#;
 
 /// Create blob URL for worker script
