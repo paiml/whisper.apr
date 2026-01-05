@@ -4,14 +4,40 @@ Thank you for your interest in contributing to whisper.apr!
 
 ## Table of Contents
 
+- [Code of Conduct](#code-of-conduct)
+- [Getting Started](#getting-started)
 - [Development Setup](#development-setup)
 - [Project Structure](#project-structure)
 - [Code Style](#code-style)
 - [Testing Requirements](#testing-requirements)
+- [Performance Testing](#performance-testing)
 - [Pull Request Process](#pull-request-process)
 - [Commit Messages](#commit-messages)
 - [Quality Gates](#quality-gates)
+- [Issue Reporting](#issue-reporting)
+- [Security](#security)
 - [License](#license)
+
+## Code of Conduct
+
+This project follows the [Rust Code of Conduct](https://www.rust-lang.org/policies/code-of-conduct).
+Please be respectful and constructive in all interactions.
+
+## Getting Started
+
+### Good First Issues
+
+Look for issues labeled `good-first-issue` for beginner-friendly tasks:
+- Documentation improvements
+- Test coverage gaps
+- Minor bug fixes
+
+### Areas Needing Help
+
+- WASM performance optimization
+- New language support
+- Browser compatibility testing
+- Documentation translations
 
 ## Development Setup
 
@@ -162,6 +188,105 @@ All contributions must pass:
 | TDG Grade | `pmat tdg .` | ≥A (90+) |
 | Complexity | `pmat quality-gate` | ≤10 per fn |
 
+## Performance Testing
+
+### Running Benchmarks
+
+```bash
+# All benchmarks
+cargo bench
+
+# Specific benchmark
+cargo bench --bench inference -- rtf
+
+# With statistical output
+cargo bench -- --confidence-level 0.95
+```
+
+### Performance Thresholds
+
+See [THRESHOLDS.md](THRESHOLDS.md) for all measurable performance targets.
+
+Key thresholds:
+- RTF (tiny): < 2.0x
+- Memory (tiny): < 150 MB
+- SIMD speedup: > 2.0x
+
+## Issue Reporting
+
+### Bug Reports
+
+Include:
+1. **Environment**: OS, Rust version, browser (if WASM)
+2. **Steps to reproduce**: Minimal example
+3. **Expected behavior**: What should happen
+4. **Actual behavior**: What happened instead
+5. **Audio file**: If transcription-related (or description)
+
+### Feature Requests
+
+Include:
+1. **Use case**: Why is this needed?
+2. **Proposed solution**: How should it work?
+3. **Alternatives considered**: Other approaches
+4. **Impact**: Who benefits?
+
+## Security
+
+### Reporting Vulnerabilities
+
+**Do NOT open public issues for security vulnerabilities.**
+
+Email security concerns to: security@paiml.com
+
+Include:
+- Description of vulnerability
+- Steps to reproduce
+- Potential impact
+- Suggested fix (if any)
+
+### Security Considerations
+
+- Audio data is processed locally (no server uploads)
+- Model files should be verified via checksums
+- WASM sandbox provides isolation in browsers
+
+## Dependency Management
+
+### Updating Dependencies
+
+```bash
+# Check for outdated dependencies
+cargo outdated
+
+# Update dependencies
+cargo update
+
+# Run full test suite after updates
+cargo test && cargo bench
+```
+
+### Pinned Versions
+
+Critical dependencies are pinned in `Cargo.toml`:
+- `trueno`: SIMD operations
+- `aprender`: Model loading
+- `realizar`: Inference primitives
+
+## Release Process
+
+1. Update version in `Cargo.toml`
+2. Update `CHANGELOG.md`
+3. Run full quality gates
+4. Create git tag: `git tag -a v0.x.x -m "Release v0.x.x"`
+5. Push tag: `git push origin v0.x.x`
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the MIT License.
+
+## Questions?
+
+- Open a [GitHub Discussion](https://github.com/paiml/whisper.apr/discussions)
+- Check existing issues and PRs
+- Review documentation in `docs/`

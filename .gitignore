@@ -27,3 +27,7 @@ book/book/
 models/*.apr
 demos/www/models/*.apr
 demos/realtime-transcription/models/*.apr
+
+# PMAT
+.pmat/backup/
+.pmat-qa/
