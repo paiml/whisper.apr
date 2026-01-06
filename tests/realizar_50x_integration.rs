@@ -100,7 +100,10 @@ fn test_decoder_kv_cache() {
 
     // Should have caches for each layer
     assert_eq!(kv_cache.self_attn_cache.len(), config.n_text_layer as usize);
-    assert_eq!(kv_cache.cross_attn_cache.len(), config.n_text_layer as usize);
+    assert_eq!(
+        kv_cache.cross_attn_cache.len(),
+        config.n_text_layer as usize
+    );
 }
 
 /// RED: Decoder PAGED KV cache creation (realizar integration)
@@ -148,7 +151,11 @@ fn test_decoder_forward_paged() {
     // Forward with paged cache - should append to cache
     let result = decoder.forward_one_paged(token, &encoder_output, &mut paged_cache, seq_id);
 
-    assert!(result.is_ok(), "Paged forward should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Paged forward should succeed: {:?}",
+        result.err()
+    );
     let logits = result.unwrap();
     assert_eq!(logits.len(), config.n_vocab as usize);
 }
@@ -208,7 +215,10 @@ fn test_q4k_linear_compression() {
     let compression = f32_bytes as f64 / linear.memory_size() as f64;
 
     // Q4K should achieve ~7x compression (32/4.5 = 7.1x theoretical)
-    assert!(compression > 6.0, "Q4K compression should be >6x, got {compression:.1}x");
+    assert!(
+        compression > 6.0,
+        "Q4K compression should be >6x, got {compression:.1}x"
+    );
 }
 
 /// RED: Compression ratio from spec
@@ -259,7 +269,10 @@ fn test_cuda_gpu_available() {
     if cuda_available {
         // Create executor to verify GPU access
         let executor = CudaExecutor::new(0);
-        assert!(executor.is_ok(), "CudaExecutor creation should succeed on GPU machine");
+        assert!(
+            executor.is_ok(),
+            "CudaExecutor creation should succeed on GPU machine"
+        );
 
         let exec = executor.unwrap();
         let name = exec.device_name();
@@ -268,8 +281,11 @@ fn test_cuda_gpu_available() {
         eprintln!("CUDA GPU detected: {:?}", name.unwrap());
 
         let (free, total) = exec.memory_info().expect("Memory info");
-        eprintln!("GPU Memory: {:.1} GB free / {:.1} GB total",
-            free as f64 / 1e9, total as f64 / 1e9);
+        eprintln!(
+            "GPU Memory: {:.1} GB free / {:.1} GB total",
+            free as f64 / 1e9,
+            total as f64 / 1e9
+        );
     } else {
         eprintln!("CUDA not available - skipping GPU tests");
     }
@@ -358,13 +374,23 @@ fn test_tensor_core_attention_gpu() {
     let mut output = vec![0.0f32; total_size];
 
     // Warm up
-    let _ = executor.tensor_core_attention(&q, &k, &v, &mut output, seq_len, head_dim, n_heads, true);
+    let _ =
+        executor.tensor_core_attention(&q, &k, &v, &mut output, seq_len, head_dim, n_heads, true);
     executor.synchronize().expect("sync");
 
     // Benchmark Tensor Core Attention
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = executor.tensor_core_attention(&q, &k, &v, &mut output, seq_len, head_dim, n_heads, true);
+        let _ = executor.tensor_core_attention(
+            &q,
+            &k,
+            &v,
+            &mut output,
+            seq_len,
+            head_dim,
+            n_heads,
+            true,
+        );
     }
     executor.synchronize().expect("sync");
     let elapsed = start.elapsed();
@@ -410,13 +436,31 @@ fn test_multi_head_attention_gpu() {
     let mut output = vec![0.0f32; total_size];
 
     // Warm up
-    let _ = executor.flash_attention_multi_head(&q, &k, &v, &mut output, seq_len, head_dim, n_heads, true);
+    let _ = executor.flash_attention_multi_head(
+        &q,
+        &k,
+        &v,
+        &mut output,
+        seq_len,
+        head_dim,
+        n_heads,
+        true,
+    );
     executor.synchronize().expect("sync");
 
     // Benchmark
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = executor.flash_attention_multi_head(&q, &k, &v, &mut output, seq_len, head_dim, n_heads, true);
+        let _ = executor.flash_attention_multi_head(
+            &q,
+            &k,
+            &v,
+            &mut output,
+            seq_len,
+            head_dim,
+            n_heads,
+            true,
+        );
     }
     executor.synchronize().expect("sync");
     let elapsed = start.elapsed();
@@ -454,12 +498,15 @@ fn test_flash_attention_correctness() {
     let k_data: Vec<f32> = (0..seq_len * head_dim).map(|i| (i as f32) * 0.02).collect();
     let v_data: Vec<f32> = (0..seq_len * head_dim).map(|i| (i as f32) * 0.03).collect();
 
-    let q = whisper_apr::realizar_inference::Tensor::from_vec(vec![seq_len, head_dim], q_data.clone())
-        .expect("Q tensor");
-    let k = whisper_apr::realizar_inference::Tensor::from_vec(vec![seq_len, head_dim], k_data.clone())
-        .expect("K tensor");
-    let v = whisper_apr::realizar_inference::Tensor::from_vec(vec![seq_len, head_dim], v_data.clone())
-        .expect("V tensor");
+    let q =
+        whisper_apr::realizar_inference::Tensor::from_vec(vec![seq_len, head_dim], q_data.clone())
+            .expect("Q tensor");
+    let k =
+        whisper_apr::realizar_inference::Tensor::from_vec(vec![seq_len, head_dim], k_data.clone())
+            .expect("K tensor");
+    let v =
+        whisper_apr::realizar_inference::Tensor::from_vec(vec![seq_len, head_dim], v_data.clone())
+            .expect("V tensor");
 
     // Standard attention
     let standard_output = attn.forward(&q, &k, &v).expect("Standard forward");
@@ -532,7 +579,10 @@ fn test_flash_attention_long_sequence() {
 
     // Should not panic or OOM
     let result = attn.flash_forward(&q, &k, &v, 64);
-    assert!(result.is_ok(), "Point 56: Flash Attention should handle 1500 frames");
+    assert!(
+        result.is_ok(),
+        "Point 56: Flash Attention should handle 1500 frames"
+    );
 
     let output = result.unwrap();
     assert_eq!(output.shape(), &[seq_len, head_dim]);
@@ -592,7 +642,10 @@ fn test_speculative_decoding_types() {
     assert_eq!(stats.iterations, 1);
     assert_eq!(stats.tokens_speculated, 4);
     assert_eq!(stats.tokens_accepted, 3);
-    assert!((stats.acceptance_rate - 0.75).abs() < 0.01, "Point 66: Acceptance rate should be ~75%");
+    assert!(
+        (stats.acceptance_rate - 0.75).abs() < 0.01,
+        "Point 66: Acceptance rate should be ~75%"
+    );
 
     // TokenProb for token probabilities
     let token = TokenProb::new(50258, -0.5); // log_prob = -0.5
@@ -688,12 +741,9 @@ fn test_simd_fallback() {
 
     let attn = Attention::new(head_dim).expect("Attention");
 
-    let q = Tensor::from_vec(vec![seq_len, head_dim], vec![0.1f32; seq_len * head_dim])
-        .expect("Q");
-    let k = Tensor::from_vec(vec![seq_len, head_dim], vec![0.1f32; seq_len * head_dim])
-        .expect("K");
-    let v = Tensor::from_vec(vec![seq_len, head_dim], vec![0.1f32; seq_len * head_dim])
-        .expect("V");
+    let q = Tensor::from_vec(vec![seq_len, head_dim], vec![0.1f32; seq_len * head_dim]).expect("Q");
+    let k = Tensor::from_vec(vec![seq_len, head_dim], vec![0.1f32; seq_len * head_dim]).expect("K");
+    let v = Tensor::from_vec(vec![seq_len, head_dim], vec![0.1f32; seq_len * head_dim]).expect("V");
 
     // flash_forward_v2 uses SIMD internally
     let result = attn.flash_forward_v2(&q, &k, &v, 8);
@@ -717,12 +767,9 @@ fn test_performance_baseline() {
 
     let attn = Attention::new(head_dim).expect("Attention");
 
-    let q = Tensor::from_vec(vec![seq_len, head_dim], vec![0.1f32; seq_len * head_dim])
-        .expect("Q");
-    let k = Tensor::from_vec(vec![seq_len, head_dim], vec![0.1f32; seq_len * head_dim])
-        .expect("K");
-    let v = Tensor::from_vec(vec![seq_len, head_dim], vec![0.1f32; seq_len * head_dim])
-        .expect("V");
+    let q = Tensor::from_vec(vec![seq_len, head_dim], vec![0.1f32; seq_len * head_dim]).expect("Q");
+    let k = Tensor::from_vec(vec![seq_len, head_dim], vec![0.1f32; seq_len * head_dim]).expect("K");
+    let v = Tensor::from_vec(vec![seq_len, head_dim], vec![0.1f32; seq_len * head_dim]).expect("V");
 
     // Warm up
     let _ = attn.flash_forward_v2(&q, &k, &v, 16);
@@ -744,9 +791,7 @@ fn test_performance_baseline() {
         "Point 50: Baseline attention should be <300ms (debug), got {avg_ms:.1}ms"
     );
 
-    eprintln!(
-        "Baseline: {seq_len} seq_len, {head_dim} head_dim, {avg_ms:.2}ms/iter"
-    );
+    eprintln!("Baseline: {seq_len} seq_len, {head_dim} head_dim, {avg_ms:.2}ms/iter");
 }
 
 // =============================================================================
@@ -762,8 +807,7 @@ fn test_multi_head_attention_mha() {
     let hidden_dim = 384;
     let num_heads = 6;
 
-    let mha = MultiHeadAttention::mha(hidden_dim, num_heads)
-        .expect("MHA creation should succeed");
+    let mha = MultiHeadAttention::mha(hidden_dim, num_heads).expect("MHA creation should succeed");
 
     assert_eq!(mha.num_heads(), num_heads);
     assert_eq!(mha.num_kv_heads(), num_heads); // MHA has same KV heads
@@ -841,7 +885,11 @@ fn test_pruning_block_sparse_pattern() {
         kept_blocks >= 16,
         "Point 10: Should keep at least 16 blocks (512 neurons)"
     );
-    assert_eq!(kept_blocks * block_size, 608, "Kept neurons should be block-aligned");
+    assert_eq!(
+        kept_blocks * block_size,
+        608,
+        "Kept neurons should be block-aligned"
+    );
 }
 
 /// Point 11: Pruned model size target
@@ -913,7 +961,5 @@ fn test_combined_compression_target() {
         "Achieved size should be <6MB, got {achieved_size:.2}MB"
     );
 
-    eprintln!(
-        "Combined compression: {combined_compression:.1}x, Size: {achieved_size:.2}MB"
-    );
+    eprintln!("Combined compression: {combined_compression:.1}x, Size: {achieved_size:.2}MB");
 }

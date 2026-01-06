@@ -1,0 +1,84 @@
+roadmap_version: '1.0'
+github_enabled: true
+github_repo: null
+roadmap:
+- id: WAPR-JS-001
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-JS-001'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-06T00:44:53.029973332+00:00
+  updated: 2026-01-06T00:45:07.386665927+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-WORKER-001
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-WORKER-001'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-06T00:51:53.764492206+00:00
+  updated: 2026-01-06T00:51:53.764492206+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-TUI-PARITY
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-TUI-PARITY'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-06T23:05:00.753077612+00:00
+  updated: 2026-01-06T23:06:47.328380396+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-TUI-IMPL
+  github_issue: null
+  item_type: task
+  title: TUI Jidoka Dashboard Implementation
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-06T23:08:37.794087225+00:00
+  updated: 2026-01-06T23:08:37.794087225+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-PHASE4-ROBUST
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PHASE4-ROBUST'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-06T23:32:32.708414560+00:00
+  updated: 2026-01-06T23:32:32.708414560+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null

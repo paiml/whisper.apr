@@ -1665,7 +1665,7 @@ dependencies = [
 
 [[package]]
 name = "jugar-probar"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -2848,6 +2848,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3883,13 +3904,17 @@ name = "whisper-apr"
 version = "0.1.0"
 dependencies = [
  "aprender",
+ "console_error_panic_hook",
  "getrandom 0.2.16",
  "getrandom 0.3.4",
+ "js-sys",
  "realizar",
  "rustfft",
  "thiserror 2.0.17",
  "tracing",
  "trueno",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -3898,6 +3923,9 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_bytes",
  "tracing",
  "tracing-wasm",
  "wasm-bindgen",

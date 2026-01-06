@@ -73,6 +73,7 @@ features = [
     "Location",
     "WorkerOptions",
     "WorkerType",
+    "Performance",
 ]
 
 [lints]
