@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- WAPR-182: Phase 3 - Transcription in Worker (#6)
+- WAPR-181: Phase 2 - Model Loading in Worker (#2)
+- WAPR-180: Phase 1 - Async Worker Foundation (#1)
 - WAPR-184: Probar GUI & Pixel Regression Tests (#5)
 - WAPR-181: Phase 2 - Model Loading in Worker (#2)
 - WAPR-183: Phase 4 - Robustness & Testing (#4)
