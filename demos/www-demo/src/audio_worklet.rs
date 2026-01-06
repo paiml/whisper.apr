@@ -1,21 +1,21 @@
-//! AudioWorklet Processor for Real-Time Audio Capture
+//! `AudioWorklet` Processor for Real-Time Audio Capture
 //!
-//! Replaces deprecated ScriptProcessorNode with low-latency AudioWorklet
+//! Replaces deprecated `ScriptProcessorNode` with low-latency `AudioWorklet`
 //! running on dedicated audio thread.
 //!
 //! # References
-//! - W3C Web Audio API (2021), Section 5.4: AudioWorklet Interface
-//! - Adenot & Wilson (2018), "Enter AudioWorklet", Google Developers
+//! - W3C Web Audio API (2021), Section 5.4: `AudioWorklet` Interface
+//! - Adenot & Wilson (2018), "Enter `AudioWorklet`", Google Developers
 //!
 //! # Performance Constraints
 //! - Process callback: <3ms (128 samples @ 44.1kHz = 2.9ms)
-//! - Zero allocations in process() hot path
-//! - Lock-free ring buffer writes via SharedArrayBuffer
+//! - Zero allocations in `process()` hot path
+//! - Lock-free ring buffer writes via `SharedArrayBuffer`
 
 use wasm_bindgen::prelude::*;
 use crate::ring_buffer::SharedRingBuffer;
 
-/// AudioWorklet processor state
+/// `AudioWorklet` processor state
 #[wasm_bindgen]
 pub struct AudioWorkletBridge {
     ring_buffer: Option<SharedRingBuffer>,
@@ -27,8 +27,9 @@ pub struct AudioWorkletBridge {
 
 #[wasm_bindgen]
 impl AudioWorkletBridge {
-    /// Create a new AudioWorklet bridge
+    /// Create a new `AudioWorklet` bridge
     #[wasm_bindgen(constructor)]
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             ring_buffer: None,
@@ -39,7 +40,7 @@ impl AudioWorkletBridge {
         }
     }
 
-    /// Initialize with a SharedRingBuffer
+    /// Initialize with a `SharedRingBuffer`
     #[wasm_bindgen]
     pub fn init(&mut self, buffer: &SharedRingBuffer, sample_rate: u32, channels: u8) {
         self.ring_buffer = Some(buffer.clone());
@@ -49,9 +50,9 @@ impl AudioWorkletBridge {
         self.underruns = 0;
     }
 
-    /// Process audio samples from AudioWorklet
+    /// Process audio samples from `AudioWorklet`
     ///
-    /// Called from JavaScript AudioWorkletProcessor.process()
+    /// Called from JavaScript `AudioWorkletProcessor.process()`
     /// Must complete within audio quantum budget (~3ms for 128 samples)
     #[wasm_bindgen(js_name = processSamples)]
     pub fn process_samples(&mut self, samples: &[f32]) -> bool {
@@ -73,7 +74,7 @@ impl AudioWorkletBridge {
             }
             Err(e) => {
                 web_sys::console::error_1(
-                    &format!("[AudioWorklet] Write error: {:?}", e).into()
+                    &format!("[AudioWorklet] Write error: {e:?}").into()
                 );
                 false
             }
@@ -82,18 +83,21 @@ impl AudioWorkletBridge {
 
     /// Get total samples written
     #[wasm_bindgen(getter, js_name = samplesWritten)]
+    #[must_use] 
     pub fn samples_written(&self) -> u64 {
         self.samples_written
     }
 
     /// Get underrun count
     #[wasm_bindgen(getter)]
+    #[must_use] 
     pub fn underruns(&self) -> u32 {
         self.underruns
     }
 
     /// Get sample rate
     #[wasm_bindgen(getter, js_name = sampleRate)]
+    #[must_use] 
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
@@ -105,10 +109,10 @@ impl Default for AudioWorkletBridge {
     }
 }
 
-/// JavaScript code for AudioWorkletProcessor
+/// JavaScript code for `AudioWorkletProcessor`
 ///
-/// This must be loaded as a separate module via audioContext.audioWorklet.addModule()
-pub const AUDIO_WORKLET_JS: &str = r#"
+/// This must be loaded as a separate module via `audioContext.audioWorklet.addModule()`
+pub const AUDIO_WORKLET_JS: &str = r"
 // WhisperAudioProcessor - AudioWorklet for real-time audio capture
 // Writes samples to SharedArrayBuffer ring buffer for worker consumption
 
@@ -217,9 +221,9 @@ class WhisperAudioProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor('whisper-audio-processor', WhisperAudioProcessor);
-"#;
+";
 
-/// Create a Blob URL for the AudioWorklet processor code
+/// Create a Blob URL for the `AudioWorklet` processor code
 #[wasm_bindgen(js_name = createAudioWorkletBlobUrl)]
 pub fn create_audio_worklet_blob_url() -> Result<String, JsValue> {
     let blob_parts = js_sys::Array::new();
@@ -235,12 +239,12 @@ pub fn create_audio_worklet_blob_url() -> Result<String, JsValue> {
     Ok(url)
 }
 
-/// Set up AudioWorklet with ring buffer
+/// Set up `AudioWorklet` with ring buffer
 ///
 /// # Arguments
-/// * `context` - AudioContext
-/// * `ring_buffer` - SharedRingBuffer to write samples to
-/// * `source` - MediaStreamAudioSourceNode
+/// * `context` - `AudioContext`
+/// * `ring_buffer` - `SharedRingBuffer` to write samples to
+/// * `source` - `MediaStreamAudioSourceNode`
 #[wasm_bindgen(js_name = setupAudioWorklet)]
 pub async fn setup_audio_worklet(
     context: &web_sys::AudioContext,

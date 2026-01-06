@@ -39,6 +39,7 @@ pub struct WorkerManager {
 impl WorkerManager {
     /// Create a new worker manager
     #[wasm_bindgen(constructor)]
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             worker: None,
@@ -51,6 +52,7 @@ impl WorkerManager {
 
     /// Get current state
     #[wasm_bindgen(getter)]
+    #[must_use] 
     pub fn state(&self) -> String {
         match self.state {
             ManagerState::Uninitialized => "uninitialized".to_string(),
@@ -64,12 +66,14 @@ impl WorkerManager {
 
     /// Check if worker is ready
     #[wasm_bindgen(js_name = isReady)]
+    #[must_use] 
     pub fn is_ready(&self) -> bool {
         self.state == ManagerState::Ready
     }
 
     /// Check if currently recording
     #[wasm_bindgen(js_name = isRecording)]
+    #[must_use] 
     pub fn is_recording(&self) -> bool {
         self.state == ManagerState::Recording
     }
@@ -119,19 +123,18 @@ impl WorkerManager {
                     }
                     WorkerResult::ModelLoaded { size_mb, load_time_ms } => {
                         web_sys::console::log_1(
-                            &format!("[Manager] Model loaded: {:.1}MB in {:.0}ms",
-                                     size_mb, load_time_ms).into()
+                            &format!("[Manager] Model loaded: {size_mb:.1}MB in {load_time_ms:.0}ms").into()
                         );
                         *state_ptr_clone.borrow_mut() = ManagerState::Ready;
                     }
                     WorkerResult::Partial { text, is_final } => {
                         if *is_final {
                             web_sys::console::log_1(
-                                &format!("[Manager] Final: {}", text).into()
+                                &format!("[Manager] Final: {text}").into()
                             );
                         } else {
                             web_sys::console::log_1(
-                                &format!("[Manager] Partial: {}", text).into()
+                                &format!("[Manager] Partial: {text}").into()
                             );
                         }
                         // Dispatch custom event for UI to handle
@@ -153,7 +156,7 @@ impl WorkerManager {
                     }
                     WorkerResult::Error { message } => {
                         web_sys::console::error_1(
-                            &format!("[Manager] Error: {}", message).into()
+                            &format!("[Manager] Error: {message}").into()
                         );
                         *state_ptr_clone.borrow_mut() = ManagerState::Error;
                     }
@@ -193,7 +196,7 @@ impl WorkerManager {
         let _ = js_sys::Reflect::set(&bootstrap_msg, &"baseUrl".into(), &JsValue::from_str(&base_url));
         worker_ref.post_message(&bootstrap_msg)?;
 
-        web_sys::console::log_1(&format!("[Manager] Bootstrap sent with baseUrl: {}", base_url).into());
+        web_sys::console::log_1(&format!("[Manager] Bootstrap sent with baseUrl: {base_url}").into());
 
         // Send init message after bootstrap (worker will handle sequencing)
         // Use a short delay to allow the bootstrap to complete
@@ -207,7 +210,7 @@ impl WorkerManager {
             let _ = js_sys::Reflect::set(&init_msg, &"buffer".into(), &ring_buffer_ref);
 
             if let Err(e) = worker_clone.post_message(&init_msg) {
-                web_sys::console::error_1(&format!("Failed to send init: {:?}", e).into());
+                web_sys::console::error_1(&format!("Failed to send init: {e:?}").into());
             }
         }) as Box<dyn FnOnce()>);
 
@@ -273,8 +276,9 @@ impl WorkerManager {
         Ok(())
     }
 
-    /// Get ring buffer for AudioWorklet
+    /// Get ring buffer for `AudioWorklet`
     #[wasm_bindgen(js_name = getRingBuffer)]
+    #[must_use] 
     pub fn get_ring_buffer(&self) -> Option<SharedRingBuffer> {
         self.ring_buffer.clone()
     }

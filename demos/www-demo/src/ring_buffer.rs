@@ -1,6 +1,6 @@
-//! Lock-free SPSC Ring Buffer over SharedArrayBuffer
+//! Lock-free SPSC Ring Buffer over `SharedArrayBuffer`
 //!
-//! Single-Producer (AudioWorklet) Single-Consumer (Worker) design
+//! Single-Producer (`AudioWorklet`) Single-Consumer (Worker) design
 //! eliminates mutex contention and enables wait-free audio writes.
 //!
 //! # References
@@ -35,9 +35,9 @@ const FLAG_ACTIVE: i32 = 1;
 /// Flag: producer finished
 const FLAG_DONE: i32 = 2;
 
-/// Lock-free SPSC ring buffer backed by SharedArrayBuffer
+/// Lock-free SPSC ring buffer backed by `SharedArrayBuffer`
 ///
-/// Thread-safe for single producer (AudioWorklet) and single consumer (Worker).
+/// Thread-safe for single producer (`AudioWorklet`) and single consumer (Worker).
 /// Uses Atomics for synchronization without locks.
 #[wasm_bindgen]
 #[derive(Clone)]
@@ -56,7 +56,7 @@ impl SharedRingBuffer {
     /// * `capacity` - Number of f32 samples the buffer can hold
     ///
     /// # Returns
-    /// A new SharedRingBuffer or error if SharedArrayBuffer unavailable
+    /// A new `SharedRingBuffer` or error if `SharedArrayBuffer` unavailable
     #[wasm_bindgen(constructor)]
     pub fn new(capacity: usize) -> Result<SharedRingBuffer, JsValue> {
         // Validate SharedArrayBuffer is available (requires COOP/COEP)
@@ -88,13 +88,13 @@ impl SharedRingBuffer {
         // Initialize header
         // Use Atomics.store for thread-safe initialization
         js_sys::Atomics::store(&header, WRITE_IDX_OFFSET as u32, 0)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {e:?}")))?;
         js_sys::Atomics::store(&header, READ_IDX_OFFSET as u32, 0)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {e:?}")))?;
         js_sys::Atomics::store(&header, CAPACITY_OFFSET as u32, capacity as i32)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {e:?}")))?;
         js_sys::Atomics::store(&header, FLAGS_OFFSET as u32, FLAG_ACTIVE)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {e:?}")))?;
 
         Ok(SharedRingBuffer {
             buffer,
@@ -104,8 +104,9 @@ impl SharedRingBuffer {
         })
     }
 
-    /// Check if SharedArrayBuffer is available
+    /// Check if `SharedArrayBuffer` is available
     #[wasm_bindgen(js_name = isAvailable)]
+    #[must_use] 
     pub fn is_available() -> bool {
         // Check crossOriginIsolated
         let window = match web_sys::window() {
@@ -124,13 +125,14 @@ impl SharedRingBuffer {
             .unwrap_or(false)
     }
 
-    /// Get the underlying SharedArrayBuffer for transfer to worker
+    /// Get the underlying `SharedArrayBuffer` for transfer to worker
     #[wasm_bindgen(getter)]
+    #[must_use] 
     pub fn buffer(&self) -> SharedArrayBuffer {
         self.buffer.clone()
     }
 
-    /// Create a view from an existing SharedArrayBuffer
+    /// Create a view from an existing `SharedArrayBuffer`
     ///
     /// Used by worker to attach to buffer created by main thread
     #[wasm_bindgen(js_name = fromBuffer)]
@@ -143,7 +145,7 @@ impl SharedRingBuffer {
 
         // Read capacity from header
         let capacity = js_sys::Atomics::load(&header, CAPACITY_OFFSET as u32)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {:?}", e)))?
+            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {e:?}")))?
             as usize;
 
         let data = Float32Array::new_with_byte_offset_and_length(
@@ -162,6 +164,7 @@ impl SharedRingBuffer {
 
     /// Get buffer capacity in samples
     #[wasm_bindgen(getter)]
+    #[must_use] 
     pub fn capacity(&self) -> usize {
         self.capacity
     }
@@ -170,10 +173,10 @@ impl SharedRingBuffer {
     #[wasm_bindgen(js_name = availableRead)]
     pub fn available_read(&self) -> Result<usize, JsValue> {
         let write_idx = js_sys::Atomics::load(&self.header, WRITE_IDX_OFFSET as u32)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {:?}", e)))?
+            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {e:?}")))?
             as usize;
         let read_idx = js_sys::Atomics::load(&self.header, READ_IDX_OFFSET as u32)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {:?}", e)))?
+            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {e:?}")))?
             as usize;
 
         if write_idx >= read_idx {
@@ -208,7 +211,7 @@ impl SharedRingBuffer {
         }
 
         let write_idx = js_sys::Atomics::load(&self.header, WRITE_IDX_OFFSET as u32)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {:?}", e)))?
+            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {e:?}")))?
             as usize;
 
         // Write samples, handling wrap-around
@@ -228,7 +231,7 @@ impl SharedRingBuffer {
         // Update write index with release semantics
         let new_write_idx = (write_idx + to_write) % self.capacity;
         js_sys::Atomics::store(&self.header, WRITE_IDX_OFFSET as u32, new_write_idx as i32)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {e:?}")))?;
 
         // Notify waiting consumers
         let _ = js_sys::Atomics::notify(&self.header, WRITE_IDX_OFFSET as u32);
@@ -253,7 +256,7 @@ impl SharedRingBuffer {
         }
 
         let read_idx = js_sys::Atomics::load(&self.header, READ_IDX_OFFSET as u32)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {:?}", e)))?
+            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {e:?}")))?
             as usize;
 
         let mut samples = Vec::with_capacity(to_read);
@@ -275,7 +278,7 @@ impl SharedRingBuffer {
         // Update read index with release semantics
         let new_read_idx = (read_idx + to_read) % self.capacity;
         js_sys::Atomics::store(&self.header, READ_IDX_OFFSET as u32, new_read_idx as i32)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {e:?}")))?;
 
         Ok(samples)
     }
@@ -290,13 +293,13 @@ impl SharedRingBuffer {
     #[wasm_bindgen(js_name = waitForData)]
     pub fn wait_for_data(&self, _timeout_ms: i32) -> Result<bool, JsValue> {
         let current = js_sys::Atomics::load(&self.header, WRITE_IDX_OFFSET as u32)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {e:?}")))?;
 
         // Wait for write index to change
         // Note: js_sys::Atomics::wait doesn't support timeout in this version
         // We use a simple polling approach instead
         let new_write = js_sys::Atomics::load(&self.header, WRITE_IDX_OFFSET as u32)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {e:?}")))?;
 
         // Data available if write index changed
         Ok(new_write != current)
@@ -306,9 +309,9 @@ impl SharedRingBuffer {
     #[wasm_bindgen(js_name = markDone)]
     pub fn mark_done(&self) -> Result<(), JsValue> {
         let current = js_sys::Atomics::load(&self.header, FLAGS_OFFSET as u32)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {e:?}")))?;
         js_sys::Atomics::store(&self.header, FLAGS_OFFSET as u32, current | FLAG_DONE)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {e:?}")))?;
         // Wake up any waiting consumers
         let _ = js_sys::Atomics::notify(&self.header, WRITE_IDX_OFFSET as u32);
         Ok(())
@@ -318,7 +321,7 @@ impl SharedRingBuffer {
     #[wasm_bindgen(js_name = isDone)]
     pub fn is_done(&self) -> Result<bool, JsValue> {
         let flags = js_sys::Atomics::load(&self.header, FLAGS_OFFSET as u32)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Atomics.load failed: {e:?}")))?;
         Ok((flags & FLAG_DONE) != 0)
     }
 
@@ -326,11 +329,11 @@ impl SharedRingBuffer {
     #[wasm_bindgen]
     pub fn reset(&self) -> Result<(), JsValue> {
         js_sys::Atomics::store(&self.header, WRITE_IDX_OFFSET as u32, 0)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {e:?}")))?;
         js_sys::Atomics::store(&self.header, READ_IDX_OFFSET as u32, 0)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {e:?}")))?;
         js_sys::Atomics::store(&self.header, FLAGS_OFFSET as u32, FLAG_ACTIVE)
-            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {:?}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Atomics.store failed: {e:?}")))?;
         Ok(())
     }
 }

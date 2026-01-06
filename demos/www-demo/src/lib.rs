@@ -14,9 +14,11 @@ use whisper_apr::wasm::{
 };
 
 pub mod worker;
+pub mod worker_js;
 pub mod bridge;
 pub mod ring_buffer;
 pub mod audio_worklet;
+pub mod audioworklet_js;
 pub mod worker_manager;
 
 use worker_manager::WorkerManager;
@@ -243,7 +245,7 @@ pub fn start() -> Result<(), JsValue> {
 
     // Add CSS animation for pulse
     let style = document.create_element("style")?;
-    style.set_text_content(Some(r#"
+    style.set_text_content(Some(r"
         @keyframes pulse {
             0%, 100% { opacity: 1; transform: scale(1); }
             50% { opacity: 0.5; transform: scale(1.1); }
@@ -256,7 +258,7 @@ pub fn start() -> Result<(), JsValue> {
             opacity: 0.5;
             cursor: not-allowed;
         }
-    "#));
+    "));
     document.head().ok_or("No head")?.append_child(&style)?;
 
     // Record button click handler
@@ -295,7 +297,7 @@ pub fn start() -> Result<(), JsValue> {
 
 fn create_element(document: &web_sys::Document, tag: &str) -> Result<web_sys::HtmlElement, JsValue> {
     document.create_element(tag)?.dyn_into::<web_sys::HtmlElement>()
-        .map_err(|e| JsValue::from_str(&format!("Cast failed: {:?}", e)))
+        .map_err(|e| JsValue::from_str(&format!("Cast failed: {e:?}")))
 }
 
 fn set_styles(element: &web_sys::HtmlElement, styles: &str) -> Result<(), JsValue> {
@@ -305,7 +307,7 @@ fn set_styles(element: &web_sys::HtmlElement, styles: &str) -> Result<(), JsValu
 
 fn handle_record_click(document: &web_sys::Document) {
     let t0 = web_sys::window().unwrap().performance().unwrap().now();
-    web_sys::console::log_1(&format!("[PERF] handle_record_click START t={:.2}ms", t0).into());
+    web_sys::console::log_1(&format!("[PERF] handle_record_click START t={t0:.2}ms").into());
 
     let model_loaded = APP.with(|app| app.borrow().model_loaded);
     if !model_loaded {
@@ -340,7 +342,7 @@ fn handle_record_click(document: &web_sys::Document) {
                 APP.with(|app| {
                     let mut app = app.borrow_mut();
                     app.is_recording = false;
-                    app.status = format!("Error: {:?}", e);
+                    app.status = format!("Error: {e:?}");
                 });
                 update_ui(&doc);
             }
@@ -423,7 +425,7 @@ fn handle_file_upload(document: &web_sys::Document) {
 
     // Update UI to show processing
     APP.with(|app| {
-        app.borrow_mut().status = format!("Processing {}...", file_name);
+        app.borrow_mut().status = format!("Processing {file_name}...");
         app.borrow_mut().transcript.clear();
         app.borrow_mut().partial_text.clear();
     });
@@ -455,7 +457,7 @@ fn handle_file_upload(document: &web_sys::Document) {
             Err(e) => {
                 warn!(error = ?e, "Failed to process audio file");
                 APP.with(|app| {
-                    app.borrow_mut().status = format!("Error: {:?}", e);
+                    app.borrow_mut().status = format!("Error: {e:?}");
                 });
             }
         }
@@ -498,13 +500,13 @@ async fn process_audio_file(file: web_sys::File, document: &web_sys::Document) -
     );
 
     APP.with(|app| {
-        app.borrow_mut().status = format!("Transcribing {:.1}s of audio...", duration);
+        app.borrow_mut().status = format!("Transcribing {duration:.1}s of audio...");
     });
     update_ui(document);
 
     // Get audio data (mix to mono if stereo)
     let samples: Vec<f32> = if num_channels == 1 {
-        audio_buffer.get_channel_data(0)?.to_vec()
+        audio_buffer.get_channel_data(0)?.clone()
     } else {
         // Mix stereo to mono
         let left = audio_buffer.get_channel_data(0)?;
@@ -523,8 +525,8 @@ async fn process_audio_file(file: web_sys::File, document: &web_sys::Document) -
     };
 
     // Debug: log audio stats
-    let audio_min = samples_16k.iter().cloned().fold(f32::INFINITY, f32::min);
-    let audio_max = samples_16k.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let audio_min = samples_16k.iter().copied().fold(f32::INFINITY, f32::min);
+    let audio_max = samples_16k.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     let audio_rms: f32 = (samples_16k.iter().map(|x| x * x).sum::<f32>() / samples_16k.len() as f32).sqrt();
     info!(
         samples = samples_16k.len(),
@@ -544,11 +546,11 @@ async fn process_audio_file(file: web_sys::File, document: &web_sys::Document) -
             info!("Starting transcription...");
             match model.transcribe(&samples_16k, options) {
                 Ok(result) => {
-                    let text = result.text().to_string();
+                    let text = result.text().clone();
                     info!(text_len = text.len(), "Transcription complete");
                     Ok(text)
                 }
-                Err(e) => Err(JsValue::from_str(&format!("Transcription failed: {:?}", e))),
+                Err(e) => Err(JsValue::from_str(&format!("Transcription failed: {e:?}"))),
             }
         } else {
             Err(JsValue::from_str("Model not loaded"))
@@ -567,7 +569,7 @@ fn resample_audio(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
         return samples.to_vec();
     }
 
-    let ratio = from_rate as f64 / to_rate as f64;
+    let ratio = f64::from(from_rate) / f64::from(to_rate);
     let new_len = (samples.len() as f64 / ratio) as usize;
     let mut resampled = Vec::with_capacity(new_len);
 
@@ -624,7 +626,7 @@ async fn start_recording(document: &web_sys::Document) -> Result<(), JsValue> {
 
     // Get ring buffer from worker manager
     let ring_buffer = WORKER_MANAGER.with(|wm| {
-        wm.borrow().as_ref().and_then(|m| m.get_ring_buffer())
+        wm.borrow().as_ref().and_then(worker_manager::WorkerManager::get_ring_buffer)
     }).ok_or("No ring buffer")?;
 
     // Create audio source
@@ -730,7 +732,7 @@ fn update_ui(document: &web_sys::Document) {
         if let Some(el) = document.get_element_by_id("vu_meter") {
             if let Ok(el) = el.dyn_into::<web_sys::HtmlElement>() {
                 let width_pct = (app.audio_level * 100.0).min(100.0);
-                let _ = el.style().set_property("width", &format!("{}%", width_pct));
+                let _ = el.style().set_property("width", &format!("{width_pct}%"));
             }
         }
 
@@ -825,7 +827,7 @@ fn spawn_model_load(document: web_sys::Document) {
                     Err(e) => {
                         warn!(error = ?e, "Failed to initialize model");
                         APP.with(|app| {
-                            app.borrow_mut().status = format!("Model error: {:?}", e);
+                            app.borrow_mut().status = format!("Model error: {e:?}");
                         });
                     }
                 }
@@ -833,7 +835,7 @@ fn spawn_model_load(document: web_sys::Document) {
             Err(e) => {
                 warn!(error = ?e, "Failed to fetch model");
                 APP.with(|app| {
-                    app.borrow_mut().status = format!("Download failed: {:?}", e);
+                    app.borrow_mut().status = format!("Download failed: {e:?}");
                 });
             }
         }

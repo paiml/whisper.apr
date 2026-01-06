@@ -754,12 +754,28 @@ roadmap:
 - id: WAPR-1.0-RELEASE
   github_issue: null
   item_type: task
-  title: 'Whisper.apr 1.0 Release Implementation'
+  title: Whisper.apr 1.0 Release Implementation
   status: completed
   priority: medium
   assigned_to: null
   created: 2026-01-06T23:41:02.234757702+00:00
   updated: 2026-01-06T23:41:02.234757702+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-1.0-VERIFY
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-1.0-VERIFY'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-06T23:47:53.162865432+00:00
+  updated: 2026-01-06T23:47:53.162865432+00:00
   spec: null
   acceptance_criteria: []
   phases: []
