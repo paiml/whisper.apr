@@ -10,7 +10,7 @@ roadmap:
   priority: medium
   assigned_to: null
   created: 2025-12-14T07:47:06.741716586+00:00
-  updated: 2025-12-14T07:51:38.418352754+00:00
+  updated: 2026-01-06T00:55:25.411404362+00:00
   spec: null
   acceptance_criteria:
   - Create `WorkerBridge::new()` - Worker initializes within 500ms
@@ -32,7 +32,7 @@ roadmap:
   priority: medium
   assigned_to: null
   created: 2025-12-14T07:51:50.918643122+00:00
-  updated: 2025-12-14T08:00:53.565381348+00:00
+  updated: 2026-01-06T00:55:31.426302061+00:00
   spec: null
   acceptance_criteria:
   - Transfer model bytes to worker (37MB in < 2s)
@@ -53,7 +53,7 @@ roadmap:
   priority: medium
   assigned_to: null
   created: 2025-12-14T07:53:00.000000000+00:00
-  updated: 2025-12-14T07:55:00.000000000+00:00
+  updated: 2026-01-06T00:55:36.761928041+00:00
   spec: null
   acceptance_criteria:
   - Stream audio chunks to worker
@@ -739,11 +739,11 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'New task: WAPR-PERF-003-GPU'
-  status: inprogress
+  status: completed
   priority: medium
   assigned_to: null
   created: 2026-01-05T15:01:21.633360667+00:00
-  updated: 2026-01-05T15:01:21.633360667+00:00
+  updated: 2026-01-05T15:12:40.196636671+00:00
   spec: null
   acceptance_criteria: []
   phases: []
