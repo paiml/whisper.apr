@@ -277,13 +277,13 @@ fn detect_compression_algorithm() -> CompressionAlgorithm {
 /// Returns expected compression ratio (e.g., 2.0 means 2:1 compression)
 pub fn estimate_compression_ratio(data_type: DataType) -> f32 {
     match data_type {
-        DataType::ModelWeightsFp32 => 1.7,   // ~4.5 bits/byte entropy
-        DataType::ModelWeightsInt8 => 1.1,   // ~7.0 bits/byte entropy
-        DataType::KvCache => 2.5,            // ~5.0 bits/byte entropy
-        DataType::PcmAudio => 3.0,           // ~3.5 bits/byte entropy
-        DataType::MelSpectrogram => 3.5,     // ~4.0 bits/byte entropy
-        DataType::CompressedAudio => 1.0,    // Already compressed
-        DataType::OutputText => 4.5,         // ~4.5 bits/byte entropy
+        DataType::ModelWeightsFp32 => 1.7, // ~4.5 bits/byte entropy
+        DataType::ModelWeightsInt8 => 1.1, // ~7.0 bits/byte entropy
+        DataType::KvCache => 2.5,          // ~5.0 bits/byte entropy
+        DataType::PcmAudio => 3.0,         // ~3.5 bits/byte entropy
+        DataType::MelSpectrogram => 3.5,   // ~4.0 bits/byte entropy
+        DataType::CompressedAudio => 1.0,  // Already compressed
+        DataType::OutputText => 4.5,       // ~4.5 bits/byte entropy
     }
 }
 

@@ -985,11 +985,19 @@ fn f16_to_f32(bits: u16) -> f32 {
         // Denormalized
         let f = mantissa as f32 / 1024.0;
         let result = f * 2.0f32.powi(-14);
-        if sign == 1 { -result } else { result }
+        if sign == 1 {
+            -result
+        } else {
+            result
+        }
     } else if exp == 31 {
         // Infinity or NaN
         if mantissa == 0 {
-            if sign == 1 { f32::NEG_INFINITY } else { f32::INFINITY }
+            if sign == 1 {
+                f32::NEG_INFINITY
+            } else {
+                f32::INFINITY
+            }
         } else {
             f32::NAN
         }
@@ -1057,7 +1065,10 @@ pub fn quantize_to_q2k(data: &[f32], shape: Vec<usize>) -> QuantizedTensorQ2K {
 
         // Find min and max for this block
         let min = block_values.iter().cloned().fold(f32::INFINITY, f32::min);
-        let max = block_values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let max = block_values
+            .iter()
+            .cloned()
+            .fold(f32::NEG_INFINITY, f32::max);
 
         // Compute scale for 6-bit range (2-bit base + 4-bit outlier = 64 levels)
         let range = max - min;
