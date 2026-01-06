@@ -770,8 +770,8 @@ roadmap:
 - id: WAPR-1.0-VERIFY
   github_issue: null
   item_type: task
-  title: 'New task: WAPR-1.0-VERIFY'
-  status: inprogress
+  title: 'Whisper.apr 1.0 Verification - Phase 4 Robustness & Zero JS'
+  status: completed
   priority: medium
   assigned_to: null
   created: 2026-01-06T23:47:53.162865432+00:00
