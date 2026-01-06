@@ -12,6 +12,8 @@ patterns = [
     "**/node_modules/**",      # npm dependencies
     "**/snippets/**",          # wasm-bindgen generated snippets
     "**/golden_traces/**",     # reference traces (avoid renacer validate mismatch)
+    "**/examples/**",          # debug/development scripts (not production code)
+    "**/tools/**",             # development utilities (not production code)
 ]
 
 [analysis]
