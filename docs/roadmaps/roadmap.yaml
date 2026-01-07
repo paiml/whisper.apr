@@ -786,8 +786,8 @@ roadmap:
 - id: WAPR-1.0-FINAL
   github_issue: null
   item_type: task
-  title: 'New task: WAPR-1.0-FINAL'
-  status: inprogress
+  title: 'Whisper.apr 1.0 Final - TUI Jidoka Alerts'
+  status: completed
   priority: medium
   assigned_to: null
   created: 2026-01-06T23:59:31.953484684+00:00
