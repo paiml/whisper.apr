@@ -147,6 +147,44 @@ impl PipelineMetrics {
     }
 }
 
+/// Jidoka alerts for Poka-Yoke visual feedback (WAPR-CLI-001 Section 3.3)
+///
+/// Implements Toyota Way principle of highlighting abnormalities immediately:
+/// - High Drift: YELLOW if processing lag > 500ms
+/// - Low Confidence: RED if log-prob < -1.0
+/// - Audio Clipping: RED if amplitude > 1.0
+#[derive(Debug, Clone, Default)]
+pub struct JidokaAlerts {
+    /// Processing drift in milliseconds (processing time - audio duration)
+    pub drift_ms: f32,
+    /// Minimum log probability from decoder tokens
+    pub min_log_prob: f32,
+    /// Maximum audio amplitude (clipping if > 1.0)
+    pub max_amplitude: f32,
+}
+
+impl JidokaAlerts {
+    /// Check if processing drift is too high (> 500ms)
+    pub fn is_high_drift(&self) -> bool {
+        self.drift_ms > 500.0
+    }
+
+    /// Check if decoder confidence is too low (log_prob < -1.0)
+    pub fn is_low_confidence(&self) -> bool {
+        self.min_log_prob < -1.0
+    }
+
+    /// Check if audio is clipping (amplitude > 1.0)
+    pub fn is_clipping(&self) -> bool {
+        self.max_amplitude > 1.0
+    }
+
+    /// Check if any alert is active
+    pub fn has_alerts(&self) -> bool {
+        self.is_high_drift() || self.is_low_confidence() || self.is_clipping()
+    }
+}
+
 /// Whisper dashboard application state
 #[derive(Debug, Clone)]
 pub struct WhisperApp {
@@ -176,6 +214,8 @@ pub struct WhisperApp {
     pub transcription: String,
     /// Performance metrics
     pub metrics: PipelineMetrics,
+    /// Jidoka alerts (Poka-Yoke visual feedback)
+    pub alerts: JidokaAlerts,
     /// Error message (if in error state)
     pub error_message: Option<String>,
     /// Status message
@@ -186,6 +226,10 @@ pub struct WhisperApp {
     pub scroll_y: usize,
     /// Selected layer for encoder view
     pub selected_layer: usize,
+    /// Show trace overlay (t key)
+    pub show_trace_overlay: bool,
+    /// Show VAD overlay (v key)
+    pub show_vad_overlay: bool,
 }
 
 impl Default for WhisperApp {
@@ -211,11 +255,14 @@ impl WhisperApp {
             attention_weights: Vec::new(),
             transcription: String::new(),
             metrics: PipelineMetrics::default(),
+            alerts: JidokaAlerts::default(),
             error_message: None,
             status_message: None,
             scroll_x: 0,
             scroll_y: 0,
             selected_layer: 0,
+            show_trace_overlay: false,
+            show_vad_overlay: false,
         }
     }
 
@@ -236,6 +283,8 @@ impl WhisperApp {
             '7' => self.current_panel = WhisperPanel::Metrics,
             '?' => self.current_panel = WhisperPanel::Help,
             ' ' => self.paused = !self.paused,
+            't' => self.show_trace_overlay = !self.show_trace_overlay,
+            'v' => self.show_vad_overlay = !self.show_vad_overlay,
             'r' => self.reset(),
             'q' => self.should_quit = true,
             _ => {}
@@ -255,11 +304,14 @@ impl WhisperApp {
         self.attention_weights.clear();
         self.transcription.clear();
         self.metrics = PipelineMetrics::default();
+        self.alerts = JidokaAlerts::default();
         self.error_message = None;
         self.status_message = Some("Reset to idle".to_string());
         self.scroll_x = 0;
         self.scroll_y = 0;
         self.selected_layer = 0;
+        self.show_trace_overlay = false;
+        self.show_vad_overlay = false;
     }
 
     /// Load audio data
@@ -268,6 +320,8 @@ impl WhisperApp {
         let _span = crate::trace_enter!("tui.load_audio");
         self.audio_data = audio.to_vec();
         self.metrics.audio_duration_secs = audio.len() as f32 / self.sample_rate as f32;
+        // Compute max amplitude for clipping detection (Jidoka)
+        self.alerts.max_amplitude = audio.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
         self.state = WhisperState::WaveformReady;
         self.status_message = Some(format!(
             "Loaded {} samples ({:.2}s)",
