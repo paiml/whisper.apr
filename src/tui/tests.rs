@@ -715,6 +715,148 @@ fn test_state_transition_sequence() {
 }
 
 // ============================================================================
+// Jidoka Alerts Tests (WAPR-CLI-001 Section 3.3)
+// ============================================================================
+
+#[test]
+fn test_jidoka_alerts_default() {
+    let alerts = JidokaAlerts::default();
+    assert_eq!(alerts.drift_ms, 0.0);
+    assert_eq!(alerts.min_log_prob, 0.0);
+    assert_eq!(alerts.max_amplitude, 0.0);
+    assert!(!alerts.has_alerts());
+}
+
+#[test]
+fn test_jidoka_alerts_high_drift() {
+    let mut alerts = JidokaAlerts::default();
+
+    // Below threshold
+    alerts.drift_ms = 400.0;
+    assert!(!alerts.is_high_drift());
+
+    // At threshold
+    alerts.drift_ms = 500.0;
+    assert!(!alerts.is_high_drift());
+
+    // Above threshold (YELLOW)
+    alerts.drift_ms = 501.0;
+    assert!(alerts.is_high_drift());
+    assert!(alerts.has_alerts());
+}
+
+#[test]
+fn test_jidoka_alerts_low_confidence() {
+    let mut alerts = JidokaAlerts::default();
+
+    // Good confidence
+    alerts.min_log_prob = -0.5;
+    assert!(!alerts.is_low_confidence());
+
+    // At threshold
+    alerts.min_log_prob = -1.0;
+    assert!(!alerts.is_low_confidence());
+
+    // Below threshold (RED)
+    alerts.min_log_prob = -1.1;
+    assert!(alerts.is_low_confidence());
+    assert!(alerts.has_alerts());
+}
+
+#[test]
+fn test_jidoka_alerts_clipping() {
+    let mut alerts = JidokaAlerts::default();
+
+    // Normal audio
+    alerts.max_amplitude = 0.8;
+    assert!(!alerts.is_clipping());
+
+    // At threshold
+    alerts.max_amplitude = 1.0;
+    assert!(!alerts.is_clipping());
+
+    // Clipping (RED)
+    alerts.max_amplitude = 1.01;
+    assert!(alerts.is_clipping());
+    assert!(alerts.has_alerts());
+}
+
+#[test]
+fn test_jidoka_alerts_multiple() {
+    let mut alerts = JidokaAlerts::default();
+    alerts.drift_ms = 600.0;
+    alerts.min_log_prob = -2.0;
+    alerts.max_amplitude = 1.5;
+
+    assert!(alerts.is_high_drift());
+    assert!(alerts.is_low_confidence());
+    assert!(alerts.is_clipping());
+    assert!(alerts.has_alerts());
+}
+
+#[test]
+fn test_load_audio_computes_max_amplitude() {
+    let mut app = WhisperApp::new();
+
+    // Load audio with known max amplitude
+    let audio: Vec<f32> = vec![0.1, -0.5, 0.8, -0.3, 0.2];
+    app.load_audio(&audio);
+
+    assert!((app.alerts.max_amplitude - 0.8).abs() < 0.001);
+    assert!(!app.alerts.is_clipping());
+}
+
+#[test]
+fn test_load_audio_detects_clipping() {
+    let mut app = WhisperApp::new();
+
+    // Load clipping audio
+    let audio: Vec<f32> = vec![0.5, 1.2, -0.3];
+    app.load_audio(&audio);
+
+    assert!((app.alerts.max_amplitude - 1.2).abs() < 0.001);
+    assert!(app.alerts.is_clipping());
+}
+
+#[test]
+fn test_reset_clears_jidoka_alerts() {
+    let mut app = WhisperApp::new();
+    app.alerts.drift_ms = 1000.0;
+    app.alerts.min_log_prob = -5.0;
+    app.alerts.max_amplitude = 2.0;
+
+    app.reset();
+
+    assert_eq!(app.alerts.drift_ms, 0.0);
+    assert_eq!(app.alerts.min_log_prob, 0.0);
+    assert_eq!(app.alerts.max_amplitude, 0.0);
+}
+
+#[test]
+fn test_trace_overlay_keybinding() {
+    let mut app = WhisperApp::new();
+    assert!(!app.show_trace_overlay);
+
+    app.handle_key('t');
+    assert!(app.show_trace_overlay);
+
+    app.handle_key('t');
+    assert!(!app.show_trace_overlay);
+}
+
+#[test]
+fn test_vad_overlay_keybinding() {
+    let mut app = WhisperApp::new();
+    assert!(!app.show_vad_overlay);
+
+    app.handle_key('v');
+    assert!(app.show_vad_overlay);
+
+    app.handle_key('v');
+    assert!(!app.show_vad_overlay);
+}
+
+// ============================================================================
 // Property-Based Tests
 // ============================================================================
 
