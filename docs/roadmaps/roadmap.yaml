@@ -802,8 +802,8 @@ roadmap:
 - id: WAPR-1.0-COMPLETE
   github_issue: null
   item_type: task
-  title: 'New task: WAPR-1.0-COMPLETE'
-  status: inprogress
+  title: 'Whisper.apr 1.0 Complete - All Sections Verified'
+  status: completed
   priority: medium
   assigned_to: null
   created: 2026-01-07T00:07:09.444866752+00:00
