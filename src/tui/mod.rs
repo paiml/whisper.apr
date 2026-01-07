@@ -40,7 +40,9 @@ mod app;
 mod panels;
 mod visualization;
 
-pub use app::{DecoderToken, JidokaAlerts, PipelineMetrics, WhisperApp, WhisperPanel, WhisperState};
+pub use app::{
+    DecoderToken, JidokaAlerts, PipelineMetrics, WhisperApp, WhisperPanel, WhisperState,
+};
 pub use panels::render_whisper_dashboard;
 pub use visualization::{
     render_attention_heatmap, render_mel_spectrogram, render_waveform, MelDisplay, WaveformDisplay,
