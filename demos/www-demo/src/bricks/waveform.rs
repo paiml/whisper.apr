@@ -14,9 +14,12 @@
 //! - Render time ≤ 16ms (60fps)
 //! - Buffer capacity sufficient for display width
 
-use jugar_probar::brick::{
-    Brick, BrickAssertion, BrickBudget, BrickVerification,
+use jugar_probar::brick::{Brick, BrickAssertion, BrickBudget, BrickVerification};
+use presentar_core::{
+    AccessibleRole, Canvas, Color, Constraints, Event, LayoutResult, Point, Rect, Size,
+    TypeId, Widget,
 };
+use std::any::Any;
 use std::time::Duration;
 
 /// Number of samples to display in the waveform
@@ -105,6 +108,7 @@ impl WaveformBrick {
     }
 
     /// Generate SVG path for the waveform
+    #[allow(clippy::cast_precision_loss, clippy::format_push_string)]
     fn generate_svg_path(&self) -> String {
         let samples = self.get_display_samples();
         let sample_width = self.width as f32 / samples.len() as f32;
@@ -204,6 +208,85 @@ impl Brick for WaveformBrick {
 
     fn test_id(&self) -> Option<&str> {
         Some("waveform")
+    }
+}
+
+impl Widget for WaveformBrick {
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn measure(&self, constraints: Constraints) -> Size {
+        // Use configured dimensions, constrained to available space
+        let width = (self.width as f32).min(constraints.max_width);
+        let height = (self.height as f32).min(constraints.max_height);
+        Size::new(width, height)
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn layout(&mut self, bounds: Rect) -> LayoutResult {
+        // Update dimensions based on allocated bounds
+        self.width = bounds.width as u32;
+        self.height = bounds.height as u32;
+        LayoutResult {
+            size: Size::new(bounds.width, bounds.height),
+        }
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn paint(&self, canvas: &mut dyn Canvas) {
+        // Draw background
+        let bounds = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
+        let bg_color = Color::from_hex("#0f3460").unwrap_or(Color::BLACK);
+        canvas.fill_rect(bounds, bg_color);
+
+        // Draw waveform path
+        let samples = self.get_display_samples();
+        let sample_width = self.width as f32 / samples.len() as f32;
+        let mid_y = self.height as f32 / 2.0;
+        let wave_color = Color::from_hex("#4dc3ff").unwrap_or(Color::BLUE);
+
+        for i in 0..samples.len().saturating_sub(1) {
+            let x1 = i as f32 * sample_width;
+            let x2 = (i + 1) as f32 * sample_width;
+            let normalized1 = samples[i].clamp(-1.0, 1.0);
+            let normalized2 = samples[i + 1].clamp(-1.0, 1.0);
+            let y1 = mid_y - (normalized1 * mid_y * 0.9);
+            let y2 = mid_y - (normalized2 * mid_y * 0.9);
+
+            canvas.draw_line(Point::new(x1, y1), Point::new(x2, y2), wave_color, 2.0);
+        }
+
+        // Draw center line
+        let line_color = Color::from_hex("#333333").unwrap_or(Color::BLACK);
+        canvas.draw_line(
+            Point::new(0.0, mid_y),
+            Point::new(self.width as f32, mid_y),
+            line_color,
+            1.0,
+        );
+    }
+
+    fn event(&mut self, _event: &Event) -> Option<Box<dyn Any + Send>> {
+        // Waveform doesn't handle events
+        None
+    }
+
+    fn children(&self) -> &[Box<dyn Widget>] {
+        &[]
+    }
+
+    fn children_mut(&mut self) -> &mut [Box<dyn Widget>] {
+        &mut []
+    }
+
+    fn accessible_name(&self) -> Option<&str> {
+        Some("Audio waveform visualization")
+    }
+
+    fn accessible_role(&self) -> AccessibleRole {
+        AccessibleRole::Image
     }
 }
 
