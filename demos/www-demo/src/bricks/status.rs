@@ -11,9 +11,12 @@
 //! - Status text visible
 //! - State transitions are valid
 
-use jugar_probar::brick::{
-    Brick, BrickAssertion, BrickBudget, BrickVerification,
+use jugar_probar::brick::{Brick, BrickAssertion, BrickBudget, BrickVerification};
+use presentar_core::{
+    AccessibleRole, Canvas, Color, Constraints, Event, LayoutResult, Point, Rect, Size, TextStyle,
+    TypeId, Widget,
 };
+use std::any::Any;
 use std::time::Duration;
 
 /// Application status states
@@ -212,6 +215,72 @@ impl Brick for StatusBrick {
 
     fn test_id(&self) -> Option<&str> {
         Some("status")
+    }
+}
+
+impl Widget for StatusBrick {
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    fn measure(&self, constraints: Constraints) -> Size {
+        // Status bar is typically full-width, fixed height
+        let height: f32 = 48.0; // padding + text
+        Size::new(
+            constraints.max_width.min(constraints.min_width.max(200.0)),
+            height.min(constraints.max_height),
+        )
+    }
+
+    fn layout(&mut self, bounds: Rect) -> LayoutResult {
+        LayoutResult {
+            size: Size::new(bounds.width, bounds.height),
+        }
+    }
+
+    fn paint(&self, canvas: &mut dyn Canvas) {
+        let bounds = Rect::new(0.0, 0.0, 400.0, 48.0);
+
+        // Draw background
+        let bg_color = Color::from_hex("#16213e").unwrap_or(Color::BLACK);
+        canvas.fill_rect(bounds, bg_color);
+
+        // Choose text color based on status
+        let text_color = match &self.status {
+            Status::Loading { .. } => Color::from_hex("#4dc3ff").unwrap_or(Color::BLUE),
+            Status::Ready | Status::Recording => Color::from_hex("#50fa7b").unwrap_or(Color::GREEN),
+            Status::Error { .. } => Color::from_hex("#ff6b6b").unwrap_or(Color::RED),
+        };
+
+        let style = TextStyle {
+            size: 16.0,
+            color: text_color,
+            weight: presentar_core::FontWeight::Normal,
+            style: presentar_core::FontStyle::Normal,
+        };
+
+        canvas.draw_text(&self.status_text(), Point::new(16.0, 24.0), &style);
+    }
+
+    fn event(&mut self, _event: &Event) -> Option<Box<dyn Any + Send>> {
+        // Status display doesn't handle events directly
+        None
+    }
+
+    fn children(&self) -> &[Box<dyn Widget>] {
+        &[]
+    }
+
+    fn children_mut(&mut self) -> &mut [Box<dyn Widget>] {
+        &mut []
+    }
+
+    fn accessible_name(&self) -> Option<&str> {
+        Some("Application status")
+    }
+
+    fn accessible_role(&self) -> AccessibleRole {
+        AccessibleRole::Generic
     }
 }
 

@@ -23,9 +23,12 @@
 //! assert!(brick.verify().is_valid());
 //! ```
 
-use jugar_probar::brick::{
-    Brick, BrickAssertion, BrickBudget, BrickVerification,
+use jugar_probar::brick::{Brick, BrickAssertion, BrickBudget, BrickVerification};
+use presentar_core::{
+    AccessibleRole, Canvas, Color, Constraints, Event, LayoutResult, Point, Rect, Size, TextStyle,
+    TypeId, Widget,
 };
+use std::any::Any;
 use std::time::Duration;
 
 /// Transcription brick for displaying speech-to-text results
@@ -155,8 +158,10 @@ impl Brick for TranscriptionBrick {
                     // DOM updates are synchronous in WASM, assume passes
                     passed.push(assertion.clone());
                 }
-                _ => {
-                    // Unknown assertions pass by default
+                BrickAssertion::ElementPresent(_)
+                | BrickAssertion::Focusable
+                | BrickAssertion::Custom { .. } => {
+                    // These assertions pass by default for this brick
                     passed.push(assertion.clone());
                 }
             }
@@ -221,6 +226,89 @@ impl Brick for TranscriptionBrick {
 
     fn test_id(&self) -> Option<&str> {
         Some("transcription")
+    }
+}
+
+impl Widget for TranscriptionBrick {
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn measure(&self, constraints: Constraints) -> Size {
+        // Calculate height based on content
+        let base_height = 200.0; // min-height from CSS
+        let line_height = 24.0; // approximate line height
+
+        let num_lines = self.final_text.len() as f32
+            + if self.partial.is_empty() { 0.0 } else { 1.0 };
+        let content_height = (num_lines * line_height).max(base_height);
+
+        Size::new(
+            constraints.max_width.min(constraints.min_width.max(300.0)),
+            content_height.min(constraints.max_height),
+        )
+    }
+
+    fn layout(&mut self, bounds: Rect) -> LayoutResult {
+        LayoutResult {
+            size: Size::new(bounds.width, bounds.height),
+        }
+    }
+
+    fn paint(&self, canvas: &mut dyn Canvas) {
+        let bounds = Rect::new(0.0, 0.0, 400.0, 200.0);
+
+        // Draw background
+        let bg_color = Color::from_hex("#16213e").unwrap_or(Color::BLACK);
+        canvas.fill_rect(bounds, bg_color);
+
+        let mut y_offset = 24.0;
+
+        // Draw partial text (in progress)
+        if !self.partial.is_empty() {
+            let partial_style = TextStyle {
+                size: 16.0,
+                color: Color::from_hex("#888888").unwrap_or(Color::BLACK),
+                weight: presentar_core::FontWeight::Normal,
+                style: presentar_core::FontStyle::Italic,
+            };
+            canvas.draw_text(&self.partial, Point::new(24.0, y_offset), &partial_style);
+            y_offset += 32.0;
+        }
+
+        // Draw final text
+        if !self.final_text.is_empty() {
+            let final_style = TextStyle {
+                size: 19.2, // 1.2rem
+                color: Color::from_hex("#eeeeee").unwrap_or(Color::WHITE),
+                weight: presentar_core::FontWeight::Normal,
+                style: presentar_core::FontStyle::Normal,
+            };
+            let combined = self.combined_text();
+            canvas.draw_text(&combined, Point::new(24.0, y_offset), &final_style);
+        }
+    }
+
+    fn event(&mut self, _event: &Event) -> Option<Box<dyn Any + Send>> {
+        // Transcription display doesn't handle events directly
+        None
+    }
+
+    fn children(&self) -> &[Box<dyn Widget>] {
+        &[]
+    }
+
+    fn children_mut(&mut self) -> &mut [Box<dyn Widget>] {
+        &mut []
+    }
+
+    fn accessible_name(&self) -> Option<&str> {
+        Some("Transcription results")
+    }
+
+    fn accessible_role(&self) -> AccessibleRole {
+        AccessibleRole::Generic
     }
 }
 
