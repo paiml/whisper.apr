@@ -358,9 +358,10 @@ fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
 }
 
 /// Create blob URL for worker script
+/// PROBAR-SPEC-009-P7: Uses brick-generated JavaScript
 #[wasm_bindgen(js_name = createWorkerBlobUrl)]
 pub fn create_worker_blob_url() -> Result<String, JsValue> {
-    let worker_js = crate::worker_js::generate_worker_js();
+    let worker_js = crate::bricks::generate_worker_js_from_brick();
 
     let blob_parts = js_sys::Array::new();
     blob_parts.push(&JsValue::from_str(&worker_js));

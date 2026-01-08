@@ -29,6 +29,13 @@ pub use ring_buffer::SharedRingBuffer;
 pub use worker::TranscriptionWorker;
 pub use worker_manager::WorkerManager;
 
+// Re-export brick-generated JS functions (PROBAR-SPEC-009-P7)
+// These replace the hand-written worker_js and audioworklet_js modules
+pub use bricks::{
+    generate_audioworklet_js_from_brick, generate_worker_js_from_brick,
+    create_whisper_audio_brick, create_whisper_event_brick, create_whisper_worker_brick,
+};
+
 /// Initialize a worker instance (called from worker JS)
 #[wasm_bindgen(js_name = initWorker)]
 #[must_use] 
