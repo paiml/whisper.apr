@@ -1,11 +1,11 @@
-//! AudioBrick: Ring buffer audio capture specification (PROBAR-SPEC-009)
+//! `AudioBrick`: Ring buffer audio capture specification (PROBAR-SPEC-009)
 //!
-//! This brick specifies the audio capture interface using a SharedArrayBuffer
+//! This brick specifies the audio capture interface using a `SharedArrayBuffer`
 //! ring buffer for streaming audio from the main thread to the worker.
 //!
 //! # Design
 //!
-//! The AudioBrick wraps the SharedRingBuffer and provides:
+//! The `AudioBrick` wraps the `SharedRingBuffer` and provides:
 //! - Buffer capacity specification
 //! - Write position tracking
 //! - Done flag for graceful shutdown
@@ -28,7 +28,7 @@ const DEFAULT_BUFFER_SIZE: usize = 144_000;
 /// Minimum buffer size: 0.5 seconds at 16kHz
 const MIN_BUFFER_SIZE: usize = 8_000;
 
-/// AudioBrick for specifying audio capture interface
+/// `AudioBrick` for specifying audio capture interface
 #[derive(Debug, Clone)]
 pub struct AudioBrick {
     /// Buffer capacity in samples

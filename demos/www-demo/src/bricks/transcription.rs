@@ -1,4 +1,4 @@
-//! TranscriptionBrick: Real-time transcription display (PROBAR-SPEC-009)
+//! `TranscriptionBrick`: Real-time transcription display (PROBAR-SPEC-009)
 //!
 //! This brick displays transcription results with:
 //! - Partial (in-progress) text in italic gray

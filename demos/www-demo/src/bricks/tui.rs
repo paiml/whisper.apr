@@ -16,7 +16,7 @@
 //! This module uses patterns from trueno-viz/ttop:
 //! - Ring buffers for sparkline data
 //! - SIMD-optimized statistics
-//! - percent_color for meter gradients
+//! - `percent_color` for meter gradients
 
 use jugar_probar::brick::Brick;
 
@@ -62,7 +62,8 @@ impl TuiOutput {
 pub struct TuiRenderer {
     /// Terminal width
     width: u16,
-    /// Terminal height
+    /// Terminal height (reserved for future use)
+    #[allow(dead_code)]
     height: u16,
 }
 

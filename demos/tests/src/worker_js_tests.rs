@@ -192,4 +192,123 @@ mod tests {
             "Manager must dispatch transcription events to main thread"
         );
     }
+
+    // ========================================================================
+    // PROBAR-SPEC-009: Cross-Language Contract Tests
+    // ========================================================================
+
+    /// PROBAR-SPEC-009 Improvement #3: Cross-Language Contract Tests
+    ///
+    /// Validates that JS postMessage types match WorkerResult variants.
+    /// This prevents serde tag mismatches (BH-005) where JS uses 'ready' but
+    /// Rust expects 'Ready'.
+    #[test]
+    fn contract_js_message_types_match_worker_result() {
+        use whisper_apr_demo::worker::WorkerResult;
+
+        // Get the generated JS
+        let js = whisper_apr_demo::worker_js::generate_worker_js();
+
+        // Extract all postMessage({ type: '...' }) patterns from JS
+        // Uses regex-like manual parsing to find all type strings
+        let mut js_types: Vec<String> = Vec::new();
+
+        // Pattern 1: self.postMessage({ type: 'XXX' })
+        for line in js.lines() {
+            if line.contains("postMessage") && line.contains("type:") {
+                // Extract the type value after type:
+                if let Some(type_start) = line.find("type:") {
+                    let after_type = &line[type_start + 5..];
+                    // Find quoted string
+                    if let Some(quote_start) = after_type.find('\'') {
+                        let after_quote = &after_type[quote_start + 1..];
+                        if let Some(quote_end) = after_quote.find('\'') {
+                            let type_value = &after_quote[..quote_end];
+                            if !js_types.contains(&type_value.to_string()) {
+                                js_types.push(type_value.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        println!("Found JS postMessage types: {:?}", js_types);
+
+        // Get WorkerResult variant names using serde
+        // WorkerResult has #[serde(tag = "type")] so variant names become type values
+        let worker_result_variants = ["Ready", "ModelLoaded", "Partial", "Result", "Error", "Progress", "Metrics"];
+
+        // Verify each JS type exists in WorkerResult variants
+        for js_type in &js_types {
+            assert!(
+                worker_result_variants.contains(&js_type.as_str()),
+                "JS postMessage type '{}' does not match any WorkerResult variant.\n\
+                 WorkerResult variants: {:?}\n\
+                 This causes serde deserialization to fail silently (BH-005).",
+                js_type,
+                worker_result_variants
+            );
+        }
+
+        // Verify the critical types are sent by JS
+        assert!(
+            js_types.contains(&"Ready".to_string()),
+            "JS must send 'Ready' message for serde to deserialize as WorkerResult::Ready"
+        );
+        assert!(
+            js_types.contains(&"Error".to_string()),
+            "JS must send 'Error' message for error handling"
+        );
+    }
+
+    /// Contract test: Verify serde roundtrip for WorkerResult
+    ///
+    /// Tests that WorkerResult serializes to expected JS-compatible format
+    /// and can be deserialized back.
+    #[test]
+    fn contract_worker_result_serde_roundtrip() {
+        use whisper_apr_demo::worker::{WorkerResult, Segment};
+        use serde_json;
+
+        // Test all variants
+        let test_cases: Vec<WorkerResult> = vec![
+            WorkerResult::Ready,
+            WorkerResult::ModelLoaded { size_mb: 39.0, load_time_ms: 1500.0 },
+            WorkerResult::Partial { text: "Hello".to_string(), is_final: false },
+            WorkerResult::Result {
+                text: "Hello world".to_string(),
+                segments: vec![Segment { start_ms: 0, end_ms: 1000, text: "Hello world".to_string() }]
+            },
+            WorkerResult::Error { message: "Test error".to_string() },
+            WorkerResult::Progress { phase: "Loading".to_string(), percent: 50.0 },
+            WorkerResult::Metrics { rtf: 1.5, chunks_processed: 10, samples_read: 16000 },
+        ];
+
+        for original in test_cases {
+            // Serialize to JSON (as serde_wasm_bindgen would)
+            let json = serde_json::to_string(&original)
+                .expect("Serialization should succeed");
+
+            println!("Serialized {:?} to: {}", std::mem::discriminant(&original), json);
+
+            // Verify the type tag is present and matches variant name
+            assert!(
+                json.contains("\"type\":"),
+                "Serialized JSON must contain type tag: {}",
+                json
+            );
+
+            // Deserialize back
+            let deserialized: WorkerResult = serde_json::from_str(&json)
+                .expect("Deserialization should succeed");
+
+            // Verify roundtrip (using discriminant since we can't derive PartialEq easily)
+            assert_eq!(
+                std::mem::discriminant(&original),
+                std::mem::discriminant(&deserialized),
+                "Roundtrip should preserve variant type"
+            );
+        }
+    }
 }

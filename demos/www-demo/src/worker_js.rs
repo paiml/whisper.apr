@@ -1,10 +1,11 @@
 //! Worker JavaScript Generator
 //!
 //! Generates the Web Worker JavaScript.
-//! Key feature: processAudioTick checks isDone() flag (like whisper.cpp's g_running)
+//! Key feature: processAudioTick checks `isDone()` flag (like whisper.cpp's `g_running`)
 
 /// Generate the complete worker JavaScript
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn generate_worker_js() -> String {
     r"
 // Worker state variables

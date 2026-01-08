@@ -1,10 +1,13 @@
 //! Worker Manager - Coordinates main thread and worker
 //!
-//! Uses shared state via Rc<RefCell<>> for closure synchronization.
+//! Uses shared state via Rc<`RefCell`<>> for closure synchronization.
 //! Marks buffer done on stop (worker polls isDone flag).
+//!
+//! PROBAR-SPEC-009: Uses tracing for structured logging instead of console.log.
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use tracing::{info, warn, error, debug};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::closure::Closure;
 
@@ -36,6 +39,7 @@ pub struct WorkerManager {
 impl WorkerManager {
     /// Create a new worker manager
     #[wasm_bindgen(constructor)]
+    #[must_use] 
     pub fn new() -> WorkerManager {
         WorkerManager {
             worker: None,
@@ -50,7 +54,7 @@ impl WorkerManager {
     pub fn spawn(&mut self, model_url: &str) -> Result<(), JsValue> {
         // Guard against double-spawning
         if self.worker.is_some() {
-            web_sys::console::warn_1(&"[Manager] Worker already spawned, ignoring".into());
+            warn!("Worker already spawned, ignoring");
             return Ok(());
         }
 
@@ -78,7 +82,7 @@ impl WorkerManager {
             if let Ok(result) = serde_wasm_bindgen::from_value::<WorkerResult>(data.clone()) {
                 match result {
                     WorkerResult::Ready => {
-                        web_sys::console::log_1(&"[Manager] Worker ready".into());
+                        info!("Worker ready");
                         *state_ptr_clone.borrow_mut() = ManagerState::Loading;
 
                         // Dispatch event for main thread to know worker is ready
@@ -89,9 +93,7 @@ impl WorkerManager {
                         }
                     }
                     WorkerResult::ModelLoaded { size_mb, load_time_ms } => {
-                        web_sys::console::log_1(
-                            &format!("[Manager] Model loaded: {size_mb:.1}MB in {load_time_ms:.0}ms").into(),
-                        );
+                        info!(size_mb = size_mb, load_time_ms = load_time_ms, "Model loaded");
                         *state_ptr_clone.borrow_mut() = ManagerState::Ready;
 
                         // Dispatch event for main thread
@@ -113,30 +115,26 @@ impl WorkerManager {
                     }
                     WorkerResult::Partial { text, is_final } => {
                         if is_final {
-                            web_sys::console::log_1(&format!("[Manager] Final: {text}").into());
+                            info!(text = %text, is_final = is_final, "Final transcription");
                         } else {
-                            web_sys::console::log_1(&format!("[Manager] Partial: {text}").into());
+                            debug!(text = %text, "Partial transcription");
                         }
                         dispatch_transcription(&text, is_final);
                     }
                     WorkerResult::Result { text, .. } => {
-                        web_sys::console::log_1(&format!("[Manager] Final result: {text}").into());
+                        info!(text = %text, "Final result");
                         *state_ptr_clone.borrow_mut() = ManagerState::Ready;
                         dispatch_transcription(&text, true);
                     }
                     WorkerResult::Error { message } => {
-                        web_sys::console::error_1(&format!("[Manager] Error: {message}").into());
+                        error!(message = %message, "Worker error");
                         *state_ptr_clone.borrow_mut() = ManagerState::Error;
                     }
                     WorkerResult::Progress { phase, percent } => {
-                        web_sys::console::log_1(
-                            &format!("[Manager] Progress: {phase} {percent:.0}%").into(),
-                        );
+                        debug!(phase = %phase, percent = percent, "Progress update");
                     }
                     WorkerResult::Metrics { rtf, chunks_processed, samples_read } => {
-                        web_sys::console::log_1(
-                            &format!("[Manager] Metrics: RTF={rtf:.2}, chunks={chunks_processed}, samples={samples_read}").into(),
-                        );
+                        debug!(rtf = rtf, chunks_processed = chunks_processed, samples_read = samples_read, "Metrics");
                     }
                 }
             }
@@ -149,7 +147,7 @@ impl WorkerManager {
             .and_then(|w| w.location().origin().ok())
             .unwrap_or_default();
 
-        web_sys::console::log_1(&format!("[Manager] Bootstrap with baseUrl: {base_url}").into());
+        debug!(base_url = %base_url, "Sending bootstrap message");
 
         let bootstrap = js_sys::Object::new();
         js_sys::Reflect::set(&bootstrap, &"type".into(), &"bootstrap".into())?;
@@ -160,7 +158,7 @@ impl WorkerManager {
         self.worker = Some(worker);
         self.on_message_closure = Some(on_message);
 
-        web_sys::console::log_1(&"[Manager] Worker spawned".into());
+        info!("Worker spawned");
         Ok(())
     }
 
@@ -170,7 +168,7 @@ impl WorkerManager {
 
         // Create ring buffer if needed
         if self.ring_buffer.is_none() {
-            self.ring_buffer = Some(SharedRingBuffer::new(144000)?); // 3 seconds at 48kHz
+            self.ring_buffer = Some(SharedRingBuffer::new(144_000)?); // 3 seconds at 48kHz
         }
 
         let buffer = self.ring_buffer.as_ref().ok_or("No ring buffer")?;
@@ -201,12 +199,12 @@ impl WorkerManager {
         // Send start message
         let msg = js_sys::Object::new();
         js_sys::Reflect::set(&msg, &"type".into(), &"start".into())?;
-        js_sys::Reflect::set(&msg, &"sampleRate".into(), &(sample_rate as f64).into())?;
+        js_sys::Reflect::set(&msg, &"sampleRate".into(), &f64::from(sample_rate).into())?;
 
         worker.post_message(&msg)?;
         *self.state_ptr.borrow_mut() = ManagerState::Recording;
 
-        web_sys::console::log_1(&"[Manager] Recording started".into());
+        info!("Recording started");
         Ok(())
     }
 
@@ -223,11 +221,11 @@ impl WorkerManager {
         }
 
         *self.state_ptr.borrow_mut() = ManagerState::Ready;
-        web_sys::console::log_1(&"[Manager] Recording stopped".into());
+        info!("Recording stopped");
         Ok(())
     }
 
-    /// Get ring buffer for AudioWorklet
+    /// Get ring buffer for `AudioWorklet`
     #[wasm_bindgen(js_name = getRingBuffer)]
     #[must_use]
     pub fn get_ring_buffer(&self) -> Option<SharedRingBuffer> {

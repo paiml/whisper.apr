@@ -4065,6 +4065,7 @@ dependencies = [
  "jugar-probar",
  "proptest",
  "ratatui",
+ "serde_json",
  "tokio",
  "whisper-apr-demo",
 ]

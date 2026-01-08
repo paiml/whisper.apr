@@ -6,7 +6,7 @@
 //! # Design Philosophy
 //!
 //! The generator:
-//! 1. Collects all bricks in the BrickHouse
+//! 1. Collects all bricks in the `BrickHouse`
 //! 2. Generates combined CSS from all bricks
 //! 3. Generates combined HTML from all bricks
 //! 4. Produces a single index.html file
@@ -42,6 +42,7 @@ impl Default for HtmlConfig {
 }
 
 /// Generate the complete index.html from brick definitions
+#[must_use] 
 pub fn generate_index_html(config: &HtmlConfig) -> String {
     // Create bricks
     let status = StatusBrick::new();
@@ -292,7 +293,7 @@ fn generate_js_glue(config: &HtmlConfig) -> String {
     )
 }
 
-/// Create a BrickHouse for the whisper demo
+/// Create a `BrickHouse` for the whisper demo
 pub fn create_whisper_brick_house() -> Result<BrickHouse, jugar_probar::brick::BrickError> {
     let mut house = BrickHouse::new("whisper-demo", 1000); // 1 second total budget
 

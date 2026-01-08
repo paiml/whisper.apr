@@ -1,11 +1,11 @@
 //! Brick Architecture for whisper.apr Demo (PROBAR-SPEC-009)
 //!
 //! This module implements the canonical bricks for the whisper.apr demo:
-//! - TranscriptionBrick: Displays transcription results
-//! - WaveformBrick: Shows audio waveform visualization
-//! - VuMeterBrick: Shows audio level indicator
-//! - StatusBrick: Shows current status (loading, ready, recording)
-//! - AudioBrick: Ring buffer audio capture specification
+//! - `TranscriptionBrick`: Displays transcription results
+//! - `WaveformBrick`: Shows audio waveform visualization
+//! - `VuMeterBrick`: Shows audio level indicator
+//! - `StatusBrick`: Shows current status (loading, ready, recording)
+//! - `AudioBrick`: Ring buffer audio capture specification
 //!
 //! All bricks follow the Brick Architecture where tests ARE the interface.
 //!

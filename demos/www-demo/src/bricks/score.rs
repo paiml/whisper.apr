@@ -1,4 +1,4 @@
-//! ScoreBrick: Falsification Score Dashboard (PROBAR-SPEC-009)
+//! `ScoreBrick`: Falsification Score Dashboard (PROBAR-SPEC-009)
 //!
 //! This brick renders the 180-point Popperian falsification checklist
 //! as a visual dashboard. The same brick renders to both TUI and HTML.
@@ -68,7 +68,7 @@ impl ScoreCategory {
     }
 }
 
-/// ScoreBrick for rendering falsification test results
+/// `ScoreBrick` for rendering falsification test results
 #[derive(Debug, Clone)]
 pub struct ScoreBrick {
     /// Categories with scores

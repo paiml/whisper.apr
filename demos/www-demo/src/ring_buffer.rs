@@ -1,7 +1,7 @@
-//! SharedArrayBuffer Ring Buffer for Audio Data
+//! `SharedArrayBuffer` Ring Buffer for Audio Data
 //!
-//! Lock-free ring buffer using SharedArrayBuffer and Atomics.
-//! Enables zero-copy audio transfer between AudioWorklet and Worker.
+//! Lock-free ring buffer using `SharedArrayBuffer` and Atomics.
+//! Enables zero-copy audio transfer between `AudioWorklet` and Worker.
 
 use wasm_bindgen::prelude::*;
 
@@ -15,7 +15,7 @@ const FLAGS_OFFSET: usize = 3;
 // Flag bits
 const FLAG_DONE: i32 = 1; // Producer is done writing
 
-/// Shared ring buffer backed by SharedArrayBuffer
+/// Shared ring buffer backed by `SharedArrayBuffer`
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct SharedRingBuffer {
@@ -61,7 +61,7 @@ impl SharedRingBuffer {
         })
     }
 
-    /// Create from existing SharedArrayBuffer
+    /// Create from existing `SharedArrayBuffer`
     #[wasm_bindgen(js_name = fromBuffer)]
     pub fn from_buffer(buffer: js_sys::SharedArrayBuffer) -> Result<SharedRingBuffer, JsValue> {
         let header_bytes = HEADER_SIZE * 4;
@@ -85,8 +85,9 @@ impl SharedRingBuffer {
         })
     }
 
-    /// Get the underlying SharedArrayBuffer for transfer
+    /// Get the underlying `SharedArrayBuffer` for transfer
     #[wasm_bindgen(getter)]
+    #[must_use] 
     pub fn buffer(&self) -> js_sys::SharedArrayBuffer {
         self.buffer.clone()
     }
