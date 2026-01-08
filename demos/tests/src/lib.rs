@@ -45,6 +45,8 @@ use probar::ux_coverage::UxCoverageTracker;
 pub mod benchmark_tui_tests;
 pub mod browser_tests;
 pub mod comply_tests;
+pub mod falsification_tests;
+pub mod integration_rebuild_tests;
 pub mod performance_tests;
 pub mod pixel_tests;
 pub mod property_tests;
@@ -52,7 +54,9 @@ pub mod quality_gates;
 pub mod streaming_ux_tests;
 pub mod transcription_test;
 pub mod tui_render_tests;
+pub mod ux_flow_tests;
 pub mod worker_js_tests;
+pub mod worker_rebuild_tests;
 pub mod zero_js_tests;
 
 /// Base URL for local testing

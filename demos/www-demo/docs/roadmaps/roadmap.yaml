@@ -82,3 +82,67 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: WAPR-BRICK-002
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-BRICK-002'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-08T11:44:49.367780271+00:00
+  updated: 2026-01-08T11:50:33.234738759+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-BRICK-003
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-BRICK-003'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-08T11:52:26.182253006+00:00
+  updated: 2026-01-08T11:58:18.837839139+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-BRICK-004
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-BRICK-004'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-08T12:11:08.882439480+00:00
+  updated: 2026-01-08T12:15:10.868741536+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-BRICK-005
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-BRICK-005'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-08T12:16:26.867181226+00:00
+  updated: 2026-01-08T12:23:18.058666257+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null

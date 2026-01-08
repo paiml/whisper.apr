@@ -26,6 +26,8 @@ serde-wasm-bindgen = "0.6"
 serde_bytes = "0.11"
 # Use absolute path for cargo-mutants compatibility (relative paths fail in temp dirs)
 probar-js-gen = { path = "/home/noah/src/probar/crates/probar-js-gen" }
+# Brick Architecture for test-driven UI (PROBAR-SPEC-009)
+jugar-probar = { path = "/home/noah/src/probar/crates/probar", default-features = false }
 
 [dependencies.web-sys]
 workspace = true
@@ -89,6 +91,11 @@ test-mocks = []
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 proptest = "1.5"
+
+# Binary to generate index.html from Brick definitions (Zero hand-written HTML)
+[[bin]]
+name = "gen-index"
+path = "src/bin/gen_index.rs"
 
 [lints]
 workspace = true
