@@ -53,6 +53,10 @@ pub struct TranscriptionWorker {
     sample_rate: u32,
     samples_read: u64,
     chunks_processed: u32,
+    /// Performance: when processing started (ms since epoch)
+    processing_start_ms: Option<f64>,
+    /// Performance: total inference time (ms)
+    total_inference_ms: f64,
 }
 
 // Constants
@@ -73,6 +77,8 @@ impl TranscriptionWorker {
             sample_rate: WHISPER_SAMPLE_RATE,
             samples_read: 0,
             chunks_processed: 0,
+            processing_start_ms: None,
+            total_inference_ms: 0.0,
         }
     }
 
@@ -148,6 +154,10 @@ impl TranscriptionWorker {
         self.accumulated_audio.clear();
         self.samples_read = 0;
         self.chunks_processed = 0;
+        self.total_inference_ms = 0.0;
+        self.processing_start_ms = web_sys::window()
+            .and_then(|w| w.performance())
+            .map(|p| p.now());
         self.state = WorkerState::Processing;
 
         info!("Started processing");
@@ -206,8 +216,21 @@ impl TranscriptionWorker {
         let chunk: Vec<f32> = self.accumulated_audio.drain(..CHUNK_SAMPLES).collect();
         self.chunks_processed += 1;
 
+        // Performance span: measure inference time
+        let inference_start = web_sys::window()
+            .and_then(|w| w.performance())
+            .map_or(0.0, |p| p.now());
+
         let options = TranscribeOptionsWasm::new();
         let result = model.transcribe(&chunk, options)?;
+
+        let inference_end = web_sys::window()
+            .and_then(|w| w.performance())
+            .map_or(0.0, |p| p.now());
+        let inference_ms = inference_end - inference_start;
+        self.total_inference_ms += inference_ms;
+
+        debug!(inference_ms = inference_ms, "Chunk transcribed");
 
         let text = result.text();
         if !text.trim().is_empty() {
@@ -263,9 +286,32 @@ impl TranscriptionWorker {
     }
 
     /// Get current metrics
+    ///
+    /// RTF (Real-Time Factor) = inference_time / audio_duration
+    /// RTF < 1.0 means faster than real-time
     #[wasm_bindgen(js_name = getMetrics)]
     pub fn get_metrics(&self) -> Result<JsValue, JsValue> {
-        let rtf = 0.0; // TODO: Calculate actual RTF
+        // Calculate RTF: inference_time_seconds / audio_duration_seconds
+        // audio_duration_ms = samples_read / sample_rate * 1000
+        let audio_duration_ms = if self.sample_rate > 0 {
+            (self.samples_read as f64 / f64::from(self.sample_rate)) * 1000.0
+        } else {
+            0.0
+        };
+
+        let rtf = if audio_duration_ms > 0.0 {
+            self.total_inference_ms / audio_duration_ms
+        } else {
+            0.0
+        };
+
+        debug!(
+            rtf = rtf,
+            total_inference_ms = self.total_inference_ms,
+            audio_duration_ms = audio_duration_ms,
+            "Metrics calculated"
+        );
+
         let result = WorkerResult::Metrics {
             rtf,
             chunks_processed: self.chunks_processed,
