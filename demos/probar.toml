@@ -1,0 +1,36 @@
+# PROBAR-SPEC-009: Runtime Health Score Integration
+#
+# Ensures quality gates validate actual runtime behavior, not just file existence.
+# Prevents "100/100 with broken app" scenarios (Root Cause: Missing Jidoka Gates).
+
+[quality_gates]
+runtime_health_required = true
+min_runtime_score = 15  # All 15 points required
+
+[runtime_health]
+# Module Resolution (5 points)
+# - All ES module imports resolve without 404
+# - All WASM bindings available
+module_resolution = 5
+
+# App Bootstrap (5 points)
+# - WASM initializes successfully
+# - Worker spawns without error
+# - Model loads (or mock loads in test)
+app_bootstrap = 5
+
+# Critical Path (5 points)
+# - Record/Stop cycle works
+# - Transcription produces output
+# - UI state transitions correctly
+critical_path = 5
+
+[test]
+# Browser test timeout (ms)
+timeout = 60000
+
+# Require browser tests for completion
+browser_required = true
+
+# Headless mode for CI
+headless = true

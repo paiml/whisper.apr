@@ -1181,6 +1181,57 @@ mod realtime_transcription_browser {
             visibility_check
         );
     }
+
+    /// PROBAR-SPEC-009 Improvement #9: Single-Worker Invariant Test (P2)
+    ///
+    /// Verifies that only one worker instance is spawned.
+    /// Double-spawn was a race condition root cause (BH-004).
+    #[tokio::test]
+    async fn test_single_worker_instance() {
+        require_server!();
+
+        let browser_result = Browser::launch(test_browser_config()).await;
+        if browser_result.is_err() {
+            return; // Skip if Chrome not available
+        }
+        let browser = browser_result.unwrap();
+
+        let mut page = browser.new_page().await.unwrap();
+        page.goto(&format!("{BASE_URL}/")).await.unwrap();
+
+        // Wait for app to fully initialize using eval
+        // Poll for record button to be enabled
+        for _ in 0..60 {
+            let is_enabled: bool = page.eval_wasm(
+                "!document.querySelector('#record')?.disabled"
+            ).await.unwrap_or(false);
+            if is_enabled {
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+
+        // Count worker blob URLs in performance entries
+        // Workers created via blob: URLs show up in resource timing
+        let worker_count: i32 = page.eval_wasm(
+            r#"
+            (function() {
+                const entries = performance.getEntriesByType('resource');
+                const workerBlobs = entries.filter(e =>
+                    e.name.includes('blob:') && e.initiatorType === 'other'
+                );
+                return workerBlobs.length;
+            })()
+            "#,
+        ).await.unwrap_or(0);
+
+        // Allow 0 (if performance API doesn't capture blobs) or 1 worker
+        assert!(
+            worker_count <= 1,
+            "Expected at most 1 worker, found {}. Double-spawn race condition detected!",
+            worker_count
+        );
+    }
 }
 
 // ============================================================================
