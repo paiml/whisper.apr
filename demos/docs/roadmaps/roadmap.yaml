@@ -214,11 +214,11 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'New task: WAPR-PROBADOR-002'
-  status: inprogress
+  status: completed
   priority: medium
   assigned_to: null
   created: 2026-01-08T13:54:41.243200446+00:00
-  updated: 2026-01-08T13:54:41.243200446+00:00
+  updated: 2026-01-08T14:02:39.086519060+00:00
   spec: null
   acceptance_criteria: []
   phases: []

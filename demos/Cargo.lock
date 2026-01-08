@@ -1697,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "jugar-probar"
-version = "0.5.1"
+version = "1.0.0-rc.1"
 dependencies = [
  "async-trait",
  "base64",
@@ -2340,6 +2340,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "presentar-core"
+version = "0.1.5"
+dependencies = [
+ "jugar-probar",
+ "serde",
+ "serde_json",
+ "trueno",
+]
+
+[[package]]
 name = "presser"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2356,7 +2366,7 @@ dependencies = [
 
 [[package]]
 name = "probar-js-gen"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 dependencies = [
  "blake3",
  "chrono",
@@ -4042,6 +4052,7 @@ dependencies = [
  "console_error_panic_hook",
  "js-sys",
  "jugar-probar",
+ "presentar-core",
  "probar-js-gen",
  "proptest",
  "serde",

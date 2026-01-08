@@ -28,6 +28,8 @@ serde_bytes = "0.11"
 probar-js-gen = { path = "/home/noah/src/probar/crates/probar-js-gen" }
 # Brick Architecture for test-driven UI (PROBAR-SPEC-009)
 jugar-probar = { path = "/home/noah/src/probar/crates/probar", default-features = false }
+# Presentar: Brick-based rendering engine (tests define interface)
+presentar-core = { path = "/home/noah/src/presentar/crates/presentar-core", features = ["brick"] }
 
 [dependencies.web-sys]
 workspace = true
