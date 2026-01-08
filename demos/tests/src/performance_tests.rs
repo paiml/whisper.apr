@@ -196,7 +196,11 @@ impl TranscriptionBenchmark {
             .map(|t| t.duration_since(start))
             .unwrap_or(total_duration);
 
-        let chunk_times_ms: Vec<u64> = self.chunk_times.iter().map(|d| d.as_millis() as u64).collect();
+        let chunk_times_ms: Vec<u64> = self
+            .chunk_times
+            .iter()
+            .map(|d| d.as_millis() as u64)
+            .collect();
 
         let rtf = if self.audio_duration_ms > 0 {
             (total_duration.as_millis() as f64) / (self.audio_duration_ms as f64)
@@ -244,7 +248,10 @@ mod tests {
             chunks_dropped: 0,
         };
 
-        assert!(good_result.meets_targets(), "Good result should meet targets");
+        assert!(
+            good_result.meets_targets(),
+            "Good result should meet targets"
+        );
         assert!(
             !good_result.violates_critical(),
             "Good result should not violate critical"
@@ -334,7 +341,10 @@ mod tests {
         assert_eq!(result.chunks_processed, 2);
         assert_eq!(result.audio_duration_ms, 3000);
         // First latency should be recorded (may be 0 if instant, that's ok)
-        assert!(result.total_duration_ms >= 10, "Should have measurable duration");
+        assert!(
+            result.total_duration_ms >= 10,
+            "Should have measurable duration"
+        );
     }
 
     #[test]

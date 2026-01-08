@@ -8,9 +8,9 @@
 //! - WebAssembly Threads Proposal (2023) - Shared memory semantics
 
 use serde::{Deserialize, Serialize};
+use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use std::rc::Rc;
 
 use crate::ring_buffer::SharedRingBuffer;
 
@@ -30,14 +30,10 @@ const MAX_CONSECUTIVE_ERRORS: u32 = 3;
 pub enum WorkerCommand {
     /// Initialize worker with model
     #[serde(rename = "init")]
-    Init {
-        model_url: String,
-    },
+    Init { model_url: String },
     /// Start processing audio from ring buffer
     #[serde(rename = "start")]
-    Start {
-        sample_rate: u32,
-    },
+    Start { sample_rate: u32 },
     /// Stop processing
     #[serde(rename = "stop")]
     Stop,
@@ -61,16 +57,10 @@ pub enum WorkerResult {
     Ready,
     /// Model loaded successfully
     #[serde(rename = "modelLoaded")]
-    ModelLoaded {
-        size_mb: f64,
-        load_time_ms: f64,
-    },
+    ModelLoaded { size_mb: f64, load_time_ms: f64 },
     /// Partial transcription result
     #[serde(rename = "partial")]
-    Partial {
-        text: String,
-        is_final: bool,
-    },
+    Partial { text: String, is_final: bool },
     /// Final transcription result
     #[serde(rename = "result")]
     Result {
@@ -79,15 +69,10 @@ pub enum WorkerResult {
     },
     /// Progress update
     #[serde(rename = "progress")]
-    Progress {
-        phase: String,
-        percent: f32,
-    },
+    Progress { phase: String, percent: f32 },
     /// Error occurred
     #[serde(rename = "error")]
-    Error {
-        message: String,
-    },
+    Error { message: String },
     /// Performance metrics
     #[serde(rename = "metrics")]
     Metrics {
@@ -136,7 +121,7 @@ pub struct TranscriptionWorker {
 impl TranscriptionWorker {
     /// Create new worker instance
     #[wasm_bindgen(constructor)]
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             state: WorkerState::Uninitialized,
@@ -163,7 +148,7 @@ impl TranscriptionWorker {
 
     /// Get current state
     #[wasm_bindgen(getter)]
-    #[must_use] 
+    #[must_use]
     pub fn state(&self) -> String {
         match self.state {
             WorkerState::Uninitialized => "uninitialized".to_string(),
@@ -188,7 +173,8 @@ impl TranscriptionWorker {
         let global = js_sys::global();
         let fetch_fn = js_sys::Reflect::get(&global, &"fetch".into())
             .map_err(|_| JsValue::from_str("fetch not available"))?;
-        let fetch_fn = fetch_fn.dyn_into::<js_sys::Function>()
+        let fetch_fn = fetch_fn
+            .dyn_into::<js_sys::Function>()
             .map_err(|_| JsValue::from_str("fetch is not a function"))?;
 
         let promise = fetch_fn.call1(&global, &url.into())?;
@@ -197,7 +183,10 @@ impl TranscriptionWorker {
 
         if !resp.ok() {
             self.state = WorkerState::Error;
-            return Err(JsValue::from_str(&format!("Failed to fetch model: {}", resp.status())));
+            return Err(JsValue::from_str(&format!(
+                "Failed to fetch model: {}",
+                resp.status()
+            )));
         }
 
         let array_buffer = JsFuture::from(resp.array_buffer()?).await?;
@@ -215,10 +204,13 @@ impl TranscriptionWorker {
                 let load_time_ms = js_sys::Date::now() - start;
 
                 web_sys::console::log_1(
-                    &format!("[Worker] Model initialized in {load_time_ms:.0}ms").into()
+                    &format!("[Worker] Model initialized in {load_time_ms:.0}ms").into(),
                 );
 
-                let result = WorkerResult::ModelLoaded { size_mb, load_time_ms };
+                let result = WorkerResult::ModelLoaded {
+                    size_mb,
+                    load_time_ms,
+                };
                 Ok(serde_wasm_bindgen::to_value(&result)?)
             }
             Err(e) => {
@@ -231,10 +223,25 @@ impl TranscriptionWorker {
     /// Start processing audio from ring buffer
     #[wasm_bindgen(js_name = startProcessing)]
     pub fn start_processing(&mut self, sample_rate: u32) -> Result<(), JsValue> {
+        web_sys::console::log_1(
+            &format!(
+                "[Worker] startProcessing called: state={:?}, has_buffer={}, sample_rate={}",
+                self.state,
+                self.ring_buffer.is_some(),
+                sample_rate
+            )
+            .into(),
+        );
+
         if self.state != WorkerState::Ready {
+            web_sys::console::warn_1(
+                &format!("[Worker] startProcessing REJECTED: state={:?} != Ready", self.state)
+                    .into(),
+            );
             return Err(JsValue::from_str("Worker not ready"));
         }
         if self.ring_buffer.is_none() {
+            web_sys::console::warn_1(&"[Worker] startProcessing REJECTED: no ring buffer".into());
             return Err(JsValue::from_str("No ring buffer attached"));
         }
 
@@ -248,7 +255,9 @@ impl TranscriptionWorker {
         self.chunks_dropped = 0;
         self.consecutive_errors = 0;
 
-        web_sys::console::log_1(&"[Worker] Started processing".into());
+        web_sys::console::log_1(
+            &format!("[Worker] ✓ Started processing, state now {:?}", self.state).into(),
+        );
         Ok(())
     }
 
@@ -258,19 +267,47 @@ impl TranscriptionWorker {
     /// Implements Phase 4 robustness: queue management, memory stability.
     #[wasm_bindgen(js_name = processAudio)]
     pub fn process_audio(&mut self) -> Result<JsValue, JsValue> {
+        // Diagnostic: Log state if not Processing (first 5 calls only)
+        static DIAG_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         if self.state != WorkerState::Processing {
+            let count = DIAG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if count < 5 {
+                web_sys::console::warn_1(
+                    &format!(
+                        "[Worker] processAudio called but state={:?}, expected Processing",
+                        self.state
+                    )
+                    .into(),
+                );
+            }
             return Ok(JsValue::NULL);
         }
 
         let Some(ref buffer) = self.ring_buffer else {
+            web_sys::console::warn_1(&"[Worker] processAudio: No ring buffer!".into());
             return Ok(JsValue::NULL);
         };
 
         // Read available samples
         let available = buffer.available_read()?;
         if available == 0 {
+            // Only log occasionally to avoid spam
+            if self.samples_read % 10000 == 0 && self.samples_read > 0 {
+                web_sys::console::log_1(
+                    &format!(
+                        "[Worker] processAudio: No data yet (accumulated: {})",
+                        self.accumulated_audio.len()
+                    )
+                    .into(),
+                );
+            }
             return Ok(JsValue::NULL);
         }
+
+        // Log data receipt
+        web_sys::console::log_1(
+            &format!("[Worker] processAudio: Reading {} samples from buffer", available).into(),
+        );
 
         let samples = buffer.read(available)?;
         self.samples_read += samples.len() as u64;
@@ -284,12 +321,24 @@ impl TranscriptionWorker {
 
         self.accumulated_audio.extend_from_slice(&resampled);
 
+        // Log accumulation progress
+        web_sys::console::log_1(
+            &format!(
+                "[Worker] Accumulated: {} samples ({:.1}s), need {} for chunk",
+                self.accumulated_audio.len(),
+                self.accumulated_audio.len() as f64 / 16000.0,
+                CHUNK_SAMPLES
+            )
+            .into(),
+        );
+
         // Phase 4: Memory stability - cap accumulated audio at 30 seconds
         if self.accumulated_audio.len() > MAX_ACCUMULATED_SAMPLES {
             let excess = self.accumulated_audio.len() - MAX_ACCUMULATED_SAMPLES;
             self.accumulated_audio.drain(..excess);
             web_sys::console::warn_1(
-                &format!("[Worker] Memory cap: dropped {excess} samples to maintain stability").into()
+                &format!("[Worker] Memory cap: dropped {excess} samples to maintain stability")
+                    .into(),
             );
         }
 
@@ -304,8 +353,11 @@ impl TranscriptionWorker {
             self.chunks_dropped += chunks_to_drop as u64;
             self.pending_chunks = MAX_PENDING_CHUNKS;
             web_sys::console::warn_1(
-                &format!("[Worker] Queue overflow: dropped {} chunks (total dropped: {})",
-                         chunks_to_drop, self.chunks_dropped).into()
+                &format!(
+                    "[Worker] Queue overflow: dropped {} chunks (total dropped: {})",
+                    chunks_to_drop, self.chunks_dropped
+                )
+                .into(),
             );
         }
 
@@ -330,8 +382,11 @@ impl TranscriptionWorker {
         // Phase 4: Check if we need to reset due to consecutive errors
         if self.consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
             web_sys::console::warn_1(
-                &format!("[Worker] Error recovery: {} consecutive errors, resetting state",
-                         self.consecutive_errors).into()
+                &format!(
+                    "[Worker] Error recovery: {} consecutive errors, resetting state",
+                    self.consecutive_errors
+                )
+                .into(),
             );
             self.reset_state();
             let error_result = WorkerResult::Error {
@@ -363,8 +418,11 @@ impl TranscriptionWorker {
                 self.consecutive_errors = 0; // Reset error counter on success
 
                 web_sys::console::log_1(
-                    &format!("[Worker] Chunk {} transcribed in {:.0}ms (RTF: {:.2})",
-                             self.chunks_processed, elapsed, rtf).into()
+                    &format!(
+                        "[Worker] Chunk {} transcribed in {:.0}ms (RTF: {:.2})",
+                        self.chunks_processed, elapsed, rtf
+                    )
+                    .into(),
                 );
 
                 let worker_result = WorkerResult::Partial {
@@ -376,8 +434,11 @@ impl TranscriptionWorker {
             Err(e) => {
                 self.consecutive_errors += 1;
                 web_sys::console::error_1(
-                    &format!("[Worker] Transcription error ({}/{}): {:?}",
-                             self.consecutive_errors, MAX_CONSECUTIVE_ERRORS, e).into()
+                    &format!(
+                        "[Worker] Transcription error ({}/{}): {:?}",
+                        self.consecutive_errors, MAX_CONSECUTIVE_ERRORS, e
+                    )
+                    .into(),
                 );
                 Ok(JsValue::NULL)
             }
@@ -471,7 +532,7 @@ impl TranscriptionWorker {
                         segments: vec![], // TODO: Add segment extraction
                     })
                 }
-                Err(_) => None
+                Err(_) => None,
             }
         };
 
@@ -502,12 +563,13 @@ impl Default for TranscriptionWorker {
 }
 
 /// Worker entry point - called when worker script loads
+///
+/// Note: console_error_panic_hook and tracing_wasm are already initialized
+/// by the #[wasm_bindgen(start)] function in lib.rs when the module loads.
 #[wasm_bindgen(js_name = initWorker)]
-#[must_use] 
+#[must_use]
 pub fn init_worker() -> TranscriptionWorker {
-    console_error_panic_hook::set_once();
-    tracing_wasm::set_as_global_default();
-
+    // Tracing already set up by start() - just log and create worker
     web_sys::console::log_1(&"[Worker] Initialized".into());
 
     TranscriptionWorker::new()

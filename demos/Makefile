@@ -211,30 +211,33 @@ test-browser-coverage:
 
 # ============================================================================
 # Development Server (via probar)
+# NOTE: All serve targets depend on build to ensure www/pkg is fresh.
+#       www-demo/pkg is a symlink to www/pkg (single source of truth).
 # ============================================================================
 
-## Start development server with probar
-serve:
+## Start development server with probar (builds first)
+serve: build
 	@echo "🌐 Starting probar development server..."
 	@probar serve www --port 8080 --cors
 
-## Start server with COOP/COEP headers for SharedArrayBuffer (parallel demos)
-serve-parallel:
+## Start server with COOP/COEP headers for SharedArrayBuffer (builds first)
+serve-parallel: build
 	@echo "🌐 Starting server with COOP/COEP headers for parallel WASM..."
 	@probar serve www --port 8080 --cors --cross-origin-isolated
 
-## Start server on port 8090 (for tests)
-serve-test:
+## Start server on port 8090 for tests (builds first)
+serve-test: build
 	@echo "🌐 Starting probar test server on port 8090..."
 	@probar serve www --port 8090 --cors
 
 ## Watch for changes and rebuild (via probar)
-watch:
+watch: build
 	@echo "👀 Watching for changes with probar..."
 	@probar watch --serve --port 8080
 
-## Legacy serve (python fallback)
+## Legacy serve (python fallback) - DEPRECATED, use serve-parallel
 serve-legacy:
+	@echo "⚠️  DEPRECATED: Use 'make serve-parallel' for COOP/COEP support"
 	@echo "🌐 Starting legacy python server..."
 	@python3 -m http.server 8080 --directory www/
 

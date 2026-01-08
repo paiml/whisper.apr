@@ -35,7 +35,7 @@ use probar_js_gen::prelude::*;
 /// # Panics
 ///
 /// Panics if any identifier is invalid (should never happen with static strings).
-#[must_use] 
+#[must_use]
 pub fn generate_worker_js() -> String {
     // Helper to make identifier creation less verbose
     let id = |s: &str| Expr::ident(s).expect("known-good identifier");
@@ -48,11 +48,20 @@ pub fn generate_worker_js() -> String {
         .comment("Uses dynamic import() for ES modules")
         .comment("Runs in DedicatedWorkerGlobalScope (NOT Window)")
         // State variables
-        .let_decl("wasm", Expr::null()).expect("wasm is valid")
-        .let_decl("worker", Expr::null()).expect("worker is valid")
-        .let_decl("ringBuffer", Expr::null()).expect("ringBuffer is valid")
-        .let_decl("processingInterval", Expr::null()).expect("processingInterval is valid")
-        .let_decl("initialized", Expr::bool(false)).expect("initialized is valid")
+        .let_decl("baseUrl", Expr::str(""))
+        .expect("baseUrl is valid")
+        .let_decl("wasmModule", Expr::null())
+        .expect("wasmModule is valid")
+        .let_decl("wasm", Expr::null())
+        .expect("wasm is valid")
+        .let_decl("worker", Expr::null())
+        .expect("worker is valid")
+        .let_decl("ringBuffer", Expr::null())
+        .expect("ringBuffer is valid")
+        .let_decl("processingInterval", Expr::null())
+        .expect("processingInterval is valid")
+        .let_decl("initialized", Expr::bool(false))
+        .expect("initialized is valid")
         // Message handler
         .stmt(build_on_message_handler())
         // Process audio tick function
@@ -63,25 +72,23 @@ pub fn generate_worker_js() -> String {
             Expr::arrow_block(
                 &[],
                 vec![
-                    Stmt::const_decl(
-                        "result",
-                        dot(id("worker"), "processAudio").call(vec![]),
-                    ).expect("result is valid"),
+                    Stmt::const_decl("result", dot(id("worker"), "processAudio").call(vec![]))
+                        .expect("result is valid"),
                     Stmt::if_then(
                         id("result"),
                         vec![Stmt::expr(
-                            dot(id("self"), "postMessage")
-                                .call(vec![id("result")]),
+                            dot(id("self"), "postMessage").call(vec![id("result")]),
                         )],
                     ),
                 ],
-            ).expect("arrow block is valid"),
-        ).expect("processAudioTick is valid")
-        // Console log for module load
-        .expr(
-            dot(id("console"), "log")
-                .call(vec![Expr::str("[Worker] Module loaded, waiting for bootstrap message")]),
+            )
+            .expect("arrow block is valid"),
         )
+        .expect("processAudioTick is valid")
+        // Console log for module load
+        .expr(dot(id("console"), "log").call(vec![Expr::str(
+            "[Worker] Module loaded, waiting for bootstrap message",
+        )]))
         .build();
 
     generate(&module)
@@ -101,12 +108,10 @@ fn build_on_message_handler() -> Stmt {
         Stmt::if_then(
             id("initialized").not(),
             vec![
-                Stmt::expr(
-                    dot(id("console"), "warn").call(vec![
-                        Expr::str("[Worker] Not initialized, ignoring message:"),
-                        dot(id("msg"), "type"),
-                    ]),
-                ),
+                Stmt::expr(dot(id("console"), "warn").call(vec![
+                    Expr::str("[Worker] Not initialized, ignoring message:"),
+                    dot(id("msg"), "type"),
+                ])),
                 Stmt::ret(),
             ],
         ),
@@ -123,86 +128,75 @@ fn build_bootstrap_handler() -> Stmt {
     Stmt::if_then(
         dot(id("msg"), "type").eq(Expr::str("bootstrap")),
         vec![
-            // const baseUrl = msg.baseUrl || ''
-            Stmt::const_decl(
-                "baseUrl",
-                dot(id("msg"), "baseUrl").or(Expr::str("")),
-            ).expect("baseUrl is valid"),
+            // baseUrl = msg.baseUrl || ''
+            Stmt::assign("baseUrl", dot(id("msg"), "baseUrl").or(Expr::str("")))
+                .expect("baseUrl assignment"),
             // try { ... } catch (e) { ... }
             Stmt::try_catch(
                 vec![
                     // console.log('[Worker] Bootstrap received, loading WASM from:', baseUrl)
-                    Stmt::expr(
-                        dot(id("console"), "log").call(vec![
-                            Expr::str("[Worker] Bootstrap received, loading WASM from:"),
-                            id("baseUrl"),
-                        ]),
-                    ),
-                    // const wasmModule = await import(baseUrl + '/pkg/whisper_apr_demo.js')
-                    Stmt::const_decl(
+                    Stmt::expr(dot(id("console"), "log").call(vec![
+                        Expr::str("[Worker] Bootstrap received, loading WASM from:"),
+                        id("baseUrl"),
+                    ])),
+                    // wasmModule = await import(baseUrl + '/pkg/whisper_apr_demo.js')
+                    Stmt::assign(
                         "wasmModule",
                         Expr::import(id("baseUrl").add(Expr::str("/pkg/whisper_apr_demo.js")))
                             .await_expr(),
-                    ).expect("wasmModule is valid"),
+                    )
+                    .expect("wasmModule assignment"),
                     // wasm = await wasmModule["default"](baseUrl + '/pkg/whisper_apr_demo_bg.wasm')
                     // Note: "default" is a reserved word, so we use computed access
                     Stmt::assign(
                         "wasm",
                         id("wasmModule")
                             .index(Expr::str("default"))
-                            .call(vec![id("baseUrl").add(Expr::str("/pkg/whisper_apr_demo_bg.wasm"))])
+                            .call(vec![
+                                id("baseUrl").add(Expr::str("/pkg/whisper_apr_demo_bg.wasm"))
+                            ])
                             .await_expr(),
-                    ).expect("wasm assignment"),
+                    )
+                    .expect("wasm assignment"),
                     // worker = wasmModule.initWorker()
-                    Stmt::assign(
-                        "worker",
-                        dot(id("wasmModule"), "initWorker").call(vec![]),
-                    ).expect("worker assignment"),
+                    Stmt::assign("worker", dot(id("wasmModule"), "initWorker").call(vec![]))
+                        .expect("worker assignment"),
                     // initialized = true
                     Stmt::assign("initialized", Expr::bool(true)).expect("initialized assignment"),
                     // console.log('[Worker] WASM initialized successfully')
                     Stmt::expr(
-                        dot(id("console"), "log").call(vec![
-                            Expr::str("[Worker] WASM initialized successfully"),
-                        ]),
+                        dot(id("console"), "log")
+                            .call(vec![Expr::str("[Worker] WASM initialized successfully")]),
                     ),
                     // console.log('[Worker] TranscriptionWorker created, ready for commands')
-                    Stmt::expr(
-                        dot(id("console"), "log").call(vec![
-                            Expr::str("[Worker] TranscriptionWorker created, ready for commands"),
-                        ]),
-                    ),
+                    Stmt::expr(dot(id("console"), "log").call(vec![Expr::str(
+                        "[Worker] TranscriptionWorker created, ready for commands",
+                    )])),
                     // self.postMessage({ type: 'ready' })
                     Stmt::expr(
-                        dot(id("self"), "postMessage").call(vec![
-                            Expr::object(vec![("type", Expr::str("ready"))]),
-                        ]),
+                        dot(id("self"), "postMessage")
+                            .call(vec![Expr::object(vec![("type", Expr::str("ready"))])]),
                     ),
                 ],
                 "e",
                 vec![
                     // console.error('[Worker] Init failed:', e)
                     Stmt::expr(
-                        dot(id("console"), "error").call(vec![
-                            Expr::str("[Worker] Init failed:"),
-                            id("e"),
-                        ]),
+                        dot(id("console"), "error")
+                            .call(vec![Expr::str("[Worker] Init failed:"), id("e")]),
                     ),
                     // self.postMessage({ type: 'error', message: 'Worker init failed: ' + e.toString() })
-                    Stmt::expr(
-                        dot(id("self"), "postMessage").call(vec![
-                            Expr::object(vec![
+                    Stmt::expr(dot(id("self"), "postMessage").call(vec![Expr::object(vec![
                                 ("type", Expr::str("error")),
                                 (
                                     "message",
                                     Expr::str("Worker init failed: ")
                                         .add(dot(id("e"), "toString").call(vec![])),
                                 ),
-                            ]),
-                        ]),
-                    ),
+                            ])])),
                 ],
-            ).expect("try-catch is valid"),
+            )
+            .expect("try-catch is valid"),
             Stmt::ret(),
         ],
     )
@@ -219,84 +213,81 @@ fn build_message_switch() -> JsSwitch {
             Expr::str("init"),
             vec![
                 Stmt::expr(
-                    dot(id("console"), "log").call(vec![
-                        Expr::str("[Worker] Processing init message"),
-                    ]),
+                    dot(id("console"), "log")
+                        .call(vec![Expr::str("[Worker] Processing init message")]),
                 ),
                 // if (msg.buffer) { ... }
                 Stmt::if_then(
                     dot(id("msg"), "buffer"),
                     vec![
-                        // ringBuffer = wasm.SharedRingBuffer.fromBuffer(msg.buffer)
+                        // ringBuffer = wasmModule.SharedRingBuffer.fromBuffer(msg.buffer)
                         Stmt::assign(
                             "ringBuffer",
-                            dot(dot(id("wasm"), "SharedRingBuffer"), "fromBuffer")
+                            dot(dot(id("wasmModule"), "SharedRingBuffer"), "fromBuffer")
                                 .call(vec![dot(id("msg"), "buffer")]),
-                        ).expect("ringBuffer assignment"),
+                        )
+                        .expect("ringBuffer assignment"),
                         // worker.setRingBuffer(ringBuffer)
-                        Stmt::expr(
-                            dot(id("worker"), "setRingBuffer").call(vec![id("ringBuffer")]),
-                        ),
+                        Stmt::expr(dot(id("worker"), "setRingBuffer").call(vec![id("ringBuffer")])),
                         // console.log('[Worker] Ring buffer attached')
                         Stmt::expr(
-                            dot(id("console"), "log").call(vec![
-                                Expr::str("[Worker] Ring buffer attached"),
-                            ]),
+                            dot(id("console"), "log")
+                                .call(vec![Expr::str("[Worker] Ring buffer attached")]),
                         ),
                     ],
                 ),
+                // Resolve model URL (prepend baseUrl if relative)
+                // baseUrl is stored from bootstrap message
+                Stmt::const_decl(
+                    "modelUrl",
+                    Expr::ternary(
+                        dot(dot(id("msg"), "modelUrl"), "startsWith").call(vec![Expr::str("/")]),
+                        id("baseUrl").add(dot(id("msg"), "modelUrl")),
+                        dot(id("msg"), "modelUrl"),
+                    ),
+                )
+                .expect("modelUrl is valid"),
                 // try { load model } catch (e) { ... }
                 Stmt::try_catch(
                     vec![
-                        Stmt::expr(
-                            dot(id("console"), "log").call(vec![
-                                Expr::str("[Worker] Loading model from:"),
-                                dot(id("msg"), "modelUrl"),
-                            ]),
-                        ),
+                        Stmt::expr(dot(id("console"), "log").call(vec![
+                            Expr::str("[Worker] Loading model from:"),
+                            id("modelUrl"),
+                        ])),
                         Stmt::const_decl(
                             "result",
                             dot(id("worker"), "loadModel")
-                                .call(vec![dot(id("msg"), "modelUrl")])
+                                .call(vec![id("modelUrl")])
                                 .await_expr(),
-                        ).expect("result is valid"),
-                        Stmt::expr(
-                            dot(id("self"), "postMessage").call(vec![id("result")]),
-                        ),
+                        )
+                        .expect("result is valid"),
+                        Stmt::expr(dot(id("self"), "postMessage").call(vec![id("result")])),
                     ],
                     "e",
                     vec![
                         Stmt::expr(
-                            dot(id("console"), "error").call(vec![
-                                Expr::str("[Worker] Model load failed:"),
-                                id("e"),
-                            ]),
+                            dot(id("console"), "error")
+                                .call(vec![Expr::str("[Worker] Model load failed:"), id("e")]),
                         ),
-                        Stmt::expr(
-                            dot(id("self"), "postMessage").call(vec![
-                                Expr::object(vec![
-                                    ("type", Expr::str("error")),
-                                    ("message", dot(id("e"), "toString").call(vec![])),
-                                ]),
-                            ]),
-                        ),
+                        Stmt::expr(dot(id("self"), "postMessage").call(vec![Expr::object(vec![
+                            ("type", Expr::str("error")),
+                            ("message", dot(id("e"), "toString").call(vec![])),
+                        ])])),
                     ],
-                ).expect("try-catch is valid"),
+                )
+                .expect("try-catch is valid"),
             ],
         )
         // start case
         .case(
             Expr::str("start"),
             vec![
+                Stmt::expr(dot(id("console"), "log").call(vec![
+                    Expr::str("[Worker] Starting processing at sample rate:"),
+                    dot(id("msg"), "sampleRate"),
+                ])),
                 Stmt::expr(
-                    dot(id("console"), "log").call(vec![
-                        Expr::str("[Worker] Starting processing at sample rate:"),
-                        dot(id("msg"), "sampleRate"),
-                    ]),
-                ),
-                Stmt::expr(
-                    dot(id("worker"), "startProcessing")
-                        .call(vec![dot(id("msg"), "sampleRate")]),
+                    dot(id("worker"), "startProcessing").call(vec![dot(id("msg"), "sampleRate")]),
                 ),
                 // processingInterval = setInterval(() => processAudioTick(), 50)
                 Stmt::assign(
@@ -306,7 +297,8 @@ fn build_message_switch() -> JsSwitch {
                         id("setInterval").call(vec![id("processAudioTick"), Expr::num(50)]),
                         Expr::null(),
                     ),
-                ).expect("processingInterval assignment"),
+                )
+                .expect("processingInterval assignment"),
             ],
         )
         // stop case
@@ -314,9 +306,7 @@ fn build_message_switch() -> JsSwitch {
             Expr::str("stop"),
             vec![
                 Stmt::expr(
-                    dot(id("console"), "log").call(vec![
-                        Expr::str("[Worker] Stopping processing"),
-                    ]),
+                    dot(id("console"), "log").call(vec![Expr::str("[Worker] Stopping processing")]),
                 ),
                 Stmt::if_then(
                     id("processingInterval"),
@@ -326,10 +316,8 @@ fn build_message_switch() -> JsSwitch {
                             .expect("processingInterval assignment"),
                     ],
                 ),
-                Stmt::const_decl(
-                    "result",
-                    dot(id("worker"), "stopProcessing").call(vec![]),
-                ).expect("result is valid"),
+                Stmt::const_decl("result", dot(id("worker"), "stopProcessing").call(vec![]))
+                    .expect("result is valid"),
                 Stmt::if_then(
                     id("result"),
                     vec![Stmt::expr(
@@ -342,9 +330,8 @@ fn build_message_switch() -> JsSwitch {
         .case(
             Expr::str("metrics"),
             vec![Stmt::expr(
-                dot(id("self"), "postMessage").call(vec![
-                    dot(id("worker"), "getMetrics").call(vec![]),
-                ]),
+                dot(id("self"), "postMessage")
+                    .call(vec![dot(id("worker"), "getMetrics").call(vec![])]),
             )],
         )
         // shutdown case
@@ -352,9 +339,7 @@ fn build_message_switch() -> JsSwitch {
             Expr::str("shutdown"),
             vec![
                 Stmt::expr(
-                    dot(id("console"), "log").call(vec![
-                        Expr::str("[Worker] Shutting down"),
-                    ]),
+                    dot(id("console"), "log").call(vec![Expr::str("[Worker] Shutting down")]),
                 ),
                 Stmt::if_then(
                     id("processingInterval"),
@@ -368,124 +353,6 @@ fn build_message_switch() -> JsSwitch {
         .build()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn worker_js_uses_dynamic_import() {
-        let js = generate_worker_js();
-        assert!(
-            js.contains("import("),
-            "Worker must use dynamic import() for ES modules"
-        );
-    }
-
-    #[test]
-    fn worker_js_never_uses_importscripts() {
-        let js = generate_worker_js();
-        assert!(
-            !js.contains("importScripts"),
-            "Worker must NOT use importScripts - it doesn't work with ES modules"
-        );
-    }
-
-    #[test]
-    fn worker_js_never_accesses_window() {
-        let js = generate_worker_js();
-        assert!(
-            !js.contains("window."),
-            "Worker has no window object - use self instead"
-        );
-        assert!(
-            !js.contains("window)"),
-            "Worker has no window object - use self instead"
-        );
-        assert!(
-            !js.contains("window,"),
-            "Worker has no window object - use self instead"
-        );
-    }
-
-    #[test]
-    fn worker_js_uses_self_for_global() {
-        let js = generate_worker_js();
-        assert!(
-            js.contains("self.onmessage"),
-            "Worker must use self.onmessage"
-        );
-        assert!(
-            js.contains("self.postMessage"),
-            "Worker must use self.postMessage"
-        );
-    }
-
-    #[test]
-    fn worker_js_has_bootstrap_handler() {
-        let js = generate_worker_js();
-        assert!(
-            js.contains("\"bootstrap\""),
-            "Worker must handle bootstrap message"
-        );
-    }
-
-    #[test]
-    fn worker_js_logs_initialization_success() {
-        let js = generate_worker_js();
-        assert!(
-            js.contains("[Worker] WASM initialized successfully"),
-            "Worker must log success message for verification"
-        );
-    }
-
-    #[test]
-    fn worker_js_sends_ready_message() {
-        let js = generate_worker_js();
-        assert!(
-            js.contains("\"ready\""),
-            "Worker must send ready message to main thread"
-        );
-    }
-
-    #[test]
-    fn worker_js_handles_all_message_types() {
-        let js = generate_worker_js();
-        for msg_type in &["init", "start", "stop", "metrics", "shutdown"] {
-            assert!(
-                js.contains(&format!("\"{}\"", msg_type)),
-                "Worker must handle '{}' message",
-                msg_type
-            );
-        }
-    }
-
-    #[test]
-    fn generation_is_deterministic() {
-        let js1 = generate_worker_js();
-        let js2 = generate_worker_js();
-        assert_eq!(js1, js2, "Generation must be deterministic");
-    }
-
-    #[test]
-    fn no_forbidden_patterns() {
-        let js = generate_worker_js();
-        for pattern in probar_js_gen::validator::FORBIDDEN_PATTERNS {
-            assert!(
-                !js.contains(pattern),
-                "Forbidden pattern '{}' found in generated JS",
-                pattern
-            );
-        }
-    }
-
-    #[test]
-    fn passes_worker_validator() {
-        let js = generate_worker_js();
-        let errors = probar_js_gen::validator::validate_worker_js(&js);
-        assert!(
-            errors.is_empty(),
-            "Worker validation failed: {:?}",
-            errors
-        );
-    }
-}
+// Unit tests moved to whisper-apr-demo-tests crate to avoid wasm-bindgen linker conflicts.
+// See: demos/tests/src/worker_js_tests.rs

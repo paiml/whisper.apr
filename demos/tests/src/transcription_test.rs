@@ -13,7 +13,10 @@ fn test_config() -> BrowserConfig {
 
 #[tokio::test]
 async fn test_transcription_completes() {
-    if tokio::net::TcpStream::connect("127.0.0.1:8080").await.is_err() {
+    if tokio::net::TcpStream::connect("127.0.0.1:8080")
+        .await
+        .is_err()
+    {
         eprintln!("SKIP: Server not running");
         return;
     }
@@ -42,7 +45,10 @@ async fn test_transcription_completes() {
             eprintln!("  [{}s] {}", i / 2, status);
         }
 
-        if status.contains("Ready") && !status.contains("Downloading") && !status.contains("Loading") {
+        if status.contains("Ready")
+            && !status.contains("Downloading")
+            && !status.contains("Loading")
+        {
             ready = true;
             eprintln!("Model loaded!");
             break;
@@ -52,38 +58,58 @@ async fn test_transcription_completes() {
 
     // Click record
     eprintln!("Clicking record...");
-    let _: bool = page.eval_wasm("(document.querySelector('#record')?.click(), true)").await.unwrap_or(false);
+    let _: bool = page
+        .eval_wasm("(document.querySelector('#record')?.click(), true)")
+        .await
+        .unwrap_or(false);
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Verify recording state
-    let status: String = page.eval_wasm("document.querySelector('#status')?.textContent || ''").await.unwrap_or_default();
+    let status: String = page
+        .eval_wasm("document.querySelector('#status')?.textContent || ''")
+        .await
+        .unwrap_or_default();
     eprintln!("Status: {}", status);
 
     // Since we can't grant mic permission in headless, recording will fail
     // Let's test the transcription path directly by injecting audio
 
     // Stop recording (even if it failed to start)
-    let _: bool = page.eval_wasm("(document.querySelector('#record')?.click(), true)").await.unwrap_or(false);
+    let _: bool = page
+        .eval_wasm("(document.querySelector('#record')?.click(), true)")
+        .await
+        .unwrap_or(false);
 
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    let final_status: String = page.eval_wasm("document.querySelector('#status')?.textContent || ''").await.unwrap_or_default();
-    let transcript: String = page.eval_wasm("document.querySelector('#transcript')?.textContent || ''").await.unwrap_or_default();
+    let final_status: String = page
+        .eval_wasm("document.querySelector('#status')?.textContent || ''")
+        .await
+        .unwrap_or_default();
+    let transcript: String = page
+        .eval_wasm("document.querySelector('#transcript')?.textContent || ''")
+        .await
+        .unwrap_or_default();
 
     eprintln!("Final status: {}", final_status);
     eprintln!("Transcript: {}", transcript);
 
     // In headless without mic, we expect "No audio recorded" or an error
     assert!(
-        final_status.contains("Ready") || transcript.contains("No audio") || transcript.contains("Error"),
+        final_status.contains("Ready")
+            || transcript.contains("No audio")
+            || transcript.contains("Error"),
         "Should handle no-mic case gracefully"
     );
 }
 
 #[tokio::test]
 async fn test_model_loads_successfully() {
-    if tokio::net::TcpStream::connect("127.0.0.1:8080").await.is_err() {
+    if tokio::net::TcpStream::connect("127.0.0.1:8080")
+        .await
+        .is_err()
+    {
         eprintln!("SKIP: Server not running");
         return;
     }
@@ -123,7 +149,10 @@ async fn test_model_loads_successfully() {
     }
 
     let total_time = start.elapsed();
-    eprintln!("\nModel loading completed in {:.1}s", total_time.as_secs_f32());
+    eprintln!(
+        "\nModel loading completed in {:.1}s",
+        total_time.as_secs_f32()
+    );
     eprintln!("Stages: {:?}", stages);
 
     assert!(ready, "Model must reach Ready state");

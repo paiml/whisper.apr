@@ -24,7 +24,8 @@ const DEMO_CONFIGS: &[DemoConfig] = &[
     DemoConfig {
         name: "realtime-transcription",
         path: "/demos/realtime-transcription.html",
-        states: &["idle", "recording", "processing"],
+        // WAPR-WORKER: Added worker_error state for full state coverage
+        states: &["idle", "recording", "processing", "worker_error"],
     },
     DemoConfig {
         name: "upload-transcription",

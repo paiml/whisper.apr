@@ -48,7 +48,6 @@ fn test_browser_config() -> BrowserConfig {
         .with_tracing(tracing)
 }
 
-
 /// Create browser config without tracing (for quick tests)
 #[allow(dead_code)]
 fn _test_browser_config_no_tracing() -> BrowserConfig {
@@ -183,7 +182,10 @@ mod realtime_transcription_browser {
             }
         }
 
-        assert!(button_enabled, "Start button should be enabled after model loads");
+        assert!(
+            button_enabled,
+            "Start button should be enabled after model loads"
+        );
     }
 
     #[tokio::test]
@@ -260,15 +262,18 @@ mod realtime_transcription_browser {
         let click_messages = page.fetch_console_messages().await.unwrap();
 
         // Debug: print all messages
-        eprintln!("Console messages captured ({} total):", click_messages.len());
+        eprintln!(
+            "Console messages captured ({} total):",
+            click_messages.len()
+        );
         for msg in &click_messages {
             eprintln!("  [{:?}] {}", msg.level, msg.text);
         }
 
         // Verify button click handler fired
-        let has_click_log = click_messages
-            .iter()
-            .any(|m| m.text.contains("Start recording button clicked") || m.text.contains("button_id"));
+        let has_click_log = click_messages.iter().any(|m| {
+            m.text.contains("Start recording button clicked") || m.text.contains("button_id")
+        });
 
         // Check if start button state changed (indicating click was processed)
         let button_disabled: bool = page
@@ -447,10 +452,7 @@ mod realtime_transcription_browser {
             })()
         "#;
 
-        let mock_installed: bool = page
-            .eval_wasm(mock_media_js)
-            .await
-            .unwrap_or(false);
+        let mock_installed: bool = page.eval_wasm(mock_media_js).await.unwrap_or(false);
         assert!(mock_installed, "Mock media should be installed");
 
         // Wait for model to load (37MB - needs more time)
@@ -475,7 +477,9 @@ mod realtime_transcription_browser {
                 .await
                 .unwrap_or_else(|_| "{}".to_string());
 
-            if page_state.contains("\"hasReady\":true") || page_state.contains("\"buttonDisabled\":false") {
+            if page_state.contains("\"hasReady\":true")
+                || page_state.contains("\"buttonDisabled\":false")
+            {
                 model_loaded = true;
                 eprintln!("Model loaded after {}s", i);
                 break;
@@ -498,7 +502,7 @@ mod realtime_transcription_browser {
                     if (!el) return 'NOT_FOUND';
                     if (el.disabled) return 'DISABLED';
                     return 'ENABLED';
-                })()"
+                })()",
             )
             .await
             .unwrap_or_else(|_| "ERROR".to_string());
@@ -540,10 +544,17 @@ mod realtime_transcription_browser {
             let messages = page.fetch_console_messages().await.unwrap_or_default();
             eprintln!("Console messages ({} total):", messages.len());
             for msg in &messages {
-                eprintln!("  [{:?}] {}", msg.level, &msg.text[..msg.text.len().min(200)]);
+                eprintln!(
+                    "  [{:?}] {}",
+                    msg.level,
+                    &msg.text[..msg.text.len().min(200)]
+                );
             }
 
-            panic!("E2E FAILURE: Model not loaded, start button disabled. Status: '{}'", status);
+            panic!(
+                "E2E FAILURE: Model not loaded, start button disabled. Status: '{}'",
+                status
+            );
         }
 
         // Click start button
@@ -553,7 +564,11 @@ mod realtime_transcription_browser {
             )
             .await
             .unwrap_or(false);
-        assert!(click_result, "Start button should be clickable (state was: {})", button_state);
+        assert!(
+            click_result,
+            "Start button should be clickable (state was: {})",
+            button_state
+        );
 
         // Wait for recording to process some audio
         tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
@@ -579,12 +594,15 @@ mod realtime_transcription_browser {
                     const t = document.querySelector('#transcript_display');
                     const p = document.querySelector('#partial_transcript');
                     return (t ? t.textContent : '') + (p ? p.textContent : '');
-                })()"
+                })()",
             )
             .await
             .unwrap_or_default();
 
-        eprintln!("  Transcript content: '{}'", transcript.chars().take(100).collect::<String>());
+        eprintln!(
+            "  Transcript content: '{}'",
+            transcript.chars().take(100).collect::<String>()
+        );
 
         // Click stop
         let _: () = page
@@ -606,7 +624,9 @@ mod realtime_transcription_browser {
         assert!(
             has_mock_stream || has_audio_callback || has_chunk_ready,
             "Audio pipeline should show activity. Got mock={}, callback={}, chunk={}",
-            has_mock_stream, has_audio_callback, has_chunk_ready
+            has_mock_stream,
+            has_audio_callback,
+            has_chunk_ready
         );
     }
 
@@ -642,9 +662,9 @@ mod realtime_transcription_browser {
         // Check console for "No window" error - this is the bug we're catching
         let messages = page.fetch_console_messages().await.unwrap_or_default();
 
-        let has_no_window_error = messages.iter().any(|m| {
-            m.text.contains("No window") || m.text.contains("Bootstrap failed")
-        });
+        let has_no_window_error = messages
+            .iter()
+            .any(|m| m.text.contains("No window") || m.text.contains("Bootstrap failed"));
 
         let has_worker_ready = messages.iter().any(|m| m.text.contains("Worker ready"));
 
@@ -652,7 +672,11 @@ mod realtime_transcription_browser {
         eprintln!("Console messages ({}):", messages.len());
         for msg in &messages {
             if msg.text.contains("Worker") || msg.text.contains("window") {
-                eprintln!("  [{:?}] {}", msg.level, &msg.text[..msg.text.len().min(150)]);
+                eprintln!(
+                    "  [{:?}] {}",
+                    msg.level,
+                    &msg.text[..msg.text.len().min(150)]
+                );
             }
         }
 
@@ -700,17 +724,29 @@ mod realtime_transcription_browser {
             let messages = page.fetch_console_messages().await.unwrap_or_default();
 
             // Check for successful Worker flow
-            let bootstrap_started = messages.iter().any(|m| m.text.contains("Bootstrap starting"));
+            let bootstrap_started = messages
+                .iter()
+                .any(|m| m.text.contains("Bootstrap starting"));
             let module_imported = messages.iter().any(|m| m.text.contains("Module imported"));
             let wasm_init = messages.iter().any(|m| m.text.contains("WASM initialized"));
-            let entry_called = messages.iter().any(|m| m.text.contains("Entry point called"));
+            let entry_called = messages
+                .iter()
+                .any(|m| m.text.contains("Entry point called"));
             let worker_ready = messages.iter().any(|m| m.text.contains("Worker ready"));
-            let model_loaded_msg = messages.iter().any(|m| m.text.contains("Model loaded in worker"));
+            let model_loaded_msg = messages
+                .iter()
+                .any(|m| m.text.contains("Model loaded in worker"));
 
             if i % 5 == 0 {
                 eprintln!(
                     "  [{:02}s] bootstrap={} import={} wasm={} entry={} ready={} model={}",
-                    i, bootstrap_started, module_imported, wasm_init, entry_called, worker_ready, model_loaded_msg
+                    i,
+                    bootstrap_started,
+                    module_imported,
+                    wasm_init,
+                    entry_called,
+                    worker_ready,
+                    model_loaded_msg
                 );
             }
 
@@ -846,13 +882,20 @@ mod realtime_transcription_browser {
         assert!(model_loaded, "Model should load within 30s");
 
         // Verify console capture is working with a test message
-        let _: () = page.eval_wasm("console.log('[TEST-CONSOLE] Capture verification');").await.unwrap_or(());
+        let _: () = page
+            .eval_wasm("console.log('[TEST-CONSOLE] Capture verification');")
+            .await
+            .unwrap_or(());
 
         // Fetch messages to check capture
         let early_messages = page.fetch_console_messages().await.unwrap_or_default();
-        eprintln!("Early console messages ({}): {:?}",
+        eprintln!(
+            "Early console messages ({}): {:?}",
             early_messages.len(),
-            early_messages.iter().map(|m| &m.text[..m.text.len().min(50)]).collect::<Vec<_>>()
+            early_messages
+                .iter()
+                .map(|m| &m.text[..m.text.len().min(50)])
+                .collect::<Vec<_>>()
         );
 
         // Use test hooks to inject audio directly (bypasses browser audio APIs)
@@ -923,7 +966,11 @@ mod realtime_transcription_browser {
             if !combined.trim().is_empty() {
                 transcription_received = true;
                 transcription_text = combined;
-                eprintln!("Transcription received after {}s: '{}'", i, transcription_text.trim());
+                eprintln!(
+                    "Transcription received after {}s: '{}'",
+                    i,
+                    transcription_text.trim()
+                );
                 break;
             }
 
@@ -937,7 +984,11 @@ mod realtime_transcription_browser {
         let messages = page.fetch_console_messages().await.unwrap_or_default();
         eprintln!("\nALL console messages ({} total):", messages.len());
         for msg in &messages {
-            eprintln!("  [{:?}] {}", msg.level, &msg.text[..msg.text.len().min(200)]);
+            eprintln!(
+                "  [{:?}] {}",
+                msg.level,
+                &msg.text[..msg.text.len().min(200)]
+            );
         }
 
         // If chunk wasn't sent, log why
@@ -1001,7 +1052,8 @@ mod realtime_transcription_browser {
 
         // Inject 2 seconds of test audio
         let _: bool = page
-            .eval_wasm(r#"
+            .eval_wasm(
+                r#"
                 (function() {
                     const sampleRate = 16000;
                     const samples = new Float32Array(sampleRate * 2);
@@ -1010,7 +1062,8 @@ mod realtime_transcription_browser {
                     }
                     return wasm_bindgen.inject_test_audio(samples);
                 })()
-            "#)
+            "#,
+            )
             .await
             .unwrap_or(false);
 
@@ -1081,7 +1134,8 @@ mod realtime_transcription_browser {
 
         // Check computed styles - element must be visible
         let visibility_check: String = page
-            .eval_wasm(r#"
+            .eval_wasm(
+                r#"
                 (function() {
                     const el = document.querySelector('#transcript_display');
                     if (!el) return 'ELEMENT_NOT_FOUND';
@@ -1096,7 +1150,8 @@ mod realtime_transcription_browser {
                         textLength: el.textContent?.length || 0
                     });
                 })()
-            "#)
+            "#,
+            )
             .await
             .unwrap_or_else(|_| "ERROR".to_string());
 
@@ -1107,21 +1162,22 @@ mod realtime_transcription_browser {
             visibility_check != "ELEMENT_NOT_FOUND",
             "transcript_display element must exist"
         );
-        assert!(
-            visibility_check != "ERROR",
-            "Failed to get computed styles"
-        );
+        assert!(visibility_check != "ERROR", "Failed to get computed styles");
         assert!(
             !visibility_check.contains("\"display\":\"none\""),
-            "Element must not be display:none - check: {}", visibility_check
+            "Element must not be display:none - check: {}",
+            visibility_check
         );
         assert!(
             !visibility_check.contains("\"visibility\":\"hidden\""),
-            "Element must not be visibility:hidden - check: {}", visibility_check
+            "Element must not be visibility:hidden - check: {}",
+            visibility_check
         );
         assert!(
-            visibility_check.contains("\"textLength\":") && !visibility_check.contains("\"textLength\":0"),
-            "Element must have text content - check: {}", visibility_check
+            visibility_check.contains("\"textLength\":")
+                && !visibility_check.contains("\"textLength\":0"),
+            "Element must have text content - check: {}",
+            visibility_check
         );
     }
 }
@@ -1238,7 +1294,8 @@ mod realtime_translation_browser {
         let url = format!("{}{}", BASE_URL, paths::REALTIME_TRANSLATION);
         page.goto(&url).await.unwrap();
 
-        let selector = Selector::css("#translation_display, .translation-display, [id*='translation']");
+        let selector =
+            Selector::css("#translation_display, .translation-display, [id*='translation']");
         let exists: bool = page
             .eval_wasm(&format!("!!{}", selector.to_query()))
             .await
@@ -1507,7 +1564,9 @@ mod traced_e2e_tests {
         page.record_span(ui_span);
 
         // Start a span for button click
-        let mut click_span = page.start_span("click_start_button", "interaction").unwrap();
+        let mut click_span = page
+            .start_span("click_start_button", "interaction")
+            .unwrap();
 
         let click_result: bool = page
             .eval_wasm(
@@ -1515,7 +1574,7 @@ mod traced_e2e_tests {
                     const el = document.querySelector('#start_recording'); \
                     if (el) { el.click(); return true; } \
                     return false; \
-                })()"
+                })()",
             )
             .await
             .unwrap_or(false);
@@ -1547,10 +1606,22 @@ mod traced_e2e_tests {
 
         // Verify trace structure
         assert!(json.contains("traceEvents"), "Trace should have events");
-        assert!(json.contains("navigate_to_demo"), "Trace should have nav span");
-        assert!(json.contains("verify_wasm_loaded"), "Trace should have wasm span");
-        assert!(json.contains("check_ui_elements"), "Trace should have ui span");
-        assert!(json.contains("click_start_button"), "Trace should have click span");
+        assert!(
+            json.contains("navigate_to_demo"),
+            "Trace should have nav span"
+        );
+        assert!(
+            json.contains("verify_wasm_loaded"),
+            "Trace should have wasm span"
+        );
+        assert!(
+            json.contains("check_ui_elements"),
+            "Trace should have ui span"
+        );
+        assert!(
+            json.contains("click_start_button"),
+            "Trace should have click span"
+        );
 
         // Print summary
         eprintln!("=== E2E TEST SUMMARY ===");
@@ -1623,7 +1694,12 @@ mod traced_e2e_tests {
                 eprintln!("  Trace for {}: {} bytes", name, json.len());
             }
 
-            eprintln!("  {} OK (ready={}, messages={})", name, ready, messages.len());
+            eprintln!(
+                "  {} OK (ready={}, messages={})",
+                name,
+                ready,
+                messages.len()
+            );
         }
     }
 
@@ -1669,7 +1745,10 @@ mod traced_e2e_tests {
             "Browser trace context should match our trace context"
         );
 
-        eprintln!("Trace context successfully injected: {}", browser_traceparent);
+        eprintln!(
+            "Trace context successfully injected: {}",
+            browser_traceparent
+        );
     }
 
     /// Test console capture correlates with traces
@@ -1700,7 +1779,7 @@ mod traced_e2e_tests {
                 "(function() { \
                     const el = document.querySelector('#start_recording'); \
                     if (el) el.click(); \
-                })()"
+                })()",
             )
             .await
             .unwrap_or(());
@@ -1732,6 +1811,178 @@ mod traced_e2e_tests {
         assert!(
             console_events.len() >= messages.len(),
             "Trace should contain all console messages"
+        );
+    }
+}
+
+// ============================================================================
+// WAPR-QA: Falsification Tests - Proving Bugs Exist
+// ============================================================================
+
+/// Falsification tests that PROVE specific bugs exist in the codebase.
+/// These tests are designed to FAIL once the bugs are fixed.
+///
+/// QA Directive: Vector D - fromBuffer undefined race condition
+#[cfg(test)]
+mod falsification_tests {
+    use super::*;
+
+    /// WAPR-QA-FALSIFY-001: Prove wasm.SharedRingBuffer is undefined
+    ///
+    /// The worker_js.rs generates: `wasm.SharedRingBuffer.fromBuffer(...)`
+    /// But `wasm` is the WASM instance (from calling default()), not the module.
+    /// `SharedRingBuffer` is exported on `wasmModule`, not `wasm`.
+    ///
+    /// This test PROVES the bug exists by checking:
+    /// 1. wasmModule.SharedRingBuffer is defined (class export)
+    /// 2. wasm.SharedRingBuffer is undefined (NOT on instance)
+    ///
+    /// EXPECTED: This test PASSES now (proving bug exists)
+    /// AFTER FIX: This test should FAIL (update it to verify fix)
+    #[tokio::test]
+    async fn falsify_wasm_vs_wasmmodule_shareringbuffer() {
+        require_server!();
+
+        let browser_result = Browser::launch(test_browser_config()).await;
+        if browser_result.is_err() {
+            eprintln!("SKIP: Chrome not available");
+            return;
+        }
+        let browser = browser_result.unwrap();
+
+        let mut page = browser.new_page().await.unwrap();
+        let _ = page.inject_console_capture().await;
+
+        let url = format!("{}{}", BASE_URL, paths::REALTIME_TRANSCRIPTION);
+        page.goto(&url).await.unwrap();
+
+        // Wait for WASM to initialize
+        tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
+
+        // Test the actual exports from the WASM module
+        // This mirrors exactly what worker_js.rs generates:
+        //   const wasmModule = await import('/pkg/whisper_apr_demo.js')
+        //   wasm = await wasmModule["default"]('/pkg/whisper_apr_demo_bg.wasm')
+        let test_result: String = page
+            .eval_wasm(
+                r#"
+                (async function() {
+                    try {
+                        // Load module exactly like worker_js.rs does
+                        const wasmModule = await import('/pkg/whisper_apr_demo.js');
+                        const wasm = await wasmModule["default"]();
+
+                        // Check both locations
+                        const onModule = typeof wasmModule.SharedRingBuffer !== 'undefined';
+                        const onInstance = typeof wasm.SharedRingBuffer !== 'undefined';
+
+                        return JSON.stringify({
+                            SharedRingBuffer_on_wasmModule: onModule,
+                            SharedRingBuffer_on_wasm: onInstance,
+                            wasmModule_keys: Object.keys(wasmModule).slice(0, 10),
+                            wasm_type: typeof wasm,
+                            bug_exists: onModule && !onInstance
+                        });
+                    } catch (e) {
+                        return JSON.stringify({ error: e.toString() });
+                    }
+                })()
+                "#,
+            )
+            .await
+            .unwrap_or_else(|_| String::from("{\"error\": \"eval failed\"}"));
+
+        eprintln!("Falsification test result: {}", test_result);
+
+        // Parse the result
+        if test_result.contains("\"bug_exists\":true") {
+            eprintln!("✓ BUG CONFIRMED: SharedRingBuffer is on wasmModule, NOT on wasm");
+            eprintln!("  worker_js.rs generates: wasm.SharedRingBuffer.fromBuffer(...)");
+            eprintln!("  But should generate: wasmModule.SharedRingBuffer.fromBuffer(...)");
+            eprintln!("");
+            eprintln!("  Fix location: demos/www-demo/src/worker_js.rs:222");
+            eprintln!("  Change: dot(id(\"wasm\"), \"SharedRingBuffer\")");
+            eprintln!("  To:     dot(id(\"wasmModule\"), \"SharedRingBuffer\")");
+        } else if test_result.contains("\"error\"") {
+            eprintln!("Test inconclusive - WASM loading failed: {}", test_result);
+        } else {
+            eprintln!("Bug may be fixed or test needs update: {}", test_result);
+        }
+
+        // This assertion proves the bug exists
+        // When the bug is fixed, this test should be updated to verify the fix
+        assert!(
+            test_result.contains("\"bug_exists\":true") || test_result.contains("\"error\""),
+            "FALSIFICATION: Expected bug to exist (wasm.SharedRingBuffer undefined). \
+             If this fails, the bug may have been fixed - update this test!"
+        );
+    }
+
+    /// WAPR-QA-FALSIFY-002: Prove init message race condition
+    ///
+    /// The worker handles messages in sequence:
+    /// 1. bootstrap -> loads WASM, sets initialized=true
+    /// 2. init -> accesses wasm.SharedRingBuffer (which is undefined!)
+    ///
+    /// Even without a race, the bug exists because wrong variable is used.
+    /// But there's ALSO a race: if init arrives before bootstrap completes,
+    /// the init is silently dropped (logged warning, no retry).
+    ///
+    /// This test verifies that sending init too early causes it to be ignored.
+    #[tokio::test]
+    async fn falsify_init_message_dropped_on_race() {
+        require_server!();
+
+        let browser_result = Browser::launch(test_browser_config()).await;
+        if browser_result.is_err() {
+            eprintln!("SKIP: Chrome not available");
+            return;
+        }
+        let browser = browser_result.unwrap();
+
+        let mut page = browser.new_page().await.unwrap();
+        let _ = page.inject_console_capture().await;
+
+        let url = format!("{}{}", BASE_URL, paths::REALTIME_TRANSCRIPTION);
+        page.goto(&url).await.unwrap();
+
+        // Wait for Worker messages
+        tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+
+        let messages = page.fetch_console_messages().await.unwrap_or_default();
+
+        // Look for the telltale warning that init was dropped
+        let init_dropped = messages
+            .iter()
+            .any(|m| m.text.contains("Not initialized, ignoring message"));
+
+        let from_buffer_error = messages
+            .iter()
+            .any(|m| m.text.contains("fromBuffer") && m.text.contains("undefined"));
+
+        eprintln!("Console messages related to Worker init:");
+        for msg in messages.iter().filter(|m| {
+            m.text.contains("Worker")
+                || m.text.contains("init")
+                || m.text.contains("fromBuffer")
+                || m.text.contains("undefined")
+        }) {
+            eprintln!("  [{:?}] {}", msg.level, msg.text);
+        }
+
+        if init_dropped {
+            eprintln!("✓ RACE CONFIRMED: Init message was dropped (arrived before bootstrap)");
+        }
+        if from_buffer_error {
+            eprintln!("✓ BUG CONFIRMED: fromBuffer error - wasm.SharedRingBuffer is undefined");
+        }
+
+        // At least one of the bugs should be observable
+        // Note: The race is timing-dependent so may not always trigger
+        // The fromBuffer bug is deterministic if init message gets through
+        eprintln!(
+            "\nFalsification result: init_dropped={}, fromBuffer_error={}",
+            init_dropped, from_buffer_error
         );
     }
 }

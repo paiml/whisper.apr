@@ -1,8 +1,8 @@
+use crate::worker::{WorkerCommand, WorkerResult};
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{Worker, MessageEvent};
-use crate::worker::{WorkerCommand, WorkerResult};
+use web_sys::{MessageEvent, Worker};
 
 pub struct WorkerBridge {
     worker: Worker,
@@ -36,12 +36,15 @@ impl WorkerBridge {
             match serde_wasm_bindgen::from_value::<WorkerResult>(data) {
                 Ok(result) => callback(result),
                 Err(e) => {
-                    web_sys::console::error_1(&format!("Failed to deserialize worker message: {e:?}").into());
+                    web_sys::console::error_1(
+                        &format!("Failed to deserialize worker message: {e:?}").into(),
+                    );
                 }
             }
         }) as Box<dyn Fn(MessageEvent)>);
 
-        self.worker.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+        self.worker
+            .set_onmessage(Some(on_message.as_ref().unchecked_ref()));
         self.on_result = Some(on_message);
     }
 

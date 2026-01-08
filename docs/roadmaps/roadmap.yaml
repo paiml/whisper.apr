@@ -802,12 +802,60 @@ roadmap:
 - id: WAPR-1.0-COMPLETE
   github_issue: null
   item_type: task
-  title: 'Whisper.apr 1.0 Complete - All Sections Verified'
+  title: Whisper.apr 1.0 Complete - All Sections Verified
   status: completed
   priority: medium
   assigned_to: null
   created: 2026-01-07T00:07:09.444866752+00:00
   updated: 2026-01-07T00:07:09.444866752+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-1.0-EXECUTE
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-1.0-EXECUTE'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-07T12:47:23.721053143+00:00
+  updated: 2026-01-07T12:55:23.975306294+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-1.0.1-VERIFY
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-1.0.1-VERIFY'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-07T12:59:14.944696021+00:00
+  updated: 2026-01-07T12:59:14.944696021+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-UX-001
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-UX-001'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-07T15:25:47.635631251+00:00
+  updated: 2026-01-07T15:25:47.635631251+00:00
   spec: null
   acceptance_criteria: []
   phases: []

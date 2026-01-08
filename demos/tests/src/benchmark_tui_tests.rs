@@ -135,7 +135,10 @@ impl BenchmarkApp {
     pub fn new() -> Self {
         Self {
             state: AppState::Idle,
-            steps: StepId::all().iter().map(|&id| PipelineStep::new(id)).collect(),
+            steps: StepId::all()
+                .iter()
+                .map(|&id| PipelineStep::new(id))
+                .collect(),
             current_step_idx: 0,
             rtf: 0.0,
             memory_mb: 0.0,
@@ -654,7 +657,11 @@ mod tests {
     #[test]
     fn test_total_target_under_5000ms() {
         let total: u64 = StepId::all().iter().map(|s| s.target_ms()).sum();
-        assert!(total < 5000, "Total target {} should be under 5000ms", total);
+        assert!(
+            total < 5000,
+            "Total target {} should be under 5000ms",
+            total
+        );
     }
 
     // =========================================================================

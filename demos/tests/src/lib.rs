@@ -13,18 +13,47 @@
 //! | Upload Translation | 4 | 2 | 2 |
 //! | **Total** | **14** | **4** | **8** |
 
+// Test modules allow patterns that would be warnings in library code
+#![allow(unused_imports)]
+#![allow(unused_macros)]
+#![allow(dead_code)]
+#![allow(clippy::needless_raw_string_hashes)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::missing_panics_doc)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::match_same_arms)]
+#![allow(clippy::similar_names)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::items_after_statements)]
+#![allow(clippy::struct_excessive_bools)]
+#![allow(clippy::fn_params_excessive_bools)]
+#![allow(clippy::cognitive_complexity)]
+#![allow(clippy::redundant_closure)]
+#![allow(clippy::redundant_closure_for_method_calls)]
+#![allow(clippy::wildcard_imports)]
+#![allow(clippy::map_unwrap_or)]
+
 use probar::gui_coverage;
 use probar::ux_coverage::UxCoverageTracker;
 
-pub mod pixel_tests;
-pub mod quality_gates;
-pub mod browser_tests;
-pub mod performance_tests;
 pub mod benchmark_tui_tests;
-pub mod tui_render_tests;
-pub mod zero_js_tests;
-pub mod transcription_test;
+pub mod browser_tests;
+pub mod comply_tests;
+pub mod performance_tests;
+pub mod pixel_tests;
+pub mod property_tests;
+pub mod quality_gates;
 pub mod streaming_ux_tests;
+pub mod transcription_test;
+pub mod tui_render_tests;
+pub mod worker_js_tests;
+pub mod zero_js_tests;
 
 /// Base URL for local testing
 pub const BASE_URL: &str = "http://localhost:8090/www";

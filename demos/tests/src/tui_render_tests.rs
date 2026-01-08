@@ -124,13 +124,13 @@ impl StepId {
     /// Uses realizar's world-class inference primitives
     pub fn backend_simd(&self) -> Backend {
         match self {
-            Self::A => Backend::DiskIo,   // Model loading is disk I/O
-            Self::B => Backend::DiskIo,   // Audio loading is disk I/O
-            Self::C => Backend::Memory,   // PCM parsing is memory ops
-            Self::D => Backend::Simd,     // Resampling uses trueno SIMD
-            Self::F => Backend::Simd,     // Mel spectrogram uses trueno SIMD FFT
-            Self::G => Backend::Flash,    // Encoder: realizar Flash Attention
-            Self::H => Backend::Flash,    // Decoder: realizar Flash + PagedKV cache
+            Self::A => Backend::DiskIo, // Model loading is disk I/O
+            Self::B => Backend::DiskIo, // Audio loading is disk I/O
+            Self::C => Backend::Memory, // PCM parsing is memory ops
+            Self::D => Backend::Simd,   // Resampling uses trueno SIMD
+            Self::F => Backend::Simd,   // Mel spectrogram uses trueno SIMD FFT
+            Self::G => Backend::Flash,  // Encoder: realizar Flash Attention
+            Self::H => Backend::Flash,  // Decoder: realizar Flash + PagedKV cache
         }
     }
 
@@ -158,7 +158,12 @@ impl StepId {
 
     /// Format step with backend annotation: "[G] Encode (SIMD)"
     pub fn label_with_backend(&self) -> String {
-        format!("[{}] {} ({})", self.as_char(), self.name(), self.backend().label())
+        format!(
+            "[{}] {} ({})",
+            self.as_char(),
+            self.name(),
+            self.backend().label()
+        )
     }
 
     pub fn target_ms(&self) -> u64 {
@@ -174,7 +179,15 @@ impl StepId {
     }
 
     pub fn all() -> &'static [Self] {
-        &[Self::A, Self::B, Self::C, Self::D, Self::F, Self::G, Self::H]
+        &[
+            Self::A,
+            Self::B,
+            Self::C,
+            Self::D,
+            Self::F,
+            Self::G,
+            Self::H,
+        ]
     }
 }
 
@@ -229,7 +242,10 @@ impl TestApp {
     pub fn new() -> Self {
         Self {
             state: AppState::Idle,
-            steps: StepId::all().iter().map(|&id| PipelineStep::new(id)).collect(),
+            steps: StepId::all()
+                .iter()
+                .map(|&id| PipelineStep::new(id))
+                .collect(),
             rtf: 0.0,
             memory_mb: 0.0,
             status_message: "Press [s] to start benchmark".to_string(),
@@ -503,7 +519,10 @@ mod tests {
         assert!(frame.contains("Model"), "Frame should show Model step");
         assert!(frame.contains("Load"), "Frame should show Load step");
         assert!(frame.contains("Parse"), "Frame should show Parse step");
-        assert!(frame.contains("Resample"), "Frame should show Resample step");
+        assert!(
+            frame.contains("Resample"),
+            "Frame should show Resample step"
+        );
         assert!(frame.contains("Mel"), "Frame should show Mel step");
         assert!(frame.contains("Encode"), "Frame should show Encode step");
         assert!(frame.contains("Decode"), "Frame should show Decode step");
@@ -514,10 +533,7 @@ mod tests {
         let app = TestApp::new();
         let frame = capture_app_frame(&app, 100, 30);
 
-        assert!(
-            frame.contains("RTF:"),
-            "Frame should show RTF metric"
-        );
+        assert!(frame.contains("RTF:"), "Frame should show RTF metric");
     }
 
     // =========================================================================
@@ -567,10 +583,7 @@ mod tests {
         let app = TestApp::with_completed_state();
         let frame = capture_app_frame(&app, 100, 30);
 
-        assert!(
-            frame.contains("2.50"),
-            "Frame should show RTF value 2.50"
-        );
+        assert!(frame.contains("2.50"), "Frame should show RTF value 2.50");
     }
 
     #[test]
@@ -591,10 +604,7 @@ mod tests {
         let frame = capture_app_frame(&app, 100, 30);
 
         // Each step should show 100.0ms elapsed
-        assert!(
-            frame.contains("100.0"),
-            "Frame should show elapsed time"
-        );
+        assert!(frame.contains("100.0"), "Frame should show elapsed time");
     }
 
     // =========================================================================
@@ -709,13 +719,21 @@ mod tests {
         let app = TestApp::new();
         let frame = capture_app_frame(&app, 80, 24);
 
-        println!("\n╔══════════════════════════════════════════════════════════════════════════════╗");
-        println!("║                        IDLE STATE FRAME DUMP                                 ║");
-        println!("╠══════════════════════════════════════════════════════════════════════════════╣");
+        println!(
+            "\n╔══════════════════════════════════════════════════════════════════════════════╗"
+        );
+        println!(
+            "║                        IDLE STATE FRAME DUMP                                 ║"
+        );
+        println!(
+            "╠══════════════════════════════════════════════════════════════════════════════╣"
+        );
         for (i, line) in frame.lines().iter().enumerate() {
             println!("║ {:2} │ {:<73} ║", i, line);
         }
-        println!("╚══════════════════════════════════════════════════════════════════════════════╝");
+        println!(
+            "╚══════════════════════════════════════════════════════════════════════════════╝"
+        );
         println!("\nFrame dimensions: {}x{}", frame.width(), frame.height());
     }
 
@@ -724,15 +742,27 @@ mod tests {
         let app = TestApp::with_completed_state();
         let frame = capture_app_frame(&app, 80, 24);
 
-        println!("\n╔══════════════════════════════════════════════════════════════════════════════╗");
-        println!("║                      COMPLETED STATE FRAME DUMP                              ║");
-        println!("╠══════════════════════════════════════════════════════════════════════════════╣");
+        println!(
+            "\n╔══════════════════════════════════════════════════════════════════════════════╗"
+        );
+        println!(
+            "║                      COMPLETED STATE FRAME DUMP                              ║"
+        );
+        println!(
+            "╠══════════════════════════════════════════════════════════════════════════════╣"
+        );
         for (i, line) in frame.lines().iter().enumerate() {
             println!("║ {:2} │ {:<73} ║", i, line);
         }
-        println!("╚══════════════════════════════════════════════════════════════════════════════╝");
-        println!("\nRTF: {:.2}x | Memory: {:.1}MB | Total: {:.0}ms",
-            app.rtf, app.memory_mb, app.total_elapsed_ms());
+        println!(
+            "╚══════════════════════════════════════════════════════════════════════════════╝"
+        );
+        println!(
+            "\nRTF: {:.2}x | Memory: {:.1}MB | Total: {:.0}ms",
+            app.rtf,
+            app.memory_mb,
+            app.total_elapsed_ms()
+        );
     }
 
     #[test]
@@ -745,29 +775,53 @@ mod tests {
 
         let diff = idle_frame.diff(&completed_frame);
 
-        println!("\n╔══════════════════════════════════════════════════════════════════════════════╗");
-        println!("║                    STATE DIFF: IDLE → COMPLETED                              ║");
-        println!("╠══════════════════════════════════════════════════════════════════════════════╣");
-        println!("║ Changed lines: {}                                                            ║", diff.changed_lines.len());
-        println!("╠══════════════════════════════════════════════════════════════════════════════╣");
+        println!(
+            "\n╔══════════════════════════════════════════════════════════════════════════════╗"
+        );
+        println!(
+            "║                    STATE DIFF: IDLE → COMPLETED                              ║"
+        );
+        println!(
+            "╠══════════════════════════════════════════════════════════════════════════════╣"
+        );
+        println!(
+            "║ Changed lines: {}                                                            ║",
+            diff.changed_lines.len()
+        );
+        println!(
+            "╠══════════════════════════════════════════════════════════════════════════════╣"
+        );
         for line_diff in diff.changed_lines.iter().take(10) {
             println!("║ Line {:2}:                                                                     ║", line_diff.line_number);
             println!("║   - {:<72} ║", truncate(&line_diff.expected, 72));
             println!("║   + {:<72} ║", truncate(&line_diff.actual, 72));
         }
         if diff.changed_lines.len() > 10 {
-            println!("║ ... and {} more changed lines                                                 ║", diff.changed_lines.len() - 10);
+            println!(
+                "║ ... and {} more changed lines                                                 ║",
+                diff.changed_lines.len() - 10
+            );
         }
-        println!("╚══════════════════════════════════════════════════════════════════════════════╝");
+        println!(
+            "╚══════════════════════════════════════════════════════════════════════════════╝"
+        );
     }
 
     #[test]
     fn diagnostic_step_timing_targets() {
         println!("\n╔═══════════════════════════════════════════════════════════════════════════════════╗");
-        println!("║                    PIPELINE STEP TIMING TARGETS + BACKENDS                        ║");
-        println!("╠═══════════════════════════════════════════════════════════════════════════════════╣");
-        println!("║  Step  │  Name     │  Backend │  Target (ms)  │  % of Total                       ║");
-        println!("╠═══════════════════════════════════════════════════════════════════════════════════╣");
+        println!(
+            "║                    PIPELINE STEP TIMING TARGETS + BACKENDS                        ║"
+        );
+        println!(
+            "╠═══════════════════════════════════════════════════════════════════════════════════╣"
+        );
+        println!(
+            "║  Step  │  Name     │  Backend │  Target (ms)  │  % of Total                       ║"
+        );
+        println!(
+            "╠═══════════════════════════════════════════════════════════════════════════════════╣"
+        );
 
         let total: u64 = StepId::all().iter().map(|s| s.target_ms()).sum();
         for step in StepId::all() {
@@ -777,26 +831,59 @@ mod tests {
             println!("║   {}    │ {:8} │ {:>6}   │    {:>5} ms   │  {:>5.1}%                            ║",
                 step.as_char(), step.name(), backend.label(), target, pct);
         }
-        println!("╠═══════════════════════════════════════════════════════════════════════════════════╣");
-        println!("║  TOTAL │          │          │    {:>5} ms   │  100.0%                            ║", total);
-        println!("╚═══════════════════════════════════════════════════════════════════════════════════╝");
+        println!(
+            "╠═══════════════════════════════════════════════════════════════════════════════════╣"
+        );
+        println!(
+            "║  TOTAL │          │          │    {:>5} ms   │  100.0%                            ║",
+            total
+        );
+        println!(
+            "╚═══════════════════════════════════════════════════════════════════════════════════╝"
+        );
 
         // Show backend summary
         println!("\n┌─── Backend Summary (aligned with realizar) ────────────────────────────────────────┐");
-        println!("│  SIMD Feature: {}                                                              │",
-            if cfg!(feature = "simd") { "ENABLED ✓" } else { "DISABLED ✗" });
-        println!("│                                                                                   │");
-        println!("│  Code Paths:                                                                      │");
-        println!("│    • I/O:    Model load, Audio load (disk bound)                                  │");
-        println!("│    • Mem:    PCM parsing (memory bound)                                           │");
-        println!("│    • SIMD:   Resample, Mel (short sequences, compute bound)                       │");
-        println!("│    • Flash:  Encode, Decode (long sequences >128, O(n) memory)                    │");
-        println!("│    • Scalar: Fallback when SIMD disabled                                          │");
-        println!("│    • GPU:    Future WebGPU acceleration                                           │");
-        println!("└───────────────────────────────────────────────────────────────────────────────────┘");
+        println!(
+            "│  SIMD Feature: {}                                                              │",
+            if cfg!(feature = "simd") {
+                "ENABLED ✓"
+            } else {
+                "DISABLED ✗"
+            }
+        );
+        println!(
+            "│                                                                                   │"
+        );
+        println!(
+            "│  Code Paths:                                                                      │"
+        );
+        println!(
+            "│    • I/O:    Model load, Audio load (disk bound)                                  │"
+        );
+        println!(
+            "│    • Mem:    PCM parsing (memory bound)                                           │"
+        );
+        println!(
+            "│    • SIMD:   Resample, Mel (short sequences, compute bound)                       │"
+        );
+        println!(
+            "│    • Flash:  Encode, Decode (long sequences >128, O(n) memory)                    │"
+        );
+        println!(
+            "│    • Scalar: Fallback when SIMD disabled                                          │"
+        );
+        println!(
+            "│    • GPU:    Future WebGPU acceleration                                           │"
+        );
+        println!(
+            "└───────────────────────────────────────────────────────────────────────────────────┘"
+        );
 
-        println!("\nAmdahl's Law: Decode (H) at {:.1}% dominates optimization potential",
-            (StepId::H.target_ms() as f64 / total as f64) * 100.0);
+        println!(
+            "\nAmdahl's Law: Decode (H) at {:.1}% dominates optimization potential",
+            (StepId::H.target_ms() as f64 / total as f64) * 100.0
+        );
     }
 }
 

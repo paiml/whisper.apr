@@ -42,19 +42,32 @@ const CAPACITY_OFFSET: u32 = 2;
 /// # Panics
 ///
 /// Panics if any identifier is invalid (should never happen with static strings).
-#[must_use] 
+#[must_use]
 pub fn generate_audioworklet_js() -> String {
     // Build the class
     let class = JsClassBuilder::new("WhisperAudioProcessor")
         .expect("WhisperAudioProcessor is valid")
         .extends("AudioWorkletProcessor")
         .expect("AudioWorkletProcessor is valid")
-        .constructor(build_constructor(HEADER_SIZE, WRITE_IDX_OFFSET, READ_IDX_OFFSET, CAPACITY_OFFSET))
+        .constructor(build_constructor(
+            HEADER_SIZE,
+            WRITE_IDX_OFFSET,
+            READ_IDX_OFFSET,
+            CAPACITY_OFFSET,
+        ))
         .method("initBuffer", &["sharedBuffer"], build_init_buffer_method())
         .expect("initBuffer is valid")
-        .method("process", &["inputs", "outputs", "parameters"], build_process_method())
+        .method(
+            "process",
+            &["inputs", "outputs", "parameters"],
+            build_process_method(),
+        )
         .expect("process is valid")
-        .method("writeToBuffer", &["samples"], build_write_to_buffer_method())
+        .method(
+            "writeToBuffer",
+            &["samples"],
+            build_write_to_buffer_method(),
+        )
         .expect("writeToBuffer is valid")
         .build();
 
@@ -74,7 +87,12 @@ pub fn generate_audioworklet_js() -> String {
 }
 
 /// Build constructor body
-fn build_constructor(header_size: u32, write_idx: u32, read_idx: u32, capacity_idx: u32) -> Vec<Stmt> {
+fn build_constructor(
+    header_size: u32,
+    write_idx: u32,
+    read_idx: u32,
+    capacity_idx: u32,
+) -> Vec<Stmt> {
     // Helper for member assignment: this.xxx = value
     let this_assign = |member: &str, value: Expr| {
         Stmt::member_assign(Expr::this(), member, value).expect("known-good member")
@@ -112,7 +130,7 @@ fn build_port_onmessage_handler() -> Stmt {
                 // this.initBuffer(event.data.buffer)
                 Stmt::expr(
                     dot(Expr::this(), "initBuffer")
-                        .call(vec![dot(dot(id("event"), "data"), "buffer")])
+                        .call(vec![dot(dot(id("event"), "data"), "buffer")]),
                 ),
             ],
         ),
@@ -175,13 +193,11 @@ fn build_init_buffer_method() -> Vec<Stmt> {
             ]),
         ),
         // console.log('[AudioWorklet] Initialized with capacity:', this.capacity, 'samples')
-        Stmt::expr(
-            dot(id("console"), "log").call(vec![
-                Expr::str("[AudioWorklet] Initialized with capacity:"),
-                dot(Expr::this(), "capacity"),
-                Expr::str("samples"),
-            ]),
-        ),
+        Stmt::expr(dot(id("console"), "log").call(vec![
+            Expr::str("[AudioWorklet] Initialized with capacity:"),
+            dot(Expr::this(), "capacity"),
+            Expr::str("samples"),
+        ])),
     ]
 }
 
@@ -195,14 +211,18 @@ fn build_process_method() -> Vec<Stmt> {
         Stmt::const_decl("input", id("inputs").index(Expr::num(0))).expect("input is valid"),
         // if (!input || input.length === 0) { return true; }
         Stmt::if_then(
-            id("input").not().or(dot(id("input"), "length").eq(Expr::num(0))),
+            id("input")
+                .not()
+                .or(dot(id("input"), "length").eq(Expr::num(0))),
             vec![Stmt::ret_val(Expr::bool(true))],
         ),
         // const samples = input[0] (mono channel)
         Stmt::const_decl("samples", id("input").index(Expr::num(0))).expect("samples is valid"),
         // if (!samples || samples.length === 0) { return true; }
         Stmt::if_then(
-            id("samples").not().or(dot(id("samples"), "length").eq(Expr::num(0))),
+            id("samples")
+                .not()
+                .or(dot(id("samples"), "length").eq(Expr::num(0))),
             vec![Stmt::ret_val(Expr::bool(true))],
         ),
         // if (!this.ringBuffer) { return true; }
@@ -258,30 +278,23 @@ fn build_write_to_buffer_method() -> Vec<Stmt> {
         // else { available = readIdx - writeIdx - 1; }
         Stmt::if_else(
             id("writeIdx").ge(id("readIdx")),
-            vec![
-                Stmt::assign(
-                    "available",
-                    dot(Expr::this(), "capacity")
-                        .sub(Expr::num(1))
-                        .sub(id("writeIdx").sub(id("readIdx"))),
-                )
-                .expect("available assignment"),
-            ],
-            vec![
-                Stmt::assign(
-                    "available",
-                    id("readIdx").sub(id("writeIdx")).sub(Expr::num(1)),
-                )
-                .expect("available assignment"),
-            ],
+            vec![Stmt::assign(
+                "available",
+                dot(Expr::this(), "capacity")
+                    .sub(Expr::num(1))
+                    .sub(id("writeIdx").sub(id("readIdx"))),
+            )
+            .expect("available assignment")],
+            vec![Stmt::assign(
+                "available",
+                id("readIdx").sub(id("writeIdx")).sub(Expr::num(1)),
+            )
+            .expect("available assignment")],
         ),
         // const toWrite = Math.min(samples.length, available)
         Stmt::const_decl(
             "toWrite",
-            dot(id("Math"), "min").call(vec![
-                dot(id("samples"), "length"),
-                id("available"),
-            ]),
+            dot(id("Math"), "min").call(vec![dot(id("samples"), "length"), id("available")]),
         )
         .expect("toWrite is valid"),
         // if (toWrite === 0) { return 0; }
@@ -315,21 +328,17 @@ fn build_write_to_buffer_method() -> Vec<Stmt> {
         )
         .expect("for loop is valid"),
         // Atomics.store(this.headerView, this.WRITE_IDX_OFFSET, idx)
-        Stmt::expr(
-            dot(id("Atomics"), "store").call(vec![
-                dot(Expr::this(), "headerView"),
-                dot(Expr::this(), "WRITE_IDX_OFFSET"),
-                id("idx"),
-            ]),
-        ),
+        Stmt::expr(dot(id("Atomics"), "store").call(vec![
+            dot(Expr::this(), "headerView"),
+            dot(Expr::this(), "WRITE_IDX_OFFSET"),
+            id("idx"),
+        ])),
         // Atomics.notify(this.headerView, this.WRITE_IDX_OFFSET, 1)
-        Stmt::expr(
-            dot(id("Atomics"), "notify").call(vec![
-                dot(Expr::this(), "headerView"),
-                dot(Expr::this(), "WRITE_IDX_OFFSET"),
-                Expr::num(1),
-            ]),
-        ),
+        Stmt::expr(dot(id("Atomics"), "notify").call(vec![
+            dot(Expr::this(), "headerView"),
+            dot(Expr::this(), "WRITE_IDX_OFFSET"),
+            Expr::num(1),
+        ])),
         // return toWrite
         Stmt::ret_val(id("toWrite")),
     ]
@@ -516,10 +525,6 @@ mod tests {
     fn passes_worklet_validator() {
         let js = generate_audioworklet_js();
         let errors = probar_js_gen::validator::validate_worklet_js(&js);
-        assert!(
-            errors.is_empty(),
-            "Worklet validation failed: {:?}",
-            errors
-        );
+        assert!(errors.is_empty(), "Worklet validation failed: {:?}", errors);
     }
 }

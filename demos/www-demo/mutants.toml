@@ -1,0 +1,53 @@
+# Mutation testing configuration for whisper-apr-demo
+# Run: cargo mutants -p whisper-apr-demo --no-times
+#
+# Reference: CLAUDE.md specifies 85% mutation score target
+
+# Include testable source files
+# Start with worker_js.rs which has our regression tests
+[filter]
+include_globs = [
+    "src/worker_js.rs",
+]
+
+# Skip UI code that requires browser APIs and cannot be tested natively.
+# These functions interact with DOM, MediaDevices, and AudioContext.
+exclude_re = [
+    # DOM manipulation (requires Document, Window)
+    "fn create_element",
+    "fn set_styles",
+    "fn update_ui",
+    # Audio capture (requires MediaDevices, AudioContext)
+    "fn handle_record_click",
+    "fn handle_file_upload",
+    "fn stop_recording",
+    "fn start_recording",
+    "fn spawn_model_load",
+    "fn fetch_model",
+    "fn resample_audio",
+    "fn process_audio_file",
+    # WASM bindings (require wasm-bindgen runtime)
+    "pub fn new\\(",             # SharedRingBuffer::new requires SharedArrayBuffer
+    "pub fn from_buffer",        # Requires SharedArrayBuffer
+    "pub fn write\\(",           # Requires Atomics API
+    "pub fn read\\(",            # Requires Atomics API
+    "pub fn reset\\(",           # Requires Atomics API
+    "pub fn mark_done",          # Requires Atomics API
+    "pub fn is_done",            # Requires Atomics API
+    "pub fn wait_for_data",      # Requires Atomics API
+    "pub fn available_",         # Requires Atomics API
+    "fn is_available",           # Requires cross-origin isolation check
+    # WorkerManager (requires Web Worker APIs)
+    "pub fn spawn",              # Creates web_sys::Worker
+    "pub fn start_recording",    # Posts to worker
+    "pub fn stop_recording",     # Posts to worker
+    "pub fn shutdown",           # Terminates worker
+    "pub fn get_ring_buffer",    # Returns WASM type
+]
+
+# Timeout for each mutant (seconds)
+[options]
+timeout = 120
+
+# Features to enable during mutation testing
+features = ["test-mocks"]

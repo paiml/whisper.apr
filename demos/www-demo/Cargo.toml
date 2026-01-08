@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Zero-JS Whisper.apr Demo - All Logic in Rust"
 
+# cdylib for WASM, rlib for linking
+# Note: Unit tests for this crate are in whisper-apr-demo-tests to avoid
+# wasm-bindgen linker conflicts on native targets.
 [lib]
 crate-type = ["cdylib", "rlib"]
 
@@ -21,7 +24,8 @@ console_error_panic_hook = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 serde_bytes = "0.11"
-probar-js-gen = { path = "../../../probar/crates/probar-js-gen" }
+# Use absolute path for cargo-mutants compatibility (relative paths fail in temp dirs)
+probar-js-gen = { path = "/home/noah/src/probar/crates/probar-js-gen" }
 
 [dependencies.web-sys]
 workspace = true
@@ -76,6 +80,15 @@ features = [
     "WorkerType",
     "Performance",
 ]
+
+[features]
+default = []
+# Enable mock window detection for unit testing
+test-mocks = []
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+proptest = "1.5"
 
 [lints]
 workspace = true
