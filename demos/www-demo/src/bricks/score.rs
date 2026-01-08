@@ -17,6 +17,11 @@
 //! ```
 
 use jugar_probar::brick::{Brick, BrickAssertion, BrickBudget, BrickVerification};
+use presentar_core::{
+    AccessibleRole, Canvas, Color, Constraints, Event, LayoutResult, Point, Rect, Size, TextStyle,
+    TypeId, Widget,
+};
+use std::any::Any;
 use std::time::Duration;
 
 /// A category in the falsification checklist
@@ -362,6 +367,134 @@ impl Brick for ScoreBrick {
 
     fn test_id(&self) -> Option<&str> {
         Some("score")
+    }
+}
+
+impl Widget for ScoreBrick {
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn measure(&self, constraints: Constraints) -> Size {
+        // Score brick height = header + categories
+        let row_height = 20.0;
+        let height = 60.0 + (self.categories.len() as f32 * row_height);
+        Size::new(
+            constraints.max_width.min(constraints.min_width.max(400.0)),
+            height.min(constraints.max_height),
+        )
+    }
+
+    fn layout(&mut self, bounds: Rect) -> LayoutResult {
+        LayoutResult {
+            size: Size::new(bounds.width, bounds.height),
+        }
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn paint(&self, canvas: &mut dyn Canvas) {
+        let bounds = Rect::new(0.0, 0.0, 500.0, 350.0);
+
+        // Draw background
+        let bg_color = Color::from_hex("#1a1a2e").unwrap_or(Color::BLACK);
+        canvas.fill_rect(bounds, bg_color);
+
+        // Draw title
+        let title_text = format!(
+            "{}: {}/{} ({:.0}%) [{}]",
+            self.title,
+            self.total_earned(),
+            self.total_possible(),
+            self.percent(),
+            self.status()
+        );
+        let title_color = match self.status() {
+            "PASS" => Color::from_hex("#50fa7b").unwrap_or(Color::GREEN),
+            "WARN" => Color::from_hex("#f1fa8c").unwrap_or(Color::YELLOW),
+            _ => Color::from_hex("#ff5555").unwrap_or(Color::RED),
+        };
+        let title_style = TextStyle {
+            size: 16.0,
+            color: title_color,
+            weight: presentar_core::FontWeight::Normal,
+            style: presentar_core::FontStyle::Normal,
+        };
+        canvas.draw_text(&title_text, Point::new(16.0, 24.0), &title_style);
+
+        // Draw categories
+        let row_height = 20.0;
+        let bar_width = 100.0;
+        let bar_start_x = 60.0;
+
+        for (i, cat) in self.categories.iter().enumerate() {
+            let y = 50.0 + (i as f32 * row_height);
+
+            // Draw status indicator
+            let status_style = TextStyle {
+                size: 14.0,
+                color: Color::from_hex("#b0b0b0").unwrap_or(Color::WHITE),
+                weight: presentar_core::FontWeight::Normal,
+                style: presentar_core::FontStyle::Normal,
+            };
+            canvas.draw_text(cat.status(), Point::new(16.0, y), &status_style);
+
+            // Draw category ID
+            let id_style = TextStyle {
+                size: 14.0,
+                color: Color::from_hex("#8be9fd").unwrap_or(Color::BLUE),
+                weight: presentar_core::FontWeight::Normal,
+                style: presentar_core::FontStyle::Normal,
+            };
+            canvas.draw_text(&cat.id.to_string(), Point::new(35.0, y), &id_style);
+
+            // Draw progress bar background
+            let bar_bg = Rect::new(bar_start_x, y - 10.0, bar_width, 12.0);
+            let bar_bg_color = Color::from_hex("#2a2a3e").unwrap_or(Color::BLACK);
+            canvas.fill_rect(bar_bg, bar_bg_color);
+
+            // Draw progress bar fill
+            let fill_width = bar_width * (cat.percent() / 100.0);
+            let bar_fill = Rect::new(bar_start_x, y - 10.0, fill_width, 12.0);
+            let bar_color = if cat.percent() >= 90.0 {
+                Color::from_hex("#50fa7b").unwrap_or(Color::GREEN)
+            } else if cat.percent() >= 70.0 {
+                Color::from_hex("#f1fa8c").unwrap_or(Color::YELLOW)
+            } else {
+                Color::from_hex("#ff5555").unwrap_or(Color::RED)
+            };
+            canvas.fill_rect(bar_fill, bar_color);
+
+            // Draw score text
+            let score_text = format!("{}/{} {}", cat.earned, cat.possible, cat.name);
+            let score_style = TextStyle {
+                size: 12.0,
+                color: Color::from_hex("#f8f8f2").unwrap_or(Color::WHITE),
+                weight: presentar_core::FontWeight::Normal,
+                style: presentar_core::FontStyle::Normal,
+            };
+            canvas.draw_text(&score_text, Point::new(bar_start_x + bar_width + 10.0, y), &score_style);
+        }
+    }
+
+    fn event(&mut self, _event: &Event) -> Option<Box<dyn Any + Send>> {
+        None
+    }
+
+    fn children(&self) -> &[Box<dyn Widget>] {
+        &[]
+    }
+
+    fn children_mut(&mut self) -> &mut [Box<dyn Widget>] {
+        &mut []
+    }
+
+    fn accessible_name(&self) -> Option<&str> {
+        Some("Falsification score dashboard")
+    }
+
+    fn accessible_role(&self) -> AccessibleRole {
+        AccessibleRole::Generic
     }
 }
 
