@@ -139,7 +139,8 @@ mod realtime_transcription_browser {
         page.goto(&url).await.unwrap();
 
         // Check status indicator exists using Selector
-        let selector = Selector::css("#status_indicator");
+        // Note: Generated HTML from Bricks uses #status, not #status_indicator
+        let selector = Selector::css("#status");
         let exists: bool = page
             .eval_wasm(&format!("!!{}", selector.to_query()))
             .await
@@ -244,7 +245,7 @@ mod realtime_transcription_browser {
         eprintln!("WASM loaded check: {}", wasm_loaded);
 
         // Click start button - this triggers microphone permission request
-        let selector = Selector::css("#start_recording");
+        let selector = Selector::css("#record");
         let click_result: bool = page
             .eval_wasm(&format!(
                 "(function() {{ const el = {}; if (el) {{ el.click(); return true; }} return false; }})()",

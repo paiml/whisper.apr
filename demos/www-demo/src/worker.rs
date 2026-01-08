@@ -1,514 +1,235 @@
-//! Web Worker for Non-Blocking Whisper Inference
+//! Transcription Worker - Runs Whisper inference
 //!
-//! Runs Whisper inference on dedicated worker thread to prevent UI freezes.
-//! Communicates with main thread via postMessage and `SharedArrayBuffer`.
-//!
-//! # References
-//! - Kocher et al. (2019), "Spectre Attacks" - `SharedArrayBuffer` security
-//! - WebAssembly Threads Proposal (2023) - Shared memory semantics
+//! Handles model loading, audio processing, and transcription.
 
 use serde::{Deserialize, Serialize};
-use std::rc::Rc;
 use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
 
 use crate::ring_buffer::SharedRingBuffer;
 
-// Phase 4: Robustness constants
-/// Maximum number of pending chunks before dropping (queue management)
-const MAX_PENDING_CHUNKS: usize = 3;
-/// Maximum accumulated audio samples (30 seconds at 16kHz = memory stability)
-const MAX_ACCUMULATED_SAMPLES: usize = 16000 * 30;
-/// Chunk size in samples (1.5 seconds at 16kHz)
-const CHUNK_SAMPLES: usize = 16000 * 3 / 2;
-/// Maximum consecutive errors before reset (error recovery)
-const MAX_CONSECUTIVE_ERRORS: u32 = 3;
+// Re-export WASM types from whisper-apr
+use whisper_apr::wasm::{TranscribeOptionsWasm, WhisperAprWasm};
 
-/// Commands sent from the main thread to the worker
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
-pub enum WorkerCommand {
-    /// Initialize worker with model
-    #[serde(rename = "init")]
-    Init { model_url: String },
-    /// Start processing audio from ring buffer
-    #[serde(rename = "start")]
-    Start { sample_rate: u32 },
-    /// Stop processing
-    #[serde(rename = "stop")]
-    Stop,
-    /// Update transcription options
-    #[serde(rename = "options")]
-    SetOptions {
-        language: Option<String>,
-        task: Option<String>,
-    },
-    /// Shutdown worker
-    #[serde(rename = "shutdown")]
-    Shutdown,
-}
-
-/// Results sent from the worker to the main thread
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
-pub enum WorkerResult {
-    /// Worker is ready
-    #[serde(rename = "ready")]
-    Ready,
-    /// Model loaded successfully
-    #[serde(rename = "modelLoaded")]
-    ModelLoaded { size_mb: f64, load_time_ms: f64 },
-    /// Partial transcription result
-    #[serde(rename = "partial")]
-    Partial { text: String, is_final: bool },
-    /// Final transcription result
-    #[serde(rename = "result")]
-    Result {
-        text: String,
-        segments: Vec<TranscriptSegment>,
-    },
-    /// Progress update
-    #[serde(rename = "progress")]
-    Progress { phase: String, percent: f32 },
-    /// Error occurred
-    #[serde(rename = "error")]
-    Error { message: String },
-    /// Performance metrics
-    #[serde(rename = "metrics")]
-    Metrics {
-        rtf: f64,
-        chunks_processed: u64,
-        samples_read: u64,
-    },
-}
-
-/// Transcript segment with timing
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TranscriptSegment {
-    pub start: f64,
-    pub end: f64,
-    pub text: String,
-}
-
-/// Worker state
+/// Worker state machine
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkerState {
     Uninitialized,
-    Loading,
     Ready,
     Processing,
     Error,
 }
 
-/// Transcription worker running in Web Worker context
+/// Messages sent from worker to main thread
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum WorkerResult {
+    Ready,
+    ModelLoaded { size_mb: f64, load_time_ms: f64 },
+    Partial { text: String, is_final: bool },
+    Result { text: String, segments: Vec<Segment> },
+    Error { message: String },
+    Progress { phase: String, percent: f64 },
+    Metrics { rtf: f64, chunks_processed: u32, samples_read: u64 },
+}
+
+/// Transcription segment with timing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Segment {
+    pub start_ms: u32,
+    pub end_ms: u32,
+    pub text: String,
+}
+
+/// Transcription worker
 #[wasm_bindgen]
 pub struct TranscriptionWorker {
     state: WorkerState,
+    model: Option<WhisperAprWasm>,
     ring_buffer: Option<SharedRingBuffer>,
-    model: Option<Rc<whisper_apr::wasm::WhisperAprWasm>>,
-    sample_rate: u32,
-    chunks_processed: u64,
-    samples_read: u64,
     accumulated_audio: Vec<f32>,
-    last_partial: String,
-    // Phase 4: Robustness fields
-    pending_chunks: usize,
-    chunks_dropped: u64,
-    consecutive_errors: u32,
+    sample_rate: u32,
+    samples_read: u64,
+    chunks_processed: u32,
 }
+
+// Constants
+const WHISPER_SAMPLE_RATE: u32 = 16000;
+const CHUNK_SAMPLES: usize = 24000; // 1.5 seconds at 16kHz
 
 #[wasm_bindgen]
 impl TranscriptionWorker {
-    /// Create new worker instance
+    /// Create a new worker instance
     #[wasm_bindgen(constructor)]
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
+    pub fn new() -> TranscriptionWorker {
+        TranscriptionWorker {
             state: WorkerState::Uninitialized,
-            ring_buffer: None,
             model: None,
-            sample_rate: 16000,
-            chunks_processed: 0,
+            ring_buffer: None,
+            accumulated_audio: Vec::new(),
+            sample_rate: WHISPER_SAMPLE_RATE,
             samples_read: 0,
-            accumulated_audio: Vec::with_capacity(MAX_ACCUMULATED_SAMPLES),
-            last_partial: String::new(),
-            // Phase 4: Robustness initialization
-            pending_chunks: 0,
-            chunks_dropped: 0,
-            consecutive_errors: 0,
+            chunks_processed: 0,
         }
     }
 
-    /// Set the ring buffer (called after receiving `SharedArrayBuffer`)
+    /// Initialize worker as ready
+    #[wasm_bindgen(js_name = initWorker)]
+    pub fn init_worker() -> TranscriptionWorker {
+        web_sys::console::log_1(&"[Worker] Initialized".into());
+        let mut worker = TranscriptionWorker::new();
+        worker.state = WorkerState::Ready;
+        worker
+    }
+
+    /// Set the ring buffer for audio data
     #[wasm_bindgen(js_name = setRingBuffer)]
     pub fn set_ring_buffer(&mut self, buffer: SharedRingBuffer) {
-        self.ring_buffer = Some(buffer);
         web_sys::console::log_1(&"[Worker] Ring buffer attached".into());
+        self.ring_buffer = Some(buffer);
     }
 
-    /// Get current state
-    #[wasm_bindgen(getter)]
-    #[must_use]
-    pub fn state(&self) -> String {
-        match self.state {
-            WorkerState::Uninitialized => "uninitialized".to_string(),
-            WorkerState::Loading => "loading".to_string(),
-            WorkerState::Ready => "ready".to_string(),
-            WorkerState::Processing => "processing".to_string(),
-            WorkerState::Error => "error".to_string(),
-        }
-    }
-
-    /// Load model from URL
+    /// Load the whisper model
     #[wasm_bindgen(js_name = loadModel)]
-    pub async fn load_model(&mut self, url: &str) -> Result<JsValue, JsValue> {
-        use wasm_bindgen_futures::JsFuture;
-
-        self.state = WorkerState::Loading;
-        let start = js_sys::Date::now();
+    pub async fn load_model(&mut self, url: String) -> Result<JsValue, JsValue> {
+        let start = web_sys::window()
+            .and_then(|w| w.performance())
+            .map(|p| p.now())
+            .unwrap_or(0.0);
 
         web_sys::console::log_1(&format!("[Worker] Loading model from: {url}").into());
 
-        // Fetch model (works in both window and worker contexts)
-        let global = js_sys::global();
-        let fetch_fn = js_sys::Reflect::get(&global, &"fetch".into())
-            .map_err(|_| JsValue::from_str("fetch not available"))?;
-        let fetch_fn = fetch_fn
-            .dyn_into::<js_sys::Function>()
-            .map_err(|_| JsValue::from_str("fetch is not a function"))?;
+        // Fetch model
+        let response = web_sys::window()
+            .ok_or("No window")?
+            .fetch_with_str(&url);
+        let response = wasm_bindgen_futures::JsFuture::from(response).await?;
+        let response: web_sys::Response = response.dyn_into()?;
 
-        let promise = fetch_fn.call1(&global, &url.into())?;
-        let resp = JsFuture::from(js_sys::Promise::from(promise)).await?;
-        let resp: web_sys::Response = resp.dyn_into()?;
-
-        if !resp.ok() {
-            self.state = WorkerState::Error;
-            return Err(JsValue::from_str(&format!(
-                "Failed to fetch model: {}",
-                resp.status()
-            )));
+        if !response.ok() {
+            return Err(JsValue::from_str(&format!("Failed to fetch model: {}", response.status())));
         }
 
-        let array_buffer = JsFuture::from(resp.array_buffer()?).await?;
-        let uint8_array = js_sys::Uint8Array::new(&array_buffer);
-        let model_bytes = uint8_array.to_vec();
-        let size_mb = model_bytes.len() as f64 / 1_000_000.0;
+        let buffer = wasm_bindgen_futures::JsFuture::from(response.array_buffer()?).await?;
+        let array = js_sys::Uint8Array::new(&buffer);
+        let bytes = array.to_vec();
+        let size_mb = bytes.len() as f64 / 1_000_000.0;
 
         web_sys::console::log_1(&format!("[Worker] Model downloaded: {size_mb:.1} MB").into());
 
-        // Initialize Whisper model
-        match whisper_apr::wasm::WhisperAprWasm::from_apr_bytes(&model_bytes) {
-            Ok(model) => {
-                self.model = Some(Rc::new(model));
-                self.state = WorkerState::Ready;
-                let load_time_ms = js_sys::Date::now() - start;
+        // Initialize model from APR bytes
+        self.model = Some(WhisperAprWasm::from_apr_bytes(&bytes)?);
 
-                web_sys::console::log_1(
-                    &format!("[Worker] Model initialized in {load_time_ms:.0}ms").into(),
-                );
+        let end = web_sys::window()
+            .and_then(|w| w.performance())
+            .map(|p| p.now())
+            .unwrap_or(0.0);
+        let load_time_ms = end - start;
 
-                let result = WorkerResult::ModelLoaded {
-                    size_mb,
-                    load_time_ms,
-                };
-                Ok(serde_wasm_bindgen::to_value(&result)?)
-            }
-            Err(e) => {
-                self.state = WorkerState::Error;
-                Err(JsValue::from_str(&format!("Model init failed: {e:?}")))
-            }
-        }
+        web_sys::console::log_1(&format!("[Worker] Model initialized in {load_time_ms:.0}ms").into());
+
+        self.state = WorkerState::Ready;
+
+        let result = WorkerResult::ModelLoaded { size_mb, load_time_ms };
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Start processing audio from ring buffer
+    /// Start processing audio
     #[wasm_bindgen(js_name = startProcessing)]
     pub fn start_processing(&mut self, sample_rate: u32) -> Result<(), JsValue> {
-        web_sys::console::log_1(
-            &format!(
-                "[Worker] startProcessing called: state={:?}, has_buffer={}, sample_rate={}",
-                self.state,
-                self.ring_buffer.is_some(),
-                sample_rate
-            )
-            .into(),
-        );
+        web_sys::console::log_1(&format!(
+            "[Worker] startProcessing called: state={:?}, has_buffer={}, sample_rate={}",
+            self.state,
+            self.ring_buffer.is_some(),
+            sample_rate
+        ).into());
 
         if self.state != WorkerState::Ready {
-            web_sys::console::warn_1(
-                &format!("[Worker] startProcessing REJECTED: state={:?} != Ready", self.state)
-                    .into(),
-            );
             return Err(JsValue::from_str("Worker not ready"));
-        }
-        if self.ring_buffer.is_none() {
-            web_sys::console::warn_1(&"[Worker] startProcessing REJECTED: no ring buffer".into());
-            return Err(JsValue::from_str("No ring buffer attached"));
         }
 
         self.sample_rate = sample_rate;
-        self.state = WorkerState::Processing;
         self.accumulated_audio.clear();
-        self.chunks_processed = 0;
         self.samples_read = 0;
-        // Phase 4: Reset robustness counters
-        self.pending_chunks = 0;
-        self.chunks_dropped = 0;
-        self.consecutive_errors = 0;
+        self.chunks_processed = 0;
+        self.state = WorkerState::Processing;
 
-        web_sys::console::log_1(
-            &format!("[Worker] ✓ Started processing, state now {:?}", self.state).into(),
-        );
+        web_sys::console::log_1(&"[Worker] ✓ Started processing, state now Processing".into());
         Ok(())
     }
 
     /// Process available audio from ring buffer
-    ///
-    /// Returns partial transcription if available.
-    /// Implements Phase 4 robustness: queue management, memory stability.
     #[wasm_bindgen(js_name = processAudio)]
     pub fn process_audio(&mut self) -> Result<JsValue, JsValue> {
-        // Diagnostic: Log state if not Processing (first 5 calls only)
-        static DIAG_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         if self.state != WorkerState::Processing {
-            let count = DIAG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if count < 5 {
-                web_sys::console::warn_1(
-                    &format!(
-                        "[Worker] processAudio called but state={:?}, expected Processing",
-                        self.state
-                    )
-                    .into(),
-                );
-            }
             return Ok(JsValue::NULL);
         }
 
-        let Some(ref buffer) = self.ring_buffer else {
-            web_sys::console::warn_1(&"[Worker] processAudio: No ring buffer!".into());
-            return Ok(JsValue::NULL);
-        };
+        let buffer = self.ring_buffer.as_ref().ok_or("No ring buffer")?;
+        let available = buffer.available()?;
 
-        // Read available samples
-        let available = buffer.available_read()?;
         if available == 0 {
-            // Only log occasionally to avoid spam
-            if self.samples_read % 10000 == 0 && self.samples_read > 0 {
-                web_sys::console::log_1(
-                    &format!(
-                        "[Worker] processAudio: No data yet (accumulated: {})",
-                        self.accumulated_audio.len()
-                    )
-                    .into(),
-                );
-            }
             return Ok(JsValue::NULL);
         }
 
-        // Log data receipt
         web_sys::console::log_1(
-            &format!("[Worker] processAudio: Reading {} samples from buffer", available).into(),
+            &format!("[Worker] processAudio: Reading {available} samples from buffer").into(),
         );
 
         let samples = buffer.read(available)?;
         self.samples_read += samples.len() as u64;
 
-        // Resample if needed (AudioWorklet runs at device rate, Whisper needs 16kHz)
-        let resampled = if self.sample_rate == 16000 {
-            samples
+        // Resample if needed (44.1kHz -> 16kHz)
+        let resampled = if self.sample_rate != WHISPER_SAMPLE_RATE {
+            resample(&samples, self.sample_rate, WHISPER_SAMPLE_RATE)
         } else {
-            self.resample(&samples, self.sample_rate, 16000)
+            samples
         };
 
-        self.accumulated_audio.extend_from_slice(&resampled);
+        self.accumulated_audio.extend(resampled);
 
-        // Log accumulation progress
-        web_sys::console::log_1(
-            &format!(
-                "[Worker] Accumulated: {} samples ({:.1}s), need {} for chunk",
-                self.accumulated_audio.len(),
-                self.accumulated_audio.len() as f64 / 16000.0,
-                CHUNK_SAMPLES
-            )
-            .into(),
-        );
+        let accumulated_seconds = self.accumulated_audio.len() as f64 / WHISPER_SAMPLE_RATE as f64;
+        web_sys::console::log_1(&format!(
+            "[Worker] Accumulated: {} samples ({:.1}s), need {} for chunk",
+            self.accumulated_audio.len(),
+            accumulated_seconds,
+            CHUNK_SAMPLES
+        ).into());
 
-        // Phase 4: Memory stability - cap accumulated audio at 30 seconds
-        if self.accumulated_audio.len() > MAX_ACCUMULATED_SAMPLES {
-            let excess = self.accumulated_audio.len() - MAX_ACCUMULATED_SAMPLES;
-            self.accumulated_audio.drain(..excess);
-            web_sys::console::warn_1(
-                &format!("[Worker] Memory cap: dropped {excess} samples to maintain stability")
-                    .into(),
-            );
-        }
-
-        // Count pending chunks
-        self.pending_chunks = self.accumulated_audio.len() / CHUNK_SAMPLES;
-
-        // Phase 4: Queue management - drop oldest chunks if queue too deep
-        if self.pending_chunks > MAX_PENDING_CHUNKS {
-            let chunks_to_drop = self.pending_chunks - MAX_PENDING_CHUNKS;
-            let samples_to_drop = chunks_to_drop * CHUNK_SAMPLES;
-            self.accumulated_audio.drain(..samples_to_drop);
-            self.chunks_dropped += chunks_to_drop as u64;
-            self.pending_chunks = MAX_PENDING_CHUNKS;
-            web_sys::console::warn_1(
-                &format!(
-                    "[Worker] Queue overflow: dropped {} chunks (total dropped: {})",
-                    chunks_to_drop, self.chunks_dropped
-                )
-                .into(),
-            );
-        }
-
-        // Check if we have enough for transcription (1.5s chunks)
+        // Check if we have enough for a chunk
         if self.accumulated_audio.len() >= CHUNK_SAMPLES {
             return self.transcribe_chunk();
         }
 
-        // Return partial if we have at least 0.5s
-        let partial_samples = 16000 / 2;
-        if self.accumulated_audio.len() >= partial_samples {
-            return self.transcribe_partial();
-        }
-
         Ok(JsValue::NULL)
     }
 
-    /// Transcribe a full chunk
-    ///
-    /// Implements Phase 4 error recovery: resets after `MAX_CONSECUTIVE_ERRORS`.
+    /// Transcribe accumulated audio chunk
     fn transcribe_chunk(&mut self) -> Result<JsValue, JsValue> {
-        // Phase 4: Check if we need to reset due to consecutive errors
-        if self.consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-            web_sys::console::warn_1(
-                &format!(
-                    "[Worker] Error recovery: {} consecutive errors, resetting state",
-                    self.consecutive_errors
-                )
-                .into(),
-            );
-            self.reset_state();
-            let error_result = WorkerResult::Error {
-                message: format!("Reset after {MAX_CONSECUTIVE_ERRORS} consecutive errors"),
+        let model = self.model.as_ref().ok_or("Model not loaded")?;
+
+        // Take chunk from accumulated audio
+        let chunk: Vec<f32> = self.accumulated_audio.drain(..CHUNK_SAMPLES).collect();
+        self.chunks_processed += 1;
+
+        let options = TranscribeOptionsWasm::new();
+        let result = model.transcribe(&chunk, options)?;
+
+        let text = result.text();
+        if !text.trim().is_empty() {
+            web_sys::console::log_1(&format!("[Worker] Partial: {text}").into());
+
+            let partial = WorkerResult::Partial {
+                text,
+                is_final: false,
             };
-            return Ok(serde_wasm_bindgen::to_value(&error_result)?);
-        }
-
-        let Some(ref model) = self.model else {
-            return Ok(JsValue::NULL);
-        };
-
-        let audio: Vec<f32> = self.accumulated_audio.drain(..CHUNK_SAMPLES).collect();
-        self.pending_chunks = self.pending_chunks.saturating_sub(1);
-
-        let start = js_sys::Date::now();
-
-        // Create transcription options
-        let options = whisper_apr::wasm::TranscribeOptionsWasm::new();
-
-        // Transcribe
-        match model.transcribe(&audio, options) {
-            Ok(result) => {
-                let elapsed = js_sys::Date::now() - start;
-                let audio_duration = audio.len() as f64 / 16000.0 * 1000.0;
-                let rtf = elapsed / audio_duration;
-
-                self.chunks_processed += 1;
-                self.consecutive_errors = 0; // Reset error counter on success
-
-                web_sys::console::log_1(
-                    &format!(
-                        "[Worker] Chunk {} transcribed in {:.0}ms (RTF: {:.2})",
-                        self.chunks_processed, elapsed, rtf
-                    )
-                    .into(),
-                );
-
-                let worker_result = WorkerResult::Partial {
-                    text: result.text(),
-                    is_final: true,
-                };
-                Ok(serde_wasm_bindgen::to_value(&worker_result)?)
-            }
-            Err(e) => {
-                self.consecutive_errors += 1;
-                web_sys::console::error_1(
-                    &format!(
-                        "[Worker] Transcription error ({}/{}): {:?}",
-                        self.consecutive_errors, MAX_CONSECUTIVE_ERRORS, e
-                    )
-                    .into(),
-                );
-                Ok(JsValue::NULL)
-            }
-        }
-    }
-
-    /// Reset worker state for error recovery (Phase 4)
-    fn reset_state(&mut self) {
-        self.accumulated_audio.clear();
-        self.pending_chunks = 0;
-        self.consecutive_errors = 0;
-        self.last_partial.clear();
-        web_sys::console::log_1(&"[Worker] State reset complete".into());
-    }
-
-    /// Transcribe partial audio for responsive feedback
-    fn transcribe_partial(&mut self) -> Result<JsValue, JsValue> {
-        let Some(ref model) = self.model else {
-            return Ok(JsValue::NULL);
-        };
-
-        // Don't process if too little audio
-        if self.accumulated_audio.len() < 8000 {
-            return Ok(JsValue::NULL);
-        }
-
-        let options = whisper_apr::wasm::TranscribeOptionsWasm::new();
-
-        // Transcribe accumulated audio without consuming it
-        if let Ok(result) = model.transcribe(&self.accumulated_audio, options) {
-            let text = result.text();
-
-            // Only return if different from last partial
-            if text != self.last_partial && !text.is_empty() {
-                self.last_partial = text.clone();
-                let worker_result = WorkerResult::Partial {
-                    text,
-                    is_final: false,
-                };
-                return Ok(serde_wasm_bindgen::to_value(&worker_result)?);
-            }
+            return serde_wasm_bindgen::to_value(&partial)
+                .map_err(|e| JsValue::from_str(&e.to_string()));
         }
 
         Ok(JsValue::NULL)
     }
 
-    /// Simple linear resampling
-    fn resample(&self, samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
-        if from_rate == to_rate {
-            return samples.to_vec();
-        }
-
-        let ratio = f64::from(from_rate) / f64::from(to_rate);
-        let new_len = (samples.len() as f64 / ratio) as usize;
-        let mut result = Vec::with_capacity(new_len);
-
-        for i in 0..new_len {
-            let src_idx = i as f64 * ratio;
-            let idx0 = src_idx.floor() as usize;
-            let idx1 = (idx0 + 1).min(samples.len() - 1);
-            let frac = src_idx - idx0 as f64;
-
-            let sample = samples[idx0] * (1.0 - frac as f32) + samples[idx1] * frac as f32;
-            result.push(sample);
-        }
-
-        result
-    }
-
-    /// Stop processing
+    /// Stop processing and get final result
     #[wasm_bindgen(js_name = stopProcessing)]
     pub fn stop_processing(&mut self) -> Result<JsValue, JsValue> {
         if self.state != WorkerState::Processing {
@@ -519,40 +240,43 @@ impl TranscriptionWorker {
         let final_result = if self.accumulated_audio.is_empty() {
             None
         } else {
-            let Some(ref model) = self.model else {
-                return Ok(JsValue::NULL);
-            };
-
-            let options = whisper_apr::wasm::TranscribeOptionsWasm::new();
-            match model.transcribe(&self.accumulated_audio, options) {
-                Ok(result) => {
-                    self.accumulated_audio.clear();
-                    Some(WorkerResult::Result {
-                        text: result.text(),
-                        segments: vec![], // TODO: Add segment extraction
-                    })
+            let model = self.model.as_ref();
+            if let Some(model) = model {
+                let options = TranscribeOptionsWasm::new();
+                match model.transcribe(&self.accumulated_audio, options) {
+                    Ok(result) => {
+                        self.accumulated_audio.clear();
+                        Some(WorkerResult::Result {
+                            text: result.text(),
+                            segments: vec![],
+                        })
+                    }
+                    Err(_) => None,
                 }
-                Err(_) => None,
+            } else {
+                None
             }
         };
 
         self.state = WorkerState::Ready;
 
         match final_result {
-            Some(result) => Ok(serde_wasm_bindgen::to_value(&result)?),
+            Some(result) => serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&e.to_string())),
             None => Ok(JsValue::NULL),
         }
     }
 
-    /// Get metrics
+    /// Get current metrics
     #[wasm_bindgen(js_name = getMetrics)]
     pub fn get_metrics(&self) -> Result<JsValue, JsValue> {
+        let rtf = 0.0; // TODO: Calculate actual RTF
         let result = WorkerResult::Metrics {
-            rtf: 0.0, // TODO: Calculate running average
+            rtf,
             chunks_processed: self.chunks_processed,
             samples_read: self.samples_read,
         };
-        Ok(serde_wasm_bindgen::to_value(&result)?)
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
 
@@ -562,26 +286,38 @@ impl Default for TranscriptionWorker {
     }
 }
 
-/// Worker entry point - called when worker script loads
-///
-/// Note: console_error_panic_hook and tracing_wasm are already initialized
-/// by the #[wasm_bindgen(start)] function in lib.rs when the module loads.
-#[wasm_bindgen(js_name = initWorker)]
-#[must_use]
-pub fn init_worker() -> TranscriptionWorker {
-    // Tracing already set up by start() - just log and create worker
-    web_sys::console::log_1(&"[Worker] Initialized".into());
+/// Simple linear resampling
+fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate {
+        return samples.to_vec();
+    }
 
-    TranscriptionWorker::new()
+    let ratio = from_rate as f64 / to_rate as f64;
+    let new_len = (samples.len() as f64 / ratio) as usize;
+    let mut resampled = Vec::with_capacity(new_len);
+
+    for i in 0..new_len {
+        let src_idx = i as f64 * ratio;
+        let idx = src_idx as usize;
+        let frac = src_idx - idx as f64;
+
+        let sample = if idx + 1 < samples.len() {
+            samples[idx] * (1.0 - frac as f32) + samples[idx + 1] * frac as f32
+        } else if idx < samples.len() {
+            samples[idx]
+        } else {
+            0.0
+        };
+
+        resampled.push(sample);
+    }
+
+    resampled
 }
 
-// Worker JavaScript is generated by worker_js.rs using probar-js-gen DSL
-// See generate_worker_js() for the DSL-generated ES module code
-
-/// Create blob URL for worker script using DSL-generated JavaScript
+/// Create blob URL for worker script
 #[wasm_bindgen(js_name = createWorkerBlobUrl)]
 pub fn create_worker_blob_url() -> Result<String, JsValue> {
-    // Use DSL-generated JavaScript from worker_js.rs
     let worker_js = crate::worker_js::generate_worker_js();
 
     let blob_parts = js_sys::Array::new();
@@ -591,7 +327,5 @@ pub fn create_worker_blob_url() -> Result<String, JsValue> {
     options.set_type("application/javascript");
 
     let blob = web_sys::Blob::new_with_blob_sequence_and_options(&blob_parts, &options)?;
-    let url = web_sys::Url::create_object_url_with_blob(&blob)?;
-
-    Ok(url)
+    web_sys::Url::create_object_url_with_blob(&blob)
 }

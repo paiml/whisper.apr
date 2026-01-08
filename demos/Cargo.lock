@@ -4041,6 +4041,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
+ "jugar-probar",
  "probar-js-gen",
  "proptest",
  "serde",
@@ -4065,6 +4066,7 @@ dependencies = [
  "proptest",
  "ratatui",
  "tokio",
+ "whisper-apr-demo",
 ]
 
 [[package]]
