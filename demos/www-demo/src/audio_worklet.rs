@@ -225,10 +225,18 @@ registerProcessor('whisper-audio-processor', WhisperAudioProcessor);
 ";
 
 /// Create a Blob URL for the `AudioWorklet` processor code
+///
+/// Uses DSL-generated JavaScript from `audioworklet_js.rs` for:
+/// - Compile-time validation
+/// - RMS audio level computation (World-class UX P0)
+/// - Property-tested output
 #[wasm_bindgen(js_name = createAudioWorkletBlobUrl)]
 pub fn create_audio_worklet_blob_url() -> Result<String, JsValue> {
+    // Use DSL-generated code for compile-time validation and RMS computation
+    let js_code = crate::audioworklet_js::generate_audioworklet_js();
+
     let blob_parts = js_sys::Array::new();
-    blob_parts.push(&JsValue::from_str(AUDIO_WORKLET_JS));
+    blob_parts.push(&JsValue::from_str(&js_code));
 
     // AudioWorklet requires JavaScript MIME type
     let options = web_sys::BlobPropertyBag::new();
@@ -277,6 +285,39 @@ pub async fn setup_audio_worklet(
     js_sys::Reflect::set(&init_msg, &"type".into(), &"init".into())?;
     js_sys::Reflect::set(&init_msg, &"buffer".into(), &ring_buffer.buffer())?;
     port.post_message(&init_msg)?;
+
+    // Set up handler for audioLevel messages from worklet (World-class UX P0: VU meter)
+    let on_message = wasm_bindgen::closure::Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
+        let data = event.data();
+        if let Ok(obj) = data.dyn_into::<js_sys::Object>() {
+            let msg_type = js_sys::Reflect::get(&obj, &"type".into())
+                .ok()
+                .and_then(|v| v.as_string());
+            if msg_type.as_deref() == Some("audioLevel") {
+                if let Ok(level) = js_sys::Reflect::get(&obj, &"level".into()) {
+                    if level.as_f64().is_some() {
+                        // Dispatch custom event for main thread to update VU meter
+                        if let Some(window) = web_sys::window() {
+                            if let Some(document) = window.document() {
+                                let detail = js_sys::Object::new();
+                                let _ = js_sys::Reflect::set(&detail, &"level".into(), &level.into());
+                                let init = web_sys::CustomEventInit::new();
+                                init.set_detail(&detail);
+                                if let Ok(custom_event) = web_sys::CustomEvent::new_with_event_init_dict(
+                                    "audioLevel",
+                                    &init,
+                                ) {
+                                    let _ = document.dispatch_event(&custom_event);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }) as Box<dyn Fn(web_sys::MessageEvent)>);
+    port.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+    on_message.forget(); // Keep closure alive
 
     // Connect source -> worklet
     source.connect_with_audio_node(&node)?;
