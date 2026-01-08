@@ -1,4 +1,7 @@
-//! `AudioWorklet` JavaScript Generator
+//! `AudioWorklet` JavaScript Generator (DEPRECATED)
+//!
+//! DEPRECATED: Use `bricks::codegen::generate_audioworklet_js_from_brick()` instead.
+//! This module is kept for backward compatibility with existing tests.
 //!
 //! Generates the `AudioWorklet` processor that captures microphone audio
 //! and writes to the `SharedRingBuffer`.

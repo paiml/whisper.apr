@@ -895,3 +895,19 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: WAPR-BRICK-001
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-BRICK-001'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-08T18:21:22.318847311+00:00
+  updated: 2026-01-08T18:21:22.318847311+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null

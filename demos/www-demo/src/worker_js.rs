@@ -1,4 +1,7 @@
-//! Worker JavaScript Generator
+//! Worker JavaScript Generator (DEPRECATED)
+//!
+//! DEPRECATED: Use `bricks::codegen::generate_worker_js_from_brick()` instead.
+//! This module is kept for backward compatibility with existing tests.
 //!
 //! Generates the Web Worker JavaScript.
 //! Key feature: processAudioTick checks `isDone()` flag (like whisper.cpp's `g_running`)
