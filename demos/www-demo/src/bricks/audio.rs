@@ -17,9 +17,12 @@
 //! - Write operations are lock-free
 //! - Done flag propagates to worker
 
-use jugar_probar::brick::{
-    Brick, BrickAssertion, BrickBudget, BrickVerification,
+use jugar_probar::brick::{Brick, BrickAssertion, BrickBudget, BrickVerification};
+use presentar_core::{
+    AccessibleRole, Canvas, Color, Constraints, Event, LayoutResult, Point, Rect, Size, TextStyle,
+    TypeId, Widget,
 };
+use std::any::Any;
 use std::time::Duration;
 
 /// Default buffer size: 3 seconds at 48kHz
@@ -232,6 +235,82 @@ impl Brick for AudioBrick {
 
     fn test_id(&self) -> Option<&str> {
         Some("audio")
+    }
+}
+
+impl Widget for AudioBrick {
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    fn measure(&self, constraints: Constraints) -> Size {
+        // Audio brick is a small status bar
+        let height: f32 = 32.0;
+        Size::new(
+            constraints.max_width.min(constraints.min_width.max(200.0)),
+            height.min(constraints.max_height),
+        )
+    }
+
+    fn layout(&mut self, bounds: Rect) -> LayoutResult {
+        LayoutResult {
+            size: Size::new(bounds.width, bounds.height),
+        }
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn paint(&self, canvas: &mut dyn Canvas) {
+        let bounds = Rect::new(0.0, 0.0, 300.0, 32.0);
+
+        // Draw background
+        let bg_color = Color::from_hex("#16213e").unwrap_or(Color::BLACK);
+        canvas.fill_rect(bounds, bg_color);
+
+        // Draw buffer bar background
+        let bar_rect = Rect::new(8.0, 22.0, bounds.width - 16.0, 4.0);
+        let bar_bg = Color::from_hex("#0f3460").unwrap_or(Color::BLACK);
+        canvas.fill_rect(bar_rect, bar_bg);
+
+        // Draw buffer fill
+        let fill_pct = self.fill_percent() as f32 / 100.0;
+        let fill_rect = Rect::new(8.0, 22.0, (bounds.width - 16.0) * fill_pct, 4.0);
+        let fill_color = Color::from_hex("#4dc3ff").unwrap_or(Color::BLUE);
+        canvas.fill_rect(fill_rect, fill_color);
+
+        // Draw info text
+        let text = format!(
+            "{} Hz | {:.1}s | {}%",
+            self.sample_rate,
+            self.buffer_duration_secs(),
+            self.fill_percent()
+        );
+        let style = TextStyle {
+            size: 12.0,
+            color: Color::from_hex("#888888").unwrap_or(Color::WHITE),
+            weight: presentar_core::FontWeight::Normal,
+            style: presentar_core::FontStyle::Normal,
+        };
+        canvas.draw_text(&text, Point::new(8.0, 14.0), &style);
+    }
+
+    fn event(&mut self, _event: &Event) -> Option<Box<dyn Any + Send>> {
+        None
+    }
+
+    fn children(&self) -> &[Box<dyn Widget>] {
+        &[]
+    }
+
+    fn children_mut(&mut self) -> &mut [Box<dyn Widget>] {
+        &mut []
+    }
+
+    fn accessible_name(&self) -> Option<&str> {
+        Some("Audio buffer status")
+    }
+
+    fn accessible_role(&self) -> AccessibleRole {
+        AccessibleRole::Generic
     }
 }
 

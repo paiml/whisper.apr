@@ -12,9 +12,12 @@
 //! - Render time ≤ 10ms (60fps capable)
 //! - Meter has accessible label
 
-use jugar_probar::brick::{
-    Brick, BrickAssertion, BrickBudget, BrickVerification,
+use jugar_probar::brick::{Brick, BrickAssertion, BrickBudget, BrickVerification};
+use presentar_core::{
+    AccessibleRole, Canvas, Color, Constraints, Event, LayoutResult, Point, Rect, Size, TypeId,
+    Widget,
 };
+use std::any::Any;
 use std::time::Duration;
 
 /// VU meter brick for showing audio levels
@@ -184,6 +187,80 @@ impl Brick for VuMeterBrick {
 
     fn test_id(&self) -> Option<&str> {
         Some("vu-meter")
+    }
+}
+
+impl Widget for VuMeterBrick {
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<Self>()
+    }
+
+    fn measure(&self, constraints: Constraints) -> Size {
+        // VU meter is a horizontal bar
+        let height: f32 = 20.0;
+        Size::new(
+            constraints.max_width.min(150.0_f32.max(constraints.min_width)),
+            height.min(constraints.max_height),
+        )
+    }
+
+    fn layout(&mut self, bounds: Rect) -> LayoutResult {
+        LayoutResult {
+            size: Size::new(bounds.width, bounds.height),
+        }
+    }
+
+    fn paint(&self, canvas: &mut dyn Canvas) {
+        let bounds = Rect::new(0.0, 0.0, 150.0, 20.0);
+
+        // Draw background
+        let bg_color = Color::from_hex("#0f3460").unwrap_or(Color::BLACK);
+        canvas.fill_rect(bounds, bg_color);
+
+        // Draw meter bar with gradient (approximate with solid for now)
+        let level_width = bounds.width * self.level;
+        if level_width > 0.0 {
+            let bar_rect = Rect::new(0.0, 0.0, level_width, bounds.height);
+            // Use green for high levels, blue for low
+            let bar_color = if self.level > 0.7 {
+                Color::from_hex("#50fa7b").unwrap_or(Color::GREEN)
+            } else {
+                Color::from_hex("#4dc3ff").unwrap_or(Color::BLUE)
+            };
+            canvas.fill_rect(bar_rect, bar_color);
+        }
+
+        // Draw peak indicator
+        if self.peak > 0.0 {
+            let peak_x = bounds.width * self.peak;
+            let peak_color = Color::from_hex("#ffffff").unwrap_or(Color::WHITE);
+            canvas.draw_line(
+                Point::new(peak_x, 0.0),
+                Point::new(peak_x, bounds.height),
+                peak_color,
+                2.0,
+            );
+        }
+    }
+
+    fn event(&mut self, _event: &Event) -> Option<Box<dyn Any + Send>> {
+        None
+    }
+
+    fn children(&self) -> &[Box<dyn Widget>] {
+        &[]
+    }
+
+    fn children_mut(&mut self) -> &mut [Box<dyn Widget>] {
+        &mut []
+    }
+
+    fn accessible_name(&self) -> Option<&str> {
+        Some(&self.label)
+    }
+
+    fn accessible_role(&self) -> AccessibleRole {
+        AccessibleRole::Generic
     }
 }
 
