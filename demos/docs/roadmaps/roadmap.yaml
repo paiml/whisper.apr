@@ -18,3 +18,35 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: PROBAR-WASM-001
+  github_issue: null
+  item_type: task
+  title: 'New task: PROBAR-WASM-001'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-07T10:01:52.321248169+00:00
+  updated: 2026-01-07T10:01:52.321248169+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-1.0.1-FULL
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-1.0.1-FULL'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-07T13:13:31.701709992+00:00
+  updated: 2026-01-07T13:17:21.145378609+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null

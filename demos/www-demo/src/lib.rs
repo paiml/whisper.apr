@@ -2,6 +2,37 @@
 //!
 //! Real-time streaming transcription - text appears as you speak.
 //! ALL DOM creation and logic happens in Rust via `#[wasm_bindgen(start)]`.
+//!
+//! # Testing
+//!
+//! Worker context detection is tested via:
+//! 1. `wasm_bindgen_test` - runs in actual browser headless
+//! 2. Feature flag `test-mocks` - enables mock window for unit tests
+//! 3. Property tests via proptest
+//! 4. Mutation tests via cargo-mutants
+
+// WASM demo code uses many casts that are safe for browser contexts
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_panics_doc)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::cognitive_complexity)]
+#![allow(clippy::similar_names)]
+#![allow(clippy::struct_excessive_bools)]
+#![allow(clippy::single_match_else)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::assigning_clones)]
+#![allow(clippy::unused_self)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::return_self_not_must_use)]
+#![allow(clippy::manual_let_else)]
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::unnecessary_wraps)]
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -9,20 +40,100 @@ use tracing::{info, warn};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
-use whisper_apr::wasm::{
-    GpuDetectionWasm, TranscribeOptionsWasm, WhisperAprWasm,
-};
+use whisper_apr::wasm::{GpuDetectionWasm, TranscribeOptionsWasm, WhisperAprWasm};
 
-pub mod worker;
-pub mod worker_js;
-pub mod bridge;
-pub mod ring_buffer;
+// =============================================================================
+// CONTEXT DETECTION MODULE (Testable)
+// =============================================================================
+
+/// Execution context for WASM module
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WasmContext {
+    /// Running in main browser window (has window, document, DOM)
+    MainThread,
+    /// Running in Web Worker (has self, postMessage, but NO window)
+    Worker,
+    /// Running in native Rust tests (no web APIs)
+    #[cfg(feature = "test-mocks")]
+    NativeTest,
+}
+
+impl WasmContext {
+    /// Detect current execution context
+    ///
+    /// # Returns
+    /// - `MainThread` if `window` exists (browser main thread)
+    /// - `Worker` if no `window` (Web Worker context)
+    ///
+    /// # Platform Behavior
+    /// - WASM: Uses `web_sys::window()` for real detection
+    /// - Native: Always returns `Worker` (no web APIs available)
+    #[must_use]
+    pub fn detect() -> Self {
+        #[cfg(feature = "test-mocks")]
+        {
+            // In test mode with mocks, check mock state
+            if MOCK_CONTEXT.with(|ctx| ctx.borrow().is_some()) {
+                return MOCK_CONTEXT.with(|ctx| ctx.borrow().unwrap());
+            }
+        }
+
+        // Real detection via web_sys (only on WASM target)
+        #[cfg(target_arch = "wasm32")]
+        {
+            if web_sys::window().is_some() {
+                return Self::MainThread;
+            }
+            return Self::Worker;
+        }
+
+        // Native targets: no web APIs, treat as Worker context
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self::Worker
+        }
+    }
+
+    /// Check if we're in worker context (no window)
+    #[must_use]
+    pub fn is_worker(&self) -> bool {
+        matches!(self, Self::Worker)
+    }
+
+    /// Check if we're in main thread context (has window)
+    #[must_use]
+    pub fn is_main_thread(&self) -> bool {
+        matches!(self, Self::MainThread)
+    }
+}
+
+#[cfg(feature = "test-mocks")]
+thread_local! {
+    static MOCK_CONTEXT: RefCell<Option<WasmContext>> = const { RefCell::new(None) };
+}
+
+/// Set mock context for testing (only available with test-mocks feature)
+#[cfg(feature = "test-mocks")]
+pub fn set_mock_context(ctx: WasmContext) {
+    MOCK_CONTEXT.with(|c| *c.borrow_mut() = Some(ctx));
+}
+
+/// Clear mock context after testing
+#[cfg(feature = "test-mocks")]
+pub fn clear_mock_context() {
+    MOCK_CONTEXT.with(|c| *c.borrow_mut() = None);
+}
+
 pub mod audio_worklet;
 pub mod audioworklet_js;
+pub mod bridge;
+pub mod ring_buffer;
+pub mod worker;
+pub mod worker_js;
 pub mod worker_manager;
 
-use worker_manager::WorkerManager;
 use audio_worklet::setup_audio_worklet;
+use worker_manager::WorkerManager;
 
 // Pareto optimal: INT8 with filterbank (37MB) - smallest working model
 // INT4 quantization breaks accuracy, FP32 (146MB) offers no quality improvement
@@ -34,12 +145,13 @@ struct App {
     transcript: String,
     partial_text: String,
     is_recording: bool,
-    model: Option<Rc<WhisperAprWasm>>,  // For file upload (main thread)
-    model_loaded: bool,                   // For button state
+    is_starting: bool, // Jidoka: prevents accidental stop during startup
+    model: Option<Rc<WhisperAprWasm>>, // For file upload (main thread)
+    model_loaded: bool,                // For button state
     sample_rate: u32,
     // World-class UX state
-    audio_level: f32,           // RMS level 0.0-1.0
-    streaming_state: String,    // "Listening", "Recording", "Transcribing"
+    audio_level: f32,        // RMS level 0.0-1.0
+    streaming_state: String, // "Listening", "Recording", "Transcribing"
 }
 
 impl Default for App {
@@ -49,6 +161,7 @@ impl Default for App {
             transcript: String::new(),
             partial_text: String::new(),
             is_recording: false,
+            is_starting: false,
             model: None,
             model_loaded: false,
             sample_rate: 48000,
@@ -69,6 +182,16 @@ thread_local! {
 }
 
 /// Zero-JS entry point
+///
+/// # Context Detection
+///
+/// This function detects whether it's running in:
+/// - Main thread (browser window) → Initialize UI
+/// - Web Worker → Skip UI, just set up tracing
+///
+/// The detection uses `WasmContext::detect()` which is testable via:
+/// - `test-mocks` feature flag for unit tests
+/// - `wasm_bindgen_test` for browser tests
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
@@ -80,20 +203,34 @@ pub fn start() -> Result<(), JsValue> {
 
     web_sys::console::log_1(&"[WASM] tracing initialized".into());
 
-    info!("WAPR-REALTIME: Initializing streaming demo");
+    // Detect execution context using testable abstraction
+    let context = WasmContext::detect();
 
-    let window = web_sys::window().ok_or("No window")?;
+    // Workers load the same WASM but don't need UI initialization
+    if context.is_worker() {
+        web_sys::console::log_1(&"[WASM] Running in worker context, skipping UI init".into());
+        return Ok(());
+    }
+
+    // Main thread: get window and initialize UI
+    let window = web_sys::window().ok_or("No window in main thread context")?;
+
+    info!("WAPR-REALTIME: Initializing streaming demo");
     let document = window.document().ok_or("No document")?;
     let body = document.body().ok_or("No body")?;
 
     body.set_inner_html("");
 
     // Set dark theme on body
-    body.style().set_css_text("background: #0d1117; color: #c9d1d9; margin: 0; padding: 0;");
+    body.style()
+        .set_css_text("background: #0d1117; color: #c9d1d9; margin: 0; padding: 0;");
 
     // Main container
     let main = create_element(&document, "main")?;
-    set_styles(&main, "max-width: 800px; margin: 0 auto; padding: 2rem; font-family: system-ui, sans-serif;")?;
+    set_styles(
+        &main,
+        "max-width: 800px; margin: 0 auto; padding: 2rem; font-family: system-ui, sans-serif;",
+    )?;
 
     // Header
     let header = create_element(&document, "header")?;
@@ -101,7 +238,10 @@ pub fn start() -> Result<(), JsValue> {
 
     let h1 = create_element(&document, "h1")?;
     h1.set_text_content(Some("Whisper.apr"));
-    set_styles(&h1, "color: #58a6ff; font-size: 2.5rem; margin-bottom: 0.5rem;")?;
+    set_styles(
+        &h1,
+        "color: #58a6ff; font-size: 2.5rem; margin-bottom: 0.5rem;",
+    )?;
     header.append_child(&h1)?;
 
     let subtitle = create_element(&document, "p")?;
@@ -125,7 +265,10 @@ pub fn start() -> Result<(), JsValue> {
 
     // Top row: recording dot + state label
     let indicator_top = create_element(&document, "div")?;
-    set_styles(&indicator_top, "display: flex; align-items: center; gap: 0.5rem;")?;
+    set_styles(
+        &indicator_top,
+        "display: flex; align-items: center; gap: 0.5rem;",
+    )?;
 
     let dot = create_element(&document, "span")?;
     dot.set_id("recording_dot");
@@ -141,7 +284,10 @@ pub fn start() -> Result<(), JsValue> {
 
     // Audio level VU meter
     let vu_container = create_element(&document, "div")?;
-    set_styles(&vu_container, "display: flex; align-items: center; gap: 0.5rem; width: 100%; max-width: 300px;")?;
+    set_styles(
+        &vu_container,
+        "display: flex; align-items: center; gap: 0.5rem; width: 100%; max-width: 300px;",
+    )?;
 
     let vu_label = create_element(&document, "span")?;
     vu_label.set_text_content(Some("🎙️"));
@@ -150,7 +296,10 @@ pub fn start() -> Result<(), JsValue> {
 
     let vu_outer = create_element(&document, "div")?;
     vu_outer.set_id("vu_meter_outer");
-    set_styles(&vu_outer, "flex: 1; height: 8px; background: #21262d; border-radius: 4px; overflow: hidden;")?;
+    set_styles(
+        &vu_outer,
+        "flex: 1; height: 8px; background: #21262d; border-radius: 4px; overflow: hidden;",
+    )?;
 
     let vu_inner = create_element(&document, "div")?;
     vu_inner.set_id("vu_meter");
@@ -161,17 +310,26 @@ pub fn start() -> Result<(), JsValue> {
 
     // Chunk progress bar
     let progress_container = create_element(&document, "div")?;
-    set_styles(&progress_container, "display: flex; align-items: center; gap: 0.5rem; width: 100%; max-width: 300px;")?;
+    set_styles(
+        &progress_container,
+        "display: flex; align-items: center; gap: 0.5rem; width: 100%; max-width: 300px;",
+    )?;
 
     let progress_label = create_element(&document, "span")?;
     progress_label.set_id("progress_label");
     progress_label.set_text_content(Some("Chunk: 0%"));
-    set_styles(&progress_label, "font-size: 0.75rem; color: #8b949e; min-width: 70px;")?;
+    set_styles(
+        &progress_label,
+        "font-size: 0.75rem; color: #8b949e; min-width: 70px;",
+    )?;
     progress_container.append_child(&progress_label)?;
 
     let progress_outer = create_element(&document, "div")?;
     progress_outer.set_id("chunk_progress_outer");
-    set_styles(&progress_outer, "flex: 1; height: 4px; background: #21262d; border-radius: 2px; overflow: hidden;")?;
+    set_styles(
+        &progress_outer,
+        "flex: 1; height: 4px; background: #21262d; border-radius: 2px; overflow: hidden;",
+    )?;
 
     let progress_inner = create_element(&document, "div")?;
     progress_inner.set_id("chunk_progress");
@@ -184,10 +342,15 @@ pub fn start() -> Result<(), JsValue> {
 
     // Button container for record and upload
     let button_container = create_element(&document, "div")?;
-    set_styles(&button_container, "display: flex; gap: 1rem; margin-bottom: 1.5rem;")?;
+    set_styles(
+        &button_container,
+        "display: flex; gap: 1rem; margin-bottom: 1.5rem;",
+    )?;
 
     // Record button
-    let record_btn = document.create_element("button")?.dyn_into::<web_sys::HtmlButtonElement>()?;
+    let record_btn = document
+        .create_element("button")?
+        .dyn_into::<web_sys::HtmlButtonElement>()?;
     record_btn.set_id("record");
     record_btn.set_inner_text("🎤 Record");
     record_btn.set_disabled(true);
@@ -198,7 +361,9 @@ pub fn start() -> Result<(), JsValue> {
     button_container.append_child(&record_btn)?;
 
     // Upload button
-    let upload_btn = document.create_element("button")?.dyn_into::<web_sys::HtmlButtonElement>()?;
+    let upload_btn = document
+        .create_element("button")?
+        .dyn_into::<web_sys::HtmlButtonElement>()?;
     upload_btn.set_id("upload");
     upload_btn.set_inner_text("📁 Upload Audio");
     upload_btn.set_disabled(true);
@@ -209,18 +374,26 @@ pub fn start() -> Result<(), JsValue> {
     button_container.append_child(&upload_btn)?;
 
     // Hidden file input
-    let file_input = document.create_element("input")?.dyn_into::<web_sys::HtmlInputElement>()?;
+    let file_input = document
+        .create_element("input")?
+        .dyn_into::<web_sys::HtmlInputElement>()?;
     file_input.set_id("file_input");
     file_input.set_type("file");
     file_input.set_accept("audio/*,video/*,.wav,.mp3,.mp4,.m4a,.ogg,.webm,.flac");
-    set_styles(&file_input.clone().dyn_into::<web_sys::HtmlElement>()?, "display: none;")?;
+    set_styles(
+        &file_input.clone().dyn_into::<web_sys::HtmlElement>()?,
+        "display: none;",
+    )?;
     button_container.append_child(&file_input)?;
 
     main.append_child(&button_container)?;
 
     // Transcript container
     let transcript_container = create_element(&document, "div")?;
-    set_styles(&transcript_container, "background: #161b22; border-radius: 12px; overflow: hidden;")?;
+    set_styles(
+        &transcript_container,
+        "background: #161b22; border-radius: 12px; overflow: hidden;",
+    )?;
 
     let transcript_header = create_element(&document, "div")?;
     transcript_header.set_text_content(Some("Transcript"));
@@ -230,7 +403,10 @@ pub fn start() -> Result<(), JsValue> {
     let transcript = create_element(&document, "div")?;
     transcript.set_id("transcript");
     transcript.set_attribute("aria-live", "polite")?;
-    set_styles(&transcript, "padding: 1.5rem; min-height: 200px; color: #c9d1d9; line-height: 1.8; font-size: 1.2rem;")?;
+    set_styles(
+        &transcript,
+        "padding: 1.5rem; min-height: 200px; color: #c9d1d9; line-height: 1.8; font-size: 1.2rem;",
+    )?;
     transcript.set_text_content(Some("Transcript will appear here as you speak..."));
     transcript_container.append_child(&transcript)?;
     main.append_child(&transcript_container)?;
@@ -238,14 +414,18 @@ pub fn start() -> Result<(), JsValue> {
     // Partial text (live updates)
     let partial = create_element(&document, "div")?;
     partial.set_id("partial");
-    set_styles(&partial, "color: #8b949e; font-style: italic; margin-top: 0.5rem; min-height: 1.5rem;")?;
+    set_styles(
+        &partial,
+        "color: #8b949e; font-style: italic; margin-top: 0.5rem; min-height: 1.5rem;",
+    )?;
     transcript_container.append_child(&partial)?;
 
     body.append_child(&main)?;
 
     // Add CSS animation for pulse
     let style = document.create_element("style")?;
-    style.set_text_content(Some(r"
+    style.set_text_content(Some(
+        r"
         @keyframes pulse {
             0%, 100% { opacity: 1; transform: scale(1); }
             50% { opacity: 0.5; transform: scale(1.1); }
@@ -258,7 +438,8 @@ pub fn start() -> Result<(), JsValue> {
             opacity: 0.5;
             cursor: not-allowed;
         }
-    "));
+    ",
+    ));
     document.head().ok_or("No head")?.append_child(&style)?;
 
     // Record button click handler
@@ -295,8 +476,13 @@ pub fn start() -> Result<(), JsValue> {
     Ok(())
 }
 
-fn create_element(document: &web_sys::Document, tag: &str) -> Result<web_sys::HtmlElement, JsValue> {
-    document.create_element(tag)?.dyn_into::<web_sys::HtmlElement>()
+fn create_element(
+    document: &web_sys::Document,
+    tag: &str,
+) -> Result<web_sys::HtmlElement, JsValue> {
+    document
+        .create_element(tag)?
+        .dyn_into::<web_sys::HtmlElement>()
         .map_err(|e| JsValue::from_str(&format!("Cast failed: {e:?}")))
 }
 
@@ -315,8 +501,22 @@ fn handle_record_click(document: &web_sys::Document) {
         return;
     }
 
+    // Jidoka: Prevent accidental stop during startup sequence
+    let is_starting = APP.with(|app| app.borrow().is_starting);
+    if is_starting {
+        web_sys::console::log_1(&"[PERF] is_starting=true, ignoring click (Jidoka)".into());
+        return;
+    }
+
     let is_recording = APP.with(|app| app.borrow().is_recording);
-    web_sys::console::log_1(&format!("[PERF] is_recording={} t={:.2}ms", is_recording, web_sys::window().unwrap().performance().unwrap().now() - t0).into());
+    web_sys::console::log_1(
+        &format!(
+            "[PERF] is_recording={} t={:.2}ms",
+            is_recording,
+            web_sys::window().unwrap().performance().unwrap().now() - t0
+        )
+        .into(),
+    );
 
     if is_recording {
         stop_recording(document);
@@ -327,10 +527,11 @@ fn handle_record_click(document: &web_sys::Document) {
         APP.with(|app| {
             let mut app = app.borrow_mut();
             app.is_recording = true;
-            app.status = "Listening...".to_string();
+            app.is_starting = true; // Jidoka: lock until recording established
+            app.status = "Starting...".to_string();
             app.transcript.clear();
             app.partial_text.clear();
-            app.streaming_state = "Listening".to_string();
+            app.streaming_state = "Starting".to_string();
         });
 
         update_ui(document);
@@ -342,6 +543,7 @@ fn handle_record_click(document: &web_sys::Document) {
                 APP.with(|app| {
                     let mut app = app.borrow_mut();
                     app.is_recording = false;
+                    app.is_starting = false;
                     app.status = format!("Error: {e:?}");
                 });
                 update_ui(&doc);
@@ -390,6 +592,7 @@ fn stop_recording(document: &web_sys::Document) {
     APP.with(|app| {
         let mut app = app.borrow_mut();
         app.is_recording = false;
+        app.is_starting = false;
         app.partial_text.clear();
         app.status = "Ready".to_string();
         app.audio_level = 0.0;
@@ -466,7 +669,10 @@ fn handle_file_upload(document: &web_sys::Document) {
 }
 
 /// Process an uploaded audio file and return transcript
-async fn process_audio_file(file: web_sys::File, document: &web_sys::Document) -> Result<String, JsValue> {
+async fn process_audio_file(
+    file: web_sys::File,
+    document: &web_sys::Document,
+) -> Result<String, JsValue> {
     // Read file as ArrayBuffer
     let array_buffer = JsFuture::from(file.array_buffer()).await?;
 
@@ -482,9 +688,10 @@ async fn process_audio_file(file: web_sys::File, document: &web_sys::Document) -
     let array_buffer: js_sys::ArrayBuffer = array_buffer.dyn_into()?;
 
     // Decode the audio data
-    let audio_buffer: web_sys::AudioBuffer = JsFuture::from(
-        audio_context.decode_audio_data(&array_buffer)?
-    ).await?.dyn_into()?;
+    let audio_buffer: web_sys::AudioBuffer =
+        JsFuture::from(audio_context.decode_audio_data(&array_buffer)?)
+            .await?
+            .dyn_into()?;
 
     let sample_rate = audio_buffer.sample_rate();
     let num_channels = audio_buffer.number_of_channels();
@@ -526,8 +733,12 @@ async fn process_audio_file(file: web_sys::File, document: &web_sys::Document) -
 
     // Debug: log audio stats
     let audio_min = samples_16k.iter().copied().fold(f32::INFINITY, f32::min);
-    let audio_max = samples_16k.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-    let audio_rms: f32 = (samples_16k.iter().map(|x| x * x).sum::<f32>() / samples_16k.len() as f32).sqrt();
+    let audio_max = samples_16k
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    let audio_rms: f32 =
+        (samples_16k.iter().map(|x| x * x).sum::<f32>() / samples_16k.len() as f32).sqrt();
     info!(
         samples = samples_16k.len(),
         duration_s = samples_16k.len() as f32 / 16000.0,
@@ -617,7 +828,9 @@ async fn start_recording(document: &web_sys::Document) -> Result<(), JsValue> {
     if !manager_exists {
         let mut manager = WorkerManager::new();
         manager.spawn(MODEL_URL)?;
-        WORKER_MANAGER.with(|wm| { *wm.borrow_mut() = Some(manager); });
+        WORKER_MANAGER.with(|wm| {
+            *wm.borrow_mut() = Some(manager);
+        });
 
         // Wait for worker to be ready (model loading)
         // TODO: This should be event-driven, not polling
@@ -625,9 +838,13 @@ async fn start_recording(document: &web_sys::Document) -> Result<(), JsValue> {
     }
 
     // Get ring buffer from worker manager
-    let ring_buffer = WORKER_MANAGER.with(|wm| {
-        wm.borrow().as_ref().and_then(worker_manager::WorkerManager::get_ring_buffer)
-    }).ok_or("No ring buffer")?;
+    let ring_buffer = WORKER_MANAGER
+        .with(|wm| {
+            wm.borrow()
+                .as_ref()
+                .and_then(worker_manager::WorkerManager::get_ring_buffer)
+        })
+        .ok_or("No ring buffer")?;
 
     // Create audio source
     let source = context.create_media_stream_source(&stream)?;
@@ -635,12 +852,52 @@ async fn start_recording(document: &web_sys::Document) -> Result<(), JsValue> {
     // Set up AudioWorklet (non-blocking audio capture)
     let worklet_node = setup_audio_worklet(&context, &ring_buffer, &source).await?;
 
-    // Start worker processing
+    // Start worker processing (may be queued if model still loading)
+    // Note: start_recording may fail if worker not ready yet - that's OK,
+    // we'll retry when model-loaded event fires
     WORKER_MANAGER.with(|wm| {
         if let Some(ref mut manager) = *wm.borrow_mut() {
             let _ = manager.start_recording(sample_rate);
         }
     });
+
+    // Set up event listener for model-loaded (to start recording and unlock Jidoka)
+    // This is the ONLY place where is_starting gets cleared - ensures button
+    // stays disabled until recording is truly established
+    let sample_rate_for_closure = sample_rate;
+    let doc_for_model_loaded = document.clone();
+    let on_model_loaded = Closure::wrap(Box::new(move |_event: web_sys::CustomEvent| {
+        web_sys::console::log_1(&"[Main] Model loaded event received".into());
+
+        // Try to start recording (will succeed now that model is ready)
+        let started = WORKER_MANAGER.with(|wm| {
+            if let Some(ref mut manager) = *wm.borrow_mut() {
+                manager.start_recording(sample_rate_for_closure).is_ok()
+            } else {
+                false
+            }
+        });
+
+        // Clear is_starting (Jidoka unlock) - this is the critical transition
+        // that re-enables the stop button
+        APP.with(|app| {
+            let mut app = app.borrow_mut();
+            app.is_starting = false;
+            app.status = "Listening...".to_string();
+            app.streaming_state = "Recording".to_string();
+        });
+        update_ui(&doc_for_model_loaded);
+
+        web_sys::console::log_1(
+            &format!("[Main] Jidoka unlocked, recording_started={started}").into(),
+        );
+    }) as Box<dyn Fn(web_sys::CustomEvent)>);
+
+    window.add_event_listener_with_callback(
+        "whisper-model-loaded",
+        on_model_loaded.as_ref().unchecked_ref(),
+    )?;
+    on_model_loaded.forget(); // Keep closure alive
 
     // Set up event listener for transcription results
     let doc = document.clone();
@@ -683,10 +940,18 @@ async fn start_recording(document: &web_sys::Document) -> Result<(), JsValue> {
     )?;
 
     // Store references
-    AUDIO_CONTEXT.with(|ctx| { *ctx.borrow_mut() = Some(context); });
-    MEDIA_STREAM.with(|ms| { *ms.borrow_mut() = Some(stream); });
-    WORKLET_NODE.with(|node| { *node.borrow_mut() = Some(worklet_node); });
-    TRANSCRIPTION_LISTENER.with(|cb| { *cb.borrow_mut() = Some(on_transcription); });
+    AUDIO_CONTEXT.with(|ctx| {
+        *ctx.borrow_mut() = Some(context);
+    });
+    MEDIA_STREAM.with(|ms| {
+        *ms.borrow_mut() = Some(stream);
+    });
+    WORKLET_NODE.with(|node| {
+        *node.borrow_mut() = Some(worklet_node);
+    });
+    TRANSCRIPTION_LISTENER.with(|cb| {
+        *cb.borrow_mut() = Some(on_transcription);
+    });
 
     info!(sample_rate, "Started worker-based real-time recording");
     Ok(())
@@ -703,10 +968,14 @@ fn update_ui(document: &web_sys::Document) {
         if let Some(el) = document.get_element_by_id("transcript") {
             if app.transcript.is_empty() && app.partial_text.is_empty() {
                 el.set_text_content(Some("Transcript will appear here as you speak..."));
-                let _ = el.dyn_ref::<web_sys::HtmlElement>().map(|e| e.style().set_property("color", "#8b949e"));
+                let _ = el
+                    .dyn_ref::<web_sys::HtmlElement>()
+                    .map(|e| e.style().set_property("color", "#8b949e"));
             } else {
                 el.set_text_content(Some(&app.transcript));
-                let _ = el.dyn_ref::<web_sys::HtmlElement>().map(|e| e.style().set_property("color", "#c9d1d9"));
+                let _ = el
+                    .dyn_ref::<web_sys::HtmlElement>()
+                    .map(|e| e.style().set_property("color", "#c9d1d9"));
             }
         }
 
@@ -739,9 +1008,10 @@ fn update_ui(document: &web_sys::Document) {
         // World-class UX: State label
         if let Some(el) = document.get_element_by_id("state_label") {
             let (label, color) = match app.streaming_state.as_str() {
+                "Starting" => ("Starting...", "#6e7681"),
                 "Listening" => ("Listening...", "#8b949e"),
-                "Recording" => ("Recording...", "#f85149"),
                 "Transcribing" => ("Transcribing...", "#58a6ff"),
+                // Default to Recording state (includes "Recording" and any unknown states)
                 _ => ("Recording...", "#f85149"),
             };
             el.set_text_content(Some(label));
@@ -759,24 +1029,42 @@ fn update_ui(document: &web_sys::Document) {
 
         if let Some(btn) = document.get_element_by_id("record") {
             if let Ok(btn) = btn.dyn_into::<web_sys::HtmlButtonElement>() {
-                btn.set_disabled(!app.model_loaded);
+                // Jidoka: Disable during startup to prevent accidental stop
+                btn.set_disabled(!app.model_loaded || app.is_starting);
 
-                if app.is_recording {
+                if app.is_starting {
+                    // Starting state: show spinner/starting indicator
+                    btn.set_inner_text("⏳ Starting...");
+                    let _ = btn
+                        .style()
+                        .set_property("background", "linear-gradient(135deg, #6e7681, #8b949e)");
+                    let _ = btn
+                        .style()
+                        .set_property("box-shadow", "0 4px 12px rgba(110, 118, 129, 0.3)");
+                } else if app.is_recording {
                     btn.set_inner_text("⏹ Stop");
-                    let _ = btn.style().set_property("background", "linear-gradient(135deg, #da3633, #f85149)");
-                    let _ = btn.style().set_property("box-shadow", "0 4px 12px rgba(248, 81, 73, 0.3)");
+                    let _ = btn
+                        .style()
+                        .set_property("background", "linear-gradient(135deg, #da3633, #f85149)");
+                    let _ = btn
+                        .style()
+                        .set_property("box-shadow", "0 4px 12px rgba(248, 81, 73, 0.3)");
                 } else {
                     btn.set_inner_text("🎤 Record");
-                    let _ = btn.style().set_property("background", "linear-gradient(135deg, #238636, #2ea043)");
-                    let _ = btn.style().set_property("box-shadow", "0 4px 12px rgba(35, 134, 54, 0.3)");
+                    let _ = btn
+                        .style()
+                        .set_property("background", "linear-gradient(135deg, #238636, #2ea043)");
+                    let _ = btn
+                        .style()
+                        .set_property("box-shadow", "0 4px 12px rgba(35, 134, 54, 0.3)");
                 }
             }
         }
 
-        // Upload button - enabled when model is loaded and not recording
+        // Upload button - enabled when model is loaded and not recording/starting
         if let Some(btn) = document.get_element_by_id("upload") {
             if let Ok(btn) = btn.dyn_into::<web_sys::HtmlButtonElement>() {
-                btn.set_disabled(!app.model_loaded || app.is_recording);
+                btn.set_disabled(!app.model_loaded || app.is_recording || app.is_starting);
             }
         }
     });
@@ -787,7 +1075,11 @@ fn spawn_model_load(document: web_sys::Document) {
         // Detect GPU capabilities
         let gpu_detection = GpuDetectionWasm::for_inference();
         let gpu_info = if gpu_detection.available() {
-            format!("GPU: {} ({})", gpu_detection.device_name(), gpu_detection.backend_name())
+            format!(
+                "GPU: {} ({})",
+                gpu_detection.device_name(),
+                gpu_detection.backend_name()
+            )
         } else {
             "GPU: Not available (using SIMD)".to_string()
         };
@@ -813,7 +1105,10 @@ fn spawn_model_load(document: web_sys::Document) {
                     Ok(model) => {
                         info!("Model initialized successfully");
                         let ready_status = if gpu_detection.available() {
-                            format!("Ready ({}) - Click to start speaking", gpu_detection.backend_name())
+                            format!(
+                                "Ready ({}) - Click to start speaking",
+                                gpu_detection.backend_name()
+                            )
                         } else {
                             "Ready (WASM SIMD) - Click to start speaking".to_string()
                         };
@@ -846,7 +1141,9 @@ fn spawn_model_load(document: web_sys::Document) {
 
 async fn fetch_model(url: &str) -> Result<Vec<u8>, JsValue> {
     let window = web_sys::window().ok_or("No window")?;
-    let response: web_sys::Response = JsFuture::from(window.fetch_with_str(url)).await?.dyn_into()?;
+    let response: web_sys::Response = JsFuture::from(window.fetch_with_str(url))
+        .await?
+        .dyn_into()?;
 
     if !response.ok() {
         return Err(JsValue::from_str(&format!("HTTP {}", response.status())));
@@ -855,4 +1152,223 @@ async fn fetch_model(url: &str) -> Result<Vec<u8>, JsValue> {
     let array_buffer = JsFuture::from(response.array_buffer()?).await?;
     let uint8_array = js_sys::Uint8Array::new(&array_buffer);
     Ok(uint8_array.to_vec())
+}
+
+// =============================================================================
+// TESTS: Worker Context Detection
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =========================================================================
+    // Unit Tests (with test-mocks feature)
+    // =========================================================================
+
+    #[test]
+    #[cfg(feature = "test-mocks")]
+    fn test_context_detect_worker_mock() {
+        set_mock_context(WasmContext::Worker);
+        let ctx = WasmContext::detect();
+        assert!(ctx.is_worker());
+        assert!(!ctx.is_main_thread());
+        clear_mock_context();
+    }
+
+    #[test]
+    #[cfg(feature = "test-mocks")]
+    fn test_context_detect_main_thread_mock() {
+        set_mock_context(WasmContext::MainThread);
+        let ctx = WasmContext::detect();
+        assert!(ctx.is_main_thread());
+        assert!(!ctx.is_worker());
+        clear_mock_context();
+    }
+
+    #[test]
+    #[cfg(feature = "test-mocks")]
+    fn test_context_detect_native_test_mock() {
+        set_mock_context(WasmContext::NativeTest);
+        let ctx = WasmContext::detect();
+        assert!(!ctx.is_worker());
+        assert!(!ctx.is_main_thread());
+        clear_mock_context();
+    }
+
+    #[test]
+    fn test_wasm_context_is_worker() {
+        assert!(WasmContext::Worker.is_worker());
+        assert!(!WasmContext::MainThread.is_worker());
+    }
+
+    #[test]
+    fn test_wasm_context_is_main_thread() {
+        assert!(WasmContext::MainThread.is_main_thread());
+        assert!(!WasmContext::Worker.is_main_thread());
+    }
+
+    #[test]
+    fn test_wasm_context_equality() {
+        assert_eq!(WasmContext::Worker, WasmContext::Worker);
+        assert_eq!(WasmContext::MainThread, WasmContext::MainThread);
+        assert_ne!(WasmContext::Worker, WasmContext::MainThread);
+    }
+
+    #[test]
+    fn test_wasm_context_debug() {
+        let worker = format!("{:?}", WasmContext::Worker);
+        let main = format!("{:?}", WasmContext::MainThread);
+        assert!(worker.contains("Worker"));
+        assert!(main.contains("MainThread"));
+    }
+
+    #[test]
+    fn test_wasm_context_clone() {
+        let ctx = WasmContext::Worker;
+        let cloned = ctx;
+        assert_eq!(ctx, cloned);
+    }
+
+    // =========================================================================
+    // Native context detection test (no mocks)
+    // In native Rust tests, web_sys::window() returns None
+    // =========================================================================
+
+    #[test]
+    #[cfg(not(feature = "test-mocks"))]
+    fn test_context_detect_native_is_worker() {
+        // In native Rust tests, window() returns None, so it's detected as Worker
+        let ctx = WasmContext::detect();
+        assert!(
+            ctx.is_worker(),
+            "Native tests should detect as Worker (no window)"
+        );
+    }
+}
+
+// =============================================================================
+// WASM BROWSER TESTS (run via wasm-pack test --headless --chrome)
+// =============================================================================
+
+#[cfg(target_arch = "wasm32")]
+#[cfg(test)]
+mod wasm_tests {
+    use super::*;
+    use wasm_bindgen_test::*;
+
+    wasm_bindgen_test_configure!(run_in_browser);
+
+    /// Test that main thread correctly detects window
+    #[wasm_bindgen_test]
+    fn test_main_thread_has_window() {
+        // This test runs in the main browser thread
+        let ctx = WasmContext::detect();
+
+        // In main browser thread, window exists
+        assert!(
+            ctx.is_main_thread(),
+            "Browser main thread should detect as MainThread"
+        );
+        assert!(
+            !ctx.is_worker(),
+            "Browser main thread should NOT detect as Worker"
+        );
+    }
+
+    /// Test window actually exists in main thread
+    #[wasm_bindgen_test]
+    fn test_web_sys_window_exists() {
+        let window = web_sys::window();
+        assert!(
+            window.is_some(),
+            "web_sys::window() should return Some in main thread"
+        );
+    }
+
+    /// Test context detection is consistent
+    #[wasm_bindgen_test]
+    fn test_context_detection_consistent() {
+        let ctx1 = WasmContext::detect();
+        let ctx2 = WasmContext::detect();
+        assert_eq!(ctx1, ctx2, "Context detection should be consistent");
+    }
+
+    /// Test WasmContext enum variants work correctly
+    #[wasm_bindgen_test]
+    fn test_context_enum_methods() {
+        let worker = WasmContext::Worker;
+        let main = WasmContext::MainThread;
+
+        assert!(worker.is_worker());
+        assert!(!worker.is_main_thread());
+        assert!(main.is_main_thread());
+        assert!(!main.is_worker());
+    }
+}
+
+// =============================================================================
+// PROPERTY TESTS (run via cargo test --features test-mocks)
+// =============================================================================
+
+#[cfg(test)]
+#[cfg(feature = "test-mocks")]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Generate arbitrary WasmContext values
+    fn arb_context() -> impl Strategy<Value = WasmContext> {
+        prop_oneof![
+            Just(WasmContext::MainThread),
+            Just(WasmContext::Worker),
+            Just(WasmContext::NativeTest),
+        ]
+    }
+
+    proptest! {
+        /// Property: is_worker and is_main_thread are mutually exclusive (except NativeTest)
+        #[test]
+        fn prop_worker_main_thread_exclusive(ctx in arb_context()) {
+            match ctx {
+                WasmContext::MainThread => {
+                    prop_assert!(ctx.is_main_thread());
+                    prop_assert!(!ctx.is_worker());
+                }
+                WasmContext::Worker => {
+                    prop_assert!(ctx.is_worker());
+                    prop_assert!(!ctx.is_main_thread());
+                }
+                WasmContext::NativeTest => {
+                    prop_assert!(!ctx.is_worker());
+                    prop_assert!(!ctx.is_main_thread());
+                }
+            }
+        }
+
+        /// Property: context equality is reflexive
+        #[test]
+        fn prop_context_equality_reflexive(ctx in arb_context()) {
+            prop_assert_eq!(ctx, ctx);
+        }
+
+        /// Property: mock context overrides detection
+        #[test]
+        fn prop_mock_context_overrides(ctx in arb_context()) {
+            set_mock_context(ctx);
+            let detected = WasmContext::detect();
+            prop_assert_eq!(detected, ctx, "Mock should override detection");
+            clear_mock_context();
+        }
+
+        /// Property: clearing mock returns to native detection
+        #[test]
+        fn prop_clear_mock_returns_native(ctx in arb_context()) {
+            set_mock_context(ctx);
+            clear_mock_context();
+            // After clearing, detection should return Worker (no window in native tests)
+            let detected = WasmContext::detect();
+            prop_assert!(detected.is_worker(), "Native detection should return Worker");
+        }
+    }
 }

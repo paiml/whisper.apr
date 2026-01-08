@@ -17,8 +17,6 @@ tokio.workspace = true
 image = "0.24"
 futures = "0.3"
 ratatui = "0.29"
-
-[dev-dependencies]
 proptest.workspace = true
 
 [[example]]

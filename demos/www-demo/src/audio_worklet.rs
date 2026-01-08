@@ -12,8 +12,8 @@
 //! - Zero allocations in `process()` hot path
 //! - Lock-free ring buffer writes via `SharedArrayBuffer`
 
-use wasm_bindgen::prelude::*;
 use crate::ring_buffer::SharedRingBuffer;
+use wasm_bindgen::prelude::*;
 
 /// `AudioWorklet` processor state
 #[wasm_bindgen]
@@ -29,7 +29,7 @@ pub struct AudioWorkletBridge {
 impl AudioWorkletBridge {
     /// Create a new `AudioWorklet` bridge
     #[wasm_bindgen(constructor)]
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             ring_buffer: None,
@@ -66,16 +66,17 @@ impl AudioWorkletBridge {
                 if written < samples.len() {
                     self.underruns += 1;
                     web_sys::console::warn_1(
-                        &format!("[AudioWorklet] Buffer full, dropped {} samples",
-                                 samples.len() - written).into()
+                        &format!(
+                            "[AudioWorklet] Buffer full, dropped {} samples",
+                            samples.len() - written
+                        )
+                        .into(),
                     );
                 }
                 true
             }
             Err(e) => {
-                web_sys::console::error_1(
-                    &format!("[AudioWorklet] Write error: {e:?}").into()
-                );
+                web_sys::console::error_1(&format!("[AudioWorklet] Write error: {e:?}").into());
                 false
             }
         }
@@ -83,21 +84,21 @@ impl AudioWorkletBridge {
 
     /// Get total samples written
     #[wasm_bindgen(getter, js_name = samplesWritten)]
-    #[must_use] 
+    #[must_use]
     pub fn samples_written(&self) -> u64 {
         self.samples_written
     }
 
     /// Get underrun count
     #[wasm_bindgen(getter)]
-    #[must_use] 
+    #[must_use]
     pub fn underruns(&self) -> u32 {
         self.underruns
     }
 
     /// Get sample rate
     #[wasm_bindgen(getter, js_name = sampleRate)]
-    #[must_use] 
+    #[must_use]
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
@@ -267,11 +268,8 @@ pub async fn setup_audio_worklet(
     options.set_number_of_inputs(1);
     options.set_number_of_outputs(0); // We don't need output, just capturing
 
-    let node = web_sys::AudioWorkletNode::new_with_options(
-        context,
-        "whisper-audio-processor",
-        &options,
-    )?;
+    let node =
+        web_sys::AudioWorkletNode::new_with_options(context, "whisper-audio-processor", &options)?;
 
     // Send ring buffer to worklet via port
     let port = node.port()?;

@@ -3,13 +3,13 @@
 //! Manages Web Worker lifecycle and message passing from main thread.
 //! Provides async API for non-blocking transcription.
 
-use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
 use std::cell::RefCell;
 use std::rc::Rc;
+use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 
 use crate::ring_buffer::SharedRingBuffer;
-use crate::worker::{WorkerResult, create_worker_blob_url};
+use crate::worker::{create_worker_blob_url, WorkerResult};
 
 /// Callback for transcription results
 pub type ResultCallback = Rc<RefCell<dyn FnMut(WorkerResult)>>;
@@ -29,32 +29,38 @@ pub enum ManagerState {
 #[wasm_bindgen]
 pub struct WorkerManager {
     worker: Option<web_sys::Worker>,
-    state: ManagerState,
+    /// CRITICAL: This is the authoritative state, shared with the onmessage closure.
+    /// Do NOT use a separate `state` field - that causes desync bugs.
+    /// The closure updates this via `state_ptr_clone`, and all state checks read from it.
+    state_ptr: Rc<RefCell<ManagerState>>,
     ring_buffer: Option<SharedRingBuffer>,
     on_message_closure: Option<Closure<dyn Fn(web_sys::MessageEvent)>>,
     on_error_closure: Option<Closure<dyn Fn(web_sys::ErrorEvent)>>,
+    /// If start_recording is called before model loads, store sample_rate here
+    pending_start_sample_rate: Option<u32>,
 }
 
 #[wasm_bindgen]
 impl WorkerManager {
     /// Create a new worker manager
     #[wasm_bindgen(constructor)]
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             worker: None,
-            state: ManagerState::Uninitialized,
+            state_ptr: Rc::new(RefCell::new(ManagerState::Uninitialized)),
             ring_buffer: None,
             on_message_closure: None,
             on_error_closure: None,
+            pending_start_sample_rate: None,
         }
     }
 
     /// Get current state
     #[wasm_bindgen(getter)]
-    #[must_use] 
+    #[must_use]
     pub fn state(&self) -> String {
-        match self.state {
+        match *self.state_ptr.borrow() {
             ManagerState::Uninitialized => "uninitialized".to_string(),
             ManagerState::Spawning => "spawning".to_string(),
             ManagerState::Loading => "loading".to_string(),
@@ -66,16 +72,23 @@ impl WorkerManager {
 
     /// Check if worker is ready
     #[wasm_bindgen(js_name = isReady)]
-    #[must_use] 
+    #[must_use]
     pub fn is_ready(&self) -> bool {
-        self.state == ManagerState::Ready
+        *self.state_ptr.borrow() == ManagerState::Ready
     }
 
     /// Check if currently recording
     #[wasm_bindgen(js_name = isRecording)]
-    #[must_use] 
+    #[must_use]
     pub fn is_recording(&self) -> bool {
-        self.state == ManagerState::Recording
+        *self.state_ptr.borrow() == ManagerState::Recording
+    }
+
+    /// Check if there's a pending start request (called before model was ready)
+    #[wasm_bindgen(js_name = pendingStartSampleRate)]
+    #[must_use]
+    pub fn pending_start_sample_rate(&self) -> Option<u32> {
+        self.pending_start_sample_rate
     }
 
     /// Spawn worker and initialize with model
@@ -85,7 +98,7 @@ impl WorkerManager {
             return Err(JsValue::from_str("Worker already spawned"));
         }
 
-        self.state = ManagerState::Spawning;
+        *self.state_ptr.borrow_mut() = ManagerState::Spawning;
 
         // Create ring buffer (3 seconds at 48kHz)
         let ring_buffer = SharedRingBuffer::new(48000 * 3)?;
@@ -107,9 +120,8 @@ impl WorkerManager {
         let model_url = model_url.to_string();
         let ring_buffer_ref = self.ring_buffer.as_ref().unwrap().buffer();
 
-        // Set up message handler
-        let state_ptr = Rc::new(RefCell::new(ManagerState::Spawning));
-        let state_ptr_clone = state_ptr.clone();
+        // Set up message handler - use the shared state_ptr from self
+        let state_ptr_clone = self.state_ptr.clone();
 
         let on_message = Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
             let data = event.data();
@@ -121,27 +133,55 @@ impl WorkerManager {
                         web_sys::console::log_1(&"[Manager] Worker ready, sending init".into());
                         *state_ptr_clone.borrow_mut() = ManagerState::Loading;
                     }
-                    WorkerResult::ModelLoaded { size_mb, load_time_ms } => {
+                    WorkerResult::ModelLoaded {
+                        size_mb,
+                        load_time_ms,
+                    } => {
                         web_sys::console::log_1(
-                            &format!("[Manager] Model loaded: {size_mb:.1}MB in {load_time_ms:.0}ms").into()
+                            &format!(
+                                "[Manager] Model loaded: {size_mb:.1}MB in {load_time_ms:.0}ms"
+                            )
+                            .into(),
                         );
                         *state_ptr_clone.borrow_mut() = ManagerState::Ready;
+
+                        // Dispatch event so main thread can start recording if pending
+                        if let Some(window) = web_sys::window() {
+                            let detail = js_sys::Object::new();
+                            let _ =
+                                js_sys::Reflect::set(&detail, &"sizeMb".into(), &(*size_mb).into());
+                            let _ = js_sys::Reflect::set(
+                                &detail,
+                                &"loadTimeMs".into(),
+                                &(*load_time_ms).into(),
+                            );
+
+                            let init = web_sys::CustomEventInit::new();
+                            init.set_detail(&detail);
+
+                            if let Ok(event) = web_sys::CustomEvent::new_with_event_init_dict(
+                                "whisper-model-loaded",
+                                &init,
+                            ) {
+                                let _ = window.dispatch_event(&event);
+                            }
+                        }
                     }
                     WorkerResult::Partial { text, is_final } => {
                         if *is_final {
-                            web_sys::console::log_1(
-                                &format!("[Manager] Final: {text}").into()
-                            );
+                            web_sys::console::log_1(&format!("[Manager] Final: {text}").into());
                         } else {
-                            web_sys::console::log_1(
-                                &format!("[Manager] Partial: {text}").into()
-                            );
+                            web_sys::console::log_1(&format!("[Manager] Partial: {text}").into());
                         }
                         // Dispatch custom event for UI to handle
                         if let Some(window) = web_sys::window() {
                             let detail = js_sys::Object::new();
                             let _ = js_sys::Reflect::set(&detail, &"text".into(), &text.into());
-                            let _ = js_sys::Reflect::set(&detail, &"isFinal".into(), &(*is_final).into());
+                            let _ = js_sys::Reflect::set(
+                                &detail,
+                                &"isFinal".into(),
+                                &(*is_final).into(),
+                            );
 
                             let init = web_sys::CustomEventInit::new();
                             init.set_detail(&detail);
@@ -155,9 +195,7 @@ impl WorkerManager {
                         }
                     }
                     WorkerResult::Error { message } => {
-                        web_sys::console::error_1(
-                            &format!("[Manager] Error: {message}").into()
-                        );
+                        web_sys::console::error_1(&format!("[Manager] Error: {message}").into());
                         *state_ptr_clone.borrow_mut() = ManagerState::Error;
                     }
                     _ => {}
@@ -171,7 +209,7 @@ impl WorkerManager {
         // Set up error handler
         let on_error = Closure::wrap(Box::new(move |event: web_sys::ErrorEvent| {
             web_sys::console::error_1(
-                &format!("[Manager] Worker error: {}", event.message()).into()
+                &format!("[Manager] Worker error: {}", event.message()).into(),
             );
         }) as Box<dyn Fn(web_sys::ErrorEvent)>);
 
@@ -193,10 +231,16 @@ impl WorkerManager {
         let worker_ref = self.worker.as_ref().unwrap();
         let bootstrap_msg = js_sys::Object::new();
         let _ = js_sys::Reflect::set(&bootstrap_msg, &"type".into(), &"bootstrap".into());
-        let _ = js_sys::Reflect::set(&bootstrap_msg, &"baseUrl".into(), &JsValue::from_str(&base_url));
+        let _ = js_sys::Reflect::set(
+            &bootstrap_msg,
+            &"baseUrl".into(),
+            &JsValue::from_str(&base_url),
+        );
         worker_ref.post_message(&bootstrap_msg)?;
 
-        web_sys::console::log_1(&format!("[Manager] Bootstrap sent with baseUrl: {base_url}").into());
+        web_sys::console::log_1(
+            &format!("[Manager] Bootstrap sent with baseUrl: {base_url}").into(),
+        );
 
         // Send init message after bootstrap (worker will handle sequencing)
         // Use a short delay to allow the bootstrap to complete
@@ -226,13 +270,32 @@ impl WorkerManager {
     }
 
     /// Start recording and transcription
+    ///
+    /// If called before model is ready (state == Loading), the request is queued
+    /// and will be executed automatically when the model finishes loading.
     #[wasm_bindgen(js_name = startRecording)]
     pub fn start_recording(&mut self, sample_rate: u32) -> Result<(), JsValue> {
-        let worker = self.worker.as_ref().ok_or("Worker not spawned")?;
+        if self.worker.is_none() {
+            return Err(JsValue::from_str("Worker not spawned"));
+        }
 
-        if self.state != ManagerState::Ready {
+        let current_state = *self.state_ptr.borrow();
+
+        // If model is still loading, queue the start request
+        if current_state == ManagerState::Loading {
+            web_sys::console::log_1(
+                &"[Manager] Model still loading, queueing start request...".into(),
+            );
+            self.pending_start_sample_rate = Some(sample_rate);
+            return Ok(());
+        }
+
+        if current_state != ManagerState::Ready {
             return Err(JsValue::from_str("Worker not ready"));
         }
+
+        // Clear pending request
+        self.pending_start_sample_rate = None;
 
         // Reset ring buffer
         if let Some(ref buffer) = self.ring_buffer {
@@ -244,8 +307,8 @@ impl WorkerManager {
         js_sys::Reflect::set(&msg, &"type".into(), &"start".into())?;
         js_sys::Reflect::set(&msg, &"sampleRate".into(), &sample_rate.into())?;
 
-        worker.post_message(&msg)?;
-        self.state = ManagerState::Recording;
+        self.worker.as_ref().unwrap().post_message(&msg)?;
+        *self.state_ptr.borrow_mut() = ManagerState::Recording;
 
         web_sys::console::log_1(&"[Manager] Recording started".into());
         Ok(())
@@ -256,7 +319,7 @@ impl WorkerManager {
     pub fn stop_recording(&mut self) -> Result<(), JsValue> {
         let worker = self.worker.as_ref().ok_or("Worker not spawned")?;
 
-        if self.state != ManagerState::Recording {
+        if *self.state_ptr.borrow() != ManagerState::Recording {
             return Ok(()); // Already stopped
         }
 
@@ -270,7 +333,7 @@ impl WorkerManager {
         js_sys::Reflect::set(&msg, &"type".into(), &"stop".into())?;
 
         worker.post_message(&msg)?;
-        self.state = ManagerState::Ready;
+        *self.state_ptr.borrow_mut() = ManagerState::Ready;
 
         web_sys::console::log_1(&"[Manager] Recording stopped".into());
         Ok(())
@@ -278,7 +341,7 @@ impl WorkerManager {
 
     /// Get ring buffer for `AudioWorklet`
     #[wasm_bindgen(js_name = getRingBuffer)]
-    #[must_use] 
+    #[must_use]
     pub fn get_ring_buffer(&self) -> Option<SharedRingBuffer> {
         self.ring_buffer.clone()
     }
@@ -295,7 +358,7 @@ impl WorkerManager {
 
         self.worker = None;
         self.ring_buffer = None;
-        self.state = ManagerState::Uninitialized;
+        *self.state_ptr.borrow_mut() = ManagerState::Uninitialized;
         self.on_message_closure = None;
         self.on_error_closure = None;
 

@@ -16,8 +16,8 @@
 //! Offset 64: data      (f32[])      - audio samples (cache-line aligned)
 //! ```
 
-use wasm_bindgen::prelude::*;
 use js_sys::{Float32Array, Int32Array, SharedArrayBuffer};
+use wasm_bindgen::prelude::*;
 
 /// Header size in bytes (cache-line aligned)
 const HEADER_SIZE: usize = 64;
@@ -74,11 +74,8 @@ impl SharedRingBuffer {
         let buffer = SharedArrayBuffer::new(total_size as u32);
 
         // Create views
-        let header = Int32Array::new_with_byte_offset_and_length(
-            &buffer,
-            0,
-            (HEADER_SIZE / 4) as u32,
-        );
+        let header =
+            Int32Array::new_with_byte_offset_and_length(&buffer, 0, (HEADER_SIZE / 4) as u32);
         let data = Float32Array::new_with_byte_offset_and_length(
             &buffer,
             HEADER_SIZE as u32,
@@ -106,7 +103,7 @@ impl SharedRingBuffer {
 
     /// Check if `SharedArrayBuffer` is available
     #[wasm_bindgen(js_name = isAvailable)]
-    #[must_use] 
+    #[must_use]
     pub fn is_available() -> bool {
         // Check crossOriginIsolated
         let window = match web_sys::window() {
@@ -127,7 +124,7 @@ impl SharedRingBuffer {
 
     /// Get the underlying `SharedArrayBuffer` for transfer to worker
     #[wasm_bindgen(getter)]
-    #[must_use] 
+    #[must_use]
     pub fn buffer(&self) -> SharedArrayBuffer {
         self.buffer.clone()
     }
@@ -137,11 +134,8 @@ impl SharedRingBuffer {
     /// Used by worker to attach to buffer created by main thread
     #[wasm_bindgen(js_name = fromBuffer)]
     pub fn from_buffer(buffer: SharedArrayBuffer) -> Result<SharedRingBuffer, JsValue> {
-        let header = Int32Array::new_with_byte_offset_and_length(
-            &buffer,
-            0,
-            (HEADER_SIZE / 4) as u32,
-        );
+        let header =
+            Int32Array::new_with_byte_offset_and_length(&buffer, 0, (HEADER_SIZE / 4) as u32);
 
         // Read capacity from header
         let capacity = js_sys::Atomics::load(&header, CAPACITY_OFFSET as u32)
@@ -164,7 +158,7 @@ impl SharedRingBuffer {
 
     /// Get buffer capacity in samples
     #[wasm_bindgen(getter)]
-    #[must_use] 
+    #[must_use]
     pub fn capacity(&self) -> usize {
         self.capacity
     }

@@ -397,3 +397,135 @@ scenarios:
       - action: "init"
         expect_state: "worker_ready"
       - assert: "worker_state() == 'ready'"
+
+  # =========================================================================
+  # WAPR-WORKER-CONTEXT: Worker Context Detection Tests
+  # Tests the WasmContext::detect() code path that was previously untested
+  # =========================================================================
+
+  - name: "worker_context_detection"
+    description: "Verify Worker detects context correctly (no window)"
+    steps:
+      - action: "init"
+        expect_state: "worker_ready"
+      - action: "verify_worker_logs"
+        contains:
+          - "[WASM] Running in worker context, skipping UI init"
+        not_contains:
+          - "No window"
+          - "panicked"
+          - "unreachable"
+      - assert: "worker_state() == 'ready'"
+      - assert: "!console_has_error('No window')"
+      - assert: "!console_has_panic()"
+
+  - name: "main_thread_context_detection"
+    description: "Verify main thread detects window correctly"
+    steps:
+      - action: "navigate"
+        url: "/realtime-transcription.html"
+      - action: "wait_for_selector"
+        selector: "#status"
+      - action: "verify_main_logs"
+        contains:
+          - "[WASM] start() called"
+          - "[WASM] tracing initialized"
+          - "WAPR-REALTIME: Initializing streaming demo"
+        not_contains:
+          - "[WASM] Running in worker context"
+          - "No window"
+      - assert: "!console_has_error('No window')"
+
+  - name: "worker_no_double_tracing_init"
+    description: "Verify tracing is not double-initialized in worker"
+    steps:
+      - action: "init"
+        expect_state: "worker_ready"
+      - action: "verify_worker_logs"
+        not_contains:
+          - "SetGlobalDefaultError"
+          - "a global default trace dispatcher has already been set"
+          - "panicked"
+      - assert: "!console_has_panic()"
+      - assert: "worker_state() == 'ready'"
+
+# =============================================================================
+# SECTION H: BROWSER/WASM STRESS TESTING (Points 116-125)
+# Per PROBAR-SPEC-WASM-001 Section H - Dual-Mode Load Testing
+# =============================================================================
+#
+# Run via probador CLI:
+#   probar stress --atomics       # SharedArrayBuffer lock contention
+#   probar stress --worker-msg    # Worker message throughput
+#   probar stress --render        # Render loop stability
+#   probar stress --trace         # Tracing overhead measurement
+#   probar stress --full          # All stress tests combined
+#
+# See: /home/noah/src/probar/book/src/probar/stress-testing.md
+#
+# =============================================================================
+
+stress_testing:
+  # Point 116: SharedArrayBuffer atomics contention
+  atomics:
+    enabled: true
+    pass_criteria: "> 10000 ops/sec"
+    duration_s: 30
+    concurrency: 4
+    command: "probar stress --atomics --duration 30 --concurrency 4"
+
+  # Point 117: Worker message throughput
+  worker_msg:
+    enabled: true
+    pass_criteria: "> 5000 msg/sec"
+    duration_s: 30
+    concurrency: 4
+    command: "probar stress --worker-msg --duration 30 --concurrency 4"
+
+  # Point 118: Render loop stability
+  render:
+    enabled: true
+    pass_criteria: "60 FPS maintained (< 5% frame drops)"
+    duration_s: 30
+    command: "probar stress --render --duration 30"
+
+  # Point 119: Tracing overhead
+  trace:
+    enabled: true
+    pass_criteria: "< 5% overhead at saturation"
+    duration_s: 30
+    command: "probar stress --trace --duration 30"
+
+  # Point 123: Full system stress (all modes combined)
+  full:
+    enabled: true
+    pass_criteria: "All sub-tests pass"
+    duration_s: 60
+    concurrency: 4
+    command: "probar stress --full --duration 60 --concurrency 4"
+
+# =============================================================================
+# COMPLIANCE GATE (PROBAR-SPEC-WASM-001)
+# =============================================================================
+
+compliance:
+  # Run with: cargo test --package whisper-apr-demo-tests comply
+  wasm_threading:
+    - "WASM-COMPLY-001: State sync lint passes"
+    - "WASM-COMPLY-002: Mock runtime tests exist"
+    - "WASM-COMPLY-003: Property tests on actual code"
+    - "WASM-COMPLY-004: Regression tests for known bugs"
+    - "WASM-COMPLY-005: No JS files in target/"
+
+  state_sync_lint:
+    - "WASM-SS-001: Rc::new() detection in closures"
+    - "WASM-SS-002: Closure capture analysis"
+    - "WASM-SS-003: Cross-thread state warnings"
+    - "WASM-SS-005: Callback lifetime validation"
+    - "WASM-SS-006: Type alias Rc detection"
+    - "WASM-SS-007: Function returning Rc detection"
+
+  zero_js:
+    - "No web_sys::eval"
+    - "No Function::new_with_args"
+    - "No dynamic JS evaluation"

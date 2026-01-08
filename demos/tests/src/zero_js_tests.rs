@@ -246,8 +246,16 @@ async fn test_pixel_initial_state() {
 
     // Decode and verify reasonable dimensions
     let img = image::load_from_memory(&png_data).unwrap();
-    assert!(img.width() >= 600, "Width must be at least 600px, got {}", img.width());
-    assert!(img.height() >= 400, "Height must be at least 400px, got {}", img.height());
+    assert!(
+        img.width() >= 600,
+        "Width must be at least 600px, got {}",
+        img.width()
+    );
+    assert!(
+        img.height() >= 400,
+        "Height must be at least 400px, got {}",
+        img.height()
+    );
 
     // Verify NOT a blank white page (has actual content)
     let rgba = img.to_rgba8();
@@ -380,7 +388,10 @@ async fn test_transcription_produces_output() {
         }
     }
 
-    assert!(has_transcript, "Transcription must produce output within 60s");
+    assert!(
+        has_transcript,
+        "Transcription must produce output within 60s"
+    );
 }
 
 // ============================================================================

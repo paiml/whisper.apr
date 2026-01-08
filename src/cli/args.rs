@@ -107,6 +107,7 @@ pub struct Args {
 
 /// Available commands
 #[derive(Subcommand, Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     /// Transcribe audio/video to text
     Transcribe(TranscribeArgs),

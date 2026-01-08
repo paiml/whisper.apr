@@ -29,7 +29,9 @@ simd = []
 parallel = ["rayon", "wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
 converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs", "zip"]
-cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "half"]
+cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "half", "symphonia"]
+# Multi-format audio decoding (MP3, FLAC, OGG, AAC, etc.)
+symphonia = ["dep:symphonia"]
 benchmark-tui = ["ratatui", "crossterm"]
 tui = ["ratatui", "crossterm"]
 # Use realizar's world-class inference primitives (attention, quantization, caching)
@@ -99,6 +101,20 @@ half = { version = "2", optional = true }
 # Optional: TUI benchmark dependencies
 ratatui = { version = "0.29", optional = true }
 crossterm = { version = "0.28", optional = true }
+
+# Optional: Multi-format audio decoding (MP3, FLAC, OGG, AAC, M4A, etc.)
+# Pure Rust - no system dependencies required
+symphonia = { version = "0.5", optional = true, default-features = false, features = [
+    "mp3",      # MP3 decoding
+    "flac",     # FLAC decoding
+    "ogg",      # OGG container (Vorbis)
+    "vorbis",   # Vorbis codec
+    "aac",      # AAC decoding (M4A)
+    "isomp4",   # MP4/M4A container
+    "mkv",      # MKV/WebM container
+    "wav",      # WAV container (fallback)
+    "pcm",      # PCM codec
+] }
 
 [dev-dependencies]
 proptest = "1"

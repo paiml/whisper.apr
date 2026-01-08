@@ -15,8 +15,8 @@
 //! - Server running: `make serve-dev` (port 8081, COOP/COEP enabled)
 
 use probar::{
-    emulation::{AudioEmulator, AudioSource},
     capabilities::{WasmThreadCapabilities, WorkerEmulator},
+    emulation::{AudioEmulator, AudioSource},
     validators::StreamingUxValidator,
     Browser, BrowserConfig,
 };
@@ -62,7 +62,10 @@ async fn test_shared_array_buffer_available() {
     caps.assert_streaming_ready()
         .expect("SharedArrayBuffer and Atomics must be available");
 
-    assert!(caps.shared_array_buffer, "SharedArrayBuffer required for streaming");
+    assert!(
+        caps.shared_array_buffer,
+        "SharedArrayBuffer required for streaming"
+    );
     assert!(caps.atomics, "Atomics required for thread synchronization");
 }
 
@@ -119,7 +122,8 @@ async fn test_audio_emulator_injection() {
     let cdp = page.cdp_page().await.expect("Should have CDP page");
 
     // Inject 3 seconds of audio
-    audio.inject_cdp(&*cdp, 3.0)
+    audio
+        .inject_cdp(&*cdp, 3.0)
         .await
         .expect("Audio injection should succeed");
 
@@ -160,17 +164,21 @@ async fn test_vad_detects_injected_speech() {
     }
 
     // Click start recording
-    page.click("#start_recording").await.expect("Should click start");
+    page.click("#start_recording")
+        .await
+        .expect("Should click start");
 
     // Wait for state to transition
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Check state label has changed from "Listening" to "Recording"
-    let result = page.evaluate("document.getElementById('state_label')?.textContent || 'NOT_FOUND'")
+    let result = page
+        .evaluate("document.getElementById('state_label')?.textContent || 'NOT_FOUND'")
         .await
         .expect("Should get state");
 
-    let state: String = result.value()
+    let state: String = result
+        .value()
         .and_then(|v| v.as_str())
         .map(String::from)
         .unwrap_or_default();
@@ -214,15 +222,17 @@ async fn test_vu_meter_responds_to_audio() {
     }
 
     // Start recording
-    page.click("#start_recording").await.expect("Should click start");
+    page.click("#start_recording")
+        .await
+        .expect("Should click start");
 
     // Create validator and track VU meter
-    let mut validator = StreamingUxValidator::new()
-        .with_max_latency(Duration::from_millis(500));
+    let mut validator = StreamingUxValidator::new().with_max_latency(Duration::from_millis(500));
 
     {
         let cdp = page.cdp_page().await.expect("CDP page");
-        validator.track_vu_meter_cdp(&*cdp, "#vu_meter")
+        validator
+            .track_vu_meter_cdp(&*cdp, "#vu_meter")
             .await
             .expect("Should track VU meter");
     }
@@ -233,7 +243,8 @@ async fn test_vu_meter_responds_to_audio() {
     // Assert VU meter was active (level > 0.05 for at least 1000ms)
     {
         let cdp = page.cdp_page().await.expect("CDP page");
-        validator.assert_vu_meter_active_cdp(&*cdp, 0.05, 1000)
+        validator
+            .assert_vu_meter_active_cdp(&*cdp, 0.05, 1000)
             .await
             .expect("VU meter should show audio level changes");
     }
@@ -284,10 +295,10 @@ async fn test_state_indicator_transitions() {
     // Assert state sequence occurred
     {
         let cdp = page.cdp_page().await.expect("CDP page");
-        validator.assert_state_sequence_cdp(
-            &*cdp,
-            &["Listening", "Recording"],
-        ).await.expect("Should see Listening -> Recording transition");
+        validator
+            .assert_state_sequence_cdp(&*cdp, &["Listening", "Recording"])
+            .await
+            .expect("Should see Listening -> Recording transition");
     }
 }
 
@@ -328,7 +339,8 @@ async fn test_chunk_progress_advances() {
         .evaluate("parseFloat(document.getElementById('chunk_progress')?.style.width || '0')")
         .await
         .expect("Should get progress");
-    let initial: f64 = initial_result.value()
+    let initial: f64 = initial_result
+        .value()
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
 
@@ -339,9 +351,7 @@ async fn test_chunk_progress_advances() {
         .evaluate("parseFloat(document.getElementById('chunk_progress')?.style.width || '0')")
         .await
         .expect("Should get progress");
-    let final_progress: f64 = final_result.value()
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.0);
+    let final_progress: f64 = final_result.value().and_then(|v| v.as_f64()).unwrap_or(0.0);
 
     assert!(
         final_progress > initial,
@@ -416,9 +426,7 @@ async fn test_full_streaming_ux_flow() {
             .evaluate("document.getElementById('start_recording')?.disabled ?? true")
             .await
             .expect("Check button");
-        let button_disabled: bool = result.value()
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+        let button_disabled: bool = result.value().and_then(|v| v.as_bool()).unwrap_or(true);
 
         if !button_disabled {
             eprintln!("Model loaded after {i}s");
@@ -461,7 +469,8 @@ async fn test_full_streaming_ux_flow() {
         .evaluate("document.getElementById('state_label')?.textContent || 'UNKNOWN'")
         .await
         .expect("Get final state");
-    let final_state: String = result.value()
+    let final_state: String = result
+        .value()
         .and_then(|v| v.as_str())
         .map(String::from)
         .unwrap_or_default();
@@ -471,7 +480,8 @@ async fn test_full_streaming_ux_flow() {
     // 9. Collect state history
     let history = {
         let cdp = page.cdp_page().await.expect("CDP page");
-        validator.collect_state_history_cdp(&*cdp)
+        validator
+            .collect_state_history_cdp(&*cdp)
             .await
             .expect("Get history")
     };
