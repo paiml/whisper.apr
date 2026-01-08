@@ -240,4 +240,40 @@ mod tests {
             "spawn() must NOT create new local state_ptr - must use self.state_ptr"
         );
     }
+
+    /// WAPR-QA-REGRESSION-008: All WorkerResult variants must be handled explicitly
+    ///
+    /// The bug was: `_ => {}` catch-all silently ignored WorkerResult::Result,
+    /// so final transcription was never sent to the UI.
+    ///
+    /// This test ensures no catch-all `_ => {}` exists in the message handler.
+    #[test]
+    fn regression_all_worker_results_handled() {
+        let source = get_worker_manager_source();
+
+        // Must NOT have catch-all `_ => {}` in the match
+        // The pattern `_ => {}` or `_ => { }` silently drops unhandled cases
+        assert!(
+            !source.contains("_ => {}"),
+            "WorkerManager must NOT have `_ => {{}}` catch-all - all WorkerResult variants must be handled explicitly"
+        );
+
+        // Must handle WorkerResult::Result
+        assert!(
+            source.contains("WorkerResult::Result {"),
+            "WorkerManager must handle WorkerResult::Result for final transcription"
+        );
+
+        // Must handle WorkerResult::Progress
+        assert!(
+            source.contains("WorkerResult::Progress {"),
+            "WorkerManager must handle WorkerResult::Progress"
+        );
+
+        // Must handle WorkerResult::Metrics
+        assert!(
+            source.contains("WorkerResult::Metrics {"),
+            "WorkerManager must handle WorkerResult::Metrics"
+        );
+    }
 }
