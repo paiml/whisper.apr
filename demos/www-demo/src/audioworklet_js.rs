@@ -230,6 +230,40 @@ fn build_process_method() -> Vec<Stmt> {
             dot(Expr::this(), "ringBuffer").not(),
             vec![Stmt::ret_val(Expr::bool(true))],
         ),
+        // Compute RMS for VU meter (World-class UX P0)
+        Stmt::comment("Compute RMS for VU meter feedback"),
+        // let sumSq = 0
+        Stmt::let_decl("sumSq", Expr::num(0)).expect("sumSq is valid"),
+        // for (let i = 0; i < samples.length; i++) { sumSq += samples[i] * samples[i]; }
+        Stmt::for_loop(
+            "i",
+            Expr::num(0),
+            dot(id("samples"), "length"),
+            vec![Stmt::add_assign(
+                id("sumSq"),
+                id("samples").index(id("i")).mul(id("samples").index(id("i"))),
+            )],
+        )
+        .expect("sumSq loop is valid"),
+        // const rms = Math.sqrt(sumSq / samples.length)
+        Stmt::const_decl(
+            "rms",
+            dot(id("Math"), "sqrt").call(vec![id("sumSq").div(dot(id("samples"), "length"))]),
+        )
+        .expect("rms is valid"),
+        // Normalize to 0-1 range (typical speech RMS ~0.1, scale by 5x)
+        // const audioLevel = Math.min(1.0, rms * 5.0)
+        Stmt::const_decl(
+            "audioLevel",
+            dot(id("Math"), "min").call(vec![Expr::num(1.0), id("rms").mul(Expr::num(5.0))]),
+        )
+        .expect("audioLevel is valid"),
+        // Send audio level to main thread for VU meter
+        // this.port.postMessage({ type: 'audioLevel', level: audioLevel })
+        Stmt::expr(dot(dot(Expr::this(), "port"), "postMessage").call(vec![Expr::object(vec![
+            ("type", Expr::str("audioLevel")),
+            ("level", id("audioLevel")),
+        ])])),
         // const written = this.writeToBuffer(samples)
         Stmt::const_decl(
             "written",

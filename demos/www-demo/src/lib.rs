@@ -179,6 +179,7 @@ thread_local! {
     static WORKLET_NODE: RefCell<Option<web_sys::AudioWorkletNode>> = const { RefCell::new(None) };
     static WORKER_MANAGER: RefCell<Option<WorkerManager>> = const { RefCell::new(None) };
     static TRANSCRIPTION_LISTENER: RefCell<Option<Closure<dyn Fn(web_sys::CustomEvent)>>> = const { RefCell::new(None) };
+    static AUDIO_LEVEL_LISTENER: RefCell<Option<Closure<dyn Fn(web_sys::CustomEvent)>>> = const { RefCell::new(None) };
 }
 
 /// Zero-JS entry point
@@ -939,6 +940,27 @@ async fn start_recording(document: &web_sys::Document) -> Result<(), JsValue> {
         on_transcription.as_ref().unchecked_ref(),
     )?;
 
+    // Set up event listener for audio level updates (World-class UX P0: VU meter)
+    let doc_for_audio = document.clone();
+    let on_audio_level = Closure::wrap(Box::new(move |event: web_sys::CustomEvent| {
+        let detail = event.detail();
+        let level = js_sys::Reflect::get(&detail, &"level".into())
+            .ok()
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+
+        APP.with(|app| {
+            app.borrow_mut().audio_level = level;
+        });
+
+        update_ui(&doc_for_audio);
+    }) as Box<dyn Fn(web_sys::CustomEvent)>);
+
+    document.add_event_listener_with_callback(
+        "audioLevel",
+        on_audio_level.as_ref().unchecked_ref(),
+    )?;
+
     // Store references
     AUDIO_CONTEXT.with(|ctx| {
         *ctx.borrow_mut() = Some(context);
@@ -951,6 +973,9 @@ async fn start_recording(document: &web_sys::Document) -> Result<(), JsValue> {
     });
     TRANSCRIPTION_LISTENER.with(|cb| {
         *cb.borrow_mut() = Some(on_transcription);
+    });
+    AUDIO_LEVEL_LISTENER.with(|cb| {
+        *cb.borrow_mut() = Some(on_audio_level);
     });
 
     info!(sample_rate, "Started worker-based real-time recording");
