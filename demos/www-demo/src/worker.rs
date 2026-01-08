@@ -1,8 +1,11 @@
 //! Transcription Worker - Runs Whisper inference
 //!
 //! Handles model loading, audio processing, and transcription.
+//!
+//! PROBAR-SPEC-009: Uses tracing for structured logging instead of console.log.
 
 use serde::{Deserialize, Serialize};
+use tracing::{info, debug};
 use wasm_bindgen::prelude::*;
 
 use crate::ring_buffer::SharedRingBuffer;
@@ -60,6 +63,7 @@ const CHUNK_SAMPLES: usize = 24000; // 1.5 seconds at 16kHz
 impl TranscriptionWorker {
     /// Create a new worker instance
     #[wasm_bindgen(constructor)]
+    #[must_use] 
     pub fn new() -> TranscriptionWorker {
         TranscriptionWorker {
             state: WorkerState::Uninitialized,
@@ -75,7 +79,7 @@ impl TranscriptionWorker {
     /// Initialize worker as ready
     #[wasm_bindgen(js_name = initWorker)]
     pub fn init_worker() -> TranscriptionWorker {
-        web_sys::console::log_1(&"[Worker] Initialized".into());
+        info!("Worker initialized");
         let mut worker = TranscriptionWorker::new();
         worker.state = WorkerState::Ready;
         worker
@@ -84,7 +88,7 @@ impl TranscriptionWorker {
     /// Set the ring buffer for audio data
     #[wasm_bindgen(js_name = setRingBuffer)]
     pub fn set_ring_buffer(&mut self, buffer: SharedRingBuffer) {
-        web_sys::console::log_1(&"[Worker] Ring buffer attached".into());
+        info!("Ring buffer attached");
         self.ring_buffer = Some(buffer);
     }
 
@@ -93,10 +97,9 @@ impl TranscriptionWorker {
     pub async fn load_model(&mut self, url: String) -> Result<JsValue, JsValue> {
         let start = web_sys::window()
             .and_then(|w| w.performance())
-            .map(|p| p.now())
-            .unwrap_or(0.0);
+            .map_or(0.0, |p| p.now());
 
-        web_sys::console::log_1(&format!("[Worker] Loading model from: {url}").into());
+        info!("Loading model");
 
         // Fetch model
         let response = web_sys::window()
@@ -114,18 +117,17 @@ impl TranscriptionWorker {
         let bytes = array.to_vec();
         let size_mb = bytes.len() as f64 / 1_000_000.0;
 
-        web_sys::console::log_1(&format!("[Worker] Model downloaded: {size_mb:.1} MB").into());
+        debug!(size_mb = size_mb, "Model downloaded");
 
         // Initialize model from APR bytes
         self.model = Some(WhisperAprWasm::from_apr_bytes(&bytes)?);
 
         let end = web_sys::window()
             .and_then(|w| w.performance())
-            .map(|p| p.now())
-            .unwrap_or(0.0);
+            .map_or(0.0, |p| p.now());
         let load_time_ms = end - start;
 
-        web_sys::console::log_1(&format!("[Worker] Model initialized in {load_time_ms:.0}ms").into());
+        info!(load_time_ms = load_time_ms, "Model initialized");
 
         self.state = WorkerState::Ready;
 
@@ -136,12 +138,7 @@ impl TranscriptionWorker {
     /// Start processing audio
     #[wasm_bindgen(js_name = startProcessing)]
     pub fn start_processing(&mut self, sample_rate: u32) -> Result<(), JsValue> {
-        web_sys::console::log_1(&format!(
-            "[Worker] startProcessing called: state={:?}, has_buffer={}, sample_rate={}",
-            self.state,
-            self.ring_buffer.is_some(),
-            sample_rate
-        ).into());
+        debug!("startProcessing called");
 
         if self.state != WorkerState::Ready {
             return Err(JsValue::from_str("Worker not ready"));
@@ -153,7 +150,7 @@ impl TranscriptionWorker {
         self.chunks_processed = 0;
         self.state = WorkerState::Processing;
 
-        web_sys::console::log_1(&"[Worker] ✓ Started processing, state now Processing".into());
+        info!("Started processing");
         Ok(())
     }
 
@@ -171,29 +168,27 @@ impl TranscriptionWorker {
             return Ok(JsValue::NULL);
         }
 
-        web_sys::console::log_1(
-            &format!("[Worker] processAudio: Reading {available} samples from buffer").into(),
-        );
+        debug!(available = available, "Reading samples from buffer");
 
         let samples = buffer.read(available)?;
         self.samples_read += samples.len() as u64;
 
         // Resample if needed (44.1kHz -> 16kHz)
-        let resampled = if self.sample_rate != WHISPER_SAMPLE_RATE {
-            resample(&samples, self.sample_rate, WHISPER_SAMPLE_RATE)
-        } else {
+        let resampled = if self.sample_rate == WHISPER_SAMPLE_RATE {
             samples
+        } else {
+            resample(&samples, self.sample_rate, WHISPER_SAMPLE_RATE)
         };
 
         self.accumulated_audio.extend(resampled);
 
-        let accumulated_seconds = self.accumulated_audio.len() as f64 / WHISPER_SAMPLE_RATE as f64;
-        web_sys::console::log_1(&format!(
-            "[Worker] Accumulated: {} samples ({:.1}s), need {} for chunk",
-            self.accumulated_audio.len(),
-            accumulated_seconds,
-            CHUNK_SAMPLES
-        ).into());
+        let accumulated_seconds = self.accumulated_audio.len() as f64 / f64::from(WHISPER_SAMPLE_RATE);
+        debug!(
+            accumulated_samples = self.accumulated_audio.len(),
+            accumulated_seconds = accumulated_seconds,
+            chunk_samples = CHUNK_SAMPLES,
+            "Accumulated audio"
+        );
 
         // Check if we have enough for a chunk
         if self.accumulated_audio.len() >= CHUNK_SAMPLES {
@@ -216,7 +211,7 @@ impl TranscriptionWorker {
 
         let text = result.text();
         if !text.trim().is_empty() {
-            web_sys::console::log_1(&format!("[Worker] Partial: {text}").into());
+            debug!(text = %text, "Partial transcription");
 
             let partial = WorkerResult::Partial {
                 text,
@@ -287,12 +282,13 @@ impl Default for TranscriptionWorker {
 }
 
 /// Simple linear resampling
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     if from_rate == to_rate {
         return samples.to_vec();
     }
 
-    let ratio = from_rate as f64 / to_rate as f64;
+    let ratio = f64::from(from_rate) / f64::from(to_rate);
     let new_len = (samples.len() as f64 / ratio) as usize;
     let mut resampled = Vec::with_capacity(new_len);
 

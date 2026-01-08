@@ -1,4 +1,4 @@
-//! WaveformBrick: Audio waveform visualization (PROBAR-SPEC-009)
+//! `WaveformBrick`: Audio waveform visualization (PROBAR-SPEC-009)
 //!
 //! This brick displays an audio waveform using a ring buffer of samples.
 //! Based on ttop-style SIMD-optimized visualization from trueno-viz.

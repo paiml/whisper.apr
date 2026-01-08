@@ -1057,6 +1057,41 @@ mod category_g {
         assert!(html.contains("brick"));
         // Hypothesis holds (2 points)
     }
+
+    /// G6: Single Worker spawn invariant (PROBAR-SPEC-009 Improvement #7)
+    /// Falsified if: Generated HTML contains multiple spawn() calls
+    ///
+    /// Race condition prevention: Double spawn caused
+    /// `closure invoked recursively or after being dropped`
+    #[test]
+    fn g6_single_spawn_invariant() {
+        use super::*;
+
+        let config = HtmlConfig::default();
+        let html = generate_index_html(&config);
+
+        // Count spawn() calls in generated HTML
+        // Use ".spawn(" pattern which catches both "manager.spawn(" and any other spawn calls
+        let spawn_count = html.matches(".spawn(").count();
+
+        assert!(
+            spawn_count <= 1,
+            "Generated HTML has {} spawn() calls, expected at most 1. \
+             Multiple spawns cause race condition (BH-004).",
+            spawn_count
+        );
+
+        // If spawn exists, verify it's in a proper async context
+        if spawn_count == 1 {
+            // spawn should be inside an async function or init block
+            let has_proper_context = html.contains("async") || html.contains("init()");
+            assert!(
+                has_proper_context,
+                "spawn() must be in async context to prevent race"
+            );
+        }
+        // Hypothesis holds (2 points)
+    }
 }
 
 /// Category H: WASM-First Architecture (10 points)

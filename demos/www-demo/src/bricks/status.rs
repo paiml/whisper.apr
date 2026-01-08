@@ -1,4 +1,4 @@
-//! StatusBrick: Application status display (PROBAR-SPEC-009)
+//! `StatusBrick`: Application status display (PROBAR-SPEC-009)
 //!
 //! This brick displays the current application state:
 //! - Loading: Model loading progress
@@ -39,6 +39,7 @@ impl Default for Status {
 
 /// Status brick for showing application state
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct StatusBrick {
     /// Current status
     status: Status,
@@ -48,15 +49,6 @@ pub struct StatusBrick {
     load_time_s: Option<f32>,
 }
 
-impl Default for StatusBrick {
-    fn default() -> Self {
-        Self {
-            status: Status::default(),
-            model_size_mb: None,
-            load_time_s: None,
-        }
-    }
-}
 
 impl StatusBrick {
     /// Create a new status brick

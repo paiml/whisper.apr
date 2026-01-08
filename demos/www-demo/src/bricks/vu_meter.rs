@@ -1,4 +1,4 @@
-//! VuMeterBrick: Audio level indicator (PROBAR-SPEC-009)
+//! `VuMeterBrick`: Audio level indicator (PROBAR-SPEC-009)
 //!
 //! This brick displays real-time audio levels with:
 //! - Gradient bar from blue to green

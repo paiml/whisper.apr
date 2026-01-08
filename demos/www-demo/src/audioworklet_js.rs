@@ -1,12 +1,13 @@
-//! AudioWorklet JavaScript Generator
+//! `AudioWorklet` JavaScript Generator
 //!
-//! Generates the AudioWorklet processor that captures microphone audio
-//! and writes to the SharedRingBuffer.
+//! Generates the `AudioWorklet` processor that captures microphone audio
+//! and writes to the `SharedRingBuffer`.
 
-/// Generate the AudioWorklet processor JavaScript
+/// Generate the `AudioWorklet` processor JavaScript
 ///
 /// This is a simple class that captures audio from the microphone
-/// and writes it to the SharedRingBuffer.
+/// and writes it to the `SharedRingBuffer`.
+#[must_use] 
 pub fn generate_audioworklet_js() -> String {
     r"
 class WhisperProcessor extends AudioWorkletProcessor {

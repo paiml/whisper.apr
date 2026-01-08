@@ -194,3 +194,19 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: WAPR-PROBADOR-FULL
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PROBADOR-FULL'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-08T13:32:55.971047109+00:00
+  updated: 2026-01-08T13:51:29.033948985+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null

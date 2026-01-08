@@ -7,11 +7,14 @@
 //!
 //! This demo uses the Brick Architecture where tests ARE the interface.
 //! All UI components are defined by their assertions and budgets.
+//!
+//! PROBAR-SPEC-009: Uses tracing for structured logging instead of console.log.
 
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::missing_panics_doc)]
 
+use tracing::info;
 use wasm_bindgen::prelude::*;
 
 pub mod audioworklet_js;
@@ -28,6 +31,7 @@ pub use worker_manager::WorkerManager;
 
 /// Initialize a worker instance (called from worker JS)
 #[wasm_bindgen(js_name = initWorker)]
+#[must_use] 
 pub fn init_worker() -> TranscriptionWorker {
     TranscriptionWorker::init_worker()
 }
@@ -36,10 +40,15 @@ pub fn init_worker() -> TranscriptionWorker {
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
     // Initialize console error panic hook for better error messages
+    // Note: This feature is optional and may not be compiled in
+    #[allow(unexpected_cfgs)]
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 
-    web_sys::console::log_1(&"[WASM] start() called".into());
+    // Initialize tracing for browser devtools
+    tracing_wasm::set_as_global_default();
+
+    info!("WASM start() called");
 
     // TODO: Initialize UI and state machine
     // This will be implemented to pass the UX flow tests

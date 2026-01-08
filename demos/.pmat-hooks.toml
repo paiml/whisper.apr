@@ -1,0 +1,7 @@
+# PROBAR-SPEC-009: Bug Hunting Probador - Mandatory Browser Test Gate
+# 36% of historical bugs (4/11) only manifest in browser runtime
+
+[pre-complete]
+# Require browser tests pass before marking work item complete
+commands = ["probar test --headless"]
+block_on_failure = true
