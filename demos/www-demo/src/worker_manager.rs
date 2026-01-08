@@ -198,7 +198,38 @@ impl WorkerManager {
                         web_sys::console::error_1(&format!("[Manager] Error: {message}").into());
                         *state_ptr_clone.borrow_mut() = ManagerState::Error;
                     }
-                    _ => {}
+                    WorkerResult::Result { text, segments: _ } => {
+                        // Final transcription result from stopProcessing()
+                        web_sys::console::log_1(&format!("[Manager] Final result: {text}").into());
+                        *state_ptr_clone.borrow_mut() = ManagerState::Ready;
+
+                        // Dispatch as final transcription event
+                        if let Some(window) = web_sys::window() {
+                            let detail = js_sys::Object::new();
+                            let _ = js_sys::Reflect::set(&detail, &"text".into(), &text.into());
+                            let _ = js_sys::Reflect::set(&detail, &"isFinal".into(), &true.into());
+
+                            let init = web_sys::CustomEventInit::new();
+                            init.set_detail(&detail);
+
+                            if let Ok(event) = web_sys::CustomEvent::new_with_event_init_dict(
+                                "whisper-transcription",
+                                &init,
+                            ) {
+                                let _ = window.dispatch_event(&event);
+                            }
+                        }
+                    }
+                    WorkerResult::Progress { phase, percent } => {
+                        web_sys::console::log_1(
+                            &format!("[Manager] Progress: {phase} {percent:.0}%").into(),
+                        );
+                    }
+                    WorkerResult::Metrics { rtf, chunks_processed, samples_read } => {
+                        web_sys::console::log_1(
+                            &format!("[Manager] Metrics: RTF={rtf:.2}, chunks={chunks_processed}, samples={samples_read}").into(),
+                        );
+                    }
                 }
             }
         }) as Box<dyn Fn(web_sys::MessageEvent)>);
