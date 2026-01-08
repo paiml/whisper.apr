@@ -4,12 +4,16 @@
 //! Marks buffer done on stop (worker polls isDone flag).
 //!
 //! PROBAR-SPEC-009: Uses tracing for structured logging instead of console.log.
+//! PROBAR-WEBSYS-001: Uses probar web_sys_gen abstractions where applicable.
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use tracing::{info, warn, error, debug};
-use wasm_bindgen::prelude::*;
+use tracing::{debug, error, info, warn};
 use wasm_bindgen::closure::Closure;
+use wasm_bindgen::prelude::*;
+
+// Use probar's generated web_sys abstractions (PROBAR-WEBSYS-001)
+use jugar_probar::brick::{get_base_url, BlobUrl, CustomEventDispatcher, EventDetail};
 
 use crate::ring_buffer::SharedRingBuffer;
 use crate::worker::{create_worker_blob_url, WorkerResult};
@@ -69,8 +73,8 @@ impl WorkerManager {
 
         let worker = web_sys::Worker::new_with_options(&worker_url, &worker_options)?;
 
-        // Clean up blob URL
-        web_sys::Url::revoke_object_url(&worker_url)?;
+        // Clean up blob URL using probar abstraction (PROBAR-WEBSYS-001)
+        BlobUrl::revoke(&worker_url).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         // Set up message handler using shared state
         let state_ptr_clone = self.state_ptr.clone();
@@ -142,10 +146,8 @@ impl WorkerManager {
 
         worker.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
 
-        // Send bootstrap message
-        let base_url = web_sys::window()
-            .and_then(|w| w.location().origin().ok())
-            .unwrap_or_default();
+        // Send bootstrap message using probar abstraction (PROBAR-WEBSYS-001)
+        let base_url = get_base_url().unwrap_or_default();
 
         debug!(base_url = %base_url, "Sending bootstrap message");
 
@@ -262,20 +264,16 @@ impl Drop for WorkerManager {
 }
 
 /// Dispatch transcription event to main thread
+/// Uses probar's CustomEventDispatcher abstraction (PROBAR-WEBSYS-001)
 fn dispatch_transcription(text: &str, is_final: bool) {
-    if let Some(window) = web_sys::window() {
-        let detail = js_sys::Object::new();
-        let _ = js_sys::Reflect::set(&detail, &"text".into(), &text.into());
-        let _ = js_sys::Reflect::set(&detail, &"isFinal".into(), &is_final.into());
-
-        let init = web_sys::CustomEventInit::new();
-        init.set_detail(&detail);
-
-        if let Ok(event) = web_sys::CustomEvent::new_with_event_init_dict(
-            "whisper-transcription",
-            &init,
-        ) {
-            let _ = window.dispatch_event(&event);
-        }
+    #[derive(serde::Serialize)]
+    struct TranscriptionDetail<'a> {
+        text: &'a str,
+        #[serde(rename = "isFinal")]
+        is_final: bool,
     }
+
+    let detail = TranscriptionDetail { text, is_final };
+    let dispatcher = CustomEventDispatcher::new("whisper-transcription");
+    let _ = dispatcher.dispatch_with_detail(EventDetail::json(&detail));
 }

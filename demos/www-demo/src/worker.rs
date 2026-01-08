@@ -3,10 +3,14 @@
 //! Handles model loading, audio processing, and transcription.
 //!
 //! PROBAR-SPEC-009: Uses tracing for structured logging instead of console.log.
+//! PROBAR-WEBSYS-001: Uses probar web_sys_gen abstractions instead of raw web_sys.
 
 use serde::{Deserialize, Serialize};
-use tracing::{info, debug};
+use tracing::{debug, info};
 use wasm_bindgen::prelude::*;
+
+// Use probar's generated web_sys abstractions (PROBAR-WEBSYS-001)
+use jugar_probar::brick::{FetchClient, PerformanceTiming};
 
 use crate::ring_buffer::SharedRingBuffer;
 
@@ -101,26 +105,16 @@ impl TranscriptionWorker {
     /// Load the whisper model
     #[wasm_bindgen(js_name = loadModel)]
     pub async fn load_model(&mut self, url: String) -> Result<JsValue, JsValue> {
-        let start = web_sys::window()
-            .and_then(|w| w.performance())
-            .map_or(0.0, |p| p.now());
+        let start = PerformanceTiming::now();
 
         info!("Loading model");
 
-        // Fetch model
-        let response = web_sys::window()
-            .ok_or("No window")?
-            .fetch_with_str(&url);
-        let response = wasm_bindgen_futures::JsFuture::from(response).await?;
-        let response: web_sys::Response = response.dyn_into()?;
-
-        if !response.ok() {
-            return Err(JsValue::from_str(&format!("Failed to fetch model: {}", response.status())));
-        }
-
-        let buffer = wasm_bindgen_futures::JsFuture::from(response.array_buffer()?).await?;
-        let array = js_sys::Uint8Array::new(&buffer);
-        let bytes = array.to_vec();
+        // Fetch model using probar's FetchClient abstraction (PROBAR-WEBSYS-001)
+        let client = FetchClient::new();
+        let bytes = client
+            .fetch_bytes(&url)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         let size_mb = bytes.len() as f64 / 1_000_000.0;
 
         debug!(size_mb = size_mb, "Model downloaded");
@@ -128,9 +122,7 @@ impl TranscriptionWorker {
         // Initialize model from APR bytes
         self.model = Some(WhisperAprWasm::from_apr_bytes(&bytes)?);
 
-        let end = web_sys::window()
-            .and_then(|w| w.performance())
-            .map_or(0.0, |p| p.now());
+        let end = PerformanceTiming::now();
         let load_time_ms = end - start;
 
         info!(load_time_ms = load_time_ms, "Model initialized");
@@ -155,9 +147,7 @@ impl TranscriptionWorker {
         self.samples_read = 0;
         self.chunks_processed = 0;
         self.total_inference_ms = 0.0;
-        self.processing_start_ms = web_sys::window()
-            .and_then(|w| w.performance())
-            .map(|p| p.now());
+        self.processing_start_ms = Some(PerformanceTiming::now());
         self.state = WorkerState::Processing;
 
         info!("Started processing");
@@ -217,16 +207,12 @@ impl TranscriptionWorker {
         self.chunks_processed += 1;
 
         // Performance span: measure inference time
-        let inference_start = web_sys::window()
-            .and_then(|w| w.performance())
-            .map_or(0.0, |p| p.now());
+        let inference_start = PerformanceTiming::now();
 
         let options = TranscribeOptionsWasm::new();
         let result = model.transcribe(&chunk, options)?;
 
-        let inference_end = web_sys::window()
-            .and_then(|w| w.performance())
-            .map_or(0.0, |p| p.now());
+        let inference_end = PerformanceTiming::now();
         let inference_ms = inference_end - inference_start;
         self.total_inference_ms += inference_ms;
 
@@ -361,14 +347,10 @@ fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
 /// PROBAR-SPEC-009-P7: Uses brick-generated JavaScript
 #[wasm_bindgen(js_name = createWorkerBlobUrl)]
 pub fn create_worker_blob_url() -> Result<String, JsValue> {
+    use jugar_probar::brick::BlobUrl;
+
     let worker_js = crate::bricks::generate_worker_js_from_brick();
 
-    let blob_parts = js_sys::Array::new();
-    blob_parts.push(&JsValue::from_str(&worker_js));
-
-    let options = web_sys::BlobPropertyBag::new();
-    options.set_type("application/javascript");
-
-    let blob = web_sys::Blob::new_with_blob_sequence_and_options(&blob_parts, &options)?;
-    web_sys::Url::create_object_url_with_blob(&blob)
+    // Use probar's BlobUrl abstraction (PROBAR-WEBSYS-001)
+    BlobUrl::from_js_code(&worker_js).map_err(|e| JsValue::from_str(&e.to_string()))
 }
