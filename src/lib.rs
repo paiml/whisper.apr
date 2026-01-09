@@ -261,6 +261,84 @@ impl BatchTranscriptionResult {
     }
 }
 
+/// Options for LFM2 summarization (Phase 3 API - Section 18.5)
+///
+/// Configures how the LFM2 model generates summaries from transcribed text.
+pub struct SummarizeOptions<'a> {
+    /// LFM2 model for text generation
+    pub model: &'a model::lfm2::Lfm2,
+    /// Tokenizer for encoding/decoding text
+    pub tokenizer: &'a model::lfm2::Lfm2Tokenizer,
+    /// Maximum tokens to generate (default: 256)
+    pub max_tokens: usize,
+    /// Sampling temperature (0.0 = greedy, default: 0.3)
+    pub temperature: f32,
+}
+
+impl<'a> SummarizeOptions<'a> {
+    /// Create new summarization options with default parameters
+    ///
+    /// # Arguments
+    /// * `model` - LFM2 model for generation
+    /// * `tokenizer` - Tokenizer for encoding/decoding
+    #[must_use]
+    pub fn new(model: &'a model::lfm2::Lfm2, tokenizer: &'a model::lfm2::Lfm2Tokenizer) -> Self {
+        Self {
+            model,
+            tokenizer,
+            max_tokens: 256,
+            temperature: 0.3,
+        }
+    }
+
+    /// Set maximum tokens to generate
+    #[must_use]
+    pub const fn with_max_tokens(mut self, max_tokens: usize) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
+    /// Set sampling temperature
+    #[must_use]
+    pub const fn with_temperature(mut self, temperature: f32) -> Self {
+        self.temperature = temperature;
+        self
+    }
+}
+
+/// Result of transcription with summarization (Phase 3 API - Section 18.5)
+///
+/// Contains both the original transcription and the LFM2-generated summary.
+#[derive(Debug, Clone)]
+pub struct TranscribeSummaryResult {
+    /// Original transcription result
+    pub transcription: TranscriptionResult,
+    /// LFM2-generated summary
+    pub summary: String,
+    /// Generation statistics (if available)
+    pub generation_stats: Option<model::lfm2::GenerationStats>,
+}
+
+impl TranscribeSummaryResult {
+    /// Get the transcript text
+    #[must_use]
+    pub fn transcript(&self) -> &str {
+        &self.transcription.text
+    }
+
+    /// Get the summary text
+    #[must_use]
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    /// Check if summary was generated
+    #[must_use]
+    pub fn has_summary(&self) -> bool {
+        !self.summary.is_empty()
+    }
+}
+
 /// Main Whisper ASR engine
 ///
 /// This is the primary interface for transcription. It handles:
@@ -1584,6 +1662,79 @@ impl WhisperApr {
             options,
             last_partial_text: String::new(),
         }
+    }
+
+    /// Transcribe audio and summarize the result using LFM2
+    ///
+    /// This unified API combines Whisper ASR with LFM2 summarization
+    /// in a single operation, implementing the Phase 3 API from spec Section 18.5.
+    ///
+    /// # Arguments
+    /// * `audio` - Audio samples (mono, 16kHz, f32 normalized to [-1, 1])
+    /// * `transcribe_options` - Transcription options
+    /// * `summarize_options` - LFM2 summarization options
+    ///
+    /// # Returns
+    /// Combined result with transcription and summary
+    ///
+    /// # Errors
+    /// Returns error if transcription or summarization fails
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use whisper_apr::{WhisperApr, TranscribeOptions, SummarizeOptions, model::lfm2::{Lfm2, Lfm2Tokenizer}};
+    ///
+    /// let whisper = WhisperApr::tiny();
+    /// let lfm2 = Lfm2::lfm2_2_6b()?;
+    /// let tokenizer = Lfm2Tokenizer::new();
+    ///
+    /// let result = whisper.transcribe_and_summarize(
+    ///     &audio_samples,
+    ///     TranscribeOptions::default(),
+    ///     SummarizeOptions::new(&lfm2, &tokenizer),
+    /// )?;
+    ///
+    /// println!("Transcript: {}", result.transcription.text);
+    /// println!("Summary: {}", result.summary);
+    /// ```
+    pub fn transcribe_and_summarize(
+        &self,
+        audio: &[f32],
+        transcribe_options: TranscribeOptions,
+        summarize_options: SummarizeOptions<'_>,
+    ) -> WhisperResult<TranscribeSummaryResult> {
+        // Step 1: Transcribe audio
+        let transcription = self.transcribe(audio, transcribe_options)?;
+
+        // Skip summarization for empty transcripts
+        if transcription.text.trim().is_empty() {
+            return Ok(TranscribeSummaryResult {
+                transcription,
+                summary: String::new(),
+                generation_stats: None,
+            });
+        }
+
+        // Step 2: Tokenize transcript for LFM2
+        let input_tokens = summarize_options.tokenizer.encode(&transcription.text);
+
+        // Step 3: Generate summary
+        let (output_tokens, stats) = summarize_options.model.generate_with_stats(
+            &input_tokens,
+            summarize_options.max_tokens,
+            summarize_options.temperature,
+            Some(|_token: u32, _idx: usize| true), // Continue generating
+        )?;
+
+        // Step 4: Decode summary
+        let summary = summarize_options.tokenizer.decode(&output_tokens);
+
+        Ok(TranscribeSummaryResult {
+            transcription,
+            summary,
+            generation_stats: Some(stats),
+        })
     }
 }
 
@@ -3727,5 +3878,208 @@ mod tests {
 
         // With SIMD optimization, RTF should be reasonable (< 50x for debug build)
         assert!(rtf < 50.0, "RTF {rtf} is too slow, SIMD may not be working");
+    }
+
+    // =========================================================================
+    // Unified Transcribe + Summarize API Tests (WAPR-LFM2-018)
+    // =========================================================================
+
+    #[test]
+    fn test_summarize_options_default_params() {
+        use model::lfm2::{Lfm2, Lfm2Tokenizer};
+
+        // Create minimal LFM2 config for testing
+        let config = format::apr2::Lfm2Config {
+            hidden_size: 64,
+            num_layers: 2,
+            num_q_heads: 4,
+            num_kv_heads: 2,
+            intermediate_size: 128,
+            vocab_size: 1000,
+            max_seq_len: 512,
+            rope_theta: 10000.0,
+            conv_dimension: 32,
+            layer_types: vec![
+                format::apr2::LayerType::Convolution {
+                    kernel_size: 4,
+                    cache_len: 3,
+                },
+                format::apr2::LayerType::Attention { use_gqa: true },
+            ],
+        };
+        let model = Lfm2::new(config).expect("Model creation should succeed");
+        let tokenizer = Lfm2Tokenizer::new();
+
+        let options = SummarizeOptions::new(&model, &tokenizer);
+
+        assert_eq!(options.max_tokens, 256);
+        assert!((options.temperature - 0.3).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_summarize_options_builder() {
+        use model::lfm2::{Lfm2, Lfm2Tokenizer};
+
+        let config = format::apr2::Lfm2Config {
+            hidden_size: 64,
+            num_layers: 2,
+            num_q_heads: 4,
+            num_kv_heads: 2,
+            intermediate_size: 128,
+            vocab_size: 1000,
+            max_seq_len: 512,
+            rope_theta: 10000.0,
+            conv_dimension: 32,
+            layer_types: vec![
+                format::apr2::LayerType::Convolution {
+                    kernel_size: 4,
+                    cache_len: 3,
+                },
+                format::apr2::LayerType::Attention { use_gqa: true },
+            ],
+        };
+        let model = Lfm2::new(config).expect("Model creation should succeed");
+        let tokenizer = Lfm2Tokenizer::new();
+
+        let options = SummarizeOptions::new(&model, &tokenizer)
+            .with_max_tokens(512)
+            .with_temperature(0.7);
+
+        assert_eq!(options.max_tokens, 512);
+        assert!((options.temperature - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_transcribe_summary_result_accessors() {
+        let transcription = TranscriptionResult {
+            text: "Hello world".to_string(),
+            language: "en".to_string(),
+            segments: vec![],
+        };
+
+        let result = TranscribeSummaryResult {
+            transcription,
+            summary: "Summary text".to_string(),
+            generation_stats: None,
+        };
+
+        assert_eq!(result.transcript(), "Hello world");
+        assert_eq!(result.summary(), "Summary text");
+        assert!(result.has_summary());
+    }
+
+    #[test]
+    fn test_transcribe_summary_result_empty_summary() {
+        let transcription = TranscriptionResult {
+            text: "Hello world".to_string(),
+            language: "en".to_string(),
+            segments: vec![],
+        };
+
+        let result = TranscribeSummaryResult {
+            transcription,
+            summary: String::new(),
+            generation_stats: None,
+        };
+
+        assert!(!result.has_summary());
+    }
+
+    #[test]
+    #[ignore = "Slow test - run with --ignored"]
+    fn test_transcribe_and_summarize_empty_audio() {
+        use model::lfm2::{Lfm2, Lfm2Tokenizer};
+
+        let whisper = WhisperApr::tiny();
+        // Use larger max_seq_len to handle typical transcription output
+        let config = format::apr2::Lfm2Config {
+            hidden_size: 64,
+            num_layers: 2,
+            num_q_heads: 4,
+            num_kv_heads: 2,
+            intermediate_size: 128,
+            vocab_size: 1000,
+            max_seq_len: 2048, // Larger to handle transcription output
+            rope_theta: 10000.0,
+            conv_dimension: 32,
+            layer_types: vec![
+                format::apr2::LayerType::Convolution {
+                    kernel_size: 4,
+                    cache_len: 3,
+                },
+                format::apr2::LayerType::Attention { use_gqa: true },
+            ],
+        };
+        let lfm2 = Lfm2::new(config).expect("Model creation should succeed");
+        let tokenizer = Lfm2Tokenizer::new();
+
+        // Empty audio (silence) should produce empty summary
+        let audio = vec![0.0f32; 16000]; // 1 second of silence
+        let transcribe_options = TranscribeOptions::default();
+        let summarize_options = SummarizeOptions::new(&lfm2, &tokenizer)
+            .with_max_tokens(8); // Very short for speed
+
+        let result = whisper
+            .transcribe_and_summarize(&audio, transcribe_options, summarize_options)
+            .expect("Should not fail");
+
+        // For silence, transcription is typically empty or minimal
+        // Summary should be empty if transcription is empty
+        if result.transcription.text.trim().is_empty() {
+            assert!(!result.has_summary());
+        }
+    }
+
+    #[test]
+    #[ignore = "Slow test - run with --ignored"]
+    fn test_transcribe_and_summarize_integration() {
+        use model::lfm2::{Lfm2, Lfm2Tokenizer};
+
+        let whisper = WhisperApr::tiny();
+        // Use larger max_seq_len to handle typical transcription output
+        let config = format::apr2::Lfm2Config {
+            hidden_size: 64,
+            num_layers: 2,
+            num_q_heads: 4,
+            num_kv_heads: 2,
+            intermediate_size: 128,
+            vocab_size: 1000,
+            max_seq_len: 2048, // Larger to handle transcription output
+            rope_theta: 10000.0,
+            conv_dimension: 32,
+            layer_types: vec![
+                format::apr2::LayerType::Convolution {
+                    kernel_size: 4,
+                    cache_len: 3,
+                },
+                format::apr2::LayerType::Attention { use_gqa: true },
+            ],
+        };
+        let lfm2 = Lfm2::new(config).expect("Model creation should succeed");
+        let tokenizer = Lfm2Tokenizer::new();
+
+        // Generate test audio (440Hz sine wave)
+        let sample_rate = 16000;
+        let duration_secs = 1.0;
+        let num_samples = (sample_rate as f32 * duration_secs) as usize;
+        let audio: Vec<f32> = (0..num_samples)
+            .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / sample_rate as f32).sin())
+            .collect();
+
+        let transcribe_options = TranscribeOptions::default();
+        let summarize_options = SummarizeOptions::new(&lfm2, &tokenizer)
+            .with_max_tokens(8); // Keep it short for test speed
+
+        // This exercises the full pipeline
+        let result = whisper
+            .transcribe_and_summarize(&audio, transcribe_options, summarize_options);
+
+        // The test validates that the pipeline doesn't crash
+        // With synthetic weights, output quality is not meaningful
+        assert!(result.is_ok());
+
+        let result = result.expect("Should succeed");
+        // Transcription always has a language
+        assert_eq!(result.transcription.language, "en");
     }
 }
