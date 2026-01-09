@@ -4,6 +4,7 @@
 //! - `TranscriptionBrick`: Displays transcription results
 //! - `WaveformBrick`: Shows audio waveform visualization
 //! - `VuMeterBrick`: Shows audio level indicator
+//! - `AudioLevelBrick`: Audio level with dB readout (-60 to 0 dB)
 //! - `StatusBrick`: Shows current status (loading, ready, recording)
 //! - `AudioBrick`: Ring buffer audio capture specification
 //! - `ChunkProgressBrick`: Real-time chunk processing display
@@ -23,6 +24,7 @@
 //! The `tui` module provides ratatui-based TUI rendering of the same bricks.
 
 pub mod audio;
+pub mod audio_level;
 pub mod chunk_progress;
 pub mod codegen;
 pub mod compute;
@@ -41,6 +43,7 @@ pub mod vu_meter;
 pub mod waveform;
 
 pub use audio::AudioBrick;
+pub use audio_level::{amplitude_to_db, db_to_amplitude, AudioLevelBrick, AudioLevelState};
 pub use chunk_progress::{ChunkProgressBrick, ChunkProgressState, ChunkState, ChunkStats};
 pub use codegen::{
     create_whisper_audio_brick, create_whisper_event_brick, create_whisper_worker_brick,
