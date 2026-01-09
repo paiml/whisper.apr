@@ -5,12 +5,14 @@
 
 mod gelu;
 mod layernorm;
-mod matmul;
+pub mod matmul;
+pub mod mel;
 mod softmax;
 
 pub use gelu::{GeluApproximation, GeluConfig, GpuGelu};
 pub use layernorm::{GpuLayerNorm, LayerNormConfig, LayerNormMode};
 pub use matmul::{GpuMatMul, MatMulConfig, MatMulDimensions, TileSize};
+pub use mel::{GpuMelFilterbank, MelConfig};
 pub use softmax::{GpuSoftmax, SoftmaxConfig, SoftmaxDimension};
 
 /// Validate matrix dimensions for multiplication

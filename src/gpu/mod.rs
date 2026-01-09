@@ -28,6 +28,7 @@ mod capabilities;
 mod detect;
 mod device;
 mod error;
+mod executor;
 pub mod ops;
 mod pipeline;
 
@@ -45,6 +46,7 @@ pub use pipeline::{
     ComputePipelineDescriptor, ShaderModule, ShaderModuleDescriptor, ShaderSource,
     ShaderSourceType, WorkgroupDimensions,
 };
+pub use executor::{ExecutorConfig, GpuExecutor, GpuExecutorSync};
 
 /// Default workgroup size for compute shaders (optimized for most GPUs)
 pub const DEFAULT_WORKGROUP_SIZE: u32 = 256;

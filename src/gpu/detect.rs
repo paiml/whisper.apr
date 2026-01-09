@@ -167,11 +167,104 @@ pub fn detect_gpu(options: &DetectionOptions) -> GpuDetectionResult {
 }
 
 #[cfg(feature = "webgpu")]
-fn detect_gpu_wgpu(_options: &DetectionOptions) -> GpuDetectionResult {
-    // WebGPU detection requires async browser APIs (navigator.gpu)
-    // In non-browser WASM environments, GPU is not available
-    // Use detect_gpu_simulated() for testing GPU code paths
-    GpuDetectionResult::unavailable()
+fn detect_gpu_wgpu(options: &DetectionOptions) -> GpuDetectionResult {
+    // Use pollster to block on async wgpu operations
+    // For WASM targets, this would need to be async - use detect_gpu_async instead
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let timeout = Duration::from_millis(options.timeout_ms as u64);
+        let prefer_high_perf = options.prefer_high_performance;
+
+        let (tx, rx) = mpsc::channel();
+
+        thread::spawn(move || {
+            let result = pollster::block_on(async {
+                let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                    backends: wgpu::Backends::all(),
+                    ..Default::default()
+                });
+
+                let power_preference = if prefer_high_perf {
+                    wgpu::PowerPreference::HighPerformance
+                } else {
+                    wgpu::PowerPreference::LowPower
+                };
+
+                if let Some(adapter) = instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    })
+                    .await
+                {
+                    let info = adapter.get_info();
+                    let limits = adapter.limits();
+
+                    let backend = match info.backend {
+                        wgpu::Backend::Vulkan => GpuBackend::Vulkan,
+                        wgpu::Backend::Metal => GpuBackend::Metal,
+                        wgpu::Backend::Dx12 => GpuBackend::Dx12,
+                        wgpu::Backend::Gl => GpuBackend::OpenGl,
+                        wgpu::Backend::BrowserWebGpu => GpuBackend::BrowserWebGpu,
+                        wgpu::Backend::Empty => GpuBackend::None,
+                    };
+
+                    let capabilities = GpuCapabilities {
+                        name: info.name.clone(),
+                        vendor: format!("{:?}", info.vendor),
+                        backend,
+                        limits: GpuLimits {
+                            max_buffer_size: limits.max_buffer_size,
+                            max_storage_buffer_binding_size: limits.max_storage_buffer_binding_size,
+                            max_uniform_buffer_binding_size: limits.max_uniform_buffer_binding_size,
+                            max_compute_workgroup_size_x: limits.max_compute_workgroup_size_x,
+                            max_compute_workgroup_size_y: limits.max_compute_workgroup_size_y,
+                            max_compute_workgroup_size_z: limits.max_compute_workgroup_size_z,
+                            max_compute_invocations_per_workgroup: limits
+                                .max_compute_invocations_per_workgroup,
+                            max_compute_workgroups_per_dimension: limits
+                                .max_compute_workgroups_per_dimension,
+                            max_bind_groups: limits.max_bind_groups,
+                        },
+                        supports_f16: adapter
+                            .features()
+                            .contains(wgpu::Features::SHADER_F16),
+                        supports_timestamp_query: adapter
+                            .features()
+                            .contains(wgpu::Features::TIMESTAMP_QUERY),
+                        vram_bytes: 0, // Not easily available from wgpu
+                    };
+
+                    GpuDetectionResult {
+                        available: true,
+                        capabilities,
+                        recommended_backend: backend,
+                        detection_method: DetectionMethod::WgpuNative,
+                    }
+                } else {
+                    GpuDetectionResult::unavailable()
+                }
+            });
+            let _ = tx.send(result);
+        });
+
+        rx.recv_timeout(timeout).unwrap_or_else(|_| {
+            GpuDetectionResult::unavailable()
+        })
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        // For WASM, GPU detection must be async
+        // Return unavailable in sync context - callers should use detect_gpu_async
+        let _ = options;
+        GpuDetectionResult::unavailable()
+    }
 }
 
 /// Create a simulated GPU result for testing

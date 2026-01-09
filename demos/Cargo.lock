@@ -1697,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "jugar-probar"
-version = "1.0.0-rc.1"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -1722,6 +1722,36 @@ dependencies = [
  "syn",
  "thiserror 2.0.17",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "jugar-probar"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45cd85d7d35b0a51df297130b938d0c7a62be8fb07f1451dde89c235de8f4416"
+dependencies = [
+ "base64",
+ "bincode",
+ "chrono",
+ "gif 0.13.3",
+ "image 0.25.9",
+ "js-sys",
+ "mp4",
+ "notify",
+ "png 0.17.16",
+ "proc-macro2",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "syn",
+ "thiserror 2.0.17",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -2341,9 +2371,11 @@ dependencies = [
 
 [[package]]
 name = "presentar-core"
-version = "0.1.5"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8ebf16fb7910c61032b1b4e72a4b867e1e7877c9466c2a8fdd8d2ccde008b6a"
 dependencies = [
- "jugar-probar",
+ "jugar-probar 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
  "trueno",
@@ -2366,7 +2398,9 @@ dependencies = [
 
 [[package]]
 name = "probar-js-gen"
-version = "1.0.0-rc.1"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f4d605e889a56084e2348130cea346e9151910d67e7996c1c43072c2da38a1e"
 dependencies = [
  "blake3",
  "chrono",
@@ -4051,7 +4085,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
- "jugar-probar",
+ "jugar-probar 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "presentar-core",
  "probar-js-gen",
  "proptest",
@@ -4073,7 +4107,7 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "image 0.24.9",
- "jugar-probar",
+ "jugar-probar 1.0.0",
  "proptest",
  "ratatui",
  "serde_json",

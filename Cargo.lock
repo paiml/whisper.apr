@@ -4655,6 +4655,7 @@ name = "whisper-apr"
 version = "0.1.0"
 dependencies = [
  "aprender",
+ "bytemuck",
  "clap",
  "console_error_panic_hook",
  "criterion",
@@ -4667,6 +4668,7 @@ dependencies = [
  "indicatif",
  "js-sys",
  "jugar-probar",
+ "pollster",
  "proptest",
  "ratatui",
  "rayon",

@@ -911,3 +911,51 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: WAPR-WEBGPU-001
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-WEBGPU-001'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-09T00:29:17.915592529+00:00
+  updated: 2026-01-09T00:38:42.952798941+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-UX-UPLOAD-001
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-UX-UPLOAD-001'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-09T00:40:38.848010762+00:00
+  updated: 2026-01-09T00:40:38.848010762+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-PARTIAL-RESULTS-001
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PARTIAL-RESULTS-001'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-09T01:01:24.579145416+00:00
+  updated: 2026-01-09T01:01:24.579145416+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null

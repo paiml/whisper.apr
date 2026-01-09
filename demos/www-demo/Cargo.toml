@@ -24,12 +24,12 @@ console_error_panic_hook = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 serde_bytes = "0.11"
-# Use absolute path for cargo-mutants compatibility (relative paths fail in temp dirs)
-probar-js-gen = { path = "/home/noah/src/probar/crates/probar-js-gen" }
+# Use crates.io versions for compatibility with presentar-core
+probar-js-gen = "1.0"
 # Brick Architecture for test-driven UI (PROBAR-SPEC-009)
-jugar-probar = { path = "/home/noah/src/probar/crates/probar", default-features = false }
+jugar-probar = { version = "1.0", default-features = false }
 # Presentar: Brick-based rendering engine (tests define interface)
-presentar-core = { path = "/home/noah/src/presentar/crates/presentar-core", features = ["brick"] }
+presentar-core = { version = "0.2", features = ["brick"] }
 
 [dependencies.web-sys]
 workspace = true
