@@ -1225,3 +1225,19 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: WAPR-LFM2-020
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-LFM2-020'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-09T18:14:20.561350238+00:00
+  updated: 2026-01-09T18:41:19.961009694+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
