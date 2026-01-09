@@ -226,7 +226,9 @@ impl PartialResultsBrick {
     /// Create new brick
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            state: PartialResultsState::new(),
+        }
     }
 
     /// Get state reference
