@@ -29,7 +29,7 @@ simd = []
 parallel = ["rayon", "wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
 converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs", "zip"]
-cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "half", "symphonia"]
+cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "half", "symphonia", "dirs"]
 # Multi-format audio decoding (MP3, FLAC, OGG, AAC, etc.)
 symphonia = ["dep:symphonia"]
 benchmark-tui = ["ratatui", "crossterm"]

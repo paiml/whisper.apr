@@ -40,13 +40,13 @@ pub use detect::{
 };
 pub use device::{GpuDevice, GpuDeviceConfig};
 pub use error::{GpuError, GpuResult};
+pub use executor::{ExecutorConfig, GpuExecutor, GpuExecutorSync};
 pub use pipeline::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingType, BufferBinding, ComputeDispatch, ComputePipeline,
     ComputePipelineDescriptor, ShaderModule, ShaderModuleDescriptor, ShaderSource,
     ShaderSourceType, WorkgroupDimensions,
 };
-pub use executor::{ExecutorConfig, GpuExecutor, GpuExecutorSync};
 
 /// Default workgroup size for compute shaders (optimized for most GPUs)
 pub const DEFAULT_WORKGROUP_SIZE: u32 = 256;

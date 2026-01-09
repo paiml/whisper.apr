@@ -991,3 +991,125 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: WAPR-LFM2-001
+  github_issue: 10
+  item_type: task
+  title: 'LFM2-2.6B-Transcript Post-Transcription Benchmark (GitHub Issue #10)'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-09T09:43:49.333997898+00:00
+  updated: 2026-01-09T10:12:10.438693398+00:00
+  spec: docs/specifications/1.0-whisper-apr.md#18-lfm2-post-transcription-benchmark
+  acceptance_criteria:
+  - Evaluate LFM2 architecture compatibility with WASM target (Lfm2ForCausalLM review)
+  - Assess memory requirements vs whisper.apr performance targets (2.5GB int4 budget)
+  - Design APR2 format for LLM support (GQA, SwiGLU, Conv layers)
+  - Benchmark inference speed (target ≤5s per 1000 tokens)
+  - Prototype CLI pipeline (whisper.apr → LFM2 summarization)
+  - Test int4 quantization quality (≥80% of fp16 baseline)
+  - WASM memory pressure testing (browser heap limits ~2GB)
+  phases: []
+  subtasks: []
+  estimated_effort: large
+  labels:
+  - research
+  - enhancement
+  - model-integration
+  notes: 'LiquidAI LFM2-2.6B-Transcript for on-device meeting summarization. Architecture: Lfm2ForCausalLM, 2.6B params, hybrid conv+attention, GQA. See spec Section 18 for details.'
+- id: WAPR-LFM2-002
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-LFM2-002'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-09T10:13:45.913965547+00:00
+  updated: 2026-01-09T10:24:59.368925584+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-LFM2-008
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-LFM2-008'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-09T12:13:07.527809918+00:00
+  updated: 2026-01-09T12:25:55.868519089+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-LFM2-009
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-LFM2-009'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-09T12:26:26.708185856+00:00
+  updated: 2026-01-09T12:42:06.788028301+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-LFM2-010
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-LFM2-010'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-09T12:43:45.304856105+00:00
+  updated: 2026-01-09T12:43:45.304856105+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-LFM2-011
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-LFM2-011'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-09T15:00:11.584607324+00:00
+  updated: 2026-01-09T15:00:11.584607324+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-LFM2-012
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-LFM2-012'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-09T15:12:21.473420167+00:00
+  updated: 2026-01-09T15:22:13.062632841+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null

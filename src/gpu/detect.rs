@@ -231,9 +231,7 @@ fn detect_gpu_wgpu(options: &DetectionOptions) -> GpuDetectionResult {
                                 .max_compute_workgroups_per_dimension,
                             max_bind_groups: limits.max_bind_groups,
                         },
-                        supports_f16: adapter
-                            .features()
-                            .contains(wgpu::Features::SHADER_F16),
+                        supports_f16: adapter.features().contains(wgpu::Features::SHADER_F16),
                         supports_timestamp_query: adapter
                             .features()
                             .contains(wgpu::Features::TIMESTAMP_QUERY),
@@ -253,9 +251,8 @@ fn detect_gpu_wgpu(options: &DetectionOptions) -> GpuDetectionResult {
             let _ = tx.send(result);
         });
 
-        rx.recv_timeout(timeout).unwrap_or_else(|_| {
-            GpuDetectionResult::unavailable()
-        })
+        rx.recv_timeout(timeout)
+            .unwrap_or_else(|_| GpuDetectionResult::unavailable())
     }
 
     #[cfg(target_arch = "wasm32")]

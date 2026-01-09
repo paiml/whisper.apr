@@ -4,7 +4,9 @@
 
 mod attention;
 mod decoder;
+pub mod download;
 mod encoder;
+pub mod lfm2;
 pub mod quantized;
 
 pub use attention::{

@@ -241,12 +241,18 @@ impl MelFilterbank {
             return Err(WhisperError::Audio("hop_length must be positive".into()));
         }
 
-        // Calculate number of frames
-        let n_frames = if audio.len() >= self.n_fft {
-            (audio.len() - self.n_fft) / hop_length + 1
-        } else {
-            0
-        };
+        // Center padding: pad n_fft//2 zeros on each side to match librosa/HuggingFace
+        // This ensures n_frames = n_samples // hop_length
+        let pad_len = self.n_fft / 2;
+        let padded_audio: Vec<f32> = std::iter::repeat(0.0_f32)
+            .take(pad_len)
+            .chain(audio.iter().copied())
+            .chain(std::iter::repeat(0.0_f32).take(pad_len))
+            .collect();
+
+        // Calculate number of frames with center padding
+        // n_frames = original_len // hop_length (matches HuggingFace exactly)
+        let n_frames = audio.len() / hop_length;
 
         if n_frames == 0 {
             return Ok(Vec::new());
@@ -266,8 +272,8 @@ impl MelFilterbank {
             // Apply window and prepare FFT input
             let mut fft_input: Vec<Complex<f32>> = (0..self.n_fft)
                 .map(|i| {
-                    let sample = if start + i < audio.len() {
-                        audio[start + i]
+                    let sample = if start + i < padded_audio.len() {
+                        padded_audio[start + i]
                     } else {
                         0.0
                     };
@@ -446,12 +452,18 @@ impl MelFilterbank {
             return Err(WhisperError::Audio("hop_length must be positive".into()));
         }
 
-        // Calculate number of frames
-        let n_frames = if audio.len() >= self.n_fft {
-            (audio.len() - self.n_fft) / hop_length + 1
-        } else {
-            0
-        };
+        // Center padding: pad n_fft//2 zeros on each side to match librosa/HuggingFace
+        // This ensures n_frames = n_samples // hop_length
+        let pad_len = self.n_fft / 2;
+        let padded_audio: Vec<f32> = std::iter::repeat(0.0_f32)
+            .take(pad_len)
+            .chain(audio.iter().copied())
+            .chain(std::iter::repeat(0.0_f32).take(pad_len))
+            .collect();
+
+        // Calculate number of frames with center padding
+        // n_frames = original_len // hop_length (matches HuggingFace exactly)
+        let n_frames = audio.len() / hop_length;
 
         if n_frames == 0 {
             return Ok(Vec::new());
@@ -471,8 +483,8 @@ impl MelFilterbank {
             // Apply window and prepare FFT input
             let mut fft_input: Vec<Complex<f32>> = (0..self.n_fft)
                 .map(|i| {
-                    let sample = if start + i < audio.len() {
-                        audio[start + i]
+                    let sample = if start + i < padded_audio.len() {
+                        padded_audio[start + i]
                     } else {
                         0.0
                     };
@@ -650,7 +662,9 @@ mod tests {
     #[test]
     fn test_mel_compute_exact_one_frame() {
         let mel = MelFilterbank::new(80, 400, 16000);
-        let audio = vec![0.0; 400]; // Exactly one FFT window
+        // With center padding, n_frames = n_samples / hop_length
+        // 160 samples -> 160 / 160 = 1 frame
+        let audio = vec![0.0; 160];
         let result = mel.compute(&audio, 160).expect("compute should succeed");
         // Should have exactly 1 frame
         assert_eq!(result.len(), 80 * 1);
@@ -660,11 +674,11 @@ mod tests {
     fn test_mel_compute_multiple_frames() {
         let mel = MelFilterbank::new(80, 400, 16000);
         // 16000 samples = 1 second at 16kHz
-        // With hop_length=160, we get (16000 - 400) / 160 + 1 = 98 frames
+        // With center padding and hop_length=160: 16000 / 160 = 100 frames
         let audio = vec![0.0; 16000];
         let result = mel.compute(&audio, 160).expect("compute should succeed");
         let n_frames = result.len() / 80;
-        assert_eq!(n_frames, 98);
+        assert_eq!(n_frames, 100);
     }
 
     #[test]
@@ -955,7 +969,8 @@ mod tests {
     #[test]
     fn test_compute_simd_one_frame() {
         let mel = MelFilterbank::new(80, 400, 16000);
-        let audio = vec![0.0; 400];
+        // With center padding: 160 samples -> 160 / 160 = 1 frame
+        let audio = vec![0.0; 160];
         let result = mel.compute_simd(&audio, 160).expect("should succeed");
         assert_eq!(result.len(), 80);
     }
@@ -1024,13 +1039,14 @@ mod tests {
         assert_eq!(mel.n_freqs(), 201); // n_fft/2 + 1
 
         // Standard Whisper: 10ms frame shift (160 samples at 16kHz)
+        // With center padding: n_frames = n_samples / hop_length
         let hop_length = 160;
         let audio_1s = vec![0.0; 16000];
         let result = mel.compute(&audio_1s, hop_length).expect("should work");
 
-        // 1 second -> (16000 - 400) / 160 + 1 = 98 frames
+        // 1 second -> 16000 / 160 = 100 frames (with center padding)
         let n_frames = result.len() / 80;
-        assert_eq!(n_frames, 98, "1s audio should produce 98 frames");
+        assert_eq!(n_frames, 100, "1s audio should produce 100 frames");
     }
 
     #[test]

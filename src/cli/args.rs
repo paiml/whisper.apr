@@ -115,6 +115,9 @@ pub enum Command {
     /// Translate speech to English
     Translate(TranslateArgs),
 
+    /// Summarize transcript using LFM2 model (WAPR-LFM2-001)
+    Summarize(SummarizeArgs),
+
     /// Real-time streaming transcription from microphone (whisper.cpp: whisper-stream)
     Stream(StreamArgs),
 
@@ -156,6 +159,9 @@ pub enum Command {
     /// Self-diagnostic checks (tokenizer, model config, known issues)
     #[command(alias = "doctor")]
     Diagnose(DiagnoseArgs),
+
+    /// Convert HuggingFace safetensors to APR2 format (WAPR-LFM2-004)
+    Convert(ConvertArgs),
 }
 
 /// Arguments for transcribe command
@@ -422,6 +428,33 @@ pub struct TranscribeArgs {
     /// When enabled, uses optimized buffer sizes for trueno-ublk ZRAM
     #[arg(long = "zram-optimized")]
     pub zram_optimized: bool,
+
+    // -------------------------------------------------------------------------
+    // Post-transcription summarization (Phase 2 - Section 18.5)
+    // -------------------------------------------------------------------------
+    /// Enable post-transcription summarization with LFM2
+    #[arg(long)]
+    pub summarize: bool,
+
+    /// Path to LFM2 model file for summarization (.apr2 format)
+    #[arg(long = "lfm2-model")]
+    pub lfm2_model: Option<PathBuf>,
+
+    /// Output file for summary (default: <input>.summary.json)
+    #[arg(long = "summary-output")]
+    pub summary_output: Option<PathBuf>,
+
+    /// Summary format (json, text, markdown, bullets)
+    #[arg(long = "summary-format", default_value = "json")]
+    pub summary_format: SummarizeFormat,
+
+    /// Include action items in summary
+    #[arg(long = "action-items")]
+    pub action_items: bool,
+
+    /// Include key points in summary
+    #[arg(long = "key-points")]
+    pub key_points: bool,
 }
 
 /// Arguments for translate command
@@ -450,6 +483,93 @@ pub struct TranslateArgs {
     /// Number of CPU threads (default: auto) (whisper.cpp: -t)
     #[arg(short = 't', long)]
     pub threads: Option<u32>,
+}
+
+/// Arguments for summarize command (WAPR-LFM2-001)
+///
+/// Summarizes transcript text using LFM2-2.6B-Transcript model.
+/// This is a post-transcription step that converts raw transcripts
+/// into structured summaries with bullet points and action items.
+///
+/// # Example
+///
+/// ```bash
+/// # Summarize a transcript file
+/// whisper-apr summarize -f transcript.txt -o summary.json
+///
+/// # End-to-end: transcribe + summarize
+/// whisper-apr transcribe -f meeting.wav | whisper-apr summarize
+///
+/// # With custom model path
+/// whisper-apr summarize -f transcript.txt --model-path ./lfm2-2.6b.apr2
+/// ```
+#[derive(Parser, Debug, Clone)]
+pub struct SummarizeArgs {
+    /// Input transcript file (or stdin if not provided)
+    #[arg(short = 'f', long = "file")]
+    pub input: Option<PathBuf>,
+
+    /// Path to LFM2 model file (.apr2 format)
+    #[arg(long)]
+    pub model_path: Option<PathBuf>,
+
+    /// Path to tokenizer.json file (HuggingFace format)
+    #[arg(long)]
+    pub tokenizer_path: Option<PathBuf>,
+
+    /// Output file path (default: stdout)
+    #[arg(short = 'o', long = "output")]
+    pub output: Option<PathBuf>,
+
+    /// Output format for summary
+    #[arg(long, default_value = "json")]
+    pub format: SummarizeFormat,
+
+    /// Maximum tokens to generate
+    #[arg(long, default_value = "1024")]
+    pub max_tokens: u32,
+
+    /// Sampling temperature (0.0 = deterministic)
+    #[arg(long, default_value = "0.3")]
+    pub temperature: f32,
+
+    /// Maximum context length for input
+    #[arg(long, default_value = "4096")]
+    pub max_context: u32,
+
+    /// Use WebGPU acceleration
+    #[arg(long)]
+    pub webgpu: bool,
+
+    /// Stream output token by token
+    #[arg(long)]
+    pub stream: bool,
+
+    /// Include action items extraction
+    #[arg(long)]
+    pub action_items: bool,
+
+    /// Include key points extraction
+    #[arg(long)]
+    pub key_points: bool,
+
+    /// Custom prompt template (overrides defaults)
+    #[arg(long)]
+    pub prompt: Option<String>,
+}
+
+/// Output format for summarization
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SummarizeFormat {
+    /// JSON with structured fields
+    #[default]
+    Json,
+    /// Plain text summary
+    Text,
+    /// Markdown with sections
+    Markdown,
+    /// Bullet points only
+    Bullets,
 }
 
 /// Arguments for stream command (§6.7 - whisper.cpp: whisper-stream)
@@ -825,6 +945,25 @@ pub enum ModelAction {
         /// Model file
         file: PathBuf,
     },
+
+    /// Check WASM viability for LFM2 deployment
+    WasmCheck {
+        /// Model family (lfm2, llama, whisper)
+        #[arg(short = 'm', long, default_value = "lfm2")]
+        family: String,
+
+        /// Quantization type (fp16, int8, int4-awq, int4-gptq)
+        #[arg(short = 'Q', long, default_value = "int4-awq")]
+        quantization: String,
+
+        /// Maximum context length
+        #[arg(short, long, default_value = "4096")]
+        context: usize,
+
+        /// Sliding window size (0 for full attention)
+        #[arg(short = 'w', long, default_value = "2048")]
+        sliding_window: usize,
+    },
 }
 
 /// Arguments for benchmark command
@@ -841,6 +980,22 @@ pub struct BenchmarkArgs {
     /// Number of iterations
     #[arg(short, long, default_value = "3")]
     pub iterations: usize,
+
+    /// Benchmark LFM2 components instead of Whisper
+    #[arg(long)]
+    pub lfm2: bool,
+
+    /// LFM2 component to benchmark (gqa, swiglu, rope, conv1d, full_layer, all)
+    #[arg(long, default_value = "all")]
+    pub component: String,
+
+    /// Sequence length for LFM2 benchmarks
+    #[arg(long, default_value = "128")]
+    pub seq_len: usize,
+
+    /// Use LFM2-2.6B config (larger, slower) vs small test config
+    #[arg(long)]
+    pub full_size: bool,
 }
 
 /// Arguments for validate command
@@ -899,6 +1054,94 @@ pub struct DiagnoseArgs {
     /// Run all checks including slow ones
     #[arg(long)]
     pub full: bool,
+}
+
+/// Arguments for convert command (WAPR-LFM2-004)
+///
+/// Converts HuggingFace safetensors models to APR2 format.
+#[derive(Parser, Debug, Clone)]
+pub struct ConvertArgs {
+    /// Input safetensors file or HuggingFace model ID
+    #[arg(short, long)]
+    pub input: PathBuf,
+
+    /// Output APR2 file path
+    #[arg(short, long)]
+    pub output: PathBuf,
+
+    /// Model family (lfm2, llama, whisper)
+    #[arg(long, default_value = "lfm2")]
+    pub family: ModelFamilyArg,
+
+    /// Quantization method
+    #[arg(short = 'Q', long, default_value = "f32")]
+    pub quantize: QuantizeMethodArg,
+
+    /// Group size for quantization
+    #[arg(long, default_value = "128")]
+    pub group_size: u32,
+
+    /// Verbose output (show tensor names)
+    #[arg(short, long)]
+    pub verbose: bool,
+
+    /// Dry run (show what would be converted)
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// Model family for conversion
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelFamilyArg {
+    /// LFM2 (LiquidAI transcript summarization)
+    Lfm2,
+    /// LLaMA-style models
+    Llama,
+    /// Whisper ASR models
+    Whisper,
+}
+
+impl std::fmt::Display for ModelFamilyArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Lfm2 => write!(f, "lfm2"),
+            Self::Llama => write!(f, "llama"),
+            Self::Whisper => write!(f, "whisper"),
+        }
+    }
+}
+
+/// Quantization method for conversion
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuantizeMethodArg {
+    /// Full precision (4 bytes per weight)
+    F32,
+    /// Half precision (2 bytes per weight)
+    F16,
+    /// BFloat16 (2 bytes per weight)
+    Bf16,
+    /// 8-bit quantization (1 byte per weight)
+    Int8,
+    /// 4-bit quantization (0.5 bytes per weight)
+    Int4,
+    /// 4-bit AWQ quantization
+    Int4Awq,
+    /// 4-bit GPTQ quantization
+    Int4Gptq,
+}
+
+impl std::fmt::Display for QuantizeMethodArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::F32 => write!(f, "f32"),
+            Self::F16 => write!(f, "f16"),
+            Self::Bf16 => write!(f, "bf16"),
+            Self::Int8 => write!(f, "int8"),
+            Self::Int4 => write!(f, "int4"),
+            Self::Int4Awq => write!(f, "int4-awq"),
+            Self::Int4Gptq => write!(f, "int4-gptq"),
+        }
+    }
 }
 
 /// Model size options
@@ -1411,6 +1654,106 @@ mod tests {
     fn test_parse_invalid_backend() {
         let args = Args::try_parse_from(["whisper-apr", "test", "--backend", "invalid"]);
         assert!(args.is_err());
+    }
+
+    // -------------------------------------------------------------------------
+    // Summarize command tests (WAPR-LFM2-001)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_summarize_minimal() {
+        let args = Args::try_parse_from(["whisper-apr", "summarize", "-f", "transcript.txt"]);
+        assert!(args.is_ok(), "Should parse minimal summarize command");
+        let args = args.expect("test parse should succeed");
+        match args.command {
+            Command::Summarize(s) => {
+                assert_eq!(s.input, Some(PathBuf::from("transcript.txt")));
+                assert_eq!(s.format, SummarizeFormat::Json);
+                assert_eq!(s.max_tokens, 1024);
+                assert!(!s.stream);
+            }
+            _ => panic!("Expected Summarize command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_summarize_all_options() {
+        let args = Args::try_parse_from([
+            "whisper-apr",
+            "summarize",
+            "-f",
+            "meeting.txt",
+            "--model-path",
+            "./lfm2.apr2",
+            "-o",
+            "summary.json",
+            "--format",
+            "markdown",
+            "--max-tokens",
+            "2048",
+            "--temperature",
+            "0.5",
+            "--max-context",
+            "8192",
+            "--webgpu",
+            "--stream",
+            "--action-items",
+            "--key-points",
+        ]);
+        assert!(args.is_ok(), "Should parse all summarize options");
+        let args = args.expect("test parse should succeed");
+        match args.command {
+            Command::Summarize(s) => {
+                assert_eq!(s.model_path, Some(PathBuf::from("./lfm2.apr2")));
+                assert_eq!(s.output, Some(PathBuf::from("summary.json")));
+                assert_eq!(s.format, SummarizeFormat::Markdown);
+                assert_eq!(s.max_tokens, 2048);
+                assert!((s.temperature - 0.5).abs() < 0.01);
+                assert_eq!(s.max_context, 8192);
+                assert!(s.webgpu);
+                assert!(s.stream);
+                assert!(s.action_items);
+                assert!(s.key_points);
+            }
+            _ => panic!("Expected Summarize command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_summarize_stdin() {
+        // Summarize without input file (reads from stdin)
+        let args = Args::try_parse_from(["whisper-apr", "summarize"]);
+        assert!(args.is_ok(), "Should parse summarize without input (stdin)");
+        let args = args.expect("test parse should succeed");
+        match args.command {
+            Command::Summarize(s) => {
+                assert!(s.input.is_none());
+            }
+            _ => panic!("Expected Summarize command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_summarize_with_prompt() {
+        let args = Args::try_parse_from([
+            "whisper-apr",
+            "summarize",
+            "-f",
+            "transcript.txt",
+            "--prompt",
+            "Summarize this meeting in 3 bullet points:",
+        ]);
+        assert!(args.is_ok());
+        let args = args.expect("test parse should succeed");
+        match args.command {
+            Command::Summarize(s) => {
+                assert_eq!(
+                    s.prompt,
+                    Some("Summarize this meeting in 3 bullet points:".to_string())
+                );
+            }
+            _ => panic!("Expected Summarize command"),
+        }
     }
 
     // -------------------------------------------------------------------------
