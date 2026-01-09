@@ -40,12 +40,14 @@
 mod capabilities;
 mod diarization;
 mod gpu;
+mod lfm2;
 mod threading;
 mod timestamps;
 mod vocabulary;
 mod worker;
 
 pub use capabilities::{Capabilities, ExecutionMode};
+pub use lfm2::{GenerationResultWasm, Lfm2Wasm, MemoryEstimateWasm, ViabilityCheckWasm};
 pub use diarization::{
     get_diarization_recommendation, DiarizationConfigWasm, DiarizationResultWasm, DiarizerWasm,
     EmbeddingExtractorWasm, SpeakerEmbeddingWasm, SpeakerSegmentWasm, TurnDetectorWasm,
