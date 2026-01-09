@@ -435,6 +435,7 @@ pub async fn matmul_gpu(
 }
 
 /// Execute a simple matrix multiplication (stub)
+#[allow(dead_code)] // Available for future use when webgpu feature enabled
 #[cfg(not(feature = "webgpu"))]
 pub async fn matmul_gpu(
     _m: u32,

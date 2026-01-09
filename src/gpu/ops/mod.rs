@@ -3,12 +3,14 @@
 //! Provides GPU-accelerated implementations of core operations used in
 //! transformer inference.
 
+mod attention;
 mod gelu;
 mod layernorm;
 pub mod matmul;
 pub mod mel;
 mod softmax;
 
+pub use attention::{AttentionConfig, GpuAttention};
 pub use gelu::{GeluApproximation, GeluConfig, GpuGelu};
 pub use layernorm::{GpuLayerNorm, LayerNormConfig, LayerNormMode};
 pub use matmul::{GpuMatMul, MatMulConfig, MatMulDimensions, TileSize};
