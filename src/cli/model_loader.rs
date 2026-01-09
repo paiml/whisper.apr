@@ -19,6 +19,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::args::ModelSize;
+use crate::tokenizer::Vocabulary;
 use crate::WhisperApr;
 
 /// Model loader error
@@ -127,8 +128,33 @@ fn download_model(size: ModelSize, verbose: bool) -> ModelLoaderResult<PathBuf> 
         );
     }
 
-    // Convert safetensors to .apr format
-    convert_safetensors_to_apr(&safetensors_path, &cache_path, size, verbose)?;
+    // Download vocab.json for tokenizer
+    let vocab_path = repo
+        .get("vocab.json")
+        .map_err(|e| ModelLoaderError::Download(format!("Failed to download vocab: {e}")))?;
+
+    if verbose {
+        eprintln!("[INFO] Downloaded vocab.json");
+    }
+
+    // Download preprocessor_config.json for mel filters
+    let preprocessor_path = repo.get("preprocessor_config.json").map_err(|e| {
+        ModelLoaderError::Download(format!("Failed to download preprocessor_config: {e}"))
+    })?;
+
+    if verbose {
+        eprintln!("[INFO] Downloaded preprocessor_config.json");
+    }
+
+    // Convert safetensors to .apr format with vocabulary and mel filters
+    convert_safetensors_to_apr(
+        &safetensors_path,
+        &vocab_path,
+        &preprocessor_path,
+        &cache_path,
+        size,
+        verbose,
+    )?;
 
     Ok(cache_path)
 }
@@ -136,6 +162,8 @@ fn download_model(size: ModelSize, verbose: bool) -> ModelLoaderResult<PathBuf> 
 /// Convert safetensors to .apr format
 fn convert_safetensors_to_apr(
     safetensors_path: &std::path::Path,
+    vocab_path: &std::path::Path,
+    preprocessor_path: &std::path::Path,
     apr_path: &std::path::Path,
     size: ModelSize,
     verbose: bool,
@@ -164,6 +192,29 @@ fn convert_safetensors_to_apr(
 
     // Create APR writer
     let mut writer = AprWriter::from_config(&config);
+
+    // Load mel filters from preprocessor_config.json
+    if let Ok(mel_filterbank) = load_mel_filters_from_preprocessor(preprocessor_path, verbose) {
+        if verbose {
+            eprintln!(
+                "[INFO] Embedding mel filterbank: {} x {} = {} values",
+                mel_filterbank.n_mels,
+                mel_filterbank.n_freqs,
+                mel_filterbank.data.len()
+            );
+        }
+        writer.set_mel_filterbank(mel_filterbank);
+    }
+
+    // Load and embed vocabulary from vocab.json
+    if let Ok(vocab) = load_vocabulary_from_json(vocab_path, verbose) {
+        if verbose {
+            eprintln!("[INFO] Embedding vocabulary with {} tokens", vocab.len());
+        }
+        writer.set_vocabulary(vocab);
+    } else if verbose {
+        eprintln!("[WARN] Failed to load vocabulary, using base tokens");
+    }
 
     // Map tensor names from HuggingFace format to our format and write
     for (name, tensor) in tensors.tensors() {
@@ -240,6 +291,201 @@ fn map_tensor_name(hf_name: &str) -> String {
     } else {
         hf_name.to_string()
     }
+}
+
+/// Load vocabulary from HuggingFace vocab.json file
+///
+/// GPT-2 style tokenizers use a special Unicode encoding where each byte
+/// is mapped to a printable Unicode character. This function decodes those
+/// tokens back to their raw byte sequences.
+///
+/// After loading the base vocabulary, this adds Whisper special tokens:
+/// - SOT, language tokens (99 languages), TRANSLATE, TRANSCRIBE
+/// - SPEAKER_TURN, PREV, NO_SPEECH, NO_TIMESTAMPS
+/// - Timestamp tokens (1501 tokens for 30 seconds at 0.02s resolution)
+fn load_vocabulary_from_json(
+    vocab_path: &std::path::Path,
+    verbose: bool,
+) -> ModelLoaderResult<Vocabulary> {
+    use crate::tokenizer::special_tokens;
+    use std::collections::HashMap;
+
+    // Read and parse vocab.json
+    let vocab_json = fs::read_to_string(vocab_path)?;
+    let token_map: HashMap<String, u32> =
+        serde_json::from_str(&vocab_json).map_err(|e| ModelLoaderError::Download(e.to_string()))?;
+
+    if verbose {
+        eprintln!("[INFO] Loaded vocab.json with {} tokens", token_map.len());
+    }
+
+    // Sort tokens by ID to ensure correct ordering
+    let mut tokens: Vec<(String, u32)> = token_map.into_iter().collect();
+    tokens.sort_by_key(|(_, id)| *id);
+
+    // Build the GPT-2 byte decoder (Unicode char -> byte)
+    let byte_decoder = build_gpt2_byte_decoder();
+
+    // Create vocabulary and add tokens in order
+    let mut vocab = Vocabulary::new();
+
+    for (token_str, expected_id) in tokens {
+        // Decode GPT-2 Unicode string to bytes
+        let bytes = decode_gpt2_token(&token_str, &byte_decoder);
+        let actual_id = vocab.add_token(bytes);
+
+        // Sanity check - IDs should match
+        if actual_id != expected_id && verbose {
+            eprintln!(
+                "[WARN] Token ID mismatch for '{}': expected {}, got {}",
+                token_str, expected_id, actual_id
+            );
+        }
+    }
+
+    // Add Whisper special tokens (multilingual model format)
+    // vocab.json has 50258 tokens (0-50257), we need to add the rest up to 51865
+    let current_size = vocab.len();
+
+    // Add remaining tokens as placeholders for special tokens
+    // SOT is at 50258, language tokens at 50259-50357, task tokens at 50358-50363
+    // Timestamp tokens start at 50364
+
+    // First, ensure we have SOT at 50258 (if not already present)
+    while vocab.len() < special_tokens::SOT as usize {
+        vocab.add_token(vec![0]); // placeholder
+    }
+
+    // Add SOT (50258) - "<|startoftranscript|>"
+    vocab.add_token(b"<|startoftranscript|>".to_vec());
+
+    // Add 99 language tokens (50259-50357)
+    let languages = [
+        "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar", "sv",
+        "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta", "no",
+        "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn", "sr",
+        "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw",
+        "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu",
+        "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl",
+        "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su",
+    ];
+    for lang in languages {
+        vocab.add_token(format!("<|{lang}|>").into_bytes());
+    }
+
+    // Add task tokens (50358-50363)
+    vocab.add_token(b"<|translate|>".to_vec()); // 50358
+    vocab.add_token(b"<|transcribe|>".to_vec()); // 50359
+    vocab.add_token(b"<|startoflm|>".to_vec()); // 50360 - speaker turn/startoflm
+    vocab.add_token(b"<|startofprev|>".to_vec()); // 50361 - prev
+    vocab.add_token(b"<|nospeech|>".to_vec()); // 50362
+    vocab.add_token(b"<|notimestamps|>".to_vec()); // 50363
+
+    // Add timestamp tokens (50364-51864 = 1501 tokens for 30 seconds)
+    // Each timestamp represents 0.02 seconds
+    for i in 0..1501 {
+        let seconds = i as f32 * 0.02;
+        vocab.add_token(format!("<|{seconds:.2}|>").into_bytes());
+    }
+
+    if verbose {
+        eprintln!(
+            "[INFO] Added {} special tokens (total: {})",
+            vocab.len() - current_size,
+            vocab.len()
+        );
+    }
+
+    Ok(vocab)
+}
+
+/// Build the GPT-2 byte decoder mapping (Unicode char -> byte value)
+///
+/// GPT-2 uses a reversible mapping from bytes to printable Unicode characters.
+/// This builds the reverse mapping for decoding vocab.json tokens.
+fn build_gpt2_byte_decoder() -> std::collections::HashMap<char, u8> {
+    use std::collections::HashMap;
+
+    let mut decoder = HashMap::new();
+    let mut n = 0u32;
+
+    // Printable ASCII characters map to themselves
+    for b in b'!'..=b'~' {
+        decoder.insert(char::from(b), b);
+    }
+    // Extended characters that map to themselves
+    for b in 0xa1u8..=0xac {
+        decoder.insert(char::from(b), b);
+    }
+    for b in 0xaeu8..=0xff {
+        decoder.insert(char::from(b), b);
+    }
+
+    // Non-printable bytes get mapped to Unicode starting at U+0100
+    for b in 0u8..=255 {
+        if !decoder.values().any(|&v| v == b) {
+            // This byte wasn't mapped yet, so it uses offset encoding
+            let unicode_char = char::from_u32(256 + n).unwrap_or('?');
+            decoder.insert(unicode_char, b);
+            n += 1;
+        }
+    }
+
+    decoder
+}
+
+/// Decode a GPT-2 style token string to bytes
+fn decode_gpt2_token(token: &str, decoder: &std::collections::HashMap<char, u8>) -> Vec<u8> {
+    token
+        .chars()
+        .filter_map(|c| decoder.get(&c).copied())
+        .collect()
+}
+
+/// Load mel filters from HuggingFace preprocessor_config.json
+///
+/// The mel_filters field contains a 2D array [n_mels][n_freqs] with Slaney-normalized
+/// triangular filterbank weights. This is crucial for matching HuggingFace's mel
+/// spectrogram output exactly.
+fn load_mel_filters_from_preprocessor(
+    preprocessor_path: &std::path::Path,
+    verbose: bool,
+) -> ModelLoaderResult<crate::format::MelFilterbankData> {
+    // Read and parse preprocessor_config.json
+    let json_str = fs::read_to_string(preprocessor_path)?;
+    let config: serde_json::Value =
+        serde_json::from_str(&json_str).map_err(|e| ModelLoaderError::Download(e.to_string()))?;
+
+    // Extract mel_filters field
+    let mel_filters_value = config
+        .get("mel_filters")
+        .ok_or_else(|| ModelLoaderError::Download("mel_filters not found in config".to_string()))?;
+
+    // Parse as 2D array and flatten to row-major order
+    let mel_filters_2d: Vec<Vec<f64>> = serde_json::from_value(mel_filters_value.clone())
+        .map_err(|e| ModelLoaderError::Download(format!("Failed to parse mel_filters: {e}")))?;
+
+    let n_mels = mel_filters_2d.len();
+    let n_freqs = mel_filters_2d.first().map(|r| r.len()).unwrap_or(0);
+
+    if verbose {
+        eprintln!(
+            "[INFO] Loaded mel filters from preprocessor_config.json: {} x {}",
+            n_mels, n_freqs
+        );
+    }
+
+    // Flatten to row-major Vec<f32>
+    let data: Vec<f32> = mel_filters_2d
+        .into_iter()
+        .flat_map(|row| row.into_iter().map(|v| v as f32))
+        .collect();
+
+    Ok(crate::format::MelFilterbankData {
+        n_mels: n_mels as u32,
+        n_freqs: n_freqs as u32,
+        data,
+    })
 }
 
 /// Load a model, downloading from HuggingFace if not cached

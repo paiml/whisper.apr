@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- LFM2-2.6B-Transcript Post-Transcription Benchmark (GitHub Issue #10) (#10)
 - WAPR-182: Phase 3 - Transcription in Worker (#6)
 - WAPR-181: Phase 2 - Model Loading in Worker (#2)
 - WAPR-180: Phase 1 - Async Worker Foundation (#1)

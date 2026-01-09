@@ -59,6 +59,7 @@ pub enum WorkerMessageType {
 impl WorkerMessageType {
     /// Convert from string (for JavaScript interop)
     #[must_use]
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "init" => Some(Self::Init),

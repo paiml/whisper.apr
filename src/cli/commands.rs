@@ -13,9 +13,10 @@ use crate::parallel::configure_thread_pool;
 use crate::{DecodingStrategy, Task, TranscribeOptions, WhisperApr};
 
 use super::args::{
-    Args, BackendArg, BatchArgs, BenchmarkArgs, Command, CommandArgs, DiagnoseArgs, ModelAction,
-    ModelArgs, OutputFormatArg, ParityArgs, QuantizeArgs, RecordArgs, ServeArgs, StreamArgs,
-    TestArgs, TranscribeArgs, TranslateArgs, ValidateArgs, ValidateOutputFormat,
+    Args, BackendArg, BatchArgs, BenchmarkArgs, Command, CommandArgs, ConvertArgs, DiagnoseArgs,
+    ModelAction, ModelArgs, ModelFamilyArg, OutputFormatArg, ParityArgs, QuantizeArgs,
+    QuantizeMethodArg, RecordArgs, ServeArgs, StreamArgs, SummarizeArgs, SummarizeFormat, TestArgs,
+    TranscribeArgs, TranslateArgs, ValidateArgs, ValidateOutputFormat,
 };
 
 use super::output::{format_output, OutputFormat};
@@ -46,6 +47,10 @@ pub enum CliError {
     /// Unsupported format
     #[error("Unsupported format: {0}")]
     UnsupportedFormat(String),
+
+    /// Write error
+    #[error("Write error: {0}")]
+    WriteError(String),
 }
 
 /// CLI result type
@@ -127,6 +132,7 @@ pub fn run(args: Args) -> CliResult<CommandResult> {
     match &args.command {
         Command::Transcribe(t) => run_transcribe(t.clone(), &args),
         Command::Translate(t) => run_translate(t.clone(), &args),
+        Command::Summarize(s) => run_summarize(s.clone(), &args),
         Command::Stream(s) => run_stream(s.clone(), &args),
         Command::Serve(s) => run_serve(s.clone(), &args),
         Command::Record(r) => run_record(r.clone(), &args),
@@ -140,6 +146,7 @@ pub fn run(args: Args) -> CliResult<CommandResult> {
         Command::Quantize(q) => run_quantize(q.clone(), &args),
         Command::Command(c) => run_command(c.clone(), &args),
         Command::Diagnose(d) => run_diagnose(d.clone(), &args),
+        Command::Convert(c) => run_convert(c.clone(), &args),
     }
 }
 
@@ -245,7 +252,7 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
     let output_text = format_output(&result, format);
 
     // Write output
-    if let Some(output_path) = args.output {
+    if let Some(output_path) = args.output.clone() {
         fs::write(&output_path, &output_text)?;
         if global.verbose {
             eprintln!("[INFO] Written to: {}", output_path.display());
@@ -255,9 +262,124 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
         io::stdout().flush()?;
     }
 
+    // Phase 2: Post-transcription summarization (Section 18.5)
+    if args.summarize {
+        let summary_result = run_post_transcription_summary(&result.text, &args, global)?;
+
+        if global.verbose {
+            eprintln!("[INFO] Summary generated: {} chars", summary_result.len());
+        }
+    }
+
     Ok(CommandResult::success(result.text)
         .with_timings(timings)
         .with_rtf(rtf))
+}
+
+/// Run post-transcription summarization (Phase 2 - Section 18.5)
+///
+/// Called from run_transcribe when --summarize flag is set.
+fn run_post_transcription_summary(
+    transcript: &str,
+    args: &TranscribeArgs,
+    global: &Args,
+) -> CliResult<String> {
+    use std::time::Instant;
+
+    let start = Instant::now();
+
+    // Check for LFM2 model path
+    let model_path = args.lfm2_model.as_ref().ok_or_else(|| {
+        CliError::InvalidArgument(
+            "Post-transcription summarization requires --lfm2-model to be specified. \
+             Use 'whisper-apr model download' to get the LFM2 model, then convert it with 'whisper-apr convert'."
+                .to_string(),
+        )
+    })?;
+
+    if !model_path.exists() {
+        return Err(CliError::FileNotFound(model_path.display().to_string()));
+    }
+
+    if transcript.trim().is_empty() {
+        if !global.quiet {
+            eprintln!("[WARN] Transcript is empty, skipping summarization");
+        }
+        return Ok(String::new());
+    }
+
+    // Load LFM2 model
+    if !global.quiet {
+        eprintln!("[INFO] Loading LFM2 model for summarization...");
+    }
+
+    let model_data = fs::read(model_path)?;
+    let model = crate::model::lfm2::Lfm2::from_apr2_bytes(model_data)
+        .map_err(|e| CliError::InvalidArgument(format!("Failed to load LFM2 model: {e}")))?;
+
+    let load_time = start.elapsed();
+    if global.verbose {
+        eprintln!("[INFO] LFM2 model loaded in {:.1}ms", load_time.as_millis());
+    }
+
+    // Use default tokenizer for post-transcription summary
+    // In production, the tokenizer would be loaded alongside the model
+    let tokenizer = crate::model::lfm2::Lfm2Tokenizer::new();
+
+    // Tokenize transcript using BPE tokenizer
+    let input_tokens = tokenizer.encode_without_special(transcript);
+
+    // Generate summary
+    let gen_start = Instant::now();
+    let output_tokens = model
+        .generate(&input_tokens, 256, 0.3) // max 256 tokens, temp 0.3
+        .map_err(|e| CliError::InvalidArgument(format!("LFM2 generation failed: {e}")))?;
+
+    let gen_time = gen_start.elapsed();
+    if global.verbose {
+        eprintln!(
+            "[INFO] Summary generated in {:.1}ms ({} tokens)",
+            gen_time.as_millis(),
+            output_tokens.len()
+        );
+    }
+
+    // Decode output tokens back to text using the tokenizer
+    let summary = tokenizer.decode(&output_tokens);
+
+    // Format summary based on requested format
+    let formatted = match args.summary_format {
+        SummarizeFormat::Json => {
+            format!(
+                r#"{{"transcript_length": {}, "summary": "{}", "action_items": {}, "key_points": {}}}"#,
+                transcript.len(),
+                summary.replace('"', "\\\"").replace('\n', "\\n"),
+                args.action_items,
+                args.key_points
+            )
+        }
+        SummarizeFormat::Text => summary.clone(),
+        SummarizeFormat::Markdown => format!("## Summary\n\n{summary}\n"),
+        SummarizeFormat::Bullets => summary
+            .lines()
+            .map(|l| format!("- {l}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    };
+
+    // Write summary output
+    let summary_path = args.summary_output.clone().unwrap_or_else(|| {
+        let mut path = args.input.clone();
+        path.set_extension("summary.json");
+        path
+    });
+
+    fs::write(&summary_path, &formatted)?;
+    if !global.quiet {
+        eprintln!("[INFO] Summary written to: {}", summary_path.display());
+    }
+
+    Ok(formatted)
 }
 
 /// Run translate command
@@ -302,6 +424,205 @@ pub fn run_translate(args: TranslateArgs, global: &Args) -> CliResult<CommandRes
     }
 
     Ok(CommandResult::success(result.text))
+}
+
+/// Run summarize command (WAPR-LFM2-001)
+///
+/// Summarizes transcript text using LFM2-2.6B-Transcript model.
+/// This is Phase 1 of the LFM2 integration (CLI pipeline).
+///
+/// # Current Status
+///
+/// This is a **stub implementation** for WAPR-LFM2-001. The full implementation
+/// requires:
+/// - APR2 format reader for LFM2 models
+/// - LFM2 inference engine (GQA, SwiGLU, Conv layers)
+/// - int4 quantization support
+///
+/// See `docs/specifications/1.0-whisper-apr.md` Section 18 for full specification.
+pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandResult> {
+    use std::time::Instant;
+
+    let start = Instant::now();
+
+    // Read input text (from file or stdin)
+    let input_text = if let Some(path) = &args.input {
+        if !path.exists() {
+            return Err(CliError::FileNotFound(path.display().to_string()));
+        }
+        fs::read_to_string(path)?
+    } else {
+        // Read from stdin
+        let mut buffer = String::new();
+        io::stdin().read_line(&mut buffer)?;
+        buffer
+    };
+
+    if input_text.trim().is_empty() {
+        return Err(CliError::InvalidArgument(
+            "No input text provided for summarization".to_string(),
+        ));
+    }
+
+    if global.verbose {
+        eprintln!("[INFO] Input text length: {} characters", input_text.len());
+        if let Some(model_path) = &args.model_path {
+            eprintln!("[INFO] Model path: {}", model_path.display());
+        } else {
+            eprintln!("[INFO] Using default LFM2-2.6B-Transcript model");
+        }
+        eprintln!("[INFO] Max tokens: {}", args.max_tokens);
+        eprintln!("[INFO] Temperature: {:.2}", args.temperature);
+    }
+
+    // Check if model path provided
+    let model_path = args.model_path.as_ref().ok_or_else(|| {
+        CliError::InvalidArgument(
+            "LFM2 summarization requires --model-path to be specified. \
+             Use 'whisper-apr model download' to get a model, then convert it with 'whisper-apr convert'."
+                .to_string(),
+        )
+    })?;
+
+    if !model_path.exists() {
+        return Err(CliError::FileNotFound(model_path.display().to_string()));
+    }
+
+    // Load model from APR2 file
+    if !global.quiet {
+        println!("Loading LFM2 model from {}...", model_path.display());
+    }
+
+    let load_start = Instant::now();
+    let model_data = fs::read(model_path)?;
+    let model = crate::model::lfm2::Lfm2::from_apr2_bytes(model_data)
+        .map_err(|e| CliError::InvalidArgument(format!("Failed to load model: {e}")))?;
+
+    let load_time = load_start.elapsed();
+    if global.verbose {
+        eprintln!(
+            "[INFO] Model loaded in {:.2}s ({} params, {:.2} MB)",
+            load_time.as_secs_f64(),
+            model.num_params(),
+            model.memory_bytes() as f64 / (1024.0 * 1024.0)
+        );
+    }
+
+    // Load tokenizer
+    let tokenizer = if let Some(tokenizer_path) = &args.tokenizer_path {
+        if !tokenizer_path.exists() {
+            return Err(CliError::FileNotFound(tokenizer_path.display().to_string()));
+        }
+        if global.verbose {
+            eprintln!("[INFO] Loading tokenizer from {}", tokenizer_path.display());
+        }
+        crate::model::lfm2::Lfm2Tokenizer::from_file(tokenizer_path)
+            .map_err(|e| CliError::InvalidArgument(format!("Failed to load tokenizer: {e}")))?
+    } else {
+        if global.verbose {
+            eprintln!("[INFO] Using default byte-level tokenizer");
+        }
+        crate::model::lfm2::Lfm2Tokenizer::new()
+    };
+
+    // Build prompt
+    let prompt = format!(
+        "Summarize the following transcript:\n\n{}\n\nSummary:",
+        input_text.trim()
+    );
+
+    // Tokenize input using the BPE tokenizer
+    let input_ids = tokenizer.encode_without_special(&prompt);
+
+    // Truncate to max context
+    let max_ctx = args.max_context.min(4096) as usize;
+    let input_ids: Vec<u32> = input_ids.into_iter().take(max_ctx).collect();
+
+    if global.verbose {
+        eprintln!("[INFO] Input tokens: {}", input_ids.len());
+    }
+
+    // Generate summary
+    if !global.quiet {
+        println!("Generating summary...");
+    }
+
+    let gen_start = Instant::now();
+    let output_ids = model
+        .generate(&input_ids, args.max_tokens as usize, args.temperature)
+        .map_err(|e| CliError::InvalidArgument(format!("Generation failed: {e}")))?;
+
+    let gen_time = gen_start.elapsed();
+
+    // Decode output using the tokenizer
+    let new_tokens = output_ids.len() - input_ids.len();
+    let summary_ids = &output_ids[input_ids.len()..];
+    let summary = tokenizer.decode(summary_ids);
+
+    if global.verbose {
+        eprintln!(
+            "[INFO] Generated {} tokens in {:.2}s ({:.1} tokens/s)",
+            new_tokens,
+            gen_time.as_secs_f64(),
+            new_tokens as f64 / gen_time.as_secs_f64()
+        );
+    }
+
+    let total_time = start.elapsed();
+
+    // Format output based on format arg
+    let output = match args.format {
+        super::args::SummarizeFormat::Json => serde_json::json!({
+            "summary": summary.trim(),
+            "stats": {
+                "input_chars": input_text.len(),
+                "input_tokens": input_ids.len(),
+                "output_tokens": new_tokens,
+                "load_time_s": load_time.as_secs_f64(),
+                "gen_time_s": gen_time.as_secs_f64(),
+                "total_time_s": total_time.as_secs_f64(),
+                "tokens_per_sec": new_tokens as f64 / gen_time.as_secs_f64()
+            }
+        })
+        .to_string(),
+        super::args::SummarizeFormat::Text => summary.trim().to_string(),
+        super::args::SummarizeFormat::Markdown => {
+            format!("## Summary\n\n{}", summary.trim())
+        }
+        super::args::SummarizeFormat::Bullets => {
+            // Split into bullet points
+            summary
+                .trim()
+                .lines()
+                .map(|line| format!("- {}", line.trim()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    };
+
+    // Output result
+    if let Some(output_path) = args.output {
+        fs::write(&output_path, &output)?;
+        if !global.quiet {
+            println!("Summary written to: {}", output_path.display());
+        }
+    } else if !global.quiet {
+        println!("\n{output}");
+    }
+
+    if !global.quiet {
+        println!(
+            "\nCompleted in {:.2}s ({} new tokens at {:.1} tokens/s)",
+            total_time.as_secs_f64(),
+            new_tokens,
+            new_tokens as f64 / gen_time.as_secs_f64()
+        );
+    }
+
+    Ok(CommandResult::success(format!(
+        "Generated {} token summary",
+        new_tokens
+    )))
 }
 
 /// Run record command (audio capture to file)
@@ -430,6 +751,13 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
             speed: 1.0,
             cache_dir: args.cache_dir.clone(),
             zram_optimized: args.zram_optimized,
+            // Phase 2 summarization (disabled for batch)
+            summarize: false,
+            lfm2_model: None,
+            summary_output: None,
+            summary_format: SummarizeFormat::Json,
+            action_items: false,
+            key_points: false,
         };
 
         match run_transcribe(transcribe_args, global) {
@@ -614,48 +942,336 @@ fn test_backend(backend: BackendArg, _global: &Args) -> CliResult<()> {
 
 /// Run model command
 pub fn run_model(args: ModelArgs, global: &Args) -> CliResult<CommandResult> {
+    use crate::model::download::{find_model, list_models, ModelFamily};
+
     match args.action {
         ModelAction::List => {
-            println!("Available models:");
-            println!("  tiny   - 39M params, fastest");
-            println!("  base   - 74M params, good balance");
-            println!("  small  - 244M params, higher accuracy");
-            println!("  medium - 769M params, high accuracy");
-            println!("  large  - 1.5B params, best accuracy");
+            if !global.quiet {
+                println!("═══════════════════════════════════════════════════════════════════");
+                println!("                    Available Models                               ");
+                println!("═══════════════════════════════════════════════════════════════════\n");
+            }
+
+            // Group by family
+            println!("WHISPER (ASR - Automatic Speech Recognition)");
+            println!("───────────────────────────────────────────────────────────────────");
+            for model in list_models() {
+                if model.family == ModelFamily::Whisper {
+                    println!(
+                        "  {:<20} {:>6} params  {}",
+                        model.name, model.params, model.description
+                    );
+                    if global.verbose {
+                        println!(
+                            "                       fp16: {}  int4: {}  WASM: {}",
+                            model.size_fp16, model.size_int4, model.wasm_quant
+                        );
+                    }
+                }
+            }
+
+            println!("\nLFM2 (Post-Transcription Summarization)");
+            println!("───────────────────────────────────────────────────────────────────");
+            for model in list_models() {
+                if model.family == ModelFamily::Lfm2 {
+                    println!(
+                        "  {:<20} {:>6} params  {}",
+                        model.name, model.params, model.description
+                    );
+                    if global.verbose {
+                        println!(
+                            "                       fp16: {}  int4: {}  WASM: {}",
+                            model.size_fp16, model.size_int4, model.wasm_quant
+                        );
+                    }
+                }
+            }
+
+            if !global.quiet {
+                println!("\n───────────────────────────────────────────────────────────────────");
+                println!("Use 'whisper-apr model download <name>' to download a model.");
+                println!("Use -v/--verbose for size details.");
+            }
+
             Ok(CommandResult::success("Listed models"))
         }
         ModelAction::Download { model } => {
+            // Map ModelSize to model name
+            let model_name = match model {
+                super::args::ModelSize::Tiny => "whisper-tiny",
+                super::args::ModelSize::Base => "whisper-base",
+                super::args::ModelSize::Small => "whisper-small",
+                super::args::ModelSize::Medium => "whisper-medium",
+                super::args::ModelSize::Large => "whisper-large",
+            };
+
+            let model_info = find_model(model_name)
+                .ok_or_else(|| CliError::InvalidArgument(format!("Unknown model: {model_name}")))?;
+
             if !global.quiet {
-                println!("Downloading {model} model...");
+                println!("Downloading {} from HuggingFace...", model_info.name);
+                println!("  Repository: {}", model_info.repo_id);
+                println!("  Parameters: {}", model_info.params);
+                println!("  Size (fp16): {}", model_info.size_fp16);
             }
-            // Download implementation would use pacha registry
-            Err(CliError::NotImplemented(
-                "Model download not yet implemented".to_string(),
-            ))
+
+            // Create downloader and download
+            let downloader = crate::model::download::ModelDownloader::new().map_err(|e| {
+                CliError::InvalidArgument(format!("Failed to initialize downloader: {e}"))
+            })?;
+
+            let paths = downloader
+                .download_safetensors(model_info)
+                .map_err(|e| CliError::InvalidArgument(format!("Download failed: {e}")))?;
+
+            if !global.quiet {
+                println!("\nDownloaded {} file(s):", paths.len());
+                for path in &paths {
+                    println!("  {}", path.display());
+                }
+                println!("\nCache directory: {}", downloader.cache_dir().display());
+            }
+
+            Ok(CommandResult::success(format!(
+                "Downloaded {} ({} files)",
+                model_info.name,
+                paths.len()
+            )))
         }
         ModelAction::Convert { input, output } => {
             if !global.quiet {
                 println!("Converting {} to {}...", input.display(), output.display());
             }
-            // Conversion implementation
-            Err(CliError::NotImplemented(
-                "Model conversion not yet implemented".to_string(),
-            ))
+
+            // Use the convert command logic
+            if !input.exists() {
+                return Err(CliError::FileNotFound(input.display().to_string()));
+            }
+
+            // Check if it's a safetensors file
+            let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if ext != "safetensors" {
+                return Err(CliError::UnsupportedFormat(format!(
+                    "Expected .safetensors file, got .{ext}"
+                )));
+            }
+
+            // Use safetensors loader
+            let loader = crate::format::SafeTensorsLoader::load(&input)
+                .map_err(|e| CliError::InvalidArgument(format!("Failed to load: {e}")))?;
+
+            let config = crate::format::apr2::Lfm2Config::lfm2_2_6b();
+            let quant = crate::format::apr2::QuantConfig::default();
+
+            let writer = loader
+                .to_apr2(config, quant, false)
+                .map_err(|e| CliError::InvalidArgument(format!("Conversion failed: {e}")))?;
+
+            let bytes = writer
+                .to_bytes()
+                .map_err(|e| CliError::InvalidArgument(format!("Serialization failed: {e}")))?;
+
+            std::fs::write(&output, &bytes)
+                .map_err(|e| CliError::WriteError(format!("Failed to write: {e}")))?;
+
+            if !global.quiet {
+                println!(
+                    "Converted {} tensors to {}",
+                    loader.tensor_names().len(),
+                    output.display()
+                );
+            }
+
+            Ok(CommandResult::success(format!(
+                "Converted to {}",
+                output.display()
+            )))
         }
         ModelAction::Info { file } => {
             if !file.exists() {
                 return Err(CliError::FileNotFound(file.display().to_string()));
             }
-            // Show model info
-            println!("Model: {}", file.display());
-            // Would parse model file and show details
+
+            let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+            match ext {
+                "apr2" => {
+                    // Parse APR2 file
+                    let data = std::fs::read(&file)
+                        .map_err(|e| CliError::InvalidArgument(format!("Failed to read: {e}")))?;
+                    let reader = crate::format::Apr2Reader::new(data)
+                        .map_err(|e| CliError::InvalidArgument(format!("Invalid APR2: {e}")))?;
+
+                    println!("═══════════════════════════════════════════════════════════════════");
+                    println!("                    APR2 Model Information                         ");
+                    println!(
+                        "═══════════════════════════════════════════════════════════════════\n"
+                    );
+                    println!("File: {}", file.display());
+                    println!("Size: {} bytes", reader.file_size());
+                    println!("Tensors: {}", reader.n_tensors());
+                    println!("Family: {:?}", reader.header.family);
+                    println!("Version: {}", reader.header.version);
+
+                    if let Ok(config) = reader.lfm2_config() {
+                        println!("\nLFM2 Configuration:");
+                        println!("  Hidden size: {}", config.hidden_size);
+                        println!("  Layers: {}", config.num_layers);
+                        println!("  Q heads: {}", config.num_q_heads);
+                        println!("  KV heads: {}", config.num_kv_heads);
+                        println!("  Intermediate: {}", config.intermediate_size);
+                        println!("  Vocab size: {}", config.vocab_size);
+                    }
+
+                    if global.verbose {
+                        println!("\nTensors:");
+                        for tensor in &reader.tensors {
+                            println!("  {} {:?} {:?}", tensor.name, tensor.shape(), tensor.dtype);
+                        }
+                    }
+                }
+                "safetensors" => {
+                    // Parse safetensors file
+                    let loader = crate::format::SafeTensorsLoader::load(&file)
+                        .map_err(|e| CliError::InvalidArgument(format!("Failed to load: {e}")))?;
+
+                    println!("═══════════════════════════════════════════════════════════════════");
+                    println!("                    SafeTensors Model Information                  ");
+                    println!(
+                        "═══════════════════════════════════════════════════════════════════\n"
+                    );
+                    println!("File: {}", file.display());
+                    println!("Tensors: {}", loader.tensor_names().len());
+
+                    if global.verbose {
+                        println!("\nTensors:");
+                        for name in loader.tensor_names() {
+                            let internal = crate::format::map_tensor_name(name);
+                            println!("  {} → {}", name, internal);
+                        }
+                    }
+                }
+                "apr" => {
+                    // Parse APR v1 file
+                    println!("APR v1 file: {}", file.display());
+                    let metadata = std::fs::metadata(&file)
+                        .map_err(|e| CliError::InvalidArgument(format!("Failed to read: {e}")))?;
+                    println!("Size: {} bytes", metadata.len());
+                }
+                _ => {
+                    return Err(CliError::UnsupportedFormat(format!(
+                        "Unknown file type: .{ext}"
+                    )));
+                }
+            }
+
             Ok(CommandResult::success("Showed model info"))
+        }
+        ModelAction::WasmCheck {
+            family,
+            quantization,
+            context,
+            sliding_window,
+        } => {
+            use crate::format::apr2::Lfm2Config;
+            use crate::model::lfm2::{Lfm2WasmConfig, WasmMemoryEstimate, WasmQuantization};
+
+            // Parse quantization type
+            let quant = match quantization.to_lowercase().as_str() {
+                "fp16" => WasmQuantization::Fp16,
+                "int8" => WasmQuantization::Int8,
+                "int4-awq" | "int4awq" | "awq" => WasmQuantization::Int4Awq,
+                "int4-gptq" | "int4gptq" | "gptq" => WasmQuantization::Int4Gptq,
+                other => {
+                    return Err(CliError::InvalidArgument(format!(
+                        "Unknown quantization: {other}. Use: fp16, int8, int4-awq, int4-gptq"
+                    )));
+                }
+            };
+
+            // Get model config based on family
+            let model_config = match family.to_lowercase().as_str() {
+                "lfm2" | "lfm2-2.6b" => Lfm2Config::lfm2_2_6b(),
+                "llama" | "llama-7b" => Lfm2Config::llama_7b(),
+                "llama2" | "llama2-7b" => Lfm2Config::llama2_7b(),
+                "whisper-tiny" | "tiny" => Lfm2Config::whisper_tiny(),
+                "whisper-base" | "base" => Lfm2Config::whisper_base(),
+                "whisper-small" | "small" => Lfm2Config::whisper_small(),
+                other => {
+                    return Err(CliError::InvalidArgument(format!(
+                        "Unknown model family: {other}. Use: lfm2, llama, llama2, whisper-tiny, whisper-base, whisper-small"
+                    )));
+                }
+            };
+
+            // Create WASM config
+            let wasm_config = Lfm2WasmConfig {
+                quantization: quant,
+                max_context: context,
+                sliding_window: if sliding_window == 0 {
+                    None
+                } else {
+                    Some(sliding_window)
+                },
+                use_webgpu: true,
+                streaming: true,
+            };
+
+            // Calculate memory estimate
+            let estimate = WasmMemoryEstimate::calculate(&model_config, &wasm_config);
+
+            if !global.quiet {
+                println!("═══════════════════════════════════════════════════════════════════");
+                println!("                    WASM Viability Check                           ");
+                println!("═══════════════════════════════════════════════════════════════════\n");
+
+                println!("Model Family: {}", family);
+                println!("Quantization: {}", quant);
+                println!("Max Context:  {}", context);
+                println!(
+                    "Sliding Win:  {}",
+                    if sliding_window == 0 {
+                        "None (full attention)".to_string()
+                    } else {
+                        format!("{sliding_window} tokens")
+                    }
+                );
+                println!();
+
+                println!("Memory Breakdown:");
+                println!("───────────────────────────────────────────────────────────────────");
+                print!("{}", estimate);
+
+                println!("───────────────────────────────────────────────────────────────────");
+                if estimate.is_viable {
+                    println!("✅ This configuration IS viable for WASM deployment");
+                } else {
+                    println!("❌ This configuration is NOT viable for WASM deployment");
+                    println!("\nRecommendations:");
+                    println!("  • Use int4-awq or int4-gptq quantization");
+                    println!("  • Reduce max_context to 4096 or less");
+                    println!("  • Enable sliding window attention (e.g., --sliding-window 2048)");
+                }
+            }
+
+            let status = if estimate.is_viable {
+                "WASM viable"
+            } else {
+                "WASM not viable"
+            };
+
+            Ok(CommandResult::success(status))
         }
     }
 }
 
 /// Run benchmark command
 pub fn run_benchmark(args: BenchmarkArgs, global: &Args) -> CliResult<CommandResult> {
+    // LFM2 component benchmarks
+    if args.lfm2 {
+        return run_lfm2_benchmark(&args, global);
+    }
+
     if !global.quiet {
         println!(
             "Benchmarking {} model with {} backend ({} iterations)...",
@@ -692,6 +1308,110 @@ pub fn run_benchmark(args: BenchmarkArgs, global: &Args) -> CliResult<CommandRes
     println!("  RTF: {rtf:.2}x");
 
     Ok(CommandResult::success(format!("RTF: {rtf:.2}x")).with_rtf(rtf))
+}
+
+/// Run LFM2 component benchmarks
+fn run_lfm2_benchmark(args: &BenchmarkArgs, global: &Args) -> CliResult<CommandResult> {
+    use crate::benchmark::{
+        benchmark_lfm2_all, benchmark_lfm2_component, Lfm2BenchmarkConfig, Lfm2Component,
+    };
+
+    // Create benchmark config
+    let config = if args.full_size {
+        Lfm2BenchmarkConfig::lfm2_2_6b(args.seq_len, args.iterations)
+    } else {
+        Lfm2BenchmarkConfig::small(args.seq_len, args.iterations)
+    };
+
+    if !global.quiet {
+        println!("═══════════════════════════════════════════════════════════════════");
+        println!("                    LFM2 Component Benchmarks                       ");
+        println!("═══════════════════════════════════════════════════════════════════\n");
+
+        println!(
+            "Config: {} (hidden={}, q_heads={}, kv_heads={})",
+            if args.full_size { "LFM2-2.6B" } else { "small" },
+            config.hidden_size,
+            config.num_q_heads,
+            config.num_kv_heads
+        );
+        println!("Sequence length: {}", config.seq_len);
+        println!("Iterations: {}", config.iterations);
+        println!();
+    }
+
+    // Parse component
+    let component_str = args.component.to_lowercase();
+
+    if component_str == "all" {
+        // Benchmark all components
+        let results = benchmark_lfm2_all(&config)
+            .map_err(|e| CliError::InvalidArgument(format!("Benchmark failed: {e}")))?;
+
+        if !global.quiet {
+            println!("Component       │ Time (μs)  │ Tokens/sec │ Memory (KB) │ FLOPs");
+            println!("────────────────┼────────────┼────────────┼─────────────┼──────────────");
+
+            for r in &results {
+                println!(
+                    "{:<15} │ {:>10.1} │ {:>10.0} │ {:>11} │ {:>12}",
+                    format!("{}", r.component),
+                    r.forward_us,
+                    r.tokens_per_sec,
+                    r.memory_bytes / 1024,
+                    r.flops
+                );
+            }
+
+            // Summary
+            let total_time: f64 = results.iter().map(|r| r.forward_us).sum();
+            let total_memory: usize = results.iter().map(|r| r.memory_bytes).sum();
+
+            println!("────────────────┴────────────┴────────────┴─────────────┴──────────────");
+            println!(
+                "Total           │ {:>10.1} │            │ {:>11} │",
+                total_time,
+                total_memory / 1024
+            );
+        }
+
+        Ok(CommandResult::success("LFM2 benchmark complete"))
+    } else {
+        // Benchmark single component
+        let component = match component_str.as_str() {
+            "gqa" => Lfm2Component::Gqa,
+            "swiglu" => Lfm2Component::SwiGlu,
+            "rope" => Lfm2Component::RoPE,
+            "conv1d" | "conv" => Lfm2Component::Conv1d,
+            "full_layer" | "full" | "layer" => Lfm2Component::FullLayer,
+            other => {
+                return Err(CliError::InvalidArgument(format!(
+                    "Unknown component: {other}. Use: gqa, swiglu, rope, conv1d, full_layer, all"
+                )));
+            }
+        };
+
+        let result = benchmark_lfm2_component(component, &config)
+            .map_err(|e| CliError::InvalidArgument(format!("Benchmark failed: {e}")))?;
+
+        if !global.quiet {
+            println!("Component: {}", result.component);
+            println!("───────────────────────────────────────────────────────────────────");
+            println!("  Forward time:  {:.2} μs", result.forward_us);
+            println!("  Tokens/sec:    {:.0}", result.tokens_per_sec);
+            println!("  Memory:        {} KB", result.memory_bytes / 1024);
+            println!("  FLOPs:         {}", result.flops);
+
+            if global.verbose {
+                println!("\nJSON: {}", result.to_json());
+            }
+        }
+
+        Ok(CommandResult::success(format!(
+            "{}: {:.2}μs",
+            result.component, result.forward_us
+        )))
+    }
 }
 
 /// Run validate command
@@ -1517,7 +2237,9 @@ fn decode_with_symphonia(data: &[u8], ext: &str) -> CliResult<Vec<f32>> {
                 break; // End of stream
             }
             Err(e) => {
-                return Err(CliError::InvalidArgument(format!("Failed to read packet: {e}")));
+                return Err(CliError::InvalidArgument(format!(
+                    "Failed to read packet: {e}"
+                )));
             }
         };
 
@@ -1581,6 +2303,146 @@ fn convert_format_arg(arg: OutputFormatArg) -> OutputFormat {
         OutputFormatArg::Wts => OutputFormat::Wts,
         OutputFormatArg::Md => OutputFormat::Md,
     }
+}
+
+// ============================================================================
+// Convert Command (WAPR-LFM2-004)
+// ============================================================================
+
+/// Run convert command - convert HuggingFace safetensors to APR2 format
+///
+/// # Conversion Pipeline
+///
+/// ```text
+/// HuggingFace (safetensors)
+///     ↓ load_safetensors()
+///     ↓ quantize (optional)
+///     ↓ export_weights()
+///     ↓ write_apr2()
+/// LFM2.apr2 (output)
+/// ```
+///
+/// # Example
+///
+/// ```bash
+/// whisper-apr convert -i model.safetensors -o model.apr2 --quantize int8
+/// ```
+///
+/// See `docs/specifications/1.0-whisper-apr.md` Section 18.8 for full specification.
+pub fn run_convert(args: ConvertArgs, global: &Args) -> CliResult<CommandResult> {
+    use crate::format::apr2::{Lfm2Config, QuantConfig};
+    use crate::format::safetensors_loader::SafeTensorsLoader;
+    use crate::format::ConversionStats;
+    use std::time::Instant;
+
+    let start = Instant::now();
+
+    // Validate input file exists
+    if !args.input.exists() {
+        return Err(CliError::FileNotFound(args.input.display().to_string()));
+    }
+
+    if !global.quiet {
+        println!(
+            "Converting: {} → {}",
+            args.input.display(),
+            args.output.display()
+        );
+        println!("Family: {}", args.family);
+        println!("Quantization: {}", args.quantize);
+    }
+
+    // Dry run mode
+    if args.dry_run {
+        if !global.quiet {
+            println!("\n[DRY RUN] Would convert file, not actually writing.");
+        }
+        return Ok(CommandResult::success("Dry run completed"));
+    }
+
+    // Load safetensors file
+    let loader = SafeTensorsLoader::load(&args.input)
+        .map_err(|e| CliError::FileNotFound(format!("Failed to load safetensors: {e}")))?;
+
+    let n_tensors = loader.tensor_names().len();
+    let n_params = loader.total_params().unwrap_or(0);
+
+    if global.verbose {
+        println!("\nTensors found: {n_tensors}");
+        for name in loader.tensor_names() {
+            let internal_name = crate::format::map_tensor_name(name);
+            println!("  {name} → {internal_name}");
+        }
+    }
+
+    // Get config based on family
+    let config = match args.family {
+        ModelFamilyArg::Lfm2 => Lfm2Config::lfm2_2_6b(),
+        ModelFamilyArg::Llama => Lfm2Config::llama2_7b(),
+        ModelFamilyArg::Whisper => Lfm2Config::whisper_small(),
+    };
+
+    // Determine quantization config
+    let quant = match args.quantize {
+        QuantizeMethodArg::F32 => QuantConfig::default(),
+        QuantizeMethodArg::Int8 => QuantConfig::int8(args.group_size),
+        QuantizeMethodArg::Int4 | QuantizeMethodArg::Int4Awq => {
+            QuantConfig::int4_awq(args.group_size)
+        }
+        QuantizeMethodArg::Int4Gptq => QuantConfig::int4_gptq(args.group_size),
+        _ => QuantConfig::default(),
+    };
+
+    let quantize = matches!(
+        args.quantize,
+        QuantizeMethodArg::Int8
+            | QuantizeMethodArg::Int4
+            | QuantizeMethodArg::Int4Awq
+            | QuantizeMethodArg::Int4Gptq
+    );
+
+    // Convert to APR2
+    let writer = loader
+        .to_apr2(config, quant, quantize)
+        .map_err(|e| CliError::InvalidArgument(format!("Conversion failed: {e}")))?;
+
+    // Write output file
+    let bytes = writer
+        .to_bytes()
+        .map_err(|e| CliError::InvalidArgument(format!("Serialization failed: {e}")))?;
+
+    let input_bytes = std::fs::metadata(&args.input).map(|m| m.len()).unwrap_or(0);
+    let output_bytes = bytes.len() as u64;
+
+    std::fs::write(&args.output, &bytes)
+        .map_err(|e| CliError::WriteError(format!("Failed to write output: {e}")))?;
+
+    let elapsed = start.elapsed();
+
+    // Report stats
+    let stats = ConversionStats {
+        n_tensors,
+        n_params,
+        input_bytes,
+        output_bytes,
+        compression_ratio: if input_bytes > 0 {
+            output_bytes as f32 / input_bytes as f32
+        } else {
+            1.0
+        },
+    };
+
+    if !global.quiet {
+        println!("\n{stats}");
+        println!("Time: {:.2}s", elapsed.as_secs_f64());
+        println!("Output: {}", args.output.display());
+    }
+
+    Ok(CommandResult::success(format!(
+        "Converted {} tensors to {}",
+        n_tensors,
+        args.output.display()
+    )))
 }
 
 // ============================================================================
@@ -1652,6 +2514,13 @@ mod tests {
             speed: 1.0,
             cache_dir: None,
             zram_optimized: false,
+            // Phase 2 summarization
+            summarize: false,
+            lfm2_model: None,
+            summary_output: None,
+            summary_format: SummarizeFormat::Json,
+            action_items: false,
+            key_points: false,
         }
     }
 
@@ -2135,7 +3004,8 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[test]
-    fn test_run_model_download_not_implemented() {
+    #[ignore = "Requires network access to HuggingFace Hub"]
+    fn test_run_model_download() {
         let args = ModelArgs {
             action: ModelAction::Download {
                 model: ModelSize::Base,
@@ -2150,20 +3020,21 @@ mod tests {
             no_color: false,
         };
 
+        // Download is now implemented - will attempt real download
         let result = run_model(args, &global);
-        assert!(result.is_err());
-        match result {
-            Err(CliError::NotImplemented(_)) => {}
-            _ => panic!("Expected NotImplemented error"),
-        }
+        // May fail without network, but should not be NotImplemented
+        assert!(
+            !matches!(result, Err(CliError::NotImplemented(_))),
+            "Download should be implemented"
+        );
     }
 
     #[test]
-    fn test_run_model_convert_not_implemented() {
+    fn test_run_model_convert_missing_input() {
         let args = ModelArgs {
             action: ModelAction::Convert {
-                input: "input.pt".into(),
-                output: "output.apr".into(),
+                input: "nonexistent_input.safetensors".into(),
+                output: "output.apr2".into(),
             },
         };
         let global = Args {
@@ -2175,12 +3046,14 @@ mod tests {
             no_color: false,
         };
 
+        // Convert is now implemented - will fail on missing input file
         let result = run_model(args, &global);
-        assert!(result.is_err());
-        match result {
-            Err(CliError::NotImplemented(_)) => {}
-            _ => panic!("Expected NotImplemented error"),
-        }
+        assert!(result.is_err(), "Should fail with missing input file");
+        // Should not be NotImplemented - it's a real error
+        assert!(
+            !matches!(result, Err(CliError::NotImplemented(_))),
+            "Convert should be implemented"
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -2713,5 +3586,238 @@ mod tests {
         let result = CommandResult::failure("Failed").with_rtf(2.0);
         assert!(!result.success);
         assert_eq!(result.rtf, Some(2.0));
+    }
+
+    // -------------------------------------------------------------------------
+    // run_summarize tests
+    // -------------------------------------------------------------------------
+
+    fn default_summarize_args(
+        input: Option<PathBuf>,
+        model_path: Option<PathBuf>,
+    ) -> SummarizeArgs {
+        SummarizeArgs {
+            input,
+            model_path,
+            output: None,
+            format: SummarizeFormat::Text,
+            max_tokens: 256,
+            temperature: 0.7,
+            max_context: 4096,
+            webgpu: false,
+            stream: false,
+            action_items: false,
+            key_points: false,
+            prompt: None,
+        }
+    }
+
+    #[test]
+    fn test_run_summarize_no_model_path() {
+        // Create a temp input file since the function checks input first
+        let temp_dir = std::env::temp_dir();
+        let input_path = temp_dir.join("test_summarize_model_check.txt");
+        fs::write(&input_path, "Some text to summarize").expect("write test file");
+
+        let args = default_summarize_args(Some(input_path.clone()), None);
+        let global = Args {
+            command: Command::Tui,
+            verbose: false,
+            quiet: true,
+            json: false,
+            trace: None,
+            no_color: false,
+        };
+
+        let result = run_summarize(args, &global);
+        // Clean up
+        let _ = fs::remove_file(&input_path);
+
+        assert!(result.is_err(), "Should error without model path");
+        match &result {
+            Err(CliError::InvalidArgument(msg)) => {
+                assert!(
+                    msg.contains("model-path"),
+                    "Error should mention --model-path: {msg}"
+                );
+            }
+            Err(e) => panic!("Expected InvalidArgument error for missing model path, got: {e:?}"),
+            Ok(_) => panic!("Expected error, got success"),
+        }
+    }
+
+    #[test]
+    fn test_run_summarize_input_file_not_found() {
+        let args = default_summarize_args(
+            Some("nonexistent_input.txt".into()),
+            Some("model.apr2".into()),
+        );
+        let global = Args {
+            command: Command::Tui,
+            verbose: false,
+            quiet: true,
+            json: false,
+            trace: None,
+            no_color: false,
+        };
+
+        let result = run_summarize(args, &global);
+        assert!(result.is_err());
+        match result {
+            Err(CliError::FileNotFound(_)) => {}
+            _ => panic!("Expected FileNotFound error"),
+        }
+    }
+
+    #[test]
+    fn test_run_summarize_model_file_not_found() {
+        // Create a temp input file
+        let temp_dir = std::env::temp_dir();
+        let input_path = temp_dir.join("test_summarize_input.txt");
+        fs::write(&input_path, "This is test input for summarization.").expect("write test file");
+
+        let args = default_summarize_args(
+            Some(input_path.clone()),
+            Some("nonexistent_model.apr2".into()),
+        );
+        let global = Args {
+            command: Command::Tui,
+            verbose: false,
+            quiet: true,
+            json: false,
+            trace: None,
+            no_color: false,
+        };
+
+        let result = run_summarize(args, &global);
+        // Clean up
+        let _ = fs::remove_file(&input_path);
+
+        assert!(result.is_err());
+        match result {
+            Err(CliError::FileNotFound(_)) => {}
+            _ => panic!("Expected FileNotFound error for missing model"),
+        }
+    }
+
+    #[test]
+    fn test_run_summarize_empty_input() {
+        // Create a temp empty input file
+        let temp_dir = std::env::temp_dir();
+        let input_path = temp_dir.join("test_summarize_empty.txt");
+        fs::write(&input_path, "   ").expect("write test file");
+
+        let args = default_summarize_args(Some(input_path.clone()), Some("model.apr2".into()));
+        let global = Args {
+            command: Command::Tui,
+            verbose: false,
+            quiet: true,
+            json: false,
+            trace: None,
+            no_color: false,
+        };
+
+        let result = run_summarize(args, &global);
+        // Clean up
+        let _ = fs::remove_file(&input_path);
+
+        assert!(result.is_err());
+        match result {
+            Err(CliError::InvalidArgument(msg)) => {
+                assert!(
+                    msg.contains("No input text"),
+                    "Error should mention no input: {msg}"
+                );
+            }
+            _ => panic!("Expected InvalidArgument error for empty input"),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // run_post_transcription_summary tests (Phase 2)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_post_transcription_summary_no_model() {
+        // Create args without lfm2_model
+        let mut args = default_transcribe_args("test.wav".into());
+        args.summarize = true;
+        args.lfm2_model = None;
+
+        let global = default_global_args();
+
+        let result = run_post_transcription_summary("Test transcript", &args, &global);
+        assert!(result.is_err());
+        match result {
+            Err(CliError::InvalidArgument(msg)) => {
+                assert!(
+                    msg.contains("lfm2-model"),
+                    "Error should mention --lfm2-model: {msg}"
+                );
+            }
+            _ => panic!("Expected InvalidArgument error for missing model"),
+        }
+    }
+
+    #[test]
+    fn test_post_transcription_summary_model_not_found() {
+        let mut args = default_transcribe_args("test.wav".into());
+        args.summarize = true;
+        args.lfm2_model = Some("nonexistent_model.apr2".into());
+
+        let global = default_global_args();
+
+        let result = run_post_transcription_summary("Test transcript", &args, &global);
+        assert!(result.is_err());
+        match result {
+            Err(CliError::FileNotFound(_)) => {}
+            _ => panic!("Expected FileNotFound error for missing model"),
+        }
+    }
+
+    #[test]
+    fn test_post_transcription_summary_empty_transcript() {
+        // Create a temp model file (won't be loaded since transcript is empty)
+        let temp_dir = std::env::temp_dir();
+        let model_path = temp_dir.join("test_lfm2_empty_check.apr2");
+        fs::write(&model_path, b"dummy").expect("write test file");
+
+        let mut args = default_transcribe_args("test.wav".into());
+        args.summarize = true;
+        args.lfm2_model = Some(model_path.clone());
+
+        let mut global = default_global_args();
+        global.quiet = true; // Suppress warning
+
+        let result = run_post_transcription_summary("   ", &args, &global);
+        // Clean up
+        let _ = fs::remove_file(&model_path);
+
+        // Empty transcript should return Ok with empty string
+        assert!(result.is_ok());
+        assert!(result.expect("should be ok").is_empty());
+    }
+
+    #[test]
+    fn test_transcribe_args_with_summarize_fields() {
+        // Verify the new summarize fields are accessible
+        let mut args = default_transcribe_args("test.wav".into());
+
+        // Set summarization options
+        args.summarize = true;
+        args.lfm2_model = Some("model.apr2".into());
+        args.summary_output = Some("summary.json".into());
+        args.summary_format = SummarizeFormat::Markdown;
+        args.action_items = true;
+        args.key_points = true;
+
+        // Verify fields are set correctly
+        assert!(args.summarize);
+        assert_eq!(
+            args.lfm2_model.as_ref().expect("should be set").to_str(),
+            Some("model.apr2")
+        );
+        assert!(args.action_items);
+        assert!(args.key_points);
     }
 }

@@ -71,6 +71,7 @@ impl GpuDeviceConfig {
 /// connection to the GPU and provides methods to create buffers and
 /// execute compute shaders.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct GpuDevice {
     /// Device capabilities
     capabilities: GpuCapabilities,

@@ -161,8 +161,7 @@ impl GpuExecutor {
             beta: op.config().beta,
             _padding: [0; 3],
         };
-        let dims_buffer =
-            self.create_uniform_buffer_init("dims", bytemuck::bytes_of(&dims_data));
+        let dims_buffer = self.create_uniform_buffer_init("dims", bytemuck::bytes_of(&dims_data));
 
         // Compile shader
         let shader_source = op.generate_shader();
@@ -409,7 +408,8 @@ impl GpuExecutorSync {
     /// Execute matrix multiplication synchronously
     #[cfg(feature = "webgpu")]
     pub fn execute_matmul(&self, op: &GpuMatMul, a: &[f32], b: &[f32]) -> GpuResult<Vec<f32>> {
-        self.runtime.block_on(self.executor.execute_matmul(op, a, b))
+        self.runtime
+            .block_on(self.executor.execute_matmul(op, a, b))
     }
 
     /// Execute matrix multiplication synchronously (stub)
@@ -422,13 +422,7 @@ impl GpuExecutorSync {
 /// Execute a simple matrix multiplication (convenience function)
 #[cfg(feature = "webgpu")]
 #[allow(dead_code)]
-pub async fn matmul_gpu(
-    m: u32,
-    k: u32,
-    n: u32,
-    a: &[f32],
-    b: &[f32],
-) -> GpuResult<Vec<f32>> {
+pub async fn matmul_gpu(m: u32, k: u32, n: u32, a: &[f32], b: &[f32]) -> GpuResult<Vec<f32>> {
     let executor = GpuExecutor::new(&ExecutorConfig::default()).await?;
     let op = GpuMatMul::simple(m, k, n)?;
     executor.execute_matmul(&op, a, b).await
@@ -437,13 +431,7 @@ pub async fn matmul_gpu(
 /// Execute a simple matrix multiplication (stub)
 #[allow(dead_code)] // Available for future use when webgpu feature enabled
 #[cfg(not(feature = "webgpu"))]
-pub async fn matmul_gpu(
-    _m: u32,
-    _k: u32,
-    _n: u32,
-    _a: &[f32],
-    _b: &[f32],
-) -> GpuResult<Vec<f32>> {
+pub async fn matmul_gpu(_m: u32, _k: u32, _n: u32, _a: &[f32], _b: &[f32]) -> GpuResult<Vec<f32>> {
     Err(GpuError::compute("WebGPU feature not enabled"))
 }
 

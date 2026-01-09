@@ -454,6 +454,9 @@ impl WhisperApr {
             mel.truncate(N_FRAMES * N_MELS);
         }
 
+        // Mel spectrogram is computed as [frames, mels] = [3000, 80]
+        // Our Conv1d expects (seq_len × in_channels) = (frames × mels)
+        // which matches the mel layout, so no transpose needed
         Ok(mel)
     }
 

@@ -38,8 +38,10 @@
 //! writer.write("model.apr")?;
 //! ```
 
+pub mod apr2;
 pub mod checksum;
 mod compress;
+pub mod safetensors_loader;
 pub mod validation;
 
 /// Re-export aprender's canonical APR format
@@ -49,8 +51,16 @@ pub mod aprender {
     };
 }
 
+pub use apr2::{
+    Apr2Header, Apr2Quantization, Apr2Reader, Apr2TensorData, Apr2TensorDescriptor, Apr2Writer,
+    FfnActivation, LayerType, Lfm2Config, Lfm2WasmConfig, ModelFamily, QuantConfig, APR2_VERSION,
+    MAGIC_APR2,
+};
 pub use checksum::{crc32, Crc32};
 pub use compress::Decompressor;
+#[cfg(feature = "cli")]
+pub use safetensors_loader::SafeTensorsLoader;
+pub use safetensors_loader::{map_tensor_name, ConversionStats, WeightMapping};
 pub use validation::{
     quick_validate, validate_apr_bytes, AprValidator, TensorStats, ValidationCheck,
     ValidationReport,
