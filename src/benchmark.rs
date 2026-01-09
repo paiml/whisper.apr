@@ -3481,4 +3481,268 @@ mod tests {
             "low_memory should use less memory"
         );
     }
+
+    // =========================================================================
+    // LFM2 End-to-End Inference Benchmarks (WAPR-LFM2-017)
+    // =========================================================================
+
+    /// Create a tiny LFM2 config for fast testing
+    fn tiny_lfm2_config() -> crate::format::apr2::Lfm2Config {
+        use crate::format::apr2::{LayerType, Lfm2Config};
+
+        // Create simple layer pattern: Conv, Attention
+        let layer_types = vec![
+            LayerType::Convolution {
+                kernel_size: 4,
+                cache_len: 3,
+            },
+            LayerType::Attention { use_gqa: true },
+        ];
+
+        Lfm2Config {
+            hidden_size: 64,
+            num_layers: 2,
+            num_q_heads: 4,
+            num_kv_heads: 2,
+            intermediate_size: 128,
+            vocab_size: 1000,
+            max_seq_len: 512,
+            rope_theta: 10000.0,
+            conv_dimension: 32,
+            layer_types,
+        }
+    }
+
+    #[test]
+    fn test_lfm2_inference_benchmark_forward_pass() {
+        use crate::model::lfm2::Lfm2;
+        use std::time::Instant;
+
+        let config = tiny_lfm2_config();
+        let model = Lfm2::new(config).expect("Model creation should succeed");
+        let input_ids: Vec<u32> = vec![1, 2, 3, 4, 5];
+
+        // Warm-up
+        let _ = model.forward(&input_ids, None);
+
+        // Benchmark forward pass
+        let iterations = 10;
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = model.forward(&input_ids, None);
+        }
+        let elapsed = start.elapsed();
+
+        let us_per_forward = elapsed.as_micros() as f64 / iterations as f64;
+        let tokens_per_sec = (input_ids.len() as f64 * 1_000_000.0) / us_per_forward;
+
+        println!(
+            "LFM2 Forward Pass Benchmark: {:.2}us/forward, {:.0} tokens/sec",
+            us_per_forward, tokens_per_sec
+        );
+
+        assert!(us_per_forward > 0.0, "Forward time should be positive");
+        assert!(tokens_per_sec > 0.0, "Tokens/sec should be positive");
+    }
+
+    #[test]
+    fn test_lfm2_inference_benchmark_generate() {
+        use crate::model::lfm2::Lfm2;
+        use std::time::Instant;
+
+        let config = tiny_lfm2_config();
+        let model = Lfm2::new(config).expect("Model creation should succeed");
+        let prompt_ids: Vec<u32> = vec![1, 2, 3];
+        let max_new_tokens = 10;
+
+        // Warm-up
+        let _ = model.generate(&prompt_ids, 5, 0.0);
+
+        // Benchmark generation
+        let iterations = 5;
+        let start = Instant::now();
+        let mut total_generated = 0;
+        for _ in 0..iterations {
+            let output = model.generate(&prompt_ids, max_new_tokens, 0.0).unwrap();
+            total_generated += output.len().saturating_sub(prompt_ids.len());
+        }
+        let elapsed = start.elapsed();
+
+        let ms_total = elapsed.as_millis() as f64;
+        let tokens_per_sec = (total_generated as f64 * 1000.0) / ms_total;
+        let ms_per_token = ms_total / total_generated as f64;
+
+        println!(
+            "LFM2 Generate Benchmark: {} tokens in {:.2}ms ({:.2} ms/token, {:.0} tokens/sec)",
+            total_generated, ms_total, ms_per_token, tokens_per_sec
+        );
+
+        assert!(total_generated > 0, "Should generate some tokens");
+        assert!(tokens_per_sec > 0.0, "Tokens/sec should be positive");
+    }
+
+    #[test]
+    fn test_lfm2_inference_benchmark_with_stats() {
+        use crate::model::lfm2::Lfm2;
+
+        let config = tiny_lfm2_config();
+        let model = Lfm2::new(config).expect("Model creation should succeed");
+        let prompt_ids: Vec<u32> = vec![1, 2, 3, 4, 5];
+
+        // Use generate_with_stats for accurate timing
+        let (output, stats) = model
+            .generate_with_stats::<fn(u32, usize) -> bool>(&prompt_ids, 20, 0.7, None)
+            .expect("Generation should succeed");
+
+        println!("LFM2 generate_with_stats benchmark:");
+        println!("  Tokens generated: {}", stats.tokens_generated);
+        println!("  Total time:       {:.2}ms", stats.total_ms);
+        println!("  Per token:        {:.2}ms", stats.ms_per_token);
+        println!("  Tokens/sec:       {:.0}", stats.tokens_per_sec);
+        println!("  Hit EOS:          {}", stats.hit_eos);
+
+        assert!(
+            output.len() >= prompt_ids.len(),
+            "Should have at least prompt tokens"
+        );
+        assert!(
+            stats.tokens_generated > 0 || stats.hit_eos,
+            "Should generate tokens or hit EOS"
+        );
+        if stats.tokens_generated > 0 {
+            assert!(stats.ms_per_token > 0.0, "ms_per_token should be positive");
+            assert!(
+                stats.tokens_per_sec > 0.0,
+                "tokens_per_sec should be positive"
+            );
+        }
+    }
+
+    #[test]
+    fn test_lfm2_inference_benchmark_streaming() {
+        use crate::model::lfm2::Lfm2;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let config = tiny_lfm2_config();
+        let model = Lfm2::new(config).expect("Model creation should succeed");
+        let prompt_ids: Vec<u32> = vec![1, 2, 3];
+
+        // Track callback timing
+        let callback_times = Rc::new(RefCell::new(Vec::new()));
+        let times_clone = Rc::clone(&callback_times);
+
+        let callback = move |_token: u32, _idx: usize| -> bool {
+            times_clone.borrow_mut().push(std::time::Instant::now());
+            true // continue
+        };
+
+        let start = std::time::Instant::now();
+        let (output, stats) = model
+            .generate_with_stats(&prompt_ids, 15, 0.5, Some(callback))
+            .expect("Streaming generation should succeed");
+        let total_time = start.elapsed();
+
+        let callback_count = callback_times.borrow().len();
+
+        println!("LFM2 Streaming Benchmark:");
+        println!("  Total tokens:     {}", output.len());
+        println!("  Generated:        {}", stats.tokens_generated);
+        println!("  Callback calls:   {}", callback_count);
+        println!("  Total time:       {:.2}ms", total_time.as_millis());
+        println!("  Stats time:       {:.2}ms", stats.total_ms);
+
+        // Callbacks should fire for each generated token
+        assert!(
+            callback_count > 0 || stats.hit_eos,
+            "Should have callbacks or hit EOS"
+        );
+        if stats.tokens_generated > 0 {
+            assert_eq!(
+                callback_count, stats.tokens_generated,
+                "Callback count should match tokens generated"
+            );
+        }
+    }
+
+    #[test]
+    fn test_lfm2_inference_benchmark_memory_estimate() {
+        use crate::format::apr2::{LayerType, Lfm2Config};
+        use crate::model::lfm2::Lfm2;
+
+        // Test memory tracking for different model sizes
+        let sizes: [(_, u32, u32); 3] =
+            [("tiny", 64, 2), ("small", 256, 4), ("medium", 512, 8)];
+
+        println!("LFM2 Memory Benchmark:");
+        for (name, hidden, layers) in sizes {
+            // Create layer types for each config
+            let layer_types: Vec<LayerType> = (0..layers)
+                .map(|i| {
+                    if i % 2 == 1 {
+                        LayerType::Attention { use_gqa: true }
+                    } else {
+                        LayerType::Convolution {
+                            kernel_size: 4,
+                            cache_len: 3,
+                        }
+                    }
+                })
+                .collect();
+
+            let config = Lfm2Config {
+                hidden_size: hidden,
+                num_layers: layers,
+                num_q_heads: (hidden / 16).max(1),
+                num_kv_heads: (hidden / 32).max(1),
+                intermediate_size: hidden * 2,
+                vocab_size: 1000,
+                max_seq_len: 512,
+                rope_theta: 10000.0,
+                conv_dimension: hidden / 2,
+                layer_types,
+            };
+
+            let model = Lfm2::new(config).expect("Model creation should succeed");
+            let params = model.num_params();
+            let memory = model.memory_bytes();
+
+            println!("  {}: {} params, {} KB", name, params, memory / 1024);
+
+            assert!(params > 0, "Should have parameters");
+            assert!(memory > 0, "Should use memory");
+        }
+    }
+
+    #[test]
+    fn test_lfm2_inference_benchmark_throughput_scaling() {
+        use crate::model::lfm2::Lfm2;
+        use std::time::Instant;
+
+        let config = tiny_lfm2_config();
+        let model = Lfm2::new(config).expect("Model creation should succeed");
+
+        // Test throughput with different input sizes
+        let input_sizes = [1, 5, 10, 20];
+
+        println!("LFM2 Throughput Scaling:");
+        for size in input_sizes {
+            let input_ids: Vec<u32> = (0..size).map(|i| i as u32 + 1).collect();
+
+            let iterations = 5;
+            let start = Instant::now();
+            for _ in 0..iterations {
+                let _ = model.forward(&input_ids, None);
+            }
+            let elapsed = start.elapsed();
+
+            let us_per_forward = elapsed.as_micros() as f64 / iterations as f64;
+            let tokens_per_sec = (size as f64 * 1_000_000.0) / us_per_forward;
+
+            println!(
+                "  {} tokens: {:.2}us ({:.0} tok/s)",
+                size, us_per_forward, tokens_per_sec
+            );
+        }
+    }
 }
