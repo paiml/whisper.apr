@@ -137,7 +137,7 @@ pub fn generate_worker_js_from_brick() -> String {
 
     // Whisper-specific WASM integration
     // This glue code matches the brick protocol but includes WASM loading
-    let whisper_glue = r#"
+    let whisper_glue = r"
 // Whisper.apr WASM Integration
 // Generated from WorkerBrick definition
 
@@ -246,7 +246,7 @@ const processAudioTick = () => {
 };
 
 console.log('[Worker] Whisper.apr worker loaded (PROBAR-SPEC-009-P7)');
-"#;
+";
 
     // Replace the simple state machine with the full WASM integration
     whisper_glue.to_string()
