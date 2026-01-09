@@ -3268,4 +3268,217 @@ mod tests {
         assert!(swiglu.flops > 0, "SwiGLU should have positive FLOPs");
         assert!(gqa.flops > 0, "GQA should have positive FLOPs");
     }
+
+    // =========================================================================
+    // WASM Memory Stress Tests (WAPR-LFM2-013)
+    // =========================================================================
+
+    #[test]
+    fn test_wasm_memory_budget_lfm2_int4() {
+        use crate::format::apr2::Lfm2Config;
+        use crate::model::lfm2::{Lfm2WasmConfig, WasmMemoryEstimate, WasmQuantization};
+
+        // LFM2-2.6B with int4 quantization should fit in WASM
+        let model_config = Lfm2Config::lfm2_2_6b();
+        let wasm_config = Lfm2WasmConfig::default();
+
+        let estimate = WasmMemoryEstimate::calculate(&model_config, &wasm_config);
+
+        // Must be viable
+        assert!(estimate.is_viable, "int4 LFM2 should be WASM viable");
+
+        // Must fit in 2GB practical limit
+        const WASM_PRACTICAL_LIMIT: u64 = 2_147_483_648; // 2GB
+        assert!(
+            estimate.total_bytes < WASM_PRACTICAL_LIMIT,
+            "Total {} exceeds 2GB limit",
+            estimate.total_bytes
+        );
+
+        // Verify quantization benefit
+        let fp16_estimate = WasmMemoryEstimate::calculate(
+            &model_config,
+            &Lfm2WasmConfig {
+                quantization: WasmQuantization::Fp16,
+                ..wasm_config
+            },
+        );
+        assert!(
+            estimate.model_bytes < fp16_estimate.model_bytes / 2,
+            "int4 should be < half of fp16 size"
+        );
+    }
+
+    #[test]
+    fn test_wasm_memory_budget_kv_cache_scaling() {
+        use crate::format::apr2::Lfm2Config;
+        use crate::model::lfm2::{Lfm2WasmConfig, WasmMemoryEstimate};
+
+        let model_config = Lfm2Config::lfm2_2_6b();
+
+        // Test KV cache scales with context size
+        let config_2k = Lfm2WasmConfig {
+            max_context: 2048,
+            sliding_window: Some(1024),
+            ..Lfm2WasmConfig::default()
+        };
+        let config_4k = Lfm2WasmConfig {
+            max_context: 4096,
+            sliding_window: Some(2048),
+            ..Lfm2WasmConfig::default()
+        };
+
+        let estimate_2k = WasmMemoryEstimate::calculate(&model_config, &config_2k);
+        let estimate_4k = WasmMemoryEstimate::calculate(&model_config, &config_4k);
+
+        // 4K context should have ~2x KV cache of 2K
+        let ratio = estimate_4k.kv_cache_bytes as f64 / estimate_2k.kv_cache_bytes as f64;
+        assert!(
+            (ratio - 2.0).abs() < 0.1,
+            "KV cache should scale 2x: ratio = {}",
+            ratio
+        );
+    }
+
+    #[test]
+    fn test_wasm_memory_budget_sliding_window() {
+        use crate::format::apr2::Lfm2Config;
+        use crate::model::lfm2::{Lfm2WasmConfig, WasmMemoryEstimate};
+
+        let model_config = Lfm2Config::lfm2_2_6b();
+
+        // Without sliding window
+        let full_config = Lfm2WasmConfig {
+            max_context: 8192,
+            sliding_window: None,
+            ..Lfm2WasmConfig::default()
+        };
+
+        // With sliding window
+        let window_config = Lfm2WasmConfig {
+            max_context: 8192,
+            sliding_window: Some(2048),
+            ..Lfm2WasmConfig::default()
+        };
+
+        let full_estimate = WasmMemoryEstimate::calculate(&model_config, &full_config);
+        let window_estimate = WasmMemoryEstimate::calculate(&model_config, &window_config);
+
+        // Sliding window should reduce KV cache significantly
+        assert!(
+            window_estimate.kv_cache_bytes < full_estimate.kv_cache_bytes,
+            "Sliding window should reduce KV cache"
+        );
+
+        // Window should be ~4x smaller (8192/2048 = 4)
+        let ratio =
+            full_estimate.kv_cache_bytes as f64 / window_estimate.kv_cache_bytes as f64;
+        assert!(
+            ratio > 3.5,
+            "Sliding window should reduce KV cache by ~4x: ratio = {}",
+            ratio
+        );
+    }
+
+    #[test]
+    fn test_wasm_memory_quantization_viability_matrix() {
+        use crate::format::apr2::Lfm2Config;
+        use crate::model::lfm2::{Lfm2WasmConfig, WasmMemoryEstimate, WasmQuantization};
+
+        let model_config = Lfm2Config::lfm2_2_6b();
+
+        // Test all quantization types
+        let quantizations = [
+            (WasmQuantization::Fp16, false, "fp16 should NOT be viable"),
+            (WasmQuantization::Int8, false, "int8 should NOT be viable"),
+            (WasmQuantization::Int4Awq, true, "int4-awq SHOULD be viable"),
+            (WasmQuantization::Int4Gptq, true, "int4-gptq SHOULD be viable"),
+        ];
+
+        for (quant, expected_viable, msg) in &quantizations {
+            let wasm_config = Lfm2WasmConfig {
+                quantization: *quant,
+                max_context: 4096,
+                sliding_window: Some(2048),
+                ..Lfm2WasmConfig::default()
+            };
+
+            let estimate = WasmMemoryEstimate::calculate(&model_config, &wasm_config);
+            assert_eq!(estimate.is_viable, *expected_viable, "{}", msg);
+        }
+    }
+
+    #[test]
+    fn test_wasm_memory_budget_overhead() {
+        use crate::format::apr2::Lfm2Config;
+        use crate::model::lfm2::{Lfm2WasmConfig, WasmMemoryEstimate};
+
+        let model_config = Lfm2Config::lfm2_2_6b();
+        let wasm_config = Lfm2WasmConfig::default();
+
+        let estimate = WasmMemoryEstimate::calculate(&model_config, &wasm_config);
+
+        // Overhead should be reasonable (100-300MB)
+        assert!(
+            estimate.overhead_bytes >= 100_000_000,
+            "Overhead {} should be >= 100MB",
+            estimate.overhead_bytes
+        );
+        assert!(
+            estimate.overhead_bytes <= 300_000_000,
+            "Overhead {} should be <= 300MB",
+            estimate.overhead_bytes
+        );
+
+        // Total should be sum of parts
+        let expected_total =
+            estimate.model_bytes + estimate.kv_cache_bytes + estimate.overhead_bytes;
+        assert_eq!(
+            estimate.total_bytes, expected_total,
+            "Total should be sum of components"
+        );
+    }
+
+    #[test]
+    fn test_wasm_memory_stress_multiple_configs() {
+        use crate::format::apr2::Lfm2Config;
+        use crate::model::lfm2::{Lfm2WasmConfig, WasmMemoryEstimate};
+
+        let model_config = Lfm2Config::lfm2_2_6b();
+
+        // Test presets
+        let configs = [
+            ("default", Lfm2WasmConfig::default()),
+            ("low_memory", Lfm2WasmConfig::low_memory()),
+            ("full_attention", Lfm2WasmConfig::full_attention()),
+        ];
+
+        for (name, wasm_config) in &configs {
+            let estimate = WasmMemoryEstimate::calculate(&model_config, wasm_config);
+
+            println!(
+                "Config '{}': model={}MB, kv={}MB, total={}MB, viable={}",
+                name,
+                estimate.model_bytes / 1_000_000,
+                estimate.kv_cache_bytes / 1_000_000,
+                estimate.total_bytes / 1_000_000,
+                estimate.is_viable
+            );
+
+            // All int4 configs should have same model size
+            assert_eq!(
+                estimate.model_bytes, 1_300_000_000,
+                "{} model size mismatch",
+                name
+            );
+        }
+
+        // low_memory should use less than default
+        let default = WasmMemoryEstimate::calculate(&model_config, &Lfm2WasmConfig::default());
+        let low_mem = WasmMemoryEstimate::calculate(&model_config, &Lfm2WasmConfig::low_memory());
+        assert!(
+            low_mem.total_bytes < default.total_bytes,
+            "low_memory should use less memory"
+        );
+    }
 }
