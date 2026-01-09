@@ -2377,7 +2377,7 @@ fn convert_format_arg(arg: OutputFormatArg) -> OutputFormat {
 /// See `docs/specifications/1.0-whisper-apr.md` Section 18.8 for full specification.
 pub fn run_convert(args: ConvertArgs, global: &Args) -> CliResult<CommandResult> {
     use crate::format::apr2::{Lfm2Config, QuantConfig};
-    use crate::format::safetensors_loader::SafeTensorsLoader;
+    use crate::format::safetensors_loader::{SafeTensorsLoader, ShardedSafeTensorsLoader};
     use crate::format::ConversionStats;
     use std::time::Instant;
 
@@ -2406,21 +2406,6 @@ pub fn run_convert(args: ConvertArgs, global: &Args) -> CliResult<CommandResult>
         return Ok(CommandResult::success("Dry run completed"));
     }
 
-    // Load safetensors file
-    let loader = SafeTensorsLoader::load(&args.input)
-        .map_err(|e| CliError::FileNotFound(format!("Failed to load safetensors: {e}")))?;
-
-    let n_tensors = loader.tensor_names().len();
-    let n_params = loader.total_params().unwrap_or(0);
-
-    if global.verbose {
-        println!("\nTensors found: {n_tensors}");
-        for name in loader.tensor_names() {
-            let internal_name = crate::format::map_tensor_name(name);
-            println!("  {name} → {internal_name}");
-        }
-    }
-
     // Get config based on family
     let config = match args.family {
         ModelFamilyArg::Lfm2 => Lfm2Config::lfm2_2_6b(),
@@ -2447,10 +2432,57 @@ pub fn run_convert(args: ConvertArgs, global: &Args) -> CliResult<CommandResult>
             | QuantizeMethodArg::Int4Gptq
     );
 
-    // Convert to APR2
-    let writer = loader
-        .to_apr2(config, quant, quantize)
-        .map_err(|e| CliError::InvalidArgument(format!("Conversion failed: {e}")))?;
+    // Load safetensors - use sharded loader for directories
+    let (n_tensors, n_params, writer) = if args.input.is_dir() {
+        // Sharded safetensors (multiple files with index.json)
+        if !global.quiet {
+            println!("Loading sharded safetensors from directory...");
+        }
+        let loader = ShardedSafeTensorsLoader::load(&args.input)
+            .map_err(|e| CliError::FileNotFound(format!("Failed to load sharded safetensors: {e}")))?;
+
+        let n_tensors = loader.tensor_names().len();
+        let n_params = loader.total_params().unwrap_or(0);
+
+        if global.verbose {
+            println!("\nTensors found: {n_tensors}");
+            for name in loader.tensor_names() {
+                let internal_name = crate::format::map_tensor_name(name);
+                println!("  {name} → {internal_name}");
+            }
+        }
+
+        if !global.quiet {
+            println!("Converting {} tensors ({} params)...", n_tensors, n_params);
+        }
+
+        let writer = loader
+            .to_apr2(config, quant, quantize)
+            .map_err(|e| CliError::InvalidArgument(format!("Conversion failed: {e}")))?;
+
+        (n_tensors, n_params, writer)
+    } else {
+        // Single safetensors file
+        let loader = SafeTensorsLoader::load(&args.input)
+            .map_err(|e| CliError::FileNotFound(format!("Failed to load safetensors: {e}")))?;
+
+        let n_tensors = loader.tensor_names().len();
+        let n_params = loader.total_params().unwrap_or(0);
+
+        if global.verbose {
+            println!("\nTensors found: {n_tensors}");
+            for name in loader.tensor_names() {
+                let internal_name = crate::format::map_tensor_name(name);
+                println!("  {name} → {internal_name}");
+            }
+        }
+
+        let writer = loader
+            .to_apr2(config, quant, quantize)
+            .map_err(|e| CliError::InvalidArgument(format!("Conversion failed: {e}")))?;
+
+        (n_tensors, n_params, writer)
+    };
 
     // Write output file
     let bytes = writer
