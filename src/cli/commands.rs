@@ -544,31 +544,72 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
 
     // Generate summary
     if !global.quiet {
-        println!("Generating summary...");
+        if args.stream {
+            println!("Generating summary (streaming)...\n");
+        } else {
+            println!("Generating summary...");
+        }
     }
 
     let gen_start = Instant::now();
-    let output_ids = model
-        .generate(&input_ids, args.max_tokens as usize, args.temperature)
-        .map_err(|e| CliError::InvalidArgument(format!("Generation failed: {e}")))?;
+    let (output_ids, gen_stats) = if args.stream {
+        // Streaming generation - print tokens as they're generated
+        use std::io::Write;
+        let tokenizer_ref = &tokenizer;
+        let quiet = global.quiet;
+
+        model
+            .generate_with_stats(
+                &input_ids,
+                args.max_tokens as usize,
+                args.temperature,
+                Some(|token: u32, _idx: usize| {
+                    if !quiet {
+                        // Decode and print single token
+                        let text = tokenizer_ref.decode(&[token]);
+                        print!("{text}");
+                        let _ = io::stdout().flush();
+                    }
+                    true // continue generating
+                }),
+            )
+            .map_err(|e| CliError::InvalidArgument(format!("Generation failed: {e}")))?
+    } else {
+        // Non-streaming generation
+        model
+            .generate_with_stats::<fn(u32, usize) -> bool>(
+                &input_ids,
+                args.max_tokens as usize,
+                args.temperature,
+                None,
+            )
+            .map_err(|e| CliError::InvalidArgument(format!("Generation failed: {e}")))?
+    };
 
     let gen_time = gen_start.elapsed();
 
+    if args.stream && !global.quiet {
+        println!("\n"); // Newline after streaming output
+    }
+
     // Decode output using the tokenizer
-    let new_tokens = output_ids.len() - input_ids.len();
     let summary_ids = &output_ids[input_ids.len()..];
     let summary = tokenizer.decode(summary_ids);
 
     if global.verbose {
         eprintln!(
-            "[INFO] Generated {} tokens in {:.2}s ({:.1} tokens/s)",
-            new_tokens,
-            gen_time.as_secs_f64(),
-            new_tokens as f64 / gen_time.as_secs_f64()
+            "[INFO] Generated {} tokens in {:.1}ms ({:.1} tokens/s)",
+            gen_stats.tokens_generated,
+            gen_stats.total_ms,
+            gen_stats.tokens_per_sec
         );
+        if gen_stats.hit_eos {
+            eprintln!("[INFO] Generation completed (hit EOS token)");
+        }
     }
 
     let total_time = start.elapsed();
+    let _ = gen_time; // Use gen_time to avoid unused variable warning
 
     // Format output based on format arg
     let output = match args.format {
@@ -577,11 +618,14 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
             "stats": {
                 "input_chars": input_text.len(),
                 "input_tokens": input_ids.len(),
-                "output_tokens": new_tokens,
+                "output_tokens": gen_stats.tokens_generated,
                 "load_time_s": load_time.as_secs_f64(),
-                "gen_time_s": gen_time.as_secs_f64(),
+                "gen_time_ms": gen_stats.total_ms,
                 "total_time_s": total_time.as_secs_f64(),
-                "tokens_per_sec": new_tokens as f64 / gen_time.as_secs_f64()
+                "tokens_per_sec": gen_stats.tokens_per_sec,
+                "ms_per_token": gen_stats.ms_per_token,
+                "streaming": args.stream,
+                "hit_eos": gen_stats.hit_eos
             }
         })
         .to_string(),
@@ -611,17 +655,19 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
     }
 
     if !global.quiet {
+        let stream_indicator = if args.stream { " (streamed)" } else { "" };
         println!(
-            "\nCompleted in {:.2}s ({} new tokens at {:.1} tokens/s)",
+            "\nCompleted in {:.2}s ({} tokens at {:.1} tokens/s{stream_indicator})",
             total_time.as_secs_f64(),
-            new_tokens,
-            new_tokens as f64 / gen_time.as_secs_f64()
+            gen_stats.tokens_generated,
+            gen_stats.tokens_per_sec
         );
     }
 
     Ok(CommandResult::success(format!(
-        "Generated {} token summary",
-        new_tokens
+        "Generated {} token summary{}",
+        gen_stats.tokens_generated,
+        if args.stream { " (streamed)" } else { "" }
     )))
 }
 

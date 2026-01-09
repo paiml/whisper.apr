@@ -48,6 +48,34 @@ pub struct Lfm2 {
     pub rope: RotaryEmbedding,
 }
 
+/// Generation statistics for streaming output
+#[derive(Debug, Clone, Default)]
+pub struct GenerationStats {
+    /// Total tokens generated (excluding prompt)
+    pub tokens_generated: usize,
+    /// Time per token in milliseconds
+    pub ms_per_token: f64,
+    /// Total generation time in milliseconds
+    pub total_ms: f64,
+    /// Tokens per second
+    pub tokens_per_sec: f64,
+    /// Whether generation hit EOS
+    pub hit_eos: bool,
+}
+
+impl std::fmt::Display for GenerationStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} tokens in {:.1}ms ({:.1} tok/s, {:.1}ms/tok)",
+            self.tokens_generated,
+            self.total_ms,
+            self.tokens_per_sec,
+            self.ms_per_token
+        )
+    }
+}
+
 impl Lfm2 {
     /// Create new LFM2 model with given configuration
     ///
@@ -227,6 +255,133 @@ impl Lfm2 {
         }
 
         Ok(output_ids)
+    }
+
+    /// Generate tokens with streaming callback
+    ///
+    /// This method calls the callback for each generated token, enabling
+    /// real-time output display and early stopping.
+    ///
+    /// # Arguments
+    /// * `prompt_ids` - Input token IDs
+    /// * `max_new_tokens` - Maximum new tokens to generate
+    /// * `temperature` - Sampling temperature (0 = greedy)
+    /// * `callback` - Called with (token_id, token_index) for each generated token.
+    ///   Return `false` to stop generation early
+    ///
+    /// # Returns
+    /// Generated token IDs (including prompt)
+    ///
+    /// # Errors
+    /// Returns error if generation fails
+    ///
+    /// # Example
+    /// ```ignore
+    /// model.generate_streaming(&prompt, 100, 0.7, |token, idx| {
+    ///     print!("{}", tokenizer.decode(&[token]));
+    ///     std::io::stdout().flush().ok();
+    ///     true // continue generating
+    /// })?;
+    /// ```
+    pub fn generate_streaming<F>(
+        &self,
+        prompt_ids: &[u32],
+        max_new_tokens: usize,
+        temperature: f32,
+        mut callback: F,
+    ) -> WhisperResult<Vec<u32>>
+    where
+        F: FnMut(u32, usize) -> bool,
+    {
+        let mut output_ids = prompt_ids.to_vec();
+        let vocab_size = self.config.vocab_size as usize;
+
+        for i in 0..max_new_tokens {
+            // Forward pass
+            let logits = self.forward(&output_ids, None)?;
+
+            // Get logits for last position
+            let last_logits_start = (output_ids.len() - 1) * vocab_size;
+            let last_logits = &logits[last_logits_start..last_logits_start + vocab_size];
+
+            // Sample next token
+            let next_token = if temperature <= 0.0 {
+                argmax(last_logits) as u32
+            } else {
+                sample_with_temperature(last_logits, temperature)? as u32
+            };
+
+            output_ids.push(next_token);
+
+            // Call callback with generated token
+            if !callback(next_token, i) {
+                break; // Early stop requested by callback
+            }
+
+            // Check for EOS
+            if next_token == 2 {
+                break;
+            }
+        }
+
+        Ok(output_ids)
+    }
+
+    /// Generate with timing statistics
+    ///
+    /// # Arguments
+    /// * `prompt_ids` - Input token IDs
+    /// * `max_new_tokens` - Maximum new tokens to generate
+    /// * `temperature` - Sampling temperature (0 = greedy)
+    /// * `callback` - Optional streaming callback
+    ///
+    /// # Returns
+    /// Tuple of (generated tokens, statistics)
+    ///
+    /// # Errors
+    /// Returns error if generation fails
+    pub fn generate_with_stats<F>(
+        &self,
+        prompt_ids: &[u32],
+        max_new_tokens: usize,
+        temperature: f32,
+        callback: Option<F>,
+    ) -> WhisperResult<(Vec<u32>, GenerationStats)>
+    where
+        F: FnMut(u32, usize) -> bool,
+    {
+        let start = std::time::Instant::now();
+        let prompt_len = prompt_ids.len();
+
+        let output_ids = if let Some(cb) = callback {
+            self.generate_streaming(prompt_ids, max_new_tokens, temperature, cb)?
+        } else {
+            self.generate(prompt_ids, max_new_tokens, temperature)?
+        };
+
+        let elapsed = start.elapsed();
+        let tokens_generated = output_ids.len().saturating_sub(prompt_len);
+        let total_ms = elapsed.as_secs_f64() * 1000.0;
+        let ms_per_token = if tokens_generated > 0 {
+            total_ms / tokens_generated as f64
+        } else {
+            0.0
+        };
+        let tokens_per_sec = if total_ms > 0.0 {
+            tokens_generated as f64 / (total_ms / 1000.0)
+        } else {
+            0.0
+        };
+
+        let stats = GenerationStats {
+            tokens_generated,
+            ms_per_token,
+            total_ms,
+            tokens_per_sec,
+            hit_eos: output_ids.last() == Some(&2),
+        };
+
+        Ok((output_ids, stats))
     }
 
     /// Total number of parameters
@@ -1585,5 +1740,159 @@ mod tests {
         let input_ids = vec![1u32, 100]; // 100 > vocab_size (50)
         let result = model.forward(&input_ids, None);
         assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // Streaming Generation Tests (WAPR-LFM2-014)
+    // =========================================================================
+
+    #[test]
+    fn test_lfm2_generate_streaming() {
+        let mut config = Lfm2Config::lfm2_2_6b();
+        config.hidden_size = 8;
+        config.num_layers = 1;
+        config.num_q_heads = 2;
+        config.num_kv_heads = 1;
+        config.intermediate_size = 16;
+        config.vocab_size = 50;
+        config.max_seq_len = 32;
+        config.layer_types = vec![LayerType::Attention { use_gqa: true }];
+
+        let model = Lfm2::new(config).expect("should create model");
+        let prompt = vec![1u32, 2, 3];
+
+        // Track tokens via callback
+        let mut streamed_tokens = Vec::new();
+        let output = model
+            .generate_streaming(&prompt, 5, 0.0, |token, _idx| {
+                streamed_tokens.push(token);
+                true // continue
+            })
+            .expect("streaming should succeed");
+
+        // Should have streamed tokens
+        assert!(!streamed_tokens.is_empty());
+        // Output should include prompt + generated
+        assert!(output.len() >= prompt.len());
+        // Streamed tokens should match generated portion
+        let generated = &output[prompt.len()..];
+        assert_eq!(streamed_tokens.len(), generated.len());
+        for (i, &token) in streamed_tokens.iter().enumerate() {
+            assert_eq!(token, generated[i]);
+        }
+    }
+
+    #[test]
+    fn test_lfm2_generate_streaming_early_stop() {
+        let mut config = Lfm2Config::lfm2_2_6b();
+        config.hidden_size = 8;
+        config.num_layers = 1;
+        config.num_q_heads = 2;
+        config.num_kv_heads = 1;
+        config.intermediate_size = 16;
+        config.vocab_size = 50;
+        config.max_seq_len = 32;
+        config.layer_types = vec![LayerType::Attention { use_gqa: true }];
+
+        let model = Lfm2::new(config).expect("should create model");
+        let prompt = vec![1u32, 2, 3];
+
+        // Stop after 2 tokens
+        let mut count = 0;
+        let output = model
+            .generate_streaming(&prompt, 10, 0.0, |_token, _idx| {
+                count += 1;
+                count < 2 // stop after 2
+            })
+            .expect("streaming should succeed");
+
+        // Should have stopped early
+        assert_eq!(output.len(), prompt.len() + 2);
+    }
+
+    #[test]
+    fn test_lfm2_generate_with_stats() {
+        let mut config = Lfm2Config::lfm2_2_6b();
+        config.hidden_size = 8;
+        config.num_layers = 1;
+        config.num_q_heads = 2;
+        config.num_kv_heads = 1;
+        config.intermediate_size = 16;
+        config.vocab_size = 50;
+        config.max_seq_len = 32;
+        config.layer_types = vec![LayerType::Attention { use_gqa: true }];
+
+        let model = Lfm2::new(config).expect("should create model");
+        let prompt = vec![1u32, 2, 3];
+
+        // Without callback
+        let (output, stats) = model
+            .generate_with_stats::<fn(u32, usize) -> bool>(&prompt, 3, 0.0, None)
+            .expect("generate should succeed");
+
+        assert!(output.len() >= prompt.len());
+        assert!(stats.tokens_generated > 0 || output.len() == prompt.len());
+        assert!(stats.total_ms >= 0.0);
+        // Display impl should work
+        let display = format!("{}", stats);
+        assert!(display.contains("tokens"));
+    }
+
+    #[test]
+    fn test_lfm2_generate_with_stats_and_callback() {
+        let mut config = Lfm2Config::lfm2_2_6b();
+        config.hidden_size = 8;
+        config.num_layers = 1;
+        config.num_q_heads = 2;
+        config.num_kv_heads = 1;
+        config.intermediate_size = 16;
+        config.vocab_size = 50;
+        config.max_seq_len = 32;
+        config.layer_types = vec![LayerType::Attention { use_gqa: true }];
+
+        let model = Lfm2::new(config).expect("should create model");
+        let prompt = vec![1u32, 2, 3];
+
+        let mut tokens_seen = 0;
+        let (output, stats) = model
+            .generate_with_stats(
+                &prompt,
+                3,
+                0.0,
+                Some(|_token: u32, _idx: usize| {
+                    tokens_seen += 1;
+                    true
+                }),
+            )
+            .expect("generate should succeed");
+
+        assert!(output.len() >= prompt.len());
+        assert_eq!(tokens_seen, stats.tokens_generated);
+    }
+
+    #[test]
+    fn test_generation_stats_display() {
+        let stats = GenerationStats {
+            tokens_generated: 42,
+            ms_per_token: 15.5,
+            total_ms: 651.0,
+            tokens_per_sec: 64.5,
+            hit_eos: true,
+        };
+
+        let display = format!("{}", stats);
+        assert!(display.contains("42 tokens"));
+        assert!(display.contains("651.0ms"));
+        assert!(display.contains("64.5 tok/s"));
+    }
+
+    #[test]
+    fn test_generation_stats_default() {
+        let stats = GenerationStats::default();
+        assert_eq!(stats.tokens_generated, 0);
+        assert_eq!(stats.ms_per_token, 0.0);
+        assert_eq!(stats.total_ms, 0.0);
+        assert_eq!(stats.tokens_per_sec, 0.0);
+        assert!(!stats.hit_eos);
     }
 }

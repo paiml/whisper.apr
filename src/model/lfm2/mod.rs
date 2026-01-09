@@ -37,7 +37,10 @@ pub mod tokenizer;
 
 pub use conv::Conv1d;
 pub use gqa::GroupedQueryAttention;
-pub use model::{Lfm2, Lfm2Layer, Lfm2WasmConfig, LoadStats, WasmMemoryEstimate, WasmQuantization};
+pub use model::{
+    GenerationStats, Lfm2, Lfm2Layer, Lfm2WasmConfig, LoadStats, WasmMemoryEstimate,
+    WasmQuantization,
+};
 pub use rope::RotaryEmbedding;
 pub use swiglu::SwiGluFfn;
 pub use tokenizer::{ByteLevelTokenizer, Lfm2Tokenizer, SpecialTokens};
