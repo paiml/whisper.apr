@@ -31,3 +31,4 @@ demos/realtime-transcription/models/*.apr
 # PMAT
 .pmat/backup/
 .pmat-qa/
+.pmat-metrics/

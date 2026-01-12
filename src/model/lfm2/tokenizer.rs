@@ -570,6 +570,83 @@ fn parse_merge_entries(json: &str, merges: &mut Vec<(String, String)>) {
     }
 }
 
+/// State for JSON key-value parsing
+#[derive(Default)]
+struct JsonParseState {
+    current_id: Option<u32>,
+    current_content: Option<String>,
+    in_string: bool,
+    escape_next: bool,
+    current_key: String,
+    current_value: String,
+    in_key: bool,
+    in_value: bool,
+}
+
+impl JsonParseState {
+    /// Handle escaped character
+    fn handle_escape(&mut self, c: char) {
+        if self.in_string {
+            self.current_value.push(c);
+        }
+        self.escape_next = false;
+    }
+
+    /// Handle quote character - toggle string state
+    fn handle_quote(&mut self) {
+        if self.in_string {
+            self.in_key = false;
+            self.in_value = false;
+        } else if self.current_key.is_empty() && self.current_value.is_empty() {
+            self.in_key = true;
+        } else if !self.current_key.is_empty() {
+            self.in_value = true;
+        }
+        self.in_string = !self.in_string;
+    }
+
+    /// Handle end of key-value pair (comma or close brace)
+    fn handle_pair_end(&mut self) {
+        if self.current_key == "id" {
+            self.current_id = self.current_value.parse().ok();
+        } else if self.current_key == "content" {
+            self.current_content = Some(unescape_json_string(&self.current_value));
+        }
+        self.current_key.clear();
+        self.current_value.clear();
+    }
+
+    /// Handle character inside a string
+    fn handle_string_char(&mut self, c: char) {
+        if self.in_key {
+            self.current_key.push(c);
+        } else if self.in_value {
+            self.current_value.push(c);
+        }
+    }
+
+    /// Finalize object and return (id, content) if valid
+    fn finalize_object(&mut self) -> Option<(u32, String)> {
+        let result = match (self.current_id, self.current_content.take()) {
+            (Some(id), Some(content)) => Some((id, content)),
+            _ => None,
+        };
+        self.current_id = None;
+        result
+    }
+}
+
+/// Map token content to special token type
+fn update_special_token(special: &mut SpecialTokens, content: &str, id: u32) {
+    match content {
+        "<s>" | "<bos>" | "[CLS]" => special.bos = id,
+        "</s>" | "<eos>" | "[SEP]" => special.eos = id,
+        "<pad>" | "[PAD]" => special.pad = id,
+        "<unk>" | "[UNK]" => special.unk = id,
+        _ => {}
+    }
+}
+
 /// Parse special tokens from added_tokens array
 fn parse_special_tokens(
     json: &str,
@@ -577,86 +654,30 @@ fn parse_special_tokens(
     vocab: &mut HashMap<String, u32>,
     id_to_token: &mut HashMap<u32, String>,
 ) {
-    // Parse objects like { "id": N, "content": "...", "special": true }
-    let mut current_id: Option<u32> = None;
-    let mut current_content: Option<String> = None;
-    let mut in_string = false;
-    let mut escape_next = false;
-    let mut current_key = String::new();
-    let mut current_value = String::new();
-    let mut in_key = false;
-    let mut in_value = false;
+    let mut state = JsonParseState::default();
 
     for c in json.chars() {
-        if escape_next {
-            if in_string {
-                current_value.push(c);
-            }
-            escape_next = false;
+        if state.escape_next {
+            state.handle_escape(c);
             continue;
         }
 
         match c {
-            '\\' if in_string => escape_next = true,
-            '"' => {
-                if in_string {
-                    if in_key {
-                        in_key = false;
-                    } else if in_value {
-                        in_value = false;
-                    }
-                } else {
-                    // Starting a string
-                    if current_key.is_empty() && current_value.is_empty() {
-                        in_key = true;
-                    } else if !current_key.is_empty() {
-                        in_value = true;
-                    }
-                }
-                in_string = !in_string;
-            }
-            ':' if !in_string => {
-                // Key complete, ready for value
-            }
-            ',' | '}' if !in_string => {
-                // Process key-value pair
-                if current_key == "id" {
-                    if let Ok(id) = current_value.parse::<u32>() {
-                        current_id = Some(id);
-                    }
-                } else if current_key == "content" {
-                    current_content = Some(unescape_json_string(&current_value));
-                }
-                current_key.clear();
-                current_value.clear();
-
-                // End of object, check for special token
-                if c == '}' {
-                    if let (Some(id), Some(ref content)) = (current_id, &current_content) {
-                        // Update special token IDs based on content
-                        match content.as_str() {
-                            "<s>" | "<bos>" | "[CLS]" => special.bos = id,
-                            "</s>" | "<eos>" | "[SEP]" => special.eos = id,
-                            "<pad>" | "[PAD]" => special.pad = id,
-                            "<unk>" | "[UNK]" => special.unk = id,
-                            _ => {}
-                        }
-                        vocab.insert(content.clone(), id);
-                        id_to_token.insert(id, content.clone());
-                    }
-                    current_id = None;
-                    current_content = None;
+            '\\' if state.in_string => state.escape_next = true,
+            '"' => state.handle_quote(),
+            ':' if !state.in_string => {} // Key complete, ready for value
+            ',' if !state.in_string => state.handle_pair_end(),
+            '}' if !state.in_string => {
+                state.handle_pair_end();
+                if let Some((id, content)) = state.finalize_object() {
+                    update_special_token(special, &content, id);
+                    vocab.insert(content.clone(), id);
+                    id_to_token.insert(id, content);
                 }
             }
-            _ if in_string => {
-                if in_key {
-                    current_key.push(c);
-                } else if in_value {
-                    current_value.push(c);
-                }
-            }
-            _ if !in_string && c.is_ascii_digit() && !current_key.is_empty() => {
-                current_value.push(c);
+            _ if state.in_string => state.handle_string_char(c),
+            _ if !state.in_string && c.is_ascii_digit() && !state.current_key.is_empty() => {
+                state.current_value.push(c);
             }
             _ => {}
         }
