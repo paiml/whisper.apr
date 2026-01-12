@@ -1,0 +1,35 @@
+# PMAT ignore patterns
+# Excludes non-source files from quality analysis
+
+# Generated files
+book/
+pkg/
+target/
+dist/
+
+# Python virtual environment
+scripts/venv/
+.venv/
+venv/
+
+# Node modules
+node_modules/
+
+# Test fixtures and data files
+tests/fixtures/
+*.safetensors
+*.bin
+*.gguf
+
+# Generated code
+*_data.rs
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

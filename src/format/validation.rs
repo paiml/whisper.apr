@@ -918,7 +918,7 @@ pub fn validate_apr_bytes(data: Vec<u8>) -> WhisperResult<ValidationReport> {
 /// # Errors
 /// Returns error if critical validation fails
 pub fn quick_validate(reader: &AprReader) -> WhisperResult<()> {
-    // Check decoder LN weight mean (the bug we found)
+    // Validate decoder layer norm weights are within expected statistical range
     if let Ok(data) = reader.load_tensor("decoder.layer_norm.weight") {
         let stats = TensorStats::compute("decoder.layer_norm.weight", &data);
         if stats.mean < 0.5 || stats.mean > 3.0 {
