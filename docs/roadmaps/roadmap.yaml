@@ -1273,3 +1273,19 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: WAPR-PERF-004
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PERF-004'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-20T11:16:32.359652923+00:00
+  updated: 2026-01-20T13:31:11.340178513+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null

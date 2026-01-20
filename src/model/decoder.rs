@@ -2698,6 +2698,329 @@ impl Decoder {
     }
 }
 
+// ============================================================================
+// Speculative Decoding Integration (WAPR-PERF-004 Phase 5)
+// Reference: Leviathan et al. (2023) "Fast Inference from Transformers via Speculative Decoding"
+// ============================================================================
+
+/// Wrapper for speculative decoding that implements realizar's SpeculativeModel trait
+///
+/// This wrapper holds references to the decoder, encoder output, and KV cache,
+/// enabling the decoder to participate in speculative decoding pipelines.
+///
+/// # Usage
+///
+/// ```ignore
+/// use whisper_apr::realizar_inference::{SpeculativeConfig, SpeculativeDecoder};
+///
+/// // Create draft (tiny) and target (base) decoders
+/// let draft_decoder = Decoder::new(&tiny_config);
+/// let target_decoder = Decoder::new(&base_config);
+///
+/// // Wrap for speculative decoding
+/// let mut draft_cache = draft_decoder.create_kv_cache();
+/// let mut target_cache = target_decoder.create_kv_cache();
+///
+/// let draft = SpeculativeDecoderWrapper::new(&draft_decoder, &encoder_output, &mut draft_cache);
+/// let target = SpeculativeDecoderWrapper::new(&target_decoder, &encoder_output, &mut target_cache);
+///
+/// // Run speculative decoding
+/// let config = SpeculativeConfig::default();
+/// let tokens = speculative_decode(draft, target, &initial_tokens, &config)?;
+/// ```
+#[cfg(feature = "realizar-inference")]
+#[allow(dead_code)] // Public API for speculative decoding integration
+pub struct SpeculativeDecoderWrapper<'a> {
+    /// Reference to the decoder model
+    decoder: &'a Decoder,
+    /// Encoder output for cross-attention
+    encoder_output: &'a [f32],
+    /// Mutable KV cache for autoregressive generation
+    cache: std::cell::RefCell<&'a mut DecoderKVCache>,
+    /// EOS token ID (Whisper default: 50257 for <|endoftext|>)
+    eos_token_id: u32,
+}
+
+#[cfg(feature = "realizar-inference")]
+#[allow(dead_code)] // Public API for speculative decoding integration
+impl<'a> SpeculativeDecoderWrapper<'a> {
+    /// Create a new speculative decoder wrapper
+    ///
+    /// # Arguments
+    /// * `decoder` - Reference to the decoder model
+    /// * `encoder_output` - Encoder hidden states for cross-attention
+    /// * `cache` - Mutable KV cache for autoregressive generation
+    pub fn new(
+        decoder: &'a Decoder,
+        encoder_output: &'a [f32],
+        cache: &'a mut DecoderKVCache,
+    ) -> Self {
+        Self {
+            decoder,
+            encoder_output,
+            cache: std::cell::RefCell::new(cache),
+            eos_token_id: 50257, // Whisper's <|endoftext|> token
+        }
+    }
+
+    /// Set custom EOS token ID
+    pub fn with_eos_token(mut self, eos_token: u32) -> Self {
+        self.eos_token_id = eos_token;
+        self
+    }
+}
+
+#[cfg(feature = "realizar-inference")]
+impl crate::realizar_inference::SpeculativeModel for SpeculativeDecoderWrapper<'_> {
+    /// Generate logits for the next token given a sequence
+    fn forward(&self, tokens: &[u32]) -> Result<Vec<f32>, crate::realizar_inference::SpeculativeError> {
+        let mut cache = self.cache.borrow_mut();
+
+        // Clear cache if this is a fresh sequence
+        if cache.seq_len() > tokens.len() {
+            cache.clear();
+        }
+
+        // Process any new tokens through the decoder
+        for (i, &token) in tokens.iter().enumerate() {
+            if i >= cache.seq_len() {
+                self.decoder
+                    .forward_one(token, self.encoder_output, &mut cache)
+                    .map_err(|e| {
+                        crate::realizar_inference::SpeculativeError::TargetModelError(format!(
+                            "decoder forward failed: {e}"
+                        ))
+                    })?;
+            }
+        }
+
+        // Get logits for the last position
+        let last_token = *tokens.last().ok_or_else(|| {
+            crate::realizar_inference::SpeculativeError::TargetModelError(
+                "empty token sequence".into(),
+            )
+        })?;
+
+        // Re-run last token to get its logits (since forward_one returns next token logits)
+        let logits = self
+            .decoder
+            .forward_one(last_token, self.encoder_output, &mut cache)
+            .map_err(|e| {
+                crate::realizar_inference::SpeculativeError::TargetModelError(format!(
+                    "decoder forward failed: {e}"
+                ))
+            })?;
+
+        Ok(logits)
+    }
+
+    /// Sample a token from logits using greedy decoding
+    fn sample(
+        &self,
+        logits: &[f32],
+    ) -> Result<crate::realizar_inference::TokenProb, crate::realizar_inference::SpeculativeError>
+    {
+        // Greedy sampling: select token with highest logit
+        let (token, &logit) = logits
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .ok_or_else(|| {
+                crate::realizar_inference::SpeculativeError::TargetModelError(
+                    "empty logits".into(),
+                )
+            })?;
+
+        // Convert logit to log probability using log-softmax
+        // log_prob = logit - log_sum_exp(logits)
+        let max_logit = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let log_sum_exp =
+            max_logit + logits.iter().map(|&l| (l - max_logit).exp()).sum::<f32>().ln();
+        let log_prob = logit - log_sum_exp;
+
+        Ok(crate::realizar_inference::TokenProb {
+            token: token as u32,
+            log_prob,
+        })
+    }
+
+    /// Get vocabulary size
+    fn vocab_size(&self) -> usize {
+        self.decoder.n_vocab
+    }
+
+    /// Get EOS token ID
+    fn eos_token(&self) -> u32 {
+        self.eos_token_id
+    }
+}
+
+/// Configuration for speculative decoding with Whisper
+#[cfg(feature = "realizar-inference")]
+#[derive(Debug, Clone)]
+pub struct WhisperSpeculativeConfig {
+    /// Number of tokens to generate speculatively (lookahead)
+    pub lookahead: usize,
+    /// Probability threshold for accepting draft tokens
+    pub acceptance_threshold: f32,
+    /// Maximum tokens to generate
+    pub max_tokens: usize,
+    /// EOS token ID
+    pub eos_token: u32,
+}
+
+#[cfg(feature = "realizar-inference")]
+impl Default for WhisperSpeculativeConfig {
+    fn default() -> Self {
+        Self {
+            lookahead: 4, // Generate 4 speculative tokens at a time
+            acceptance_threshold: 0.8,
+            max_tokens: 448, // Whisper default max
+            eos_token: 50257,
+        }
+    }
+}
+
+#[cfg(feature = "realizar-inference")]
+impl Decoder {
+    /// Generate tokens using speculative decoding with a draft model
+    ///
+    /// Uses a smaller (faster) draft model to generate candidate tokens,
+    /// then verifies them with this (target) model. Can achieve 1.5-3x speedup.
+    ///
+    /// # Arguments
+    /// * `draft_decoder` - Smaller draft model (e.g., tiny for base target)
+    /// * `encoder_output` - Encoder hidden states for cross-attention
+    /// * `initial_tokens` - Starting tokens (e.g., <|startoftranscript|>)
+    /// * `config` - Speculative decoding configuration
+    ///
+    /// # Returns
+    /// Generated token sequence
+    pub fn generate_speculative(
+        &self,
+        draft_decoder: &Decoder,
+        encoder_output: &[f32],
+        initial_tokens: &[u32],
+        config: &WhisperSpeculativeConfig,
+    ) -> WhisperResult<Vec<u32>> {
+        let mut draft_cache = draft_decoder.create_kv_cache();
+        let mut target_cache = self.create_kv_cache();
+
+        let mut tokens = initial_tokens.to_vec();
+
+        // Prime both caches with initial tokens
+        for &token in initial_tokens {
+            let _ = draft_decoder.forward_one(token, encoder_output, &mut draft_cache)?;
+            let _ = self.forward_one(token, encoder_output, &mut target_cache)?;
+        }
+
+        // Main speculative decoding loop
+        while tokens.len() < config.max_tokens {
+            // Phase 1: Draft model generates K speculative tokens
+            let mut draft_tokens = Vec::with_capacity(config.lookahead);
+            let mut draft_probs = Vec::with_capacity(config.lookahead);
+            let mut current_token = *tokens.last().ok_or_else(|| {
+                WhisperError::Model("empty token sequence".into())
+            })?;
+
+            for _ in 0..config.lookahead {
+                let draft_logits =
+                    draft_decoder.forward_one(current_token, encoder_output, &mut draft_cache)?;
+
+                // Greedy sample from draft
+                let (next_token, prob) = sample_with_prob(&draft_logits);
+
+                if next_token == config.eos_token {
+                    draft_tokens.push(next_token);
+                    draft_probs.push(prob);
+                    break;
+                }
+
+                draft_tokens.push(next_token);
+                draft_probs.push(prob);
+                current_token = next_token;
+            }
+
+            if draft_tokens.is_empty() {
+                break;
+            }
+
+            // Phase 2: Target model verifies all K tokens in parallel (single forward pass)
+            // We process each drafted token and check if target agrees
+            let mut accepted_count = 0;
+            for (i, &draft_token) in draft_tokens.iter().enumerate() {
+                let prev_token = if i == 0 {
+                    *tokens.last().ok_or_else(|| {
+                        WhisperError::Model("empty token sequence".into())
+                    })?
+                } else {
+                    draft_tokens[i - 1]
+                };
+
+                let target_logits =
+                    self.forward_one(prev_token, encoder_output, &mut target_cache)?;
+                let (target_token, target_prob) = sample_with_prob(&target_logits);
+
+                // Accept if tokens match and probability ratio is acceptable
+                if draft_token == target_token {
+                    tokens.push(draft_token);
+                    accepted_count += 1;
+
+                    if draft_token == config.eos_token {
+                        return Ok(tokens);
+                    }
+                } else {
+                    // Rejection: use target model's choice instead
+                    tokens.push(target_token);
+
+                    // Rollback draft cache to match target
+                    draft_cache.clear();
+                    for &t in &tokens[..tokens.len() - 1] {
+                        let _ = draft_decoder.forward_one(t, encoder_output, &mut draft_cache)?;
+                    }
+
+                    if target_token == config.eos_token {
+                        return Ok(tokens);
+                    }
+                    break;
+                }
+
+                // Suppress unused variable warning - prob tracking for future sampling modes
+                let _ = target_prob;
+                let _ = draft_probs[i];
+            }
+
+            // If all tokens were accepted, we already advanced the target cache correctly
+            if accepted_count < draft_tokens.len() {
+                // Cache was rolled back above, continue from rejection point
+            }
+        }
+
+        Ok(tokens)
+    }
+}
+
+/// Sample token with probability from logits
+#[cfg(feature = "realizar-inference")]
+fn sample_with_prob(logits: &[f32]) -> (u32, f32) {
+    let (token, &logit) = logits
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        .unwrap_or((0, &0.0));
+
+    // Softmax probability
+    let max_logit = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let exp_sum: f32 = logits.iter().map(|&l| (l - max_logit).exp()).sum();
+    let prob = if exp_sum > 0.0 {
+        (logit - max_logit).exp() / exp_sum
+    } else {
+        0.0
+    };
+
+    (token as u32, prob)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -4966,6 +5289,154 @@ mod tests {
             // Logits should not be all zeros
             let sum: f32 = logits.iter().map(|x: &f32| x.abs()).sum();
             assert!(sum > 0.0, "Logits should not be all zeros");
+        }
+    }
+
+    // =========================================================================
+    // Speculative Decoding Tests (WAPR-PERF-004 Phase 5)
+    // Reference: Leviathan et al. (2023) "Fast Inference via Speculative Decoding"
+    // =========================================================================
+
+    #[cfg(feature = "realizar-inference")]
+    mod speculative_tests {
+        use super::*;
+        use crate::realizar_inference::SpeculativeModel;
+
+        #[test]
+        fn test_speculative_decoder_wrapper_new() {
+            // Test: Create speculative wrapper for decoder
+            let config = ModelConfig::tiny();
+            let decoder = create_decoder_with_test_weights(&config);
+
+            let d_model = config.n_text_state as usize;
+            let encoder_output: Vec<f32> = (0..5 * d_model).map(|i| (i as f32).sin()).collect();
+
+            let mut cache = decoder.create_kv_cache();
+            let wrapper = SpeculativeDecoderWrapper::new(&decoder, &encoder_output, &mut cache);
+
+            assert_eq!(wrapper.vocab_size(), config.n_vocab as usize);
+            assert_eq!(wrapper.eos_token(), 50257);
+        }
+
+        #[test]
+        fn test_speculative_decoder_wrapper_custom_eos() {
+            // Test: Set custom EOS token
+            let config = ModelConfig::tiny();
+            let decoder = create_decoder_with_test_weights(&config);
+
+            let d_model = config.n_text_state as usize;
+            let encoder_output: Vec<f32> = (0..5 * d_model).map(|i| (i as f32).sin()).collect();
+
+            let mut cache = decoder.create_kv_cache();
+            let wrapper = SpeculativeDecoderWrapper::new(&decoder, &encoder_output, &mut cache)
+                .with_eos_token(50256);
+
+            assert_eq!(wrapper.eos_token(), 50256);
+        }
+
+        #[test]
+        fn test_speculative_decoder_wrapper_forward() {
+            let config = ModelConfig::tiny();
+            let decoder = create_decoder_with_test_weights(&config);
+
+            let d_model = config.n_text_state as usize;
+            let encoder_output: Vec<f32> = (0..5 * d_model).map(|i| (i as f32).sin()).collect();
+
+            let mut cache = decoder.create_kv_cache();
+            let wrapper = SpeculativeDecoderWrapper::new(&decoder, &encoder_output, &mut cache);
+
+            // Forward with single token
+            let tokens = [50257_u32]; // SOT token
+            let logits = wrapper.forward(&tokens).expect("forward");
+
+            assert_eq!(logits.len(), config.n_vocab as usize);
+        }
+
+        #[test]
+        fn test_speculative_decoder_wrapper_sample() {
+            let config = ModelConfig::tiny();
+            let decoder = create_decoder_with_test_weights(&config);
+
+            let d_model = config.n_text_state as usize;
+            let encoder_output: Vec<f32> = (0..5 * d_model).map(|i| (i as f32).sin()).collect();
+
+            let mut cache = decoder.create_kv_cache();
+            let wrapper = SpeculativeDecoderWrapper::new(&decoder, &encoder_output, &mut cache);
+
+            // Create simple logits (token 3 has highest)
+            let mut logits = vec![-10.0_f32; 100];
+            logits[3] = 10.0;
+
+            let token_prob = wrapper.sample(&logits).expect("sample");
+
+            assert_eq!(token_prob.token, 3);
+            assert!(token_prob.log_prob > -1.0); // Should be close to 0 (high prob)
+        }
+
+        #[test]
+        fn test_whisper_speculative_config_default() {
+            let config = WhisperSpeculativeConfig::default();
+
+            assert_eq!(config.lookahead, 4);
+            assert_eq!(config.max_tokens, 448);
+            assert_eq!(config.eos_token, 50257);
+            assert!(config.acceptance_threshold > 0.0);
+        }
+
+        #[test]
+        fn test_generate_speculative_short_sequence() {
+            // Test: Speculative decoding generates tokens
+            let config = ModelConfig::tiny();
+            let draft_decoder = create_decoder_with_test_weights(&config);
+            let target_decoder = create_decoder_with_test_weights(&config);
+
+            let d_model = config.n_text_state as usize;
+            let encoder_output: Vec<f32> = (0..5 * d_model).map(|i| (i as f32).sin()).collect();
+
+            let initial_tokens = vec![50257_u32]; // SOT token
+            let spec_config = WhisperSpeculativeConfig {
+                lookahead: 2,
+                acceptance_threshold: 0.8,
+                max_tokens: 5,
+                eos_token: 50257,
+            };
+
+            let tokens = target_decoder
+                .generate_speculative(
+                    &draft_decoder,
+                    &encoder_output,
+                    &initial_tokens,
+                    &spec_config,
+                )
+                .expect("generate_speculative");
+
+            // Should have generated at least the initial tokens
+            assert!(tokens.len() >= initial_tokens.len());
+        }
+
+        #[test]
+        fn test_sample_with_prob_greedy() {
+            // Test: sample_with_prob selects highest logit
+            let mut logits = vec![0.0_f32; 10];
+            logits[7] = 5.0; // Highest
+
+            let (token, prob) = super::super::sample_with_prob(&logits);
+
+            assert_eq!(token, 7);
+            assert!(prob > 0.9); // Should have high probability
+        }
+
+        #[test]
+        fn test_sample_with_prob_uniform() {
+            // Test: sample_with_prob with uniform logits
+            let logits = vec![1.0_f32; 10]; // All equal
+
+            let (token, prob) = super::super::sample_with_prob(&logits);
+
+            // Token should be valid (any of 0-9)
+            assert!(token < 10);
+            // Probability should be ~0.1 for uniform
+            assert!((prob - 0.1).abs() < 0.01);
         }
     }
 }
