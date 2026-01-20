@@ -197,6 +197,157 @@ measure_whisper_cpp() {
 
 ---
 
+### 2.3 Brick Profiling Integration (trueno BrickProfiler)
+
+The `transcribe-folder` command integrates with trueno's `BrickProfiler` v2 (PAR-200) for real profiling of each transcription. This enables:
+
+1. **Per-file timing breakdown** by brick category (Audio, Mel, Encoder, Decoder)
+2. **Batch statistics aggregation** across all processed files
+3. **Anomaly detection** via `ModelTracer` (NaN, explosion, vanishing gradients)
+4. **Budget validation** with Jidoka stop-the-line on violation
+
+#### 2.3.1 Brick Categories for Whisper
+
+| BrickId | Category | Budget (µs/token) | Description |
+|---------|----------|-------------------|-------------|
+| `AudioResample` | Audio | 5.0 | 16kHz resampling |
+| `MelFilterbank` | Audio | 10.0 | 80-bin mel spectrogram |
+| `EncoderConv` | Encoder | 15.0 | Conv1d x2 + GELU |
+| `EncoderAttn` | Encoder | 25.0 | Self-attention |
+| `EncoderFFN` | Encoder | 20.0 | Feed-forward network |
+| `DecoderAttn` | Decoder | 30.0 | Cross-attention to encoder |
+| `DecoderFFN` | Decoder | 20.0 | Feed-forward network |
+| `TokenDecode` | Decoder | 5.0 | BPE token decode |
+
+**Total budget per token:** 130 µs/token = **7,692 tok/s** target throughput
+
+#### 2.3.2 CLI Integration
+
+```bash
+# Enable brick profiling for batch transcription
+whisper-apr-cli transcribe-folder ./audio --output ./trans --profile
+
+# Output includes per-file and aggregate brick timing:
+# Processing: ./audio/file1.wav
+#   Audio:    15.2ms (Audio: 12.1ms, Mel: 3.1ms)
+#   Encoder:  45.3ms (Conv: 8.2ms, Attn: 22.1ms, FFN: 15.0ms)
+#   Decoder:  89.4ms (Attn: 52.3ms, FFN: 37.1ms)
+#   Total:    149.9ms (6,671 tok/s) ✓ BUDGET MET
+#
+# Batch Summary (10 files):
+#   Category      Avg (ms)   Pct    Budget Status
+#   Audio            14.8   10.2%   ✓ MET
+#   Encoder          46.1   31.8%   ✓ MET
+#   Decoder          84.2   58.0%   ✓ MET
+#   Total           145.1   -----   ✓ 6,893 tok/s avg
+```
+
+#### 2.3.3 Programmatic Usage
+
+```rust
+use trueno::{BrickProfiler, BrickId, SyncMode};
+use whisper_apr::TranscribeOptions;
+
+// Create profiler with deferred sync for minimal overhead
+let mut profiler = BrickProfiler::new();
+profiler.enable();
+profiler.set_sync_mode(SyncMode::Deferred);
+
+// Process batch with profiling
+for file in files {
+    profiler.reset_epoch();
+
+    // Audio preprocessing
+    let t = profiler.start_brick(BrickId::AudioResample);
+    let samples = load_and_resample(&file)?;
+    profiler.stop_brick(t, samples.len() as u64);
+
+    let t = profiler.start_brick(BrickId::MelFilterbank);
+    let mel = compute_mel(&samples)?;
+    profiler.stop_brick(t, mel.len() as u64);
+
+    // Encoder pass
+    let t = profiler.start_brick(BrickId::EncoderAttn);
+    let encoded = encoder.forward(&mel)?;
+    profiler.stop_brick(t, encoded.len() as u64);
+
+    // Decoder pass (per-token)
+    for token in decoded_tokens {
+        let t = profiler.start_brick(BrickId::DecoderAttn);
+        // ... decode ...
+        profiler.stop_brick(t, 1);
+    }
+
+    // Finalize epoch for this file
+    profiler.finalize(profiler.elapsed_ns());
+
+    // Check budget
+    if !profiler.budget_met(TokenBudget::from_latency(130.0)) {
+        eprintln!("[JIDOKA] Budget exceeded for {}", file.display());
+    }
+}
+
+// Print aggregate statistics
+println!("{}", profiler.report());
+```
+
+#### 2.3.4 ModelTracer for Anomaly Detection
+
+```rust
+use trueno::brick::{ModelTracer, ModelTracerConfig, TensorStats};
+
+// Lightweight tracing for production (activations + KV cache only)
+let config = ModelTracerConfig::lightweight();
+let mut tracer = ModelTracer::new(config);
+
+tracer.begin_forward(position);
+
+// After each encoder/decoder layer, check for anomalies
+for layer_idx in 0..num_layers {
+    let stats = TensorStats::from_slice(&layer_output);
+    tracer.record_layer_activation(layer_idx, stats);
+
+    if stats.has_anomaly() {
+        eprintln!("[ANOMALY] Layer {}: {}", layer_idx, stats.anomaly_description().unwrap());
+        // Jidoka: stop processing this file
+        break;
+    }
+}
+
+if let Some(anomaly) = tracer.end_forward() {
+    eprintln!("[ANOMALY] Forward pass: {}", anomaly);
+}
+```
+
+#### 2.3.5 Batch Output with Profiling
+
+When `--profile` is enabled, each output file includes timing metadata:
+
+```json
+{
+  "text": "Hello, world.",
+  "segments": [...],
+  "profiling": {
+    "total_ms": 149.9,
+    "tokens_per_sec": 6671,
+    "budget_met": true,
+    "breakdown": {
+      "audio_ms": 15.2,
+      "encoder_ms": 45.3,
+      "decoder_ms": 89.4
+    },
+    "bricks": [
+      {"id": "AudioResample", "avg_us": 1520, "count": 1},
+      {"id": "MelFilterbank", "avg_us": 3100, "count": 1},
+      {"id": "EncoderAttn", "avg_us": 2210, "count": 4},
+      {"id": "DecoderAttn", "avg_us": 523, "count": 100}
+    ]
+  }
+}
+```
+
+---
+
 ## 3. Optimization Strategies
 
 ### 3.1 CPU Optimizations (trueno 0.13.0)
@@ -503,6 +654,26 @@ The scientific method requires attempting to **falsify** hypotheses, not confirm
 | 109 | **Symlink loops** | Create circular link | Errors or halts safely |
 | 110 | **Space in path failure** | `My Documents/audio` | Handles spaces correctly |
 
+### Section I: Brick Profiling Falsification (Points 111-125)
+
+| # | Falsification Test | Method | Pass Criteria |
+|---|-------------------|--------|---------------|
+| 111 | **BrickProfiler not enabled** | Check `--profile` flag | Timing data present in output |
+| 112 | **Brick timing not real** | Compare to wall clock | Within 10% of Instant measurement |
+| 113 | **Category aggregation wrong** | Sum brick times | Audio + Encoder + Decoder = Total ±1% |
+| 114 | **Deferred sync overhead > 10%** | Profile with/without | Overhead < 10% |
+| 115 | **Budget violation not reported** | Exceed budget deliberately | Jidoka warning emitted |
+| 116 | **Throughput calculation wrong** | Manual calculation | tokens / time_us * 1M = tok/s |
+| 117 | **Per-file stats not isolated** | Process 2 files | Each file has separate stats |
+| 118 | **Batch aggregate wrong** | Sum file stats | Aggregate = sum of individual |
+| 119 | **NaN not detected in activations** | Inject NaN in layer output | Anomaly warning emitted |
+| 120 | **Explosion not detected** | Inject 1e10 value | Anomaly warning emitted |
+| 121 | **Vanishing gradient not detected** | Inject 1e-10 std | Anomaly warning emitted |
+| 122 | **Profiling JSON schema wrong** | Validate output JSON | Matches schema in §2.3.5 |
+| 123 | **BrickId enum incomplete** | Check all 8 Whisper bricks | All bricks have timing |
+| 124 | **Zero-overhead when disabled** | Profile without `--profile` | < 1% overhead |
+| 125 | **Profiling deterministic** | Run 10x same file | CV < 5% for each brick |
+
 ---
 
 ## 7. Implementation Roadmap
@@ -550,7 +721,7 @@ The scientific method requires attempting to **falsify** hypotheses, not confirm
 *Note: In the Popperian framework, a theory is never "done," only "provisionally corroborated" until falsified by a new test.*
 
 1. `scripts/perf-qa-2x-whisper-cpp.sh` exits 0
-2. **All 110 falsification points pass** (including new Folder/Path and Hallucination checks)
+2. **All 125 falsification points pass** (including Folder/Path, Hallucination, and Brick Profiling checks)
 3. **tiny CPU: RTF < 0.04x** (2x faster than whisper.cpp)
 4. **tiny GPU: RTF < 0.01x** (2x faster than whisper.cpp)
 5. **small CPU: RTF < 0.125x** (2x faster than whisper.cpp)
@@ -635,6 +806,83 @@ trueno-explain profile whisper-apr-cli transcribe --file audio.wav --gpu
 trueno-explain roofline whisper-apr-cli transcribe --file audio.wav
 ```
 
+## Appendix D: Brick Profiling Commands
+
+```bash
+# Single file with brick profiling
+whisper-apr-cli transcribe --file audio.wav --profile
+
+# Batch transcription with brick profiling
+whisper-apr-cli transcribe-folder ./audio --output ./trans --profile
+
+# Profile with JSON output (includes brick timing in each file)
+whisper-apr-cli transcribe-folder ./audio --output ./trans --profile --format json
+
+# Profile with budget validation (exit 1 if budget exceeded)
+whisper-apr-cli transcribe-folder ./audio --output ./trans --profile --strict-budget
+
+# Profile with anomaly detection enabled
+whisper-apr-cli transcribe-folder ./audio --output ./trans --profile --trace-anomalies
+
+# Generate aggregate profiling report
+whisper-apr-cli transcribe-folder ./audio --output ./trans --profile --report profile-report.json
+```
+
+### Interpreting Brick Profiling Output
+
+```
+=== Brick Profiling Report ===
+
+Per-Brick Timing (file: audio.wav):
+Brick              Avg (µs) Total (µs)    Count  Budget  Status
+-----------------------------------------------------------------
+AudioResample         4,823      4,823        1   5,000  ✓ MET
+MelFilterbank         9,241      9,241        1  10,000  ✓ MET
+EncoderConv          14,102     14,102        1  15,000  ✓ MET
+EncoderAttn          23,456     93,824        4  25,000  ✓ MET
+EncoderFFN           18,234     72,936        4  20,000  ✓ MET
+DecoderAttn          28,912  2,891,200      100  30,000  ✓ MET
+DecoderFFN           19,456  1,945,600      100  20,000  ✓ MET
+TokenDecode           4,234    423,400      100   5,000  ✓ MET
+
+Category Breakdown:
+Category       Avg (ms)      Pct    Samples
+--------------------------------------------
+Audio             14.1     0.3%          2
+Encoder          180.9     3.3%          8
+Decoder        5,260.2    96.4%        300
+--------------------------------------------
+Total          5,455.2   100.0%        310
+
+Throughput: 18,332 tok/s (Budget: 7,692 tok/s) ✓ 2.4x OVER BUDGET TARGET
+```
+
+### Programmatic Brick Report Access
+
+```rust
+use whisper_apr::cli::BatchProfileReport;
+
+let report = BatchProfileReport::from_folder("./trans")?;
+
+// Aggregate statistics
+println!("Files processed: {}", report.file_count);
+println!("Total tokens: {}", report.total_tokens);
+println!("Avg throughput: {:.0} tok/s", report.avg_throughput);
+
+// Per-brick breakdown
+for brick in &report.brick_stats {
+    println!("{}: {:.1}µs avg, {} calls",
+        brick.id.name(), brick.avg_us(), brick.count);
+}
+
+// Anomaly summary
+if report.has_anomalies() {
+    for anomaly in &report.anomalies {
+        println!("[ANOMALY] {}: {}", anomaly.file, anomaly.description);
+    }
+}
+```
+
 ---
 
-*This specification follows the Toyota Way principles and Popperian falsification methodology to systematically achieve and validate 2x performance improvement over whisper.cpp.*
+*This specification follows the Toyota Way principles and Popperian falsification methodology to systematically achieve and validate 2x performance improvement over whisper.cpp. The Brick Profiling integration leverages trueno's real profiling mandate (PAR-200) to ensure all performance measurements are measured, not derived.*

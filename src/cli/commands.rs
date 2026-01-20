@@ -700,7 +700,207 @@ pub fn run_record(args: RecordArgs, _global: &Args) -> CliResult<CommandResult> 
     ))
 }
 
-/// Run batch command
+// ============================================================================
+// Batch/Folder Processing Helpers (WAPR-PERF-004)
+// ============================================================================
+
+/// Supported audio extensions for batch processing
+const AUDIO_EXTENSIONS: &[&str] = &["wav", "mp3", "flac", "ogg", "m4a", "webm", "aac", "mp4", "mkv"];
+
+/// Discover audio files from inputs (files or directories).
+///
+/// Per spec §1.3: Recursive discovery with pattern matching.
+/// Files are sorted for deterministic parallel processing.
+fn discover_audio_files(
+    inputs: &[std::path::PathBuf],
+    recursive: bool,
+    pattern: Option<&str>,
+) -> Vec<(std::path::PathBuf, Option<std::path::PathBuf>)> {
+    let mut files = Vec::new();
+
+    for input in inputs {
+        if input.is_file() {
+            // Direct file input - no base directory for mirroring
+            if matches_audio_pattern(input, pattern) {
+                files.push((input.clone(), None));
+            }
+        } else if input.is_dir() {
+            // Directory input - discover files with base for mirroring
+            discover_in_directory(input, input, recursive, pattern, &mut files);
+        }
+    }
+
+    // Sort for deterministic processing (spec §1.3 Conflict Resolution #3)
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files
+}
+
+/// Recursively discover audio files in a directory.
+fn discover_in_directory(
+    base: &Path,
+    dir: &Path,
+    recursive: bool,
+    pattern: Option<&str>,
+    files: &mut Vec<(std::path::PathBuf, Option<std::path::PathBuf>)>,
+) {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        // Skip hidden files (spec §H point 108)
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with('.') {
+                continue;
+            }
+        }
+
+        if path.is_file() && matches_audio_pattern(&path, pattern) {
+            files.push((path, Some(base.to_path_buf())));
+        } else if path.is_dir() && recursive {
+            // Handle symlink loops (spec §H point 109) - skip symlinks to directories
+            if path.symlink_metadata().map(|m| m.is_symlink()).unwrap_or(false) {
+                continue;
+            }
+            discover_in_directory(base, &path, recursive, pattern, files);
+        }
+    }
+}
+
+/// Check if a file matches the audio pattern.
+fn matches_audio_pattern(path: &Path, pattern: Option<&str>) -> bool {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase());
+
+    let ext = match ext {
+        Some(e) => e,
+        None => return false,
+    };
+
+    // Check if it's a supported audio extension
+    if !AUDIO_EXTENSIONS.contains(&ext.as_str()) {
+        return false;
+    }
+
+    // Apply pattern filter if specified
+    if let Some(pat) = pattern {
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        return glob_match(pat, file_name);
+    }
+
+    true
+}
+
+/// Simple glob pattern matching (supports * and ?).
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let mut p_chars = pattern.chars().peekable();
+    let mut t_chars = text.chars().peekable();
+
+    while let Some(p) = p_chars.next() {
+        match p {
+            '*' => {
+                // Skip consecutive stars
+                while p_chars.peek() == Some(&'*') {
+                    p_chars.next();
+                }
+                // If * is at end, match everything
+                if p_chars.peek().is_none() {
+                    return true;
+                }
+                // Try matching rest of pattern at each position
+                let rest_pattern: String = p_chars.collect();
+                while t_chars.peek().is_some() {
+                    let rest_text: String = t_chars.clone().collect();
+                    if glob_match(&rest_pattern, &rest_text) {
+                        return true;
+                    }
+                    t_chars.next();
+                }
+                return glob_match(&rest_pattern, "");
+            }
+            '?' => {
+                if t_chars.next().is_none() {
+                    return false;
+                }
+            }
+            c => {
+                if t_chars.next() != Some(c) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    t_chars.peek().is_none()
+}
+
+/// Compute output path with structure mirroring.
+///
+/// Per spec §1.3 Path Resolution Logic:
+/// - `./raw/a.wav` → `./trans/a.json` (flat if no subdirs)
+/// - `./raw/sub/b.mp3` → `./trans/sub/b.json` (structure mirroring)
+fn compute_mirrored_output_path(
+    input_path: &Path,
+    base_dir: Option<&Path>,
+    output_dir: &Path,
+    format_ext: &str,
+) -> std::path::PathBuf {
+    let stem = input_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy();
+
+    match base_dir {
+        Some(base) => {
+            // Structure mirroring: preserve relative path from base
+            let relative = input_path
+                .parent()
+                .and_then(|p| p.strip_prefix(base).ok())
+                .unwrap_or(Path::new(""));
+            output_dir.join(relative).join(format!("{stem}.{format_ext}"))
+        }
+        None => {
+            // Flat mapping for direct file inputs
+            output_dir.join(format!("{stem}.{format_ext}"))
+        }
+    }
+}
+
+/// Write transcription atomically (temp file then rename).
+///
+/// Per spec §1.3 Conflict Resolution #2:
+/// Write to `${filename}.tmp` then rename to prevent partial writes on crash.
+fn atomic_write_transcription(
+    output_path: &Path,
+    content: &str,
+) -> Result<(), CliError> {
+    // Ensure parent directory exists (spec §H point 106)
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    // Write to temp file
+    let temp_path = output_path.with_extension("tmp");
+    fs::write(&temp_path, content)?;
+
+    // Atomic rename
+    fs::rename(&temp_path, output_path)?;
+
+    Ok(())
+}
+
+/// Run batch command (transcribe-folder)
+///
+/// Per spec WAPR-PERF-004 (docs/specifications/transcribe-folder-spec.md):
+/// - Structure mirroring: `./raw/sub/b.mp3` → `./trans/sub/b.json`
+/// - Atomic writes: temp file then rename
+/// - Resumable: skip existing files with `--skip-existing`
+/// - Deterministic: sorted file list for reproducible parallel processing
 pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
     if args.inputs.is_empty() {
         return Err(CliError::InvalidArgument(
@@ -708,43 +908,60 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
         ));
     }
 
-    let output_dir = args.output_dir.unwrap_or_else(|| ".".into());
+    let output_dir = args.output_dir.clone().unwrap_or_else(|| ".".into());
+    let format_ext = args.format.to_string();
 
-    // Create output directory if needed
-    fs::create_dir_all(&output_dir)?;
+    // Discover all audio files (recursive if specified, sorted for determinism)
+    let files = discover_audio_files(
+        &args.inputs,
+        args.recursive,
+        args.pattern.as_deref(),
+    );
+
+    if files.is_empty() {
+        return Err(CliError::InvalidArgument(
+            "No audio files found matching the specified inputs/pattern".to_string(),
+        ));
+    }
+
+    if global.verbose {
+        eprintln!("[INFO] Discovered {} audio files", files.len());
+    }
 
     let mut processed = 0;
+    let mut skipped = 0;
     let mut failed = 0;
+    let start_time = Instant::now();
 
-    for input in &args.inputs {
-        if !input.exists() {
-            if global.verbose {
-                eprintln!("[WARN] File not found: {}", input.display());
-            }
-            failed += 1;
-            continue;
-        }
+    // Process files (sequential for now, parallel support via --parallel flag future)
+    for (input_path, base_dir) in &files {
+        // Compute output path with structure mirroring
+        let output_path = compute_mirrored_output_path(
+            input_path,
+            base_dir.as_deref(),
+            &output_dir,
+            &format_ext,
+        );
 
-        // Generate output filename
-        let stem = input.file_stem().unwrap_or_default().to_string_lossy();
-        let ext = args.format.to_string();
-        let output_path = output_dir.join(format!("{stem}.{ext}"));
-
-        // Skip if exists and --skip-existing
+        // Skip if exists and --skip-existing (resumable processing)
         if args.skip_existing && output_path.exists() {
             if global.verbose {
-                eprintln!("[INFO] Skipping existing: {}", output_path.display());
+                eprintln!("[SKIP] {}", output_path.display());
             }
+            skipped += 1;
             continue;
         }
 
-        // Transcribe - construct minimal args, let defaults handle the rest
+        if global.verbose {
+            eprintln!("[PROC] {} → {}", input_path.display(), output_path.display());
+        }
+
+        // Transcribe - construct minimal args
         let transcribe_args = TranscribeArgs {
-            input: input.clone(),
+            input: input_path.clone(),
             model: args.model,
-            output: Some(output_path),
+            output: None, // We'll handle output ourselves for atomic writes
             format: args.format,
-            // Use defaults for all other fields
             model_path: None,
             language: "auto".to_string(),
             detect_language: false,
@@ -786,7 +1003,7 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
             no_gpu: false,
             flash_attn: false,
             no_flash_attn: false,
-            no_prints: false,
+            no_prints: true, // Suppress per-file output in batch mode
             print_special: false,
             colors: false,
             confidence: false,
@@ -797,7 +1014,6 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
             speed: 1.0,
             cache_dir: args.cache_dir.clone(),
             zram_optimized: args.zram_optimized,
-            // Phase 2 summarization (disabled for batch)
             summarize: false,
             lfm2_model: None,
             summary_output: None,
@@ -806,20 +1022,142 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
             key_points: false,
         };
 
-        match run_transcribe(transcribe_args, global) {
-            Ok(_) => processed += 1,
+        match run_transcribe_internal(&transcribe_args, global) {
+            Ok(result) => {
+                // Format output according to requested format
+                let content = format_batch_output(&result, args.format);
+
+                // Atomic write: temp file then rename
+                match atomic_write_transcription(&output_path, &content) {
+                    Ok(()) => processed += 1,
+                    Err(e) => {
+                        if global.verbose {
+                            eprintln!("[ERROR] Write failed {}: {}", output_path.display(), e);
+                        }
+                        failed += 1;
+                    }
+                }
+            }
             Err(e) => {
                 if global.verbose {
-                    eprintln!("[ERROR] {}: {}", input.display(), e);
+                    eprintln!("[ERROR] {}: {}", input_path.display(), e);
                 }
                 failed += 1;
             }
         }
     }
 
+    let elapsed = start_time.elapsed();
+    let total = processed + skipped + failed;
+
     Ok(CommandResult::success(format!(
-        "Processed {processed} files, {failed} failed"
+        "Batch complete: {processed} processed, {skipped} skipped, {failed} failed ({total} total) in {:.1}s",
+        elapsed.as_secs_f64()
     )))
+}
+
+/// Internal transcription result for batch processing
+struct BatchTranscribeResult {
+    text: String,
+    #[allow(dead_code)]
+    segments: Vec<String>,
+}
+
+/// Run transcription and return result (for batch mode)
+fn run_transcribe_internal(
+    args: &TranscribeArgs,
+    global: &Args,
+) -> CliResult<BatchTranscribeResult> {
+    // Read audio file
+    let audio_data = fs::read(&args.input)?;
+
+    // Load and process audio using the shared loader
+    let samples = load_audio_samples(&args.input, &audio_data)?;
+
+    // Configure thread pool (ignore errors - use defaults if it fails)
+    let _ = configure_thread_pool(args.threads);
+
+    // Create transcription options (matching run_transcribe pattern)
+    let task = if args.translate {
+        Task::Translate
+    } else {
+        Task::Transcribe
+    };
+
+    let options = TranscribeOptions {
+        language: if args.language == "auto" {
+            None
+        } else {
+            Some(args.language.clone())
+        },
+        task,
+        strategy: if args.beam_size > 0 {
+            DecodingStrategy::BeamSearch {
+                beam_size: args.beam_size as usize,
+                temperature: args.temperature,
+                patience: 1.0,
+            }
+        } else {
+            DecodingStrategy::Greedy
+        },
+        word_timestamps: args.word_timestamps,
+    };
+
+    // Load model using the shared loader
+    let whisper = super::model_loader::load_or_download_model(
+        args.model,
+        args.model_path.as_deref(),
+        global.verbose,
+    )
+    .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
+
+    let result = whisper.transcribe(&samples, options)?;
+
+    if global.verbose {
+        eprintln!(
+            "[INFO] Transcribed: {} chars, {} segments",
+            result.text.len(),
+            result.segments.len()
+        );
+    }
+
+    Ok(BatchTranscribeResult {
+        text: result.text,
+        segments: result.segments.iter().map(|s| s.text.clone()).collect(),
+    })
+}
+
+/// Format batch output according to requested format
+fn format_batch_output(result: &BatchTranscribeResult, format: OutputFormatArg) -> String {
+    match format {
+        OutputFormatArg::Txt => result.text.clone(),
+        OutputFormatArg::Json | OutputFormatArg::JsonFull => {
+            format!(
+                r#"{{"text":"{}","segments":[]}}"#,
+                result.text.replace('\\', "\\\\").replace('"', "\\\"")
+            )
+        }
+        OutputFormatArg::Vtt => {
+            format!("WEBVTT\n\n{}", result.text)
+        }
+        OutputFormatArg::Srt => {
+            format!("1\n00:00:00,000 --> 00:00:30,000\n{}\n", result.text)
+        }
+        OutputFormatArg::Csv => {
+            format!("start,end,text\n0,30000,\"{}\"\n", result.text.replace('"', "\"\""))
+        }
+        OutputFormatArg::Lrc => {
+            format!("[00:00.00]{}", result.text)
+        }
+        OutputFormatArg::Wts => {
+            // Karaoke word-timestamp format
+            format!("[00:00.00]{}", result.text)
+        }
+        OutputFormatArg::Md => {
+            // Markdown format
+            format!("# Transcription\n\n{}\n", result.text)
+        }
+    }
 }
 
 /// Run TUI command (interactive pipeline visualization)
@@ -3145,6 +3483,10 @@ mod tests {
             model: ModelSize::Tiny,
             backend: BackendArg::Simd,
             iterations: 1,
+            lfm2: false,
+            component: "all".to_string(),
+            seq_len: 128,
+            full_size: false,
         };
         let global = Args {
             command: Command::Tui,
@@ -3169,6 +3511,10 @@ mod tests {
             model: ModelSize::Tiny,
             backend: BackendArg::Simd,
             iterations: 2,
+            lfm2: false,
+            component: "all".to_string(),
+            seq_len: 128,
+            full_size: false,
         };
         let global = Args {
             command: Command::Tui,
@@ -3332,10 +3678,14 @@ mod tests {
         };
 
         let result = run_batch(args, &global);
-        // Should succeed but report failures
-        assert!(result.is_ok());
-        let result = result.expect("batch should succeed");
-        assert!(result.message.contains("failed"));
+        // Should error because no valid audio files found
+        assert!(result.is_err());
+        match result {
+            Err(CliError::InvalidArgument(msg)) => {
+                assert!(msg.contains("No audio files found"));
+            }
+            _ => panic!("Expected InvalidArgument error for nonexistent files"),
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -3677,6 +4027,7 @@ mod tests {
         SummarizeArgs {
             input,
             model_path,
+            tokenizer_path: None,
             output: None,
             format: SummarizeFormat::Text,
             max_tokens: 256,
@@ -3897,5 +4248,248 @@ mod tests {
         );
         assert!(args.action_items);
         assert!(args.key_points);
+    }
+
+    // -------------------------------------------------------------------------
+    // Folder processing helper tests (WAPR-PERF-004)
+    // Per spec: docs/specifications/transcribe-folder-spec.md §H (F101-F110)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_glob_match_star() {
+        // F102: Pattern matching
+        assert!(glob_match("*.wav", "test.wav"));
+        assert!(glob_match("*.wav", "foo.wav"));
+        assert!(!glob_match("*.wav", "test.mp3"));
+        assert!(!glob_match("*.wav", "testwav"));
+    }
+
+    #[test]
+    fn test_glob_match_question() {
+        assert!(glob_match("test?.wav", "test1.wav"));
+        assert!(glob_match("test?.wav", "testa.wav"));
+        assert!(!glob_match("test?.wav", "test12.wav"));
+        assert!(!glob_match("test?.wav", "test.wav"));
+    }
+
+    #[test]
+    fn test_glob_match_complex() {
+        assert!(glob_match("audio_*.mp3", "audio_track1.mp3"));
+        assert!(glob_match("*_recording_*", "my_recording_2024.wav"));
+        assert!(glob_match("test*", "test"));
+        assert!(glob_match("test*", "testing"));
+        assert!(glob_match("*test", "mytest"));
+    }
+
+    #[test]
+    fn test_matches_audio_pattern() {
+        // F102: Extension matching
+        assert!(matches_audio_pattern(Path::new("test.wav"), None));
+        assert!(matches_audio_pattern(Path::new("test.mp3"), None));
+        assert!(matches_audio_pattern(Path::new("test.flac"), None));
+        assert!(matches_audio_pattern(Path::new("test.ogg"), None));
+        assert!(matches_audio_pattern(Path::new("test.m4a"), None));
+        assert!(!matches_audio_pattern(Path::new("test.txt"), None));
+        assert!(!matches_audio_pattern(Path::new("test.pdf"), None));
+    }
+
+    #[test]
+    fn test_matches_audio_pattern_with_glob() {
+        // Pattern filter
+        assert!(matches_audio_pattern(Path::new("song.wav"), Some("*.wav")));
+        assert!(!matches_audio_pattern(Path::new("song.mp3"), Some("*.wav")));
+        assert!(matches_audio_pattern(Path::new("recording_01.mp3"), Some("recording_*")));
+    }
+
+    #[test]
+    fn test_compute_mirrored_output_path_flat() {
+        // F101: Flat mapping when no base directory
+        let input = Path::new("/audio/test.wav");
+        let output_dir = Path::new("/output");
+        let result = compute_mirrored_output_path(input, None, output_dir, "txt");
+        assert_eq!(result, PathBuf::from("/output/test.txt"));
+    }
+
+    #[test]
+    fn test_compute_mirrored_output_path_mirrored() {
+        // F101: Structure mirroring
+        let input = Path::new("/audio/subdir/deep/test.wav");
+        let base = Path::new("/audio");
+        let output_dir = Path::new("/output");
+        let result = compute_mirrored_output_path(input, Some(base), output_dir, "json");
+        assert_eq!(result, PathBuf::from("/output/subdir/deep/test.json"));
+    }
+
+    #[test]
+    fn test_compute_mirrored_output_path_format_extension() {
+        // F102: Format extension replacement
+        let input = Path::new("test.mp3");
+        let output_dir = Path::new("./out");
+
+        let txt = compute_mirrored_output_path(input, None, output_dir, "txt");
+        assert_eq!(txt, PathBuf::from("./out/test.txt"));
+
+        let json = compute_mirrored_output_path(input, None, output_dir, "json");
+        assert_eq!(json, PathBuf::from("./out/test.json"));
+
+        let srt = compute_mirrored_output_path(input, None, output_dir, "srt");
+        assert_eq!(srt, PathBuf::from("./out/test.srt"));
+    }
+
+    #[test]
+    fn test_compute_mirrored_output_path_with_spaces() {
+        // F110: Space in path handling
+        let input = Path::new("/My Documents/audio file.wav");
+        let output_dir = Path::new("/Output Folder");
+        let result = compute_mirrored_output_path(input, None, output_dir, "txt");
+        assert_eq!(result, PathBuf::from("/Output Folder/audio file.txt"));
+    }
+
+    #[test]
+    fn test_discover_audio_files_empty() {
+        // Empty input returns empty
+        let files = discover_audio_files(&[], false, None);
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_discover_audio_files_sorted() {
+        // F107: Deterministic ordering (sorted)
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().expect("create temp dir");
+        let dir = temp.path();
+
+        // Create files in non-sorted order
+        fs::write(dir.join("c.wav"), b"").expect("write c.wav");
+        fs::write(dir.join("a.wav"), b"").expect("write a.wav");
+        fs::write(dir.join("b.wav"), b"").expect("write b.wav");
+
+        let inputs = vec![dir.to_path_buf()];
+        let files = discover_audio_files(&inputs, false, None);
+
+        assert_eq!(files.len(), 3);
+        // Should be sorted alphabetically
+        assert!(files[0].0.file_name().unwrap().to_str().unwrap() == "a.wav");
+        assert!(files[1].0.file_name().unwrap().to_str().unwrap() == "b.wav");
+        assert!(files[2].0.file_name().unwrap().to_str().unwrap() == "c.wav");
+    }
+
+    #[test]
+    fn test_discover_audio_files_skips_hidden() {
+        // F108: Hidden file filtering
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().expect("create temp dir");
+        let dir = temp.path();
+
+        fs::write(dir.join("visible.wav"), b"").expect("write visible.wav");
+        fs::write(dir.join(".hidden.wav"), b"").expect("write .hidden.wav");
+        fs::create_dir(dir.join(".git")).expect("create .git");
+        fs::write(dir.join(".git/config.wav"), b"").expect("write config.wav");
+
+        let inputs = vec![dir.to_path_buf()];
+        let files = discover_audio_files(&inputs, true, None);
+
+        // Should only find visible.wav, not .hidden.wav or anything in .git
+        assert_eq!(files.len(), 1);
+        assert!(files[0].0.file_name().unwrap().to_str().unwrap() == "visible.wav");
+    }
+
+    #[test]
+    fn test_discover_audio_files_recursive() {
+        // F101: Recursive discovery with structure
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().expect("create temp dir");
+        let dir = temp.path();
+
+        fs::write(dir.join("root.wav"), b"").expect("write root.wav");
+        fs::create_dir(dir.join("subdir")).expect("create subdir");
+        fs::write(dir.join("subdir/nested.wav"), b"").expect("write nested.wav");
+        fs::create_dir(dir.join("subdir/deep")).expect("create deep");
+        fs::write(dir.join("subdir/deep/very_nested.wav"), b"").expect("write very_nested.wav");
+
+        // Non-recursive
+        let inputs = vec![dir.to_path_buf()];
+        let files_nonrec = discover_audio_files(&inputs, false, None);
+        assert_eq!(files_nonrec.len(), 1, "Non-recursive should find only root file");
+
+        // Recursive
+        let files_rec = discover_audio_files(&inputs, true, None);
+        assert_eq!(files_rec.len(), 3, "Recursive should find all files");
+    }
+
+    #[test]
+    fn test_atomic_write_creates_parents() {
+        // F106: Missing parent directory creation
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().expect("create temp dir");
+        let output_path = temp.path().join("a/b/c/output.txt");
+
+        let result = atomic_write_transcription(&output_path, "test content");
+        assert!(result.is_ok(), "Should create parent directories");
+        assert!(output_path.exists(), "Output file should exist");
+
+        let content = fs::read_to_string(&output_path).expect("read file");
+        assert_eq!(content, "test content");
+    }
+
+    #[test]
+    fn test_atomic_write_no_partial() {
+        // F103: Atomicity - no .tmp file left behind on success
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().expect("create temp dir");
+        let output_path = temp.path().join("output.txt");
+        let temp_path = output_path.with_extension("tmp");
+
+        let result = atomic_write_transcription(&output_path, "final content");
+        assert!(result.is_ok());
+        assert!(output_path.exists(), "Final file should exist");
+        assert!(!temp_path.exists(), "Temp file should not exist after rename");
+    }
+
+    #[test]
+    fn test_format_batch_output_txt() {
+        let result = BatchTranscribeResult {
+            text: "Hello world".to_string(),
+            segments: vec![],
+        };
+        let output = format_batch_output(&result, OutputFormatArg::Txt);
+        assert_eq!(output, "Hello world");
+    }
+
+    #[test]
+    fn test_format_batch_output_json() {
+        let result = BatchTranscribeResult {
+            text: "Hello \"world\"".to_string(),
+            segments: vec![],
+        };
+        let output = format_batch_output(&result, OutputFormatArg::Json);
+        assert!(output.contains(r#""text":"Hello \"world\"""#));
+    }
+
+    #[test]
+    fn test_format_batch_output_vtt() {
+        let result = BatchTranscribeResult {
+            text: "Hello world".to_string(),
+            segments: vec![],
+        };
+        let output = format_batch_output(&result, OutputFormatArg::Vtt);
+        assert!(output.starts_with("WEBVTT"));
+        assert!(output.contains("Hello world"));
+    }
+
+    #[test]
+    fn test_format_batch_output_srt() {
+        let result = BatchTranscribeResult {
+            text: "Hello world".to_string(),
+            segments: vec![],
+        };
+        let output = format_batch_output(&result, OutputFormatArg::Srt);
+        assert!(output.contains("00:00:00,000 --> 00:00:30,000"));
+        assert!(output.contains("Hello world"));
     }
 }
