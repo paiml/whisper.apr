@@ -114,9 +114,9 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
 name = "aprender"
-version = "0.24.0"
+version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1140494fee114ac8ae686c8d4e0d859b421c8e082e7a8c4a3f67d0e3f9e2754"
+checksum = "cbdcccadf867c37e6538dd179da518f4a9e55eb9efabcaec01323c3a12239e34"
 dependencies = [
  "bincode",
  "dirs 6.0.0",
@@ -1406,6 +1406,17 @@ dependencies = [
  "thiserror 2.0.17",
  "ureq",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "hostname"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "617aaa3557aef3810a6369d0a99fac8a080891b68bd9f9812a1eeda0c0730cbd"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "windows-link",
 ]
 
 [[package]]
@@ -2931,9 +2942,9 @@ dependencies = [
 
 [[package]]
 name = "realizar"
-version = "0.5.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21dbcc57265ee1a24c01a4145f4879cd572798d0318c2ab5677ccf215804977a"
+checksum = "c8d94b2028ee6df1087988a6a7404ad6edaaac67f12e3303f89d0d7a15b5e2f8"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3321,6 +3332,15 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_spanned"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -3903,6 +3923,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_edit",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.22.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_write",
+ "winnow",
+]
+
+[[package]]
+name = "toml_write"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
+
+[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4033,24 +4094,29 @@ dependencies = [
 
 [[package]]
 name = "trueno"
-version = "0.11.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a0756605a19a0b79f5dca9b61fba7e428c497abe9ebeac2ef91b39d90b6da91"
+checksum = "5ba5457f1f184520c46e6b315d540baa4cf2a2ae3d047e13001a4a23a12c6ab8"
 dependencies = [
  "anyhow",
  "bytemuck",
+ "chrono",
  "futures-intrusive",
+ "hostname",
  "num_cpus",
  "pollster",
+ "serde",
+ "serde_json",
  "thiserror 2.0.17",
+ "toml",
  "wgpu 27.0.1",
 ]
 
 [[package]]
 name = "trueno-gpu"
-version = "0.4.5"
+version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11adf9d98b8ebe9349d729c79bc755d6ec209a25d0fe03d7e2917db4811e4c93"
+checksum = "4608db87ec0921e0ebe8fb1461b73e01a9b79b1673801bdd5168316c4c1b5c21"
 dependencies = [
  "libloading",
  "thiserror 2.0.17",
@@ -5087,6 +5153,15 @@ name = "windows_x86_64_msvc"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
+
+[[package]]
+name = "winnow"
+version = "0.7.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a5364e9d77fcdeeaa6062ced926ee3381faa2ee02d3eb83a5c27a8825540829"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "wit-bindgen"
