@@ -129,6 +129,7 @@ pub enum Command {
     Record(RecordArgs),
 
     /// Process multiple files in parallel
+    #[command(alias = "transcribe-folder")]
     Batch(BatchArgs),
 
     /// Interactive terminal UI

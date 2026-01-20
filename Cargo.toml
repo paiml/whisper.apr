@@ -45,18 +45,18 @@ thiserror = "2"
 
 # SIMD acceleration (trueno integration)
 # Updated per WAPR-PERF-002: 0.11.0 has enhanced WASM SIMD, fused_layernorm_linear
-trueno = "0.11.0"
+trueno = "0.13.0"
 
 # Model format (aprender is the canonical .apr format library)
 # Note: safetensors-compare pulls hf-hub which doesn't support WASM
 # Use target-specific deps below to enable it only for native builds
 # Updated per WAPR-PERF-002: 0.21.0 has embedded mel filterbank support
-aprender = { version = "0.24", default-features = false }
+aprender = { version = "0.24.1", default-features = false }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
 # Updated per WAPR-PERF-002: 0.4.0 has PagedKvCache improvements for WASM
-realizar = { version = "0.5", optional = true, default-features = false }
+realizar = { version = "0.6.3", optional = true, default-features = false }
 
 # FFT for mel spectrogram computation
 rustfft = "6.2"
