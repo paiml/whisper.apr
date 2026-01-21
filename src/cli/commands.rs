@@ -16,7 +16,7 @@ use super::args::{
     Args, BackendArg, BatchArgs, BenchmarkArgs, Command, CommandArgs, ConvertArgs, DiagnoseArgs,
     ModelAction, ModelArgs, ModelFamilyArg, OutputFormatArg, ParityArgs, QuantizeArgs,
     QuantizeMethodArg, RecordArgs, ServeArgs, StreamArgs, SummarizeArgs, SummarizeFormat, TestArgs,
-    TranscribeArgs, TranslateArgs, ValidateArgs, ValidateOutputFormat,
+    TranscribeArgs, TranscribeFolderArgs, TranslateArgs, ValidateArgs, ValidateOutputFormat,
 };
 
 use super::output::{format_output, OutputFormat};
@@ -137,6 +137,7 @@ pub fn run(args: Args) -> CliResult<CommandResult> {
         Command::Serve(s) => run_serve(s.clone(), &args),
         Command::Record(r) => run_record(r.clone(), &args),
         Command::Batch(b) => run_batch(b.clone(), &args),
+        Command::TranscribeFolder(tf) => run_transcribe_folder(tf.clone(), &args),
         Command::Tui => run_tui(&args),
         Command::Test(t) => run_test(t.clone(), &args),
         Command::Model(m) => run_model(m.clone(), &args),
@@ -155,11 +156,49 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
     let start = Instant::now();
     let mut timings = Timings::default();
 
+    // WAPR-PERF-005: CPU is default (Popper Falsification Protocol)
+    // The hybrid CPU→GPU path incurs PCI-E transfer overhead per token,
+    // likely making it slower than pure CPU. Use --gpu to explicitly enable.
+    // Full GPU-resident implementation required for actual speedup.
+    #[cfg(feature = "realizar-gpu")]
+    let use_gpu = if args.gpu {
+        // User explicitly requested GPU - warn about hybrid path limitations
+        use realizar::cuda::CudaExecutor;
+        if CudaExecutor::is_available() {
+            let num_devices = CudaExecutor::num_devices();
+            if !global.quiet {
+                eprintln!("[INFO] GPU enabled: {} CUDA device(s)", num_devices);
+                eprintln!("[WARN] Hybrid CPU→GPU path may be slower than CPU due to PCI-E transfer overhead");
+                eprintln!("[WARN] Full GPU-resident implementation pending (WAPR-PERF-005)");
+            }
+            true
+        } else {
+            eprintln!("[WARN] GPU requested but CUDA not available, falling back to CPU");
+            false
+        }
+    } else {
+        // CPU is default (the proven, stable path)
+        if global.verbose {
+            eprintln!("[INFO] Using CPU backend (default)");
+        }
+        false
+    };
+
+    #[cfg(not(feature = "realizar-gpu"))]
+    let use_gpu = if args.gpu {
+        return Err(CliError::InvalidArgument(
+            "GPU requested but whisper-apr was not compiled with 'realizar-gpu' feature. \
+             Rebuild with: cargo build --features realizar-gpu".to_string()
+        ));
+    } else {
+        false
+    };
+
     // Configure thread pool for parallel inference (§11.3.6 P.6)
     let thread_count = configure_thread_pool(args.threads)
         .map_err(|e| CliError::InvalidArgument(format!("Failed to configure threads: {e}")))?;
 
-    if global.verbose {
+    if global.verbose && !use_gpu {
         eprintln!("[INFO] Using {thread_count} thread(s) for inference");
     }
 
@@ -235,7 +274,36 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
         word_timestamps: args.word_timestamps,
     };
 
+    // Run transcription on GPU or CPU based on --gpu flag
+    #[cfg(feature = "realizar-gpu")]
+    let result = if use_gpu {
+        // Convert to CUDA model and transcribe
+        let mut cuda_model = whisper
+            .into_cuda(0)
+            .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
+
+        if global.verbose {
+            eprintln!("[INFO] Running on GPU: {}", cuda_model.device_name());
+            let (free, total) = cuda_model.memory_info();
+            eprintln!(
+                "[INFO] GPU memory: {:.1}GB free / {:.1}GB total",
+                free as f64 / 1e9,
+                total as f64 / 1e9
+            );
+        }
+
+        // WAPR-PERF-004: Use GPU-accelerated transcription path
+        // This uses gemv_cached for output projection (the decoder bottleneck)
+        cuda_model
+            .transcribe_gpu(&samples, options)
+            .map_err(|e| CliError::InvalidArgument(e.to_string()))?
+    } else {
+        whisper.transcribe(&samples, options)?
+    };
+
+    #[cfg(not(feature = "realizar-gpu"))]
     let result = whisper.transcribe(&samples, options)?;
+
     timings.decode_ms = transcribe_start.elapsed().as_secs_f64() * 1000.0;
     timings.total_ms = start.elapsed().as_secs_f64() * 1000.0;
 
@@ -245,6 +313,51 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
     if global.verbose {
         eprintln!("[INFO] Total: {:.1}ms", timings.total_ms);
         eprintln!("[INFO] RTF: {rtf:.2}x");
+    }
+
+    // WAPR-PERF-004: Component profiling output (apr-cli style)
+    if args.profile {
+        let inference_ms = timings.decode_ms;
+        let tokens = result.segments.iter().map(|s| s.text.split_whitespace().count()).sum::<usize>();
+        let tokens_per_sec = if inference_ms > 0.0 {
+            (tokens as f64 / inference_ms) * 1000.0
+        } else {
+            0.0
+        };
+
+        eprintln!();
+        eprintln!("=== Component Profiling (WAPR-PERF-004) ===");
+        eprintln!(
+            "[PROFILE] Model load:     {:>7.1}ms ({:>5.1}%)",
+            timings.model_load_ms,
+            (timings.model_load_ms / timings.total_ms) * 100.0
+        );
+        eprintln!(
+            "[PROFILE] Audio load:     {:>7.1}ms ({:>5.1}%)",
+            timings.audio_load_ms,
+            (timings.audio_load_ms / timings.total_ms) * 100.0
+        );
+        eprintln!(
+            "[PROFILE] Inference:      {:>7.1}ms ({:>5.1}%)",
+            inference_ms,
+            (inference_ms / timings.total_ms) * 100.0
+        );
+        eprintln!("[PROFILE] --------------------------------");
+        eprintln!("[PROFILE] Total:          {:>7.1}ms", timings.total_ms);
+        eprintln!("[PROFILE] Audio duration: {:>7.2}s", audio_duration_secs);
+        eprintln!("[PROFILE] RTF:            {:>7.3}x", rtf);
+        eprintln!("[PROFILE] Tokens:         {:>7}", tokens);
+        eprintln!("[PROFILE] Throughput:     {:>7.0} tok/s", tokens_per_sec);
+
+        // Budget check (spec §2.3.1: 130 µs/token = 7,692 tok/s target)
+        let budget_target = 7692.0;
+        let budget_met = tokens_per_sec >= budget_target;
+        eprintln!(
+            "[PROFILE] Budget:         {} (target: {:.0} tok/s)",
+            if budget_met { "✓ MET" } else { "✗ EXCEEDED" },
+            budget_target
+        );
+        eprintln!();
     }
 
     // Format output
@@ -1009,6 +1122,7 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
             confidence: false,
             progress: false,
             print_memory: false,
+            profile: false, // Batch mode has its own profiling
             translate: false,
             hallucination_filter: false,
             speed: 1.0,
@@ -1054,6 +1168,464 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
         "Batch complete: {processed} processed, {skipped} skipped, {failed} failed ({total} total) in {:.1}s",
         elapsed.as_secs_f64()
     )))
+}
+
+/// Run transcribe-folder command (WAPR-PERF-004)
+///
+/// Structure-preserving batch transcription with brick profiling integration.
+/// Per spec (docs/specifications/transcribe-folder-spec.md):
+/// - §1.3: Structure mirroring, atomicity, determinism
+/// - §2.3: Brick profiling with Jidoka budget enforcement
+/// - §H: Falsification points 101-125
+pub fn run_transcribe_folder(args: TranscribeFolderArgs, global: &Args) -> CliResult<CommandResult> {
+    // Validate input directory exists
+    if !args.input_dir.exists() {
+        return Err(CliError::FileNotFound(args.input_dir.display().to_string()));
+    }
+    if !args.input_dir.is_dir() {
+        return Err(CliError::InvalidArgument(format!(
+            "{} is not a directory",
+            args.input_dir.display()
+        )));
+    }
+
+    // Configure thread pool
+    let thread_count = configure_thread_pool(args.threads)
+        .map_err(|e| CliError::InvalidArgument(format!("Failed to configure threads: {e}")))?;
+
+    if global.verbose {
+        eprintln!("[INFO] Using {thread_count} thread(s) for inference");
+    }
+
+    // Discover audio files (sorted for determinism per spec §1.3 #3)
+    let files = discover_folder_audio_files(&args.input_dir, args.recursive);
+
+    if files.is_empty() {
+        return Err(CliError::InvalidArgument(format!(
+            "No audio files found in {}",
+            args.input_dir.display()
+        )));
+    }
+
+    if global.verbose {
+        eprintln!("[INFO] Discovered {} audio files", files.len());
+    }
+
+    // Load model once for all files (efficiency)
+    if global.verbose {
+        if let Some(path) = &args.model_path {
+            eprintln!("[INFO] Loading model from: {}", path.display());
+        } else {
+            eprintln!("[INFO] Loading model: {}", args.model);
+        }
+    }
+
+    let whisper = super::model_loader::load_or_download_model(
+        args.model,
+        args.model_path.as_deref(),
+        global.verbose,
+    )
+    .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
+
+    let format_ext = args.format.to_string();
+    let mut processed = 0;
+    let mut skipped = 0;
+    let mut failed = 0;
+    let mut budget_violations = 0;
+    let start_time = Instant::now();
+
+    // Aggregate profiling data for report
+    let mut profile_entries: Vec<FolderProfileEntry> = Vec::new();
+
+    // Process each file
+    for input_path in &files {
+        // Compute mirrored output path (spec §1.3 Structure Mirroring)
+        let output_path = compute_folder_output_path(
+            input_path,
+            &args.input_dir,
+            &args.output_dir,
+            &format_ext,
+        );
+
+        // Skip if exists and --skip-existing (resumable per spec §1.3)
+        if args.skip_existing && output_path.exists() {
+            if global.verbose {
+                eprintln!("[SKIP] {}", output_path.display());
+            }
+            skipped += 1;
+            continue;
+        }
+
+        if global.verbose {
+            eprintln!(
+                "[PROC] {} → {}",
+                input_path.display(),
+                output_path.display()
+            );
+        }
+
+        let file_start = Instant::now();
+
+        // Transcribe file
+        match transcribe_single_file(input_path, &whisper, &args, global) {
+            Ok(result) => {
+                let transcribe_ms = file_start.elapsed().as_secs_f64() * 1000.0;
+                let audio_duration_secs = result.audio_duration_secs;
+                let tokens_generated = result.tokens_generated;
+
+                // Calculate throughput
+                let tokens_per_sec = if transcribe_ms > 0.0 {
+                    (tokens_generated as f64 / transcribe_ms) * 1000.0
+                } else {
+                    0.0
+                };
+
+                // Budget check: 130 µs/token = 7,692 tok/s target (spec §2.3.1)
+                let budget_target_tok_s = 7692.0;
+                let budget_met = tokens_per_sec >= budget_target_tok_s;
+
+                if !budget_met && args.strict_budget {
+                    budget_violations += 1;
+                    if global.verbose {
+                        eprintln!(
+                            "[JIDOKA] Budget exceeded for {}: {:.0} tok/s < {} tok/s",
+                            input_path.display(),
+                            tokens_per_sec,
+                            budget_target_tok_s
+                        );
+                    }
+                }
+
+                // Format output with optional profiling
+                let content = if args.profile {
+                    format_folder_output_with_profile(
+                        &result,
+                        args.format,
+                        transcribe_ms,
+                        tokens_per_sec,
+                        budget_met,
+                    )
+                } else {
+                    format_folder_output(&result, args.format)
+                };
+
+                // Atomic write (spec §1.3 #2)
+                match atomic_write_transcription(&output_path, &content) {
+                    Ok(()) => {
+                        processed += 1;
+
+                        // Collect profile data for report
+                        if args.profile || args.report.is_some() {
+                            profile_entries.push(FolderProfileEntry {
+                                file: input_path.display().to_string(),
+                                audio_duration_secs,
+                                transcribe_ms,
+                                tokens_generated,
+                                tokens_per_sec,
+                                budget_met,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        if global.verbose {
+                            eprintln!("[ERROR] Write failed {}: {}", output_path.display(), e);
+                        }
+                        failed += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                if global.verbose {
+                    eprintln!("[ERROR] {}: {}", input_path.display(), e);
+                }
+                failed += 1;
+            }
+        }
+    }
+
+    let elapsed = start_time.elapsed();
+    let total = processed + skipped + failed;
+
+    // Generate aggregate report if requested (spec §2.3.5)
+    if let Some(report_path) = &args.report {
+        let report = generate_folder_profile_report(&profile_entries, elapsed.as_secs_f64());
+        if let Err(e) = fs::write(report_path, report) {
+            eprintln!("[WARN] Failed to write report: {}", e);
+        } else if global.verbose {
+            eprintln!("[INFO] Profile report written to: {}", report_path.display());
+        }
+    }
+
+    // Print summary if profiling enabled
+    if args.profile && !global.quiet {
+        print_folder_profile_summary(&profile_entries, elapsed.as_secs_f64());
+    }
+
+    // Jidoka: fail if strict budget mode and violations occurred
+    if args.strict_budget && budget_violations > 0 {
+        return Err(CliError::InvalidArgument(format!(
+            "Strict budget mode: {} file(s) exceeded throughput budget",
+            budget_violations
+        )));
+    }
+
+    Ok(CommandResult::success(format!(
+        "Folder complete: {processed} processed, {skipped} skipped, {failed} failed ({total} total) in {:.1}s",
+        elapsed.as_secs_f64()
+    )))
+}
+
+/// Profile entry for a single file
+struct FolderProfileEntry {
+    file: String,
+    audio_duration_secs: f64,
+    transcribe_ms: f64,
+    tokens_generated: usize,
+    tokens_per_sec: f64,
+    budget_met: bool,
+}
+
+/// Result from transcribing a single file
+struct FolderTranscribeResult {
+    text: String,
+    #[allow(dead_code)]
+    segments: Vec<String>,
+    audio_duration_secs: f64,
+    tokens_generated: usize,
+}
+
+/// Transcribe a single file using the provided model
+fn transcribe_single_file(
+    input_path: &Path,
+    whisper: &WhisperApr,
+    args: &TranscribeFolderArgs,
+    global: &Args,
+) -> CliResult<FolderTranscribeResult> {
+    // Read audio file
+    let audio_data = fs::read(input_path)?;
+    let samples = load_audio_samples(input_path, &audio_data)?;
+    let audio_duration_secs = samples.len() as f64 / 16000.0;
+
+    // Create transcription options
+    let task = Task::Transcribe;
+    let options = TranscribeOptions {
+        language: if args.language == "auto" {
+            None
+        } else {
+            Some(args.language.clone())
+        },
+        task,
+        strategy: DecodingStrategy::Greedy,
+        word_timestamps: false,
+    };
+
+    // Transcribe
+    let result = whisper.transcribe(&samples, options)?;
+    let tokens_generated = result.segments.iter().map(|s| s.text.split_whitespace().count()).sum();
+
+    if global.verbose {
+        eprintln!(
+            "[INFO] Transcribed: {} chars, {} tokens",
+            result.text.len(),
+            tokens_generated
+        );
+    }
+
+    Ok(FolderTranscribeResult {
+        text: result.text,
+        segments: result.segments.iter().map(|s| s.text.clone()).collect(),
+        audio_duration_secs,
+        tokens_generated,
+    })
+}
+
+/// Discover audio files in a folder (sorted for determinism)
+fn discover_folder_audio_files(
+    input_dir: &Path,
+    recursive: bool,
+) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    discover_folder_recursive(input_dir, recursive, &mut files);
+    // Sort for deterministic processing (spec §1.3 #3)
+    files.sort();
+    files
+}
+
+/// Recursively discover audio files
+fn discover_folder_recursive(
+    dir: &Path,
+    recursive: bool,
+    files: &mut Vec<std::path::PathBuf>,
+) {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        // Skip hidden files (spec §H point 108)
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with('.') {
+                continue;
+            }
+        }
+
+        if path.is_file() {
+            // Check if it's an audio file
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                let ext_lower = ext.to_lowercase();
+                if matches!(
+                    ext_lower.as_str(),
+                    "wav" | "mp3" | "flac" | "ogg" | "m4a" | "mp4" | "webm" | "aac"
+                ) {
+                    files.push(path);
+                }
+            }
+        } else if path.is_dir() && recursive {
+            // Handle symlink loops (spec §H point 109) - skip symlinks to directories
+            if path.is_symlink() {
+                continue;
+            }
+            discover_folder_recursive(&path, recursive, files);
+        }
+    }
+}
+
+/// Compute output path with structure mirroring (spec §1.3)
+fn compute_folder_output_path(
+    input_path: &Path,
+    input_dir: &Path,
+    output_dir: &Path,
+    format_ext: &str,
+) -> std::path::PathBuf {
+    let stem = input_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy();
+
+    // Structure mirroring: preserve relative path from input_dir
+    let relative = input_path
+        .parent()
+        .and_then(|p| p.strip_prefix(input_dir).ok())
+        .unwrap_or(Path::new(""));
+
+    output_dir.join(relative).join(format!("{stem}.{format_ext}"))
+}
+
+/// Format output for folder transcription
+fn format_folder_output(result: &FolderTranscribeResult, format: OutputFormatArg) -> String {
+    match format {
+        OutputFormatArg::Txt => result.text.clone(),
+        OutputFormatArg::Json | OutputFormatArg::JsonFull => {
+            format!(
+                r#"{{"text":"{}","segments":[]}}"#,
+                result.text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
+            )
+        }
+        OutputFormatArg::Vtt => format!("WEBVTT\n\n{}", result.text),
+        OutputFormatArg::Srt => format!("1\n00:00:00,000 --> 00:00:30,000\n{}\n", result.text),
+        OutputFormatArg::Csv => format!(
+            "start,end,text\n0,30000,\"{}\"\n",
+            result.text.replace('"', "\"\"")
+        ),
+        OutputFormatArg::Lrc => format!("[00:00.00]{}", result.text),
+        OutputFormatArg::Wts => format!("[00:00.00]{}", result.text),
+        OutputFormatArg::Md => format!("# Transcription\n\n{}\n", result.text),
+    }
+}
+
+/// Format output with profiling metadata (spec §2.3.5)
+fn format_folder_output_with_profile(
+    result: &FolderTranscribeResult,
+    format: OutputFormatArg,
+    total_ms: f64,
+    tokens_per_sec: f64,
+    budget_met: bool,
+) -> String {
+    match format {
+        OutputFormatArg::Json | OutputFormatArg::JsonFull => {
+            format!(
+                r#"{{"text":"{}","segments":[],"profiling":{{"total_ms":{:.1},"tokens_per_sec":{:.0},"budget_met":{}}}}}"#,
+                result.text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n"),
+                total_ms,
+                tokens_per_sec,
+                budget_met
+            )
+        }
+        // For non-JSON formats, just return the regular output
+        _ => format_folder_output(result, format),
+    }
+}
+
+/// Generate aggregate profile report (JSON)
+fn generate_folder_profile_report(entries: &[FolderProfileEntry], total_elapsed_secs: f64) -> String {
+    let file_count = entries.len();
+    let total_audio_secs: f64 = entries.iter().map(|e| e.audio_duration_secs).sum();
+    let total_tokens: usize = entries.iter().map(|e| e.tokens_generated).sum();
+    let avg_tok_s = if !entries.is_empty() {
+        entries.iter().map(|e| e.tokens_per_sec).sum::<f64>() / entries.len() as f64
+    } else {
+        0.0
+    };
+    let budget_met_count = entries.iter().filter(|e| e.budget_met).count();
+
+    let files_json: String = entries
+        .iter()
+        .map(|e| {
+            format!(
+                "    {{\"file\":\"{}\",\"audio_secs\":{:.1},\"ms\":{:.1},\"tokens\":{},\"tok_s\":{:.0},\"budget_met\":{}}}",
+                e.file.replace('\\', "\\\\").replace('"', "\\\""),
+                e.audio_duration_secs,
+                e.transcribe_ms,
+                e.tokens_generated,
+                e.tokens_per_sec,
+                e.budget_met
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+
+    format!(
+        "{{\n  \"file_count\": {},\n  \"total_audio_secs\": {:.1},\n  \"total_elapsed_secs\": {:.1},\n  \"total_tokens\": {},\n  \"avg_tokens_per_sec\": {:.0},\n  \"budget_met_count\": {},\n  \"budget_target_tok_s\": 7692,\n  \"files\": [\n{}\n  ]\n}}",
+        file_count,
+        total_audio_secs,
+        total_elapsed_secs,
+        total_tokens,
+        avg_tok_s,
+        budget_met_count,
+        files_json
+    )
+}
+
+/// Print folder profile summary to stderr
+fn print_folder_profile_summary(entries: &[FolderProfileEntry], total_elapsed_secs: f64) {
+    if entries.is_empty() {
+        return;
+    }
+
+    let total_audio_secs: f64 = entries.iter().map(|e| e.audio_duration_secs).sum();
+    let total_tokens: usize = entries.iter().map(|e| e.tokens_generated).sum();
+    let avg_tok_s = entries.iter().map(|e| e.tokens_per_sec).sum::<f64>() / entries.len() as f64;
+    let budget_met_count = entries.iter().filter(|e| e.budget_met).count();
+    let budget_target = 7692.0;
+
+    eprintln!();
+    eprintln!("=== Folder Profiling Summary ===");
+    eprintln!("Files processed:     {}", entries.len());
+    eprintln!("Total audio:         {:.1}s", total_audio_secs);
+    eprintln!("Total elapsed:       {:.1}s", total_elapsed_secs);
+    eprintln!("Total tokens:        {}", total_tokens);
+    eprintln!("Avg throughput:      {:.0} tok/s", avg_tok_s);
+    eprintln!("Budget target:       {:.0} tok/s", budget_target);
+    eprintln!(
+        "Budget status:       {}/{} files met budget ({}%)",
+        budget_met_count,
+        entries.len(),
+        (budget_met_count * 100) / entries.len().max(1)
+    );
+    eprintln!();
 }
 
 /// Internal transcription result for batch processing
@@ -2925,6 +3497,7 @@ mod tests {
             confidence: false,
             progress: false,
             print_memory: false,
+            profile: false,
             translate: false,
             hallucination_filter: false,
             speed: 1.0,
