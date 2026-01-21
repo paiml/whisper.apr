@@ -3169,4 +3169,412 @@ mod tests {
         eprintln!("  - No NaN/Inf values");
         eprintln!("  - KV cache works across positions");
     }
+
+    /// WAPR-PERF-013 Point 156: GPU vs CPU Decoder Parity Test
+    ///
+    /// Compares GPU total offload decoder output vs CPU decoder for same input.
+    /// This is the critical test for detecting accumulation drift.
+    #[test]
+    #[cfg(feature = "cuda")]
+    fn test_gpu_vs_cpu_decoder_parity() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping parity test");
+            return;
+        }
+
+        let model_path = "models/whisper-tiny.apr";
+        if !std::path::Path::new(model_path).exists() {
+            eprintln!("Model not found at {}, skipping test", model_path);
+            return;
+        }
+
+        let audio_path = "demos/test-audio/test-speech-1.5s.wav";
+        if !std::path::Path::new(audio_path).exists() {
+            eprintln!("Audio not found at {}, skipping test", audio_path);
+            return;
+        }
+
+        eprintln!("\n=== WAPR-PERF-013 Point 156: GPU vs CPU Decoder Parity ===");
+
+        // Load model (compute mel before converting to CUDA)
+        let bytes = std::fs::read(model_path).expect("Failed to read model");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+
+        // Load audio and compute mel BEFORE into_cuda()
+        let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio");
+        let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+        let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
+
+        // Now convert to CUDA
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        // Run encoder (CPU is fine for this test)
+        let encoder_output = cuda_model.encoder.forward_mel(&mel).expect("Encoder failed");
+
+        let d_model = cuda_model.config().n_text_state as usize;
+        let n_layers = cuda_model.config().n_text_layer as usize;
+        let n_vocab = cuda_model.config().n_vocab as usize;
+        let max_len = cuda_model.config().n_text_ctx as usize;
+
+        eprintln!("Model: d_model={}, n_layers={}, n_vocab={}", d_model, n_layers, n_vocab);
+        eprintln!("Encoder output: {} elements", encoder_output.len());
+
+        // Test token: SOT (start of transcript)
+        let sot_token = 50258_u32; // Whisper SOT token
+
+        // === CPU Reference Path ===
+        let mut cpu_cache = crate::model::DecoderKVCache::new(n_layers, d_model, max_len);
+        let cpu_hidden = cuda_model.decoder.forward_one_hidden(
+            sot_token,
+            &encoder_output,
+            &mut cpu_cache
+        ).expect("CPU decoder failed");
+
+        // Get CPU logits
+        let cpu_logits = cuda_model.decoder.project_to_vocab_debug(&cpu_hidden);
+
+        // === GPU Path ===
+        cuda_model.reset_gpu_decoder_pos();
+        cuda_model.upload_decoder_weights_to_gpu().expect("Upload failed");
+        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init failed");
+
+        let gpu_logits = cuda_model.forward_one_gpu_total_offload(
+            sot_token,
+            &encoder_output
+        ).expect("GPU decoder failed");
+
+        // === Parity Check ===
+        let tolerance = 1e-3_f32; // Slightly looser for full path
+        let mut max_diff = 0.0_f32;
+        let mut diff_count = 0_usize;
+
+        // Find argmax for both
+        let cpu_argmax = cpu_logits.iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let gpu_argmax = gpu_logits.iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+
+        for (i, (cpu_val, gpu_val)) in cpu_logits.iter().zip(gpu_logits.iter()).enumerate() {
+            let diff: f32 = (*cpu_val - *gpu_val).abs();
+            if diff > max_diff {
+                max_diff = diff;
+            }
+            if diff > tolerance {
+                diff_count += 1;
+            }
+        }
+
+        eprintln!("CPU argmax: {} (token '{}')", cpu_argmax, cuda_model.tokenizer.decode(&[cpu_argmax as u32]).unwrap_or_default());
+        eprintln!("GPU argmax: {} (token '{}')", gpu_argmax, cuda_model.tokenizer.decode(&[gpu_argmax as u32]).unwrap_or_default());
+        eprintln!("Max absolute difference: {:.2e}", max_diff);
+        eprintln!("Elements exceeding {:.0e}: {}/{}", tolerance, diff_count, n_vocab);
+
+        // Critical: argmax must match for correct decoding
+        if cpu_argmax != gpu_argmax {
+            eprintln!("\n❌ ARGMAX MISMATCH: GPU decoder produces different token");
+            eprintln!("   This WILL cause divergent text output.");
+            panic!("GPU vs CPU decoder argmax mismatch: CPU={} GPU={}", cpu_argmax, gpu_argmax);
+        }
+
+        if max_diff > 0.1 {
+            eprintln!("\n⚠️ WARNING: Large numerical difference detected");
+            eprintln!("   This may cause drift over long sequences.");
+        }
+
+        eprintln!("\n✓ WAPR-PERF-013 Point 156: GPU vs CPU Decoder Parity PASSED");
+        eprintln!("  Argmax matches, max_diff={:.2e}", max_diff);
+    }
+
+    /// WAPR-PERF-013 Point 156b: Step-by-step divergence diagnostic
+    ///
+    /// Compares GPU vs CPU decoder at each computation stage to pinpoint
+    /// where numerical divergence begins.
+    #[test]
+    #[cfg(feature = "cuda")]
+    fn test_gpu_decoder_step_diagnostic() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping diagnostic test");
+            return;
+        }
+
+        let model_path = "models/whisper-tiny.apr";
+        if !std::path::Path::new(model_path).exists() {
+            eprintln!("Model not found at {}, skipping test", model_path);
+            return;
+        }
+
+        eprintln!("\n=== WAPR-PERF-013 Point 156b: Step-by-step Divergence Diagnostic ===");
+
+        // Load model
+        let bytes = std::fs::read(model_path).expect("Failed to read model");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        let d_model = cuda_model.config().n_text_state as usize;
+        let n_layers = cuda_model.config().n_text_layer as usize;
+        let n_vocab = cuda_model.config().n_vocab as usize;
+        let n_heads = cuda_model.config().n_text_head as usize;
+        let head_dim = d_model / n_heads;
+        let max_len = cuda_model.config().n_text_ctx as usize;
+
+        eprintln!("Model: d_model={}, n_heads={}, head_dim={}, n_layers={}", d_model, n_heads, head_dim, n_layers);
+
+        // Initialize GPU infrastructure
+        cuda_model.upload_decoder_weights_to_gpu().expect("Upload failed");
+        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init failed");
+
+        // Test token
+        let test_token = 50258_u32; // SOT
+        let pos = 0_usize;
+
+        // === Step 1: Token + Positional Embedding ===
+        let emb_start = (test_token as usize) * d_model;
+        let token_emb = cuda_model.decoder.token_embedding();
+        let pos_emb = cuda_model.decoder.positional_embedding();
+        let pos_start = pos * d_model;
+        let x: Vec<f32> = token_emb[emb_start..emb_start + d_model]
+            .iter()
+            .zip(&pos_emb[pos_start..pos_start + d_model])
+            .map(|(t, p)| t + p)
+            .collect();
+        eprintln!("\n[Step 1] Token+Pos Embedding: {} elements, sum={:.4}", x.len(), x.iter().sum::<f32>());
+
+        // === Step 2: LN1 for layer 0 ===
+        let block = &cuda_model.decoder.blocks()[0];
+        let normed = block.ln1.forward(&x).expect("LN1 failed");
+        eprintln!("[Step 2] LN1: sum={:.4}, first 5: {:?}", normed.iter().sum::<f32>(), &normed[..5]);
+
+        // === Step 3: CPU Q/K/V projections ===
+        let cpu_q = block.self_attn.w_q().forward(&normed, 1).expect("CPU Q failed");
+        let cpu_k = block.self_attn.w_k().forward(&normed, 1).expect("CPU K failed");
+        let cpu_v = block.self_attn.w_v().forward(&normed, 1).expect("CPU V failed");
+        eprintln!("[Step 3] CPU Q: sum={:.4}", cpu_q.iter().sum::<f32>());
+        eprintln!("         CPU K: sum={:.4}", cpu_k.iter().sum::<f32>());
+        eprintln!("         CPU V: sum={:.4}", cpu_v.iter().sum::<f32>());
+
+        // === Step 4: GPU Q/K/V projections ===
+        let ctx = cuda_model.executor.context();
+        let weights = cuda_model.gpu_decoder_weights.as_ref()
+            .expect("Weights not uploaded");
+        let layer_weights = &weights[0];
+
+        let x_gpu = GpuResidentTensor::from_host(ctx, &normed).expect("x upload");
+        let mut gpu_q = x_gpu.linear(ctx, &layer_weights.self_w_q, Some(&layer_weights.self_b_q), 1, d_model as u32, d_model as u32)
+            .expect("GPU Q failed");
+        let mut gpu_k = x_gpu.linear(ctx, &layer_weights.self_w_k, Some(&layer_weights.self_b_k), 1, d_model as u32, d_model as u32)
+            .expect("GPU K failed");
+        let mut gpu_v = x_gpu.linear(ctx, &layer_weights.self_w_v, Some(&layer_weights.self_b_v), 1, d_model as u32, d_model as u32)
+            .expect("GPU V failed");
+
+        let gpu_q_host = gpu_q.to_host().expect("Q download");
+        let gpu_k_host = gpu_k.to_host().expect("K download");
+        let gpu_v_host = gpu_v.to_host().expect("V download");
+        eprintln!("[Step 4] GPU Q: sum={:.4}", gpu_q_host.iter().sum::<f32>());
+        eprintln!("         GPU K: sum={:.4}", gpu_k_host.iter().sum::<f32>());
+        eprintln!("         GPU V: sum={:.4}", gpu_v_host.iter().sum::<f32>());
+
+        // Compare Q/K/V
+        let q_diff: f32 = cpu_q.iter().zip(gpu_q_host.iter()).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        let k_diff: f32 = cpu_k.iter().zip(gpu_k_host.iter()).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        let v_diff: f32 = cpu_v.iter().zip(gpu_v_host.iter()).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        eprintln!("[Step 4] Q diff: {:.2e}, K diff: {:.2e}, V diff: {:.2e}", q_diff, k_diff, v_diff);
+
+        if q_diff > 1e-4 || k_diff > 1e-4 || v_diff > 1e-4 {
+            eprintln!("\n❌ DIVERGENCE at Q/K/V projections!");
+            panic!("Q/K/V divergence: q={:.2e} k={:.2e} v={:.2e}", q_diff, k_diff, v_diff);
+        }
+
+        eprintln!("\n✓ Q/K/V projections match within 1e-4");
+
+        // === Step 5: CPU self-attention (for pos=0, just Q @ K^T @ V with single token) ===
+        // For position 0 with seq_len=1, self-attention is trivial:
+        // scores = Q @ K^T = [1, d] @ [d, 1] = [1, 1]
+        // softmax([1,1]) = [1.0]
+        // output = [1.0] @ V = V
+        eprintln!("\n[Step 5] CPU self-attention (pos=0, trivial case):");
+        let cpu_attn_out = cpu_v.clone(); // For single token at pos 0, output = V
+        eprintln!("         CPU attn out: sum={:.4}", cpu_attn_out.iter().sum::<f32>());
+
+        // === Step 6: GPU incremental attention ===
+        // First scatter K/V to caches
+        use trueno_gpu::driver::CudaStream;
+        let stream = CudaStream::new(ctx).expect("stream");
+        let self_k_caches = cuda_model.gpu_self_k_head_first.as_mut().unwrap();
+        let self_v_caches = cuda_model.gpu_self_v_head_first.as_mut().unwrap();
+
+        kv_cache_scatter_gpu(
+            ctx, &gpu_k, &mut self_k_caches[0],
+            pos as u32, n_heads as u32, head_dim as u32, max_len as u32, &stream
+        ).expect("K scatter");
+        kv_cache_scatter_gpu(
+            ctx, &gpu_v, &mut self_v_caches[0],
+            pos as u32, n_heads as u32, head_dim as u32, max_len as u32, &stream
+        ).expect("V scatter");
+
+        // Run incremental attention
+        let seq_len_attn = (pos + 1) as u32;
+        let mut gpu_attn_out = incremental_attention_gpu(
+            ctx, &gpu_q, &self_k_caches[0], &self_v_caches[0],
+            n_heads as u32, head_dim as u32, seq_len_attn, max_len as u32
+        ).expect("incremental attention");
+
+        let gpu_attn_host = gpu_attn_out.to_host().expect("attn download");
+        eprintln!("[Step 6] GPU attn out: sum={:.4}", gpu_attn_host.iter().sum::<f32>());
+
+        let attn_diff: f32 = cpu_attn_out.iter().zip(gpu_attn_host.iter())
+            .map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        eprintln!("[Step 6] Attention diff: {:.2e}", attn_diff);
+
+        if attn_diff > 1e-4 {
+            eprintln!("\n❌ DIVERGENCE at self-attention output!");
+            // Print first few elements to debug
+            eprintln!("CPU first 10: {:?}", &cpu_attn_out[..10]);
+            eprintln!("GPU first 10: {:?}", &gpu_attn_host[..10]);
+            panic!("Self-attention divergence: max={:.2e}", attn_diff);
+        }
+
+        eprintln!("\n✓ Self-attention output matches within 1e-4");
+
+        // === Step 7: Output projection (W_o) ===
+        eprintln!("\n[Step 7] Output projection (W_o):");
+        // CPU
+        let cpu_attn_proj = block.self_attn.w_o().forward(&cpu_attn_out, 1).expect("CPU W_o");
+        eprintln!("         CPU W_o out: sum={:.4}", cpu_attn_proj.iter().sum::<f32>());
+
+        // GPU
+        let mut gpu_attn_proj = gpu_attn_out.linear(ctx, &layer_weights.self_w_o, Some(&layer_weights.self_b_o), 1, d_model as u32, d_model as u32)
+            .expect("GPU W_o");
+        let gpu_attn_proj_host = gpu_attn_proj.to_host().expect("W_o download");
+        eprintln!("         GPU W_o out: sum={:.4}", gpu_attn_proj_host.iter().sum::<f32>());
+
+        let wo_diff: f32 = cpu_attn_proj.iter().zip(gpu_attn_proj_host.iter())
+            .map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        eprintln!("[Step 7] W_o diff: {:.2e}", wo_diff);
+
+        // === Step 8: Residual after self-attention ===
+        eprintln!("\n[Step 8] Residual after self-attention:");
+        let cpu_residual: Vec<f32> = x.iter().zip(cpu_attn_proj.iter()).map(|(a, b)| a + b).collect();
+        let gpu_residual: Vec<f32> = x.iter().zip(gpu_attn_proj_host.iter()).map(|(a, b)| a + b).collect();
+        eprintln!("         CPU residual: sum={:.4}", cpu_residual.iter().sum::<f32>());
+        eprintln!("         GPU residual: sum={:.4}", gpu_residual.iter().sum::<f32>());
+
+        // === Step 9: Compute CPU FFN (before mutable borrow) ===
+        // LN3 of residual
+        let ln3_out = block.ln3.forward(&cpu_residual).expect("LN3");
+        let ffn_out = block.ffn.forward(&ln3_out).expect("FFN");
+        let cpu_final: Vec<f32> = cpu_residual.iter().zip(ffn_out.iter()).map(|(a, b)| a + b).collect();
+        eprintln!("\n[Step 9] CPU (no cross-attn): sum={:.4}", cpu_final.iter().sum::<f32>());
+
+        // Now drop the immutable block borrow
+        drop(block);
+
+        // GPU path (no encoder output = no cross-attention)
+        eprintln!("[Step 9] GPU block forward (self-attention + FFN only):");
+        let gpu_block_out = cuda_model.forward_decoder_block_gpu(
+            0, &x, 0, None
+        ).expect("GPU block forward");
+        eprintln!("         GPU block out: sum={:.4}", gpu_block_out.iter().sum::<f32>());
+
+        let gpu_block_sum: f32 = gpu_block_out.iter().sum();
+        if gpu_block_sum.is_nan() || gpu_block_sum.is_infinite() {
+            panic!("GPU block output is NaN/Inf!");
+        }
+
+        // Note: GPU block uses a fresh KV cache scatter, so it's comparing apples to apples
+        let block_diff: f32 = cpu_final.iter().zip(gpu_block_out.iter())
+            .map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        eprintln!("[Step 9] Block diff (no cross-attn): {:.2e}", block_diff);
+
+        if block_diff > 1e-3 {
+            eprintln!("\n❌ DIVERGENCE at block level!");
+            eprintln!("CPU first 10: {:?}", &cpu_final[..10]);
+            eprintln!("GPU first 10: {:?}", &gpu_block_out[..10]);
+        }
+
+        eprintln!("\n✓ GPU decoder block diagnostic complete");
+        eprintln!("  W_o diff: {:.2e}", wo_diff);
+        eprintln!("  Block diff: {:.2e}", block_diff);
+
+        // === Step 10: Test with encoder output (cross-attention enabled) ===
+        eprintln!("\n[Step 10] Full path with cross-attention:");
+
+        // Create deterministic encoder output for testing (same as CPU will use)
+        let enc_seq_len = 1500;
+        let enc_output: Vec<f32> = (0..enc_seq_len * d_model)
+            .map(|i| (i as f32 * 0.001).sin())
+            .collect();
+        eprintln!("         Encoder output: {} elements", enc_output.len());
+
+        // === CPU Reference Path (using forward_block_cached logic) ===
+        // Get a fresh reference to the block
+        let block = &cuda_model.decoder.blocks()[0];
+
+        // Self-attention on CPU
+        let normed = block.ln1.forward(&x).expect("LN1");
+        let cpu_q = block.self_attn.w_q().forward(&normed, 1).expect("CPU Q");
+        let cpu_k = block.self_attn.w_k().forward(&normed, 1).expect("CPU K");
+        let cpu_v = block.self_attn.w_v().forward(&normed, 1).expect("CPU V");
+
+        // For single position, attention output = V
+        let cpu_attn = cpu_v.clone();
+        let cpu_attn_proj = block.self_attn.w_o().forward(&cpu_attn, 1).expect("CPU O");
+        let cpu_self_residual: Vec<f32> = x.iter().zip(cpu_attn_proj.iter()).map(|(a, b)| a + b).collect();
+
+        // Cross-attention on CPU
+        let normed2 = block.ln2.forward(&cpu_self_residual).expect("LN2");
+        let cpu_cross_out = block.cross_attn.forward_cross_dispatch(&normed2, &enc_output, None)
+            .expect("CPU cross-attn");
+        let cpu_cross_residual: Vec<f32> = cpu_self_residual.iter()
+            .zip(cpu_cross_out.iter()).map(|(a, b)| a + b).collect();
+
+        // FFN on CPU
+        let normed3 = block.ln3.forward(&cpu_cross_residual).expect("LN3");
+        let cpu_ffn_out = block.ffn.forward(&normed3).expect("FFN");
+        let cpu_block_out: Vec<f32> = cpu_cross_residual.iter()
+            .zip(cpu_ffn_out.iter()).map(|(a, b)| a + b).collect();
+        eprintln!("         CPU block (with cross-attn): sum={:.4}", cpu_block_out.iter().sum::<f32>());
+
+        // Drop block borrow before mutable call
+        drop(block);
+
+        // Reset GPU decoder position (important!)
+        cuda_model.reset_gpu_decoder_pos();
+
+        // Re-initialize KV caches (they were modified by step 9)
+        // Need to set to None first to force re-init
+        cuda_model.gpu_self_k_head_first = None;
+        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV");
+
+        // Run GPU block with encoder output
+        let gpu_cross_block_out = cuda_model.forward_decoder_block_gpu(
+            0, &x, 0, Some(&enc_output)
+        ).expect("GPU block with cross-attn");
+        eprintln!("         GPU block (with cross-attn): sum={:.4}", gpu_cross_block_out.iter().sum::<f32>());
+
+        // Compare outputs
+        let cross_block_diff: f32 = cpu_block_out.iter().zip(gpu_cross_block_out.iter())
+            .map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        eprintln!("[Step 10] Block diff (with cross-attn): {:.2e}", cross_block_diff);
+
+        if cross_block_diff > 1e-3 {
+            eprintln!("\n❌ DIVERGENCE at block level with cross-attention!");
+            eprintln!("CPU first 10: {:?}", &cpu_block_out[..10]);
+            eprintln!("GPU first 10: {:?}", &gpu_cross_block_out[..10]);
+        }
+
+        // Check for NaN/Inf
+        let gpu_cross_sum: f32 = gpu_cross_block_out.iter().sum();
+        if gpu_cross_sum.is_nan() || gpu_cross_sum.is_infinite() {
+            panic!("GPU block with cross-attention output is NaN/Inf!");
+        }
+
+        eprintln!("\n✓ GPU with cross-attention diagnostic complete");
+        eprintln!("  Block diff: {:.2e}", cross_block_diff);
+    }
 }
