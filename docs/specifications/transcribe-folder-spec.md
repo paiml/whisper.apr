@@ -1197,6 +1197,64 @@ TRUE BOTTLENECK: CPU Convolutional Frontend
 
 ---
 
+## Section N: WAPR-PERF-013 - Decoder GPU Residence Hypothesis
+
+### N.1 The Decoder Residence Hypothesis
+
+**Status**: ACTIVE - Under Investigation
+
+**Hypothesis**: The current decoder bottleneck is the **Ping-Pong Latency** between CPU blocks and GPU output projection. Moving the entire decoder sequence (Self-Attn, Cross-Attn, FFN) to GPU-resident execution will reduce per-token latency by >5x.
+
+**Context**: With the encoder optimized to 43ms, the decoder becomes the new "Dark Matter" hiding system-level performance gains. The autoregressive loop requires:
+- N tokens × (Self-Attn + Cross-Attn + FFN + Output Projection)
+- Current: CPU Self-Attn, CPU Cross-Attn, CPU FFN → GPU Output Projection → CPU sampling
+- Target: Full GPU residence with minimal host synchronization
+
+### N.2 Falsification Tests
+
+| # | Falsification Test | Method | Pass Criteria |
+|---|-------------------|--------|---------------|
+| 154 | **Decoder GPU Residence** | Move Self-Attn, Cross-Attn, FFN to GPU | **tokens/sec increase ≥3x** |
+| 155 | **Kernel Launch Overhead** | If Point 154 fails, measure kernel launch latency | **Launch overhead > 50% of token time** |
+| 156 | **KV Cache Residence** | Ensure incremental KV stays on GPU | **Zero D2H during decode loop** |
+| 157 | **Total System Target** | Full transcription vs whisper.cpp 992ms | **≤1984ms (2x target)** |
+
+### N.3 Jidoka Warning: Numerical Drift
+
+**Risk**: WMMA fragments in cross-attention may accumulate numerical drift in the incremental KV cache.
+
+**Monitoring Protocol**:
+1. Compare GPU cross-attention output vs CPU reference every 10 tokens
+2. Track max absolute difference in logits
+3. **STOP** if drift exceeds 1e-3 (indicates accumulation error)
+
+### N.4 Implementation Roadmap (Phase 3.1)
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ PHASE 3.1: DECODER GPU RESIDENCE                               │
+├────────────────────────────────────────────────────────────────┤
+│ Step 1: forward_decoder_block_gpu()                            │
+│   - Port decoder Self-Attention to GPU                         │
+│   - Port decoder Cross-Attention to GPU                        │
+│   - Port decoder FFN to GPU                                    │
+│   - Target: Single kernel launch per block                     │
+├────────────────────────────────────────────────────────────────┤
+│ Step 2: KV Cache GPU Residence                                 │
+│   - GpuResidentKVCache struct                                  │
+│   - IncrementalAttention with GPU-resident buffers             │
+│   - Scatter/gather for incremental updates                     │
+├────────────────────────────────────────────────────────────────┤
+│ Step 3: Autoregressive Loop Optimization                       │
+│   - Minimize host synchronization                              │
+│   - Batch argmax on GPU                                        │
+│   - Consider CUDA Graphs if Point 155 indicates launch         │
+│     overhead is dominant                                       │
+└────────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## 7. Implementation Roadmap
 
 *(Same as previous version)*
