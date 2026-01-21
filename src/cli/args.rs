@@ -129,8 +129,14 @@ pub enum Command {
     Record(RecordArgs),
 
     /// Process multiple files in parallel
-    #[command(alias = "transcribe-folder")]
     Batch(BatchArgs),
+
+    /// Transcribe all audio files in a folder (WAPR-PERF-004)
+    ///
+    /// Structure-preserving batch transcription with brick profiling.
+    /// Mirrors input directory structure to output directory.
+    #[command(alias = "folder")]
+    TranscribeFolder(TranscribeFolderArgs),
 
     /// Interactive terminal UI
     Tui,
@@ -402,6 +408,18 @@ pub struct TranscribeArgs {
     /// Print memory usage stats (whisper.cpp: -pm)
     #[arg(long = "print-memory")]
     pub print_memory: bool,
+
+    // -------------------------------------------------------------------------
+    // Profiling (WAPR-PERF-004)
+    // -------------------------------------------------------------------------
+    /// Enable component timing breakdown (mel, encoder, decoder)
+    ///
+    /// Outputs timing breakdown like apr-cli:
+    /// [PROFILE] Mel spectrogram:   15ms (2.5%)
+    /// [PROFILE] Encoder:          120ms (20.1%)
+    /// [PROFILE] Decoder:          450ms (75.5%)
+    #[arg(long)]
+    pub profile: bool,
 
     // -------------------------------------------------------------------------
     // Other
@@ -891,6 +909,115 @@ pub struct BatchArgs {
 
     /// Enable ZRAM-aware allocation for reduced memory usage
     /// Provides ~48% RAM reduction for batch transcription (515 MB → 267 MB)
+    #[arg(long = "zram-optimized")]
+    pub zram_optimized: bool,
+}
+
+/// Arguments for transcribe-folder command (WAPR-PERF-004)
+///
+/// Structure-preserving batch transcription with brick profiling integration.
+/// Per spec §1.3 (docs/specifications/transcribe-folder-spec.md):
+/// - Structure Mirroring: `./raw/sub/b.mp3` → `./trans/sub/b.json`
+/// - Atomic writes: Write to `${filename}.tmp` then rename
+/// - Resumable: Skip existing files
+/// - Deterministic: Sorted file list for reproducible parallel processing
+///
+/// # Example
+///
+/// ```bash
+/// whisper-apr-cli transcribe-folder \
+///     --input-dir ./raw_audio \
+///     --output-dir ./transcripts \
+///     --format json \
+///     --recursive \
+///     --workers 4 \
+///     --profile
+/// ```
+#[derive(Parser, Debug, Clone)]
+pub struct TranscribeFolderArgs {
+    /// Input directory containing audio files
+    #[arg(long = "input-dir", short = 'i')]
+    pub input_dir: PathBuf,
+
+    /// Output directory for transcriptions (structure mirrors input)
+    #[arg(long = "output-dir", short = 'o')]
+    pub output_dir: PathBuf,
+
+    /// Output format for transcription files
+    #[arg(long, short = 'f', default_value = "json")]
+    pub format: OutputFormatArg,
+
+    /// Process subdirectories recursively
+    #[arg(long, short = 'r')]
+    pub recursive: bool,
+
+    /// Number of parallel workers (default: number of CPU cores)
+    #[arg(long, short = 'w')]
+    pub workers: Option<usize>,
+
+    /// Model size to use
+    #[arg(long, short = 'm', default_value = "tiny")]
+    pub model: ModelSize,
+
+    /// Path to .apr model file (overrides --model)
+    #[arg(long)]
+    pub model_path: Option<PathBuf>,
+
+    /// Source language (ISO 639-1) or 'auto' for detection
+    #[arg(long, short = 'l', default_value = "auto")]
+    pub language: String,
+
+    /// Skip files that already have transcriptions
+    #[arg(long)]
+    pub skip_existing: bool,
+
+    // -------------------------------------------------------------------------
+    // Brick Profiling Integration (§2.3 of spec)
+    // -------------------------------------------------------------------------
+    /// Enable brick profiling (per-stage timing breakdown)
+    ///
+    /// When enabled, each output file includes profiling metadata:
+    /// audio_ms, encoder_ms, decoder_ms, tokens_per_sec, budget_met
+    #[arg(long)]
+    pub profile: bool,
+
+    /// Strict budget mode: exit with error if any file exceeds budget
+    ///
+    /// Jidoka (自働化) principle: Stop the line on defect.
+    /// Budget is 130 µs/token = 7,692 tok/s.
+    #[arg(long)]
+    pub strict_budget: bool,
+
+    /// Enable anomaly detection during inference
+    ///
+    /// Checks for NaN, explosion (>1e10), vanishing gradients (<1e-10)
+    /// in layer activations. Logs warnings on detection.
+    #[arg(long)]
+    pub trace_anomalies: bool,
+
+    /// Output file for aggregate profiling report (JSON)
+    #[arg(long)]
+    pub report: Option<PathBuf>,
+
+    // -------------------------------------------------------------------------
+    // GPU/Hardware options
+    // -------------------------------------------------------------------------
+    /// Use GPU acceleration
+    #[arg(long)]
+    pub gpu: bool,
+
+    /// Number of CPU threads (default: auto)
+    #[arg(long, short = 't')]
+    pub threads: Option<u32>,
+
+    // -------------------------------------------------------------------------
+    // ZRAM optimization (GitHub #8)
+    // -------------------------------------------------------------------------
+    /// Cache directory for models and intermediate data
+    #[arg(long = "cache-dir")]
+    pub cache_dir: Option<PathBuf>,
+
+    /// Enable ZRAM-aware allocation for reduced memory usage
     #[arg(long = "zram-optimized")]
     pub zram_optimized: bool,
 }
@@ -1802,5 +1929,163 @@ mod tests {
             }
             _ => panic!("Expected Batch command"),
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // TranscribeFolder tests (WAPR-PERF-004)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_transcribe_folder_minimal() {
+        let args = Args::try_parse_from([
+            "whisper-apr",
+            "transcribe-folder",
+            "--input-dir",
+            "./audio",
+            "--output-dir",
+            "./transcripts",
+        ]);
+        assert!(args.is_ok(), "Should parse minimal transcribe-folder");
+        let args = args.expect("test parse should succeed");
+        match args.command {
+            Command::TranscribeFolder(tf) => {
+                assert_eq!(tf.input_dir, PathBuf::from("./audio"));
+                assert_eq!(tf.output_dir, PathBuf::from("./transcripts"));
+                assert_eq!(tf.format, OutputFormatArg::Json);
+                assert_eq!(tf.model, ModelSize::Tiny);
+                assert!(!tf.recursive);
+                assert!(!tf.profile);
+            }
+            _ => panic!("Expected TranscribeFolder command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_transcribe_folder_alias() {
+        // Test the 'folder' alias
+        let args = Args::try_parse_from([
+            "whisper-apr",
+            "folder",
+            "-i",
+            "./audio",
+            "-o",
+            "./transcripts",
+        ]);
+        assert!(args.is_ok(), "Should parse 'folder' alias");
+        let args = args.expect("test parse should succeed");
+        assert!(matches!(args.command, Command::TranscribeFolder(_)));
+    }
+
+    #[test]
+    fn test_parse_transcribe_folder_all_options() {
+        let args = Args::try_parse_from([
+            "whisper-apr",
+            "transcribe-folder",
+            "--input-dir",
+            "./raw_audio",
+            "--output-dir",
+            "./trans",
+            "--format",
+            "json",
+            "--recursive",
+            "--workers",
+            "4",
+            "--model",
+            "base",
+            "--language",
+            "en",
+            "--skip-existing",
+            "--profile",
+            "--strict-budget",
+            "--trace-anomalies",
+            "--report",
+            "profile-report.json",
+            "--gpu",
+            "--threads",
+            "8",
+            "--zram-optimized",
+        ]);
+        assert!(args.is_ok(), "Should parse all transcribe-folder options");
+        let args = args.expect("test parse should succeed");
+        match args.command {
+            Command::TranscribeFolder(tf) => {
+                assert_eq!(tf.input_dir, PathBuf::from("./raw_audio"));
+                assert_eq!(tf.output_dir, PathBuf::from("./trans"));
+                assert_eq!(tf.format, OutputFormatArg::Json);
+                assert!(tf.recursive);
+                assert_eq!(tf.workers, Some(4));
+                assert_eq!(tf.model, ModelSize::Base);
+                assert_eq!(tf.language, "en");
+                assert!(tf.skip_existing);
+                assert!(tf.profile);
+                assert!(tf.strict_budget);
+                assert!(tf.trace_anomalies);
+                assert_eq!(tf.report, Some(PathBuf::from("profile-report.json")));
+                assert!(tf.gpu);
+                assert_eq!(tf.threads, Some(8));
+                assert!(tf.zram_optimized);
+            }
+            _ => panic!("Expected TranscribeFolder command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_transcribe_folder_short_flags() {
+        let args = Args::try_parse_from([
+            "whisper-apr",
+            "transcribe-folder",
+            "-i",
+            "./audio",
+            "-o",
+            "./out",
+            "-f",
+            "txt",
+            "-r",
+            "-w",
+            "2",
+            "-m",
+            "small",
+            "-l",
+            "fr",
+            "-t",
+            "4",
+        ]);
+        assert!(args.is_ok(), "Should parse short flags");
+        let args = args.expect("test parse should succeed");
+        match args.command {
+            Command::TranscribeFolder(tf) => {
+                assert_eq!(tf.input_dir, PathBuf::from("./audio"));
+                assert_eq!(tf.output_dir, PathBuf::from("./out"));
+                assert_eq!(tf.format, OutputFormatArg::Txt);
+                assert!(tf.recursive);
+                assert_eq!(tf.workers, Some(2));
+                assert_eq!(tf.model, ModelSize::Small);
+                assert_eq!(tf.language, "fr");
+                assert_eq!(tf.threads, Some(4));
+            }
+            _ => panic!("Expected TranscribeFolder command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_transcribe_folder_missing_input_dir() {
+        let args = Args::try_parse_from([
+            "whisper-apr",
+            "transcribe-folder",
+            "--output-dir",
+            "./out",
+        ]);
+        assert!(args.is_err(), "Should fail without --input-dir");
+    }
+
+    #[test]
+    fn test_parse_transcribe_folder_missing_output_dir() {
+        let args = Args::try_parse_from([
+            "whisper-apr",
+            "transcribe-folder",
+            "--input-dir",
+            "./audio",
+        ]);
+        assert!(args.is_err(), "Should fail without --output-dir");
     }
 }

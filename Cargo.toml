@@ -24,12 +24,12 @@ default = ["std", "simd", "realizar-inference"]
 std = []
 wasm = ["wasm-bindgen", "js-sys", "web-sys", "console_error_panic_hook"]
 webgpu = ["wgpu", "bytemuck", "tokio", "pollster"]
-cuda = ["trueno/gpu"]
+cuda = ["trueno/gpu", "dep:trueno-gpu", "trueno-gpu/cuda"]
 simd = []
 parallel = ["rayon", "wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
 converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs", "zip"]
-cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "half", "symphonia", "dirs"]
+cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "half", "symphonia", "dirs", "parallel"]
 # Multi-format audio decoding (MP3, FLAC, OGG, AAC, etc.)
 symphonia = ["dep:symphonia"]
 benchmark-tui = ["ratatui", "crossterm"]
@@ -37,7 +37,8 @@ tui = ["ratatui", "crossterm"]
 # Use realizar's world-class inference primitives (attention, quantization, caching)
 realizar-inference = ["dep:realizar"]
 # Enable realizar's CUDA backend (50x speedup via trueno-gpu)
-realizar-gpu = ["dep:realizar", "realizar/cuda"]
+# WAPR-PERF-004: Include cuda feature to enable GPU-resident tensor architecture
+realizar-gpu = ["dep:realizar", "realizar/cuda", "cuda"]
 
 [dependencies]
 # Core dependencies
@@ -46,6 +47,8 @@ thiserror = "2"
 # SIMD acceleration (trueno integration)
 # Updated per WAPR-PERF-002: 0.11.0 has enhanced WASM SIMD, fused_layernorm_linear
 trueno = "0.13.0"
+# GPU-resident tensor architecture (WAPR-PERF-004)
+trueno-gpu = { path = "../trueno/trueno-gpu", optional = true }
 
 # Model format (aprender is the canonical .apr format library)
 # Note: safetensors-compare pulls hf-hub which doesn't support WASM
@@ -174,3 +177,12 @@ harness = false
 name = "cli_benchmarks"
 harness = false
 
+
+# NOTE (WAPR-PERF-004): GPU-Resident Tensor integration requires:
+# 1. trueno-gpu 0.4.10+ (with GpuResidentTensor, batched_multihead_attention)
+# 2. realizar 0.6.10+ (updated trueno-gpu dependency)
+#
+# LOCAL TESTING - DO NOT PUBLISH UNTIL 2x WHISPER.CPP VERIFIED
+[patch.crates-io]
+trueno-gpu = { path = "../trueno/trueno-gpu" }
+realizar = { path = "../realizar" }

@@ -2942,9 +2942,7 @@ dependencies = [
 
 [[package]]
 name = "realizar"
-version = "0.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8d94b2028ee6df1087988a6a7404ad6edaaac67f12e3303f89d0d7a15b5e2f8"
+version = "0.6.8"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4114,9 +4112,7 @@ dependencies = [
 
 [[package]]
 name = "trueno-gpu"
-version = "0.4.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4608db87ec0921e0ebe8fb1461b73e01a9b79b1673801bdd5168316c4c1b5c21"
+version = "0.4.9"
 dependencies = [
  "libloading",
  "thiserror 2.0.17",
@@ -4751,6 +4747,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trueno",
+ "trueno-gpu",
  "wasm-bindgen",
  "wasm-bindgen-rayon",
  "web-sys",
