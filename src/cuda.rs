@@ -1076,6 +1076,53 @@ impl WhisperCuda {
         Ok(residual)
     }
 
+    /// WAPR-PERF-013: Full GPU decoder forward pass for single token
+    ///
+    /// Runs a single token through all decoder layers on GPU.
+    /// Uses head-first KV caches for zero-conversion attention.
+    ///
+    /// # Point 157 Compliance
+    ///
+    /// - Single H2D at start (token embedding)
+    /// - Minimal sync points (once per token, not per layer)
+    /// - Target: Full transcription ≤1984ms (2x whisper.cpp @ 992ms)
+    ///
+    /// # Parameters
+    ///
+    /// - `token_embedding`: Embedded token vector [d_model]
+    /// - `pos`: Current position in sequence
+    /// - `encoder_output`: Encoder hidden states for cross-attention
+    #[cfg(feature = "cuda")]
+    pub fn forward_decoder_token_gpu(
+        &mut self,
+        token_embedding: &[f32],
+        pos: usize,
+        encoder_output: &[f32],
+    ) -> WhisperResult<Vec<f32>> {
+        let n_layers = self.config.n_text_layer as usize;
+
+        // Ensure weights and KV caches are initialized
+        if self.gpu_decoder_weights.is_none() {
+            self.upload_decoder_weights_to_gpu()?;
+        }
+        if self.gpu_self_k_head_first.is_none() {
+            self.init_gpu_decoder_kv_cache_head_first()?;
+        }
+
+        // Process through all layers
+        let mut hidden = token_embedding.to_vec();
+        for layer_idx in 0..n_layers {
+            hidden = self.forward_decoder_block_gpu(
+                layer_idx,
+                &hidden,
+                pos,
+                Some(encoder_output),
+            )?;
+        }
+
+        Ok(hidden)
+    }
+
     /// Full GPU encoder (WAPR-PERF-004: Total Offload)
     ///
     /// Runs the entire encoder on GPU with minimal host transfers:
