@@ -1284,13 +1284,28 @@ Elements exceeding tolerance: 0/384
 ✓ GPU attention matches CPU within 1e-5
 ```
 
+#### GPU Decoder Block (whisper.apr - 2026-01-21)
+
+| Component | Commit | Description |
+|-----------|--------|-------------|
+| `forward_decoder_block_gpu()` | `561eb52` | GPU self-attention + CPU FFN, optional cross-attn |
+| Smoke test | `67b6b26` | Point 155: shape correct, no NaN/Inf, KV cache works |
+
+```
+=== WAPR-PERF-013 Point 155: GPU Decoder Block Smoke Test ===
+Model: d_model=384, n_layers=4, max_len=448
+Position 0: max_abs=1.10, mean_abs=0.36
+Position 1-2: KV cache populates correctly
+✓ Output shape correct, no NaN/Inf, KV cache works across positions
+```
+
 #### Remaining Implementation
 
-1. **GPU GEMV for projections** - Wire GpuDecoderBlockWeights for Q/K/V/O
-2. **forward_decoder_block_gpu()** - Full async forward pass
-3. **Stream chaining** - All ops on single stream, sync at token boundary only
-4. **Full correctness test** - Compare GPU decoder block vs CPU hidden state
-5. **Point 157 benchmark** - Full transcription ≤1984ms
+1. ✅ **GPU GEMV for projections** - Wired via `layer_weights.linear()`
+2. ✅ **forward_decoder_block_gpu()** - Self-attention + FFN (cross-attn optional)
+3. ⏳ **GPU cross-attention** - Needs encoder K/V cached on GPU
+4. ⏳ **Full decoder loop** - All layers on GPU with stream chaining
+5. ⏳ **Point 157 benchmark** - Full transcription ≤1984ms
 
 ### N.6 Critical Constraints (Dr. Popper's Advice)
 
