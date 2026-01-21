@@ -114,6 +114,21 @@ pub struct WhisperCuda {
     /// WAPR-PERF-013: GPU-resident cross-attention KV cache (encoder K/V, per layer)
     #[cfg(feature = "cuda")]
     gpu_cross_kv_cache: Option<Vec<GpuKvCache>>,
+    /// WAPR-PERF-013: Head-first self-attention K cache [n_heads, max_seq_len, head_dim]
+    #[cfg(feature = "cuda")]
+    gpu_self_k_head_first: Option<Vec<GpuResidentTensor<f32>>>,
+    /// WAPR-PERF-013: Head-first self-attention V cache [n_heads, max_seq_len, head_dim]
+    #[cfg(feature = "cuda")]
+    gpu_self_v_head_first: Option<Vec<GpuResidentTensor<f32>>>,
+    /// WAPR-PERF-013: Head-first cross-attention K cache [n_heads, enc_seq_len, head_dim]
+    #[cfg(feature = "cuda")]
+    gpu_cross_k_head_first: Option<Vec<GpuResidentTensor<f32>>>,
+    /// WAPR-PERF-013: Head-first cross-attention V cache [n_heads, enc_seq_len, head_dim]
+    #[cfg(feature = "cuda")]
+    gpu_cross_v_head_first: Option<Vec<GpuResidentTensor<f32>>>,
+    /// WAPR-PERF-013: Current sequence position for decoder
+    #[cfg(feature = "cuda")]
+    gpu_decoder_pos: usize,
 }
 
 impl WhisperCuda {
@@ -249,6 +264,16 @@ impl WhisperCuda {
             gpu_self_kv_cache: None,
             #[cfg(feature = "cuda")]
             gpu_cross_kv_cache: None,
+            #[cfg(feature = "cuda")]
+            gpu_self_k_head_first: None,
+            #[cfg(feature = "cuda")]
+            gpu_self_v_head_first: None,
+            #[cfg(feature = "cuda")]
+            gpu_cross_k_head_first: None,
+            #[cfg(feature = "cuda")]
+            gpu_cross_v_head_first: None,
+            #[cfg(feature = "cuda")]
+            gpu_decoder_pos: 0,
         };
 
         // Initialize GPU KV caches for decoder self-attention
@@ -861,6 +886,68 @@ impl WhisperCuda {
         self.gpu_cross_kv_cache = Some(cross_kv_caches);
 
         Ok(())
+    }
+
+    /// WAPR-PERF-013: Initialize head-first KV caches for GPU decoder
+    ///
+    /// Creates KV caches in head-first layout [n_heads, max_seq_len, head_dim]
+    /// required by `incremental_attention_gpu`.
+    #[cfg(feature = "cuda")]
+    pub fn init_gpu_decoder_kv_cache_head_first(&mut self) -> WhisperResult<()> {
+        if self.gpu_self_k_head_first.is_some() {
+            return Ok(()); // Already initialized
+        }
+
+        let ctx = self.executor.context();
+        let d_model = self.config.n_text_state as usize;
+        let n_heads = self.config.n_text_head as usize;
+        let n_layers = self.config.n_text_layer as usize;
+        let head_dim = d_model / n_heads;
+        let max_seq_len = self.config.n_text_ctx as usize;
+        let enc_seq_len = 1500_usize; // Fixed for Whisper
+
+        // Head-first cache size: [n_heads, seq_len, head_dim]
+        let self_cache_size = n_heads * max_seq_len * head_dim;
+        let cross_cache_size = n_heads * enc_seq_len * head_dim;
+
+        let mut self_k_caches = Vec::with_capacity(n_layers);
+        let mut self_v_caches = Vec::with_capacity(n_layers);
+        let mut cross_k_caches = Vec::with_capacity(n_layers);
+        let mut cross_v_caches = Vec::with_capacity(n_layers);
+
+        for _layer in 0..n_layers {
+            // Self-attention caches
+            let zeros_self = vec![0.0f32; self_cache_size];
+            let k_self = GpuResidentTensor::from_host(ctx, &zeros_self)
+                .map_err(|e| WhisperError::Inference(format!("self K cache: {e}")))?;
+            let v_self = GpuResidentTensor::from_host(ctx, &zeros_self)
+                .map_err(|e| WhisperError::Inference(format!("self V cache: {e}")))?;
+            self_k_caches.push(k_self);
+            self_v_caches.push(v_self);
+
+            // Cross-attention caches
+            let zeros_cross = vec![0.0f32; cross_cache_size];
+            let k_cross = GpuResidentTensor::from_host(ctx, &zeros_cross)
+                .map_err(|e| WhisperError::Inference(format!("cross K cache: {e}")))?;
+            let v_cross = GpuResidentTensor::from_host(ctx, &zeros_cross)
+                .map_err(|e| WhisperError::Inference(format!("cross V cache: {e}")))?;
+            cross_k_caches.push(k_cross);
+            cross_v_caches.push(v_cross);
+        }
+
+        self.gpu_self_k_head_first = Some(self_k_caches);
+        self.gpu_self_v_head_first = Some(self_v_caches);
+        self.gpu_cross_k_head_first = Some(cross_k_caches);
+        self.gpu_cross_v_head_first = Some(cross_v_caches);
+        self.gpu_decoder_pos = 0;
+
+        Ok(())
+    }
+
+    /// WAPR-PERF-013: Reset decoder position for new sequence
+    #[cfg(feature = "cuda")]
+    pub fn reset_gpu_decoder_pos(&mut self) {
+        self.gpu_decoder_pos = 0;
     }
 
     /// Full GPU encoder (WAPR-PERF-004: Total Offload)
