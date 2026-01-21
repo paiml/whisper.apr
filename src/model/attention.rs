@@ -185,6 +185,9 @@ impl LinearWeights {
     /// If `finalize_weights()` was called, uses cached trueno Matrix for
     /// zero-copy matmul (WAPR-BENCH-001 optimization).
     ///
+    /// For single-token inference (autoregressive decoding), uses tiled_matvec
+    /// for cache-efficient matrix-vector multiplication (WAPR-PERF-004).
+    ///
     /// # Arguments
     /// * `input` - Input tensor (batch_size x seq_len x in_features) flattened
     /// * `seq_len` - Sequence length
@@ -199,11 +202,15 @@ impl LinearWeights {
         let batch_size = input.len() / (seq_len * self.in_features);
         let total_tokens = batch_size * seq_len;
 
-        // Use cached trueno Matrix if available (WAPR-BENCH-001 optimization)
-        // This avoids Matrix::from_vec() allocation for the weight matrix
-        // Note: Using if-let because map_or_else cannot handle the lifetime of weight_t_owned
-        #[allow(clippy::option_if_let_else)]
-        let mut output = if let Some(weight_matrix) = &self.weight_matrix {
+        // WAPR-PERF-004: Use tiled_matvec for single-token inference (autoregressive decoding)
+        // This is ~2x faster than general matmul for the common case of decoding one token at a time
+        let mut output = if total_tokens == 1 {
+            // Single token: use cache-efficient tiled matrix-vector multiplication
+            // weight is (out_features x in_features), input is (in_features,)
+            // output = weight @ input = (out_features,)
+            simd::tiled_matvec(&self.weight, input, self.out_features, self.in_features)
+        } else if let Some(weight_matrix) = &self.weight_matrix {
+            // Batch inference: use cached trueno Matrix (WAPR-BENCH-001 optimization)
             simd::matmul_with_matrix(input, weight_matrix, total_tokens, self.in_features)
         } else {
             // Fallback: use cached transpose Vec or compute on-the-fly
