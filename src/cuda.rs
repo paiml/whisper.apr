@@ -2615,6 +2615,146 @@ impl WhisperCuda {
         }
         eprintln!("");
     }
+
+    // ========================================================================
+    // WAPR-PERF-014: Stream-Optimized Decoder (CudaExecutor-based)
+    // ========================================================================
+    //
+    // Root cause of 10x slowdown: GpuResidentTensor creates new CUDA stream
+    // per operation (~40 streams per token). Fix: use CudaExecutor's persistent
+    // compute_stream for all operations.
+
+    /// WAPR-PERF-014: Upload decoder weights to CudaExecutor's weight_cache
+    ///
+    /// Unlike `upload_decoder_weights_to_gpu()` which stores in GpuResidentTensor,
+    /// this uploads to executor's weight_cache for use with `gemm_cached_async()`.
+    ///
+    /// # Naming Convention
+    ///
+    /// Weights are cached with names: `dec.L{layer}.{component}`
+    /// - `dec.L0.self_w_q` - Self-attention Q projection
+    /// - `dec.L0.ffn_fc1` - FFN first layer
+    #[cfg(feature = "cuda")]
+    pub fn upload_decoder_weights_to_executor(&mut self) -> WhisperResult<usize> {
+        let d_model = self.config.n_text_state as usize;
+        let n_layers = self.config.n_text_layer as usize;
+        let d_ff = d_model * 4;
+        let mut total_bytes = 0;
+
+        // Helper to transpose weight matrix from [rows, cols] to [cols, rows]
+        fn transpose_weights(weights: &[f32], rows: usize, cols: usize) -> Vec<f32> {
+            let mut transposed = vec![0.0_f32; weights.len()];
+            for r in 0..rows {
+                for c in 0..cols {
+                    transposed[c * rows + r] = weights[r * cols + c];
+                }
+            }
+            transposed
+        }
+
+        for layer_idx in 0..n_layers {
+            let block = &self.decoder.blocks()[layer_idx];
+
+            // Self-attention Q/K/V/O (transposed for GPU: [in, out])
+            let w_q_t = transpose_weights(&block.self_attn.w_q().weight, d_model, d_model);
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_w_q"), &w_q_t)
+                .map_err(|e| WhisperError::Inference(format!("dec self_w_q L{layer_idx}: {e}")))?;
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_b_q"), &block.self_attn.w_q().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec self_b_q L{layer_idx}: {e}")))?;
+
+            let w_k_t = transpose_weights(&block.self_attn.w_k().weight, d_model, d_model);
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_w_k"), &w_k_t)
+                .map_err(|e| WhisperError::Inference(format!("dec self_w_k L{layer_idx}: {e}")))?;
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_b_k"), &block.self_attn.w_k().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec self_b_k L{layer_idx}: {e}")))?;
+
+            let w_v_t = transpose_weights(&block.self_attn.w_v().weight, d_model, d_model);
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_w_v"), &w_v_t)
+                .map_err(|e| WhisperError::Inference(format!("dec self_w_v L{layer_idx}: {e}")))?;
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_b_v"), &block.self_attn.w_v().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec self_b_v L{layer_idx}: {e}")))?;
+
+            let w_o_t = transpose_weights(&block.self_attn.w_o().weight, d_model, d_model);
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_w_o"), &w_o_t)
+                .map_err(|e| WhisperError::Inference(format!("dec self_w_o L{layer_idx}: {e}")))?;
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_b_o"), &block.self_attn.w_o().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec self_b_o L{layer_idx}: {e}")))?;
+
+            // Cross-attention Q/K/V/O
+            let cross_w_q_t = transpose_weights(&block.cross_attn.w_q().weight, d_model, d_model);
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_w_q"), &cross_w_q_t)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_w_q L{layer_idx}: {e}")))?;
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_b_q"), &block.cross_attn.w_q().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_b_q L{layer_idx}: {e}")))?;
+
+            let cross_w_k_t = transpose_weights(&block.cross_attn.w_k().weight, d_model, d_model);
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_w_k"), &cross_w_k_t)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_w_k L{layer_idx}: {e}")))?;
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_b_k"), &block.cross_attn.w_k().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_b_k L{layer_idx}: {e}")))?;
+
+            let cross_w_v_t = transpose_weights(&block.cross_attn.w_v().weight, d_model, d_model);
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_w_v"), &cross_w_v_t)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_w_v L{layer_idx}: {e}")))?;
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_b_v"), &block.cross_attn.w_v().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_b_v L{layer_idx}: {e}")))?;
+
+            let cross_w_o_t = transpose_weights(&block.cross_attn.w_o().weight, d_model, d_model);
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_w_o"), &cross_w_o_t)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_w_o L{layer_idx}: {e}")))?;
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_b_o"), &block.cross_attn.w_o().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_b_o L{layer_idx}: {e}")))?;
+
+            // FFN weights (fc1: d_model -> d_ff, fc2: d_ff -> d_model)
+            let fc1_t = transpose_weights(&block.ffn.fc1.weight, d_ff, d_model);
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ffn_fc1"), &fc1_t)
+                .map_err(|e| WhisperError::Inference(format!("dec ffn_fc1 L{layer_idx}: {e}")))?;
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ffn_b1"), &block.ffn.fc1.bias)
+                .map_err(|e| WhisperError::Inference(format!("dec ffn_b1 L{layer_idx}: {e}")))?;
+
+            let fc2_t = transpose_weights(&block.ffn.fc2.weight, d_model, d_ff);
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ffn_fc2"), &fc2_t)
+                .map_err(|e| WhisperError::Inference(format!("dec ffn_fc2 L{layer_idx}: {e}")))?;
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ffn_b2"), &block.ffn.fc2.bias)
+                .map_err(|e| WhisperError::Inference(format!("dec ffn_b2 L{layer_idx}: {e}")))?;
+
+            // LayerNorm weights (gamma/beta)
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ln1_gamma"), &block.ln1.weight)
+                .map_err(|e| WhisperError::Inference(format!("dec ln1_gamma L{layer_idx}: {e}")))?;
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ln1_beta"), &block.ln1.bias)
+                .map_err(|e| WhisperError::Inference(format!("dec ln1_beta L{layer_idx}: {e}")))?;
+
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ln2_gamma"), &block.ln2.weight)
+                .map_err(|e| WhisperError::Inference(format!("dec ln2_gamma L{layer_idx}: {e}")))?;
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ln2_beta"), &block.ln2.bias)
+                .map_err(|e| WhisperError::Inference(format!("dec ln2_beta L{layer_idx}: {e}")))?;
+
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ln3_gamma"), &block.ln3.weight)
+                .map_err(|e| WhisperError::Inference(format!("dec ln3_gamma L{layer_idx}: {e}")))?;
+            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ln3_beta"), &block.ln3.bias)
+                .map_err(|e| WhisperError::Inference(format!("dec ln3_beta L{layer_idx}: {e}")))?;
+        }
+
+        // Output projection weights (token embedding)
+        let token_emb = self.decoder.token_embedding();
+        total_bytes += self.executor.load_weights("dec.output_proj", token_emb)
+            .map_err(|e| WhisperError::Inference(format!("dec output_proj: {e}")))?;
+
+        // Final layer norm
+        let ln_post = self.decoder.ln_post();
+        total_bytes += self.executor.load_weights("dec.ln_post_gamma", &ln_post.weight)
+            .map_err(|e| WhisperError::Inference(format!("dec ln_post_gamma: {e}")))?;
+        total_bytes += self.executor.load_weights("dec.ln_post_beta", &ln_post.bias)
+            .map_err(|e| WhisperError::Inference(format!("dec ln_post_beta: {e}")))?;
+
+        if std::env::var("WHISPER_DEBUG_GPU").is_ok() {
+            eprintln!("[WAPR-PERF-014] Uploaded {} decoder weight tensors ({:.2} MB) to executor",
+                self.executor.cached_weight_count(),
+                total_bytes as f64 / 1_048_576.0);
+        }
+
+        Ok(total_bytes)
+    }
 }
 
 #[cfg(test)]
@@ -3576,5 +3716,261 @@ mod tests {
 
         eprintln!("\n✓ GPU with cross-attention diagnostic complete");
         eprintln!("  Block diff: {:.2e}", cross_block_diff);
+    }
+
+    /// WAPR-PERF-014 Point 157: Full system integration benchmark
+    ///
+    /// Tests the complete GPU decoder pipeline and measures against the
+    /// 1984ms target (2x whisper.cpp @ 992ms).
+    ///
+    /// # Falsification Criteria
+    ///
+    /// - Point 157: Total time ≤1984ms
+    /// - Point 158: CPU/GPU overlap (async advantage)
+    /// - Accumulation Risk: WER matches CPU baseline
+    #[test]
+    #[cfg(feature = "cuda")]
+    fn test_full_system_integration_benchmark() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        // Load model
+        let model_path = std::env::var("WHISPER_MODEL_PATH")
+            .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/models/whisper-tiny.apr").to_string());
+
+        if !std::path::Path::new(&model_path).exists() {
+            eprintln!("Model not found at {}, skipping test", model_path);
+            return;
+        }
+
+        // Load test audio
+        let audio_path = std::env::var("WHISPER_TEST_AUDIO")
+            .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/demos/test-audio/test-speech-1.5s.wav").to_string());
+
+        if !std::path::Path::new(&audio_path).exists() {
+            eprintln!("Test audio not found at {}, skipping test", audio_path);
+            return;
+        }
+
+        eprintln!("\n============================================================");
+        eprintln!("WAPR-PERF-014 Point 157: Full System Integration Benchmark");
+        eprintln!("============================================================");
+        eprintln!("Model: {}", model_path);
+        eprintln!("Audio: {}", audio_path);
+        eprintln!("Target: ≤1984ms (2x whisper.cpp @ 992ms)");
+        eprintln!("============================================================\n");
+
+        // Load model
+        let bytes = std::fs::read(&model_path).expect("Failed to read model file");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+        let n_layers = apr.config().n_text_layer;
+        let d_model = apr.config().n_text_state;
+        eprintln!("[Model] {} layers, d_model={}", n_layers, d_model);
+
+        // Load audio
+        let audio_bytes = std::fs::read(&audio_path).expect("Failed to read audio file");
+        let wav_data = crate::audio::wav::parse_wav(&audio_bytes).expect("Failed to parse WAV");
+        eprintln!("[Audio] {} samples ({:.2}s @ {}Hz)",
+            wav_data.samples.len(),
+            wav_data.samples.len() as f64 / wav_data.sample_rate as f64,
+            wav_data.sample_rate);
+
+        // Compute mel spectrogram BEFORE into_cuda (WhisperApr method)
+        let mel = apr.compute_mel(&wav_data.samples).expect("Mel computation failed");
+        eprintln!("[Mel] {} frames", mel.len() / 80);
+
+        // Create CUDA model
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        // Upload weights to executor (WAPR-PERF-014)
+        let upload_start = std::time::Instant::now();
+        let weight_bytes = cuda_model.upload_decoder_weights_to_executor()
+            .expect("Failed to upload decoder weights");
+        let upload_time = upload_start.elapsed();
+        eprintln!("[Weights] {:.2} MB uploaded in {:?}", weight_bytes as f64 / 1_048_576.0, upload_time);
+
+        // Enable GPU decoder offload
+        std::env::set_var("WHISPER_GPU_DECODER_OFFLOAD", "1");
+
+        // Run transcription with timing
+        let options = crate::TranscribeOptions::default();
+
+        eprintln!("\n[Benchmark] Starting GPU decoder transcription...");
+        let total_start = std::time::Instant::now();
+
+        // Use the internal encoder + decoder path
+        // First encode on CPU (or GPU if enabled)
+        let encode_start = std::time::Instant::now();
+        let encoder_output = cuda_model.encoder.forward_mel(&mel).expect("Encoder failed");
+        let encode_time = encode_start.elapsed();
+        eprintln!("[Encoder] {:?}", encode_time);
+
+        // Decode using GPU total offload
+        let decode_start = std::time::Instant::now();
+
+        // Initialize GPU decoder
+        cuda_model.reset_gpu_decoder_pos();
+        cuda_model.upload_decoder_weights_to_gpu().expect("Upload decoder weights");
+        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache");
+
+        // Build initial tokens
+        use crate::tokenizer::special_tokens::SpecialTokens;
+        let specials = SpecialTokens::for_vocab_size(cuda_model.config().n_vocab as usize);
+        let mut tokens = vec![specials.sot];
+        if specials.is_multilingual {
+            tokens.push(specials.lang_base); // English
+        }
+        tokens.push(specials.transcribe);
+        tokens.push(specials.no_timestamps);
+
+        // Process initial tokens
+        for &token in &tokens {
+            let _ = cuda_model.forward_one_gpu_total_offload(token, &encoder_output)
+                .expect("Initial token forward failed");
+        }
+
+        // Generate tokens
+        let max_tokens = cuda_model.config().n_text_ctx as usize;
+        let mut token_times: Vec<u128> = Vec::new();
+
+        for gen_idx in 0..max_tokens.saturating_sub(tokens.len()) {
+            let last_token = *tokens.last().unwrap_or(&specials.sot);
+
+            let token_start = std::time::Instant::now();
+            let logits = cuda_model.forward_one_gpu_total_offload(last_token, &encoder_output)
+                .expect("Token forward failed");
+            let token_time = token_start.elapsed();
+            token_times.push(token_time.as_micros());
+
+            // Greedy decode
+            let next_token = logits
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(idx, _)| idx as u32)
+                .unwrap_or(specials.eot);
+
+            if next_token == specials.eot {
+                break;
+            }
+
+            tokens.push(next_token);
+        }
+
+        let decode_time = decode_start.elapsed();
+        let total_time = total_start.elapsed();
+
+        // Decode text
+        let text = cuda_model.tokenizer.decode_with_options(&tokens, true)
+            .expect("Decode failed");
+
+        eprintln!("\n============================================================");
+        eprintln!("RESULTS");
+        eprintln!("============================================================");
+        eprintln!("[Output] \"{}\"", text.trim());
+        eprintln!("[Tokens] {} generated", tokens.len() - 4); // Subtract initial tokens
+        eprintln!("");
+        eprintln!("[Timing]");
+        eprintln!("  Weight upload: {:?}", upload_time);
+        eprintln!("  Encoder:       {:?}", encode_time);
+        eprintln!("  Decoder:       {:?}", decode_time);
+        eprintln!("  TOTAL:         {:?}", total_time);
+        eprintln!("");
+
+        if !token_times.is_empty() {
+            let avg_token_us = token_times.iter().sum::<u128>() / token_times.len() as u128;
+            let min_token_us = *token_times.iter().min().unwrap_or(&0);
+            let max_token_us = *token_times.iter().max().unwrap_or(&0);
+            eprintln!("[Per-Token]");
+            eprintln!("  Average: {:.2}ms", avg_token_us as f64 / 1000.0);
+            eprintln!("  Min:     {:.2}ms", min_token_us as f64 / 1000.0);
+            eprintln!("  Max:     {:.2}ms", max_token_us as f64 / 1000.0);
+            eprintln!("  First 5: {:?}", token_times.iter().take(5).map(|t| format!("{:.1}ms", *t as f64 / 1000.0)).collect::<Vec<_>>());
+        }
+
+        eprintln!("");
+        eprintln!("[Point 157 Falsification]");
+        let total_ms = total_time.as_millis();
+        let target_ms = 1984;
+        if total_ms <= target_ms {
+            eprintln!("  ✓ PASSED: {}ms ≤ {}ms target", total_ms, target_ms);
+        } else {
+            eprintln!("  ✗ FAILED: {}ms > {}ms target ({:.1}x slower)", total_ms, target_ms, total_ms as f64 / target_ms as f64);
+        }
+        eprintln!("============================================================\n");
+
+        // Don't fail the test - this is a benchmark, not a correctness test
+        // The user will analyze the results
+    }
+
+    /// WAPR-PERF-014: Test executor-based weight upload
+    ///
+    /// Verifies that upload_decoder_weights_to_executor correctly uploads
+    /// all decoder weights to CudaExecutor's weight_cache.
+    #[test]
+    #[cfg(feature = "cuda")]
+    fn test_executor_weight_upload() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        // Load model
+        let model_path = std::env::var("WHISPER_MODEL_PATH")
+            .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/models/whisper-tiny.apr").to_string());
+
+        if !std::path::Path::new(&model_path).exists() {
+            eprintln!("Model not found at {}, skipping test", model_path);
+            return;
+        }
+
+        let bytes = std::fs::read(&model_path).expect("Failed to read model file");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+        let n_layers = apr.config().n_text_layer as usize;
+        let _d_model = apr.config().n_text_state as usize;
+
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        // Upload weights to executor
+        let start = std::time::Instant::now();
+        let bytes = cuda_model.upload_decoder_weights_to_executor()
+            .expect("Failed to upload weights");
+        let elapsed = start.elapsed();
+
+        eprintln!("[WAPR-PERF-014] Uploaded {:.2} MB in {:?}", bytes as f64 / 1_048_576.0, elapsed);
+
+        // Verify all expected weights are cached
+        let expected_weights_per_layer = vec![
+            "self_w_q", "self_b_q", "self_w_k", "self_b_k", "self_w_v", "self_b_v", "self_w_o", "self_b_o",
+            "cross_w_q", "cross_b_q", "cross_w_k", "cross_b_k", "cross_w_v", "cross_b_v", "cross_w_o", "cross_b_o",
+            "ffn_fc1", "ffn_b1", "ffn_fc2", "ffn_b2",
+            "ln1_gamma", "ln1_beta", "ln2_gamma", "ln2_beta", "ln3_gamma", "ln3_beta",
+        ];
+
+        for layer_idx in 0..n_layers {
+            for weight_name in &expected_weights_per_layer {
+                let full_name = format!("dec.L{layer_idx}.{weight_name}");
+                assert!(cuda_model.executor.has_weights(&full_name),
+                    "Missing weight: {}", full_name);
+            }
+        }
+
+        // Verify global weights
+        assert!(cuda_model.executor.has_weights("dec.output_proj"), "Missing output_proj");
+        assert!(cuda_model.executor.has_weights("dec.ln_post_gamma"), "Missing ln_post_gamma");
+        assert!(cuda_model.executor.has_weights("dec.ln_post_beta"), "Missing ln_post_beta");
+
+        // Expected weight count: n_layers * 26 per-layer + 3 global
+        let expected_count = n_layers * expected_weights_per_layer.len() + 3;
+        let actual_count = cuda_model.executor.cached_weight_count();
+        eprintln!("[WAPR-PERF-014] Expected {} weights, got {}", expected_count, actual_count);
+
+        // Note: actual_count may be higher due to encoder weights from earlier tests
+        assert!(actual_count >= expected_count,
+            "Not enough weights cached: expected at least {}, got {}", expected_count, actual_count);
+
+        eprintln!("✓ Executor weight upload test passed");
     }
 }
