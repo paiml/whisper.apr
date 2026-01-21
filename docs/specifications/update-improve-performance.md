@@ -637,7 +637,197 @@ The scientific method requires attempting to **falsify** hypotheses, not confirm
 
 ---
 
-## 10. Implementation Roadmap
+## 10. GPU-Resident Tensor Architecture (WAPR-PERF-004)
+
+### Problem Statement: GPU Ping-Pong Latency Wall
+
+**Systematic Falsifications (2026-01-20):**
+
+| Hypothesis | Experiment | Result | Root Cause |
+|------------|------------|--------|------------|
+| Decoder is bottleneck | InferenceTracer profiling | **FALSIFIED** | Decoder is 0.7% of time, encoder is 98.7% |
+| flash_attention_multi_head works | seq_len=1500, n_heads=6, head_dim=64 | **FALSIFIED** | CUDA_ERROR_UNKNOWN (code 700) |
+| Simple GPU gemm loop | 6-head attention via gemm + softmax | **FALSIFIED** | 0.76x slower (6.81s vs 5.15s) |
+
+**Root Cause Analysis (Five Whys):**
+
+| Level | Question | Answer |
+|-------|----------|--------|
+| Why 1 | Why is GPU encoder slower than CPU? | 0.76x speedup (slower) |
+| Why 2 | Why is CUDA gemm not helping? | ~150 host↔device transfers per forward pass |
+| Why 3 | Why so many transfers? | Tensor data ping-pongs: CPU→GPU for gemm, GPU→CPU for softmax, repeat |
+| Why 4 | Why not keep data on GPU? | trueno-gpu lacks GPU-resident tensor abstraction |
+| Why 5 | What's the fundamental fix? | Build GPU-Resident Tensor Architecture into trueno-gpu |
+
+**Architecture Decision:**
+
+| Component | Location | Rationale |
+|-----------|----------|-----------|
+| `GpuResidentTensor` | trueno-gpu | Core primitive - tensor stays on device |
+| `GpuMemoryPool` | trueno-gpu | Reusable allocations, avoid cudaMalloc overhead |
+| `batched_multihead_attention` | trueno-gpu | Single kernel for all heads (not N separate calls) |
+| `gpu_softmax` | trueno-gpu | Row-wise softmax on device (no CPU roundtrip) |
+| `GpuResidentExecutor` trait | realizar | Inference pattern with tracing hooks |
+
+**Future Model Benefits:** LLaMA, BERT, ViT, Conformer - all have multi-head attention with identical ping-pong problem.
+
+### TDD Implementation Plan (trueno-gpu)
+
+**Phase 1: GpuResidentTensor (Test-First)**
+
+```rust
+// Tests to write FIRST in trueno-gpu/tests/gpu_resident.rs
+#[test]
+fn test_gpu_tensor_stays_on_device() {
+    let tensor = GpuResidentTensor::new(&[1.0, 2.0, 3.0, 4.0], &device);
+    // Tensor created on GPU, no host copy
+    assert!(tensor.is_device_resident());
+    assert_eq!(tensor.host_transfers(), 0);
+}
+
+#[test]
+fn test_gpu_tensor_chain_operations() {
+    let a = GpuResidentTensor::new(&data_a, &device);
+    let b = GpuResidentTensor::new(&data_b, &device);
+    let c = a.matmul(&b); // Stays on GPU
+    let d = c.softmax(1); // Stays on GPU
+    let e = d.matmul(&v); // Stays on GPU
+    // Only transfer at the end
+    let result = e.to_host();
+    assert_eq!(a.host_transfers() + b.host_transfers() + c.host_transfers(), 0);
+}
+```
+
+**Phase 2: Batched Multi-Head Attention (Test-First)**
+
+```rust
+#[test]
+fn test_batched_attention_single_kernel() {
+    let q = GpuResidentTensor::new(&q_data, &device); // [seq, n_heads * head_dim]
+    let k = GpuResidentTensor::new(&k_data, &device);
+    let v = GpuResidentTensor::new(&v_data, &device);
+
+    let output = batched_multihead_attention(&q, &k, &v, n_heads, head_dim);
+
+    // Single kernel launch, not n_heads separate launches
+    assert_eq!(output.kernel_launches(), 1);
+    assert!(output.is_device_resident());
+}
+```
+
+**Phase 3: Memory Pool (Test-First)**
+
+```rust
+#[test]
+fn test_memory_pool_reuse() {
+    let pool = GpuMemoryPool::new(&device, 1024 * 1024); // 1MB pool
+
+    let a = pool.allocate::<f32>(1000);
+    let ptr_a = a.device_ptr();
+    drop(a);
+
+    let b = pool.allocate::<f32>(1000);
+    assert_eq!(b.device_ptr(), ptr_a); // Reused allocation
+    assert_eq!(pool.cuda_malloc_calls(), 1); // Only one real allocation
+}
+```
+
+### Performance Targets
+
+| Metric | Current | Target | Method |
+|--------|---------|--------|--------|
+| Encoder (1.5s audio) | 5150ms | <300ms | GPU-resident attention |
+| Host↔Device transfers | ~150 | 2 | Upload once, download once |
+| whisper.cpp ratio | 18.5x slower | 2x faster | Batched kernels |
+| Memory allocations | ~150 cudaMalloc | <10 | Memory pool |
+
+### Implementation Roadmap
+
+| Task | Location | Test File | Status |
+|------|----------|-----------|--------|
+| Write GpuResidentTensor tests | trueno-gpu | `tests/gpu_resident_tensor.rs` | :white_check_mark: **Done** (12 tests) |
+| Implement GpuResidentTensor core | trueno-gpu | `src/memory/resident.rs` | :white_check_mark: **Done** (4 tests pass) |
+| Implement tensor operations | trueno-gpu | `src/memory/resident.rs` | :white_check_mark: **Done** |
+| Write batched_attention tests | trueno-gpu | `tests/gpu_resident_tensor.rs` | :white_check_mark: **Done** (4 tests) |
+| Implement batched_attention | trueno-gpu | `src/memory/resident.rs` | :white_check_mark: **Done** |
+| TransposeKernel | trueno-gpu | `src/kernels/elementwise.rs` | :white_check_mark: **Done** |
+| GpuMemoryPool (existing) | trueno-gpu | `src/memory/pool.rs` | :white_check_mark: **Exists** |
+| Wire into whisper.apr | whisper.apr | `src/cuda.rs` | :construction: Ready to integrate |
+
+### Implementation Progress (2026-01-21)
+
+**Completed:**
+- `GpuResidentTensor` struct with transfer tracking
+- `from_host()` - upload with H2D counter
+- `to_host()` - download with D2H counter
+- `TransferStats` for pipeline debugging
+- Global transfer counters (`total_h2d_transfers()`, `total_d2h_transfers()`)
+- `.matmul()` - GPU matrix multiply using GemmKernel
+- `.softmax()` - GPU softmax using SoftmaxKernel
+- `.add()` - Elementwise add using ResidualAddKernel
+- `.scale()` - Scalar multiply using ElementwiseMulKernel
+- `batched_multihead_attention()` - attention with ZERO host transfers
+- `TransposeKernel` - matrix transpose for K^T computation
+- `transpose_matrix()` - helper function for attention
+
+**Test Results (3/12 passing, 8 ignored future phases, 1 CUDA issue):**
+```
+test test_gpu_tensor_created_on_device ... ok
+test test_gpu_to_host_transfers ... ok
+test test_gpu_operations_stay_on_device ... ok
+test test_batched_attention_single_kernel ... FAILED (CUDA_ERROR_UNKNOWN)
+```
+
+**Known Issue: CUDA Error 700**
+- Batched attention kernel fails with CUDA_ERROR_UNKNOWN (code: 700)
+- Root cause: Kernel parameter mismatch or illegal memory access
+- Debug needed: GemmKernel or SoftmaxKernel with small tensor sizes
+- Workaround: Use `attention_via_gemm` (per-head) until fixed
+
+**Key Achievement:** Full attention computation stays on GPU with ZERO intermediate host transfers!
+
+**Batched Attention Pipeline (GPU-Resident):**
+1. Q, K, V uploaded once (3 H2D transfers)
+2. K^T = transpose(K) - on GPU
+3. scores = Q @ K^T - on GPU
+4. scaled = scores * (1/√d_k) - on GPU
+5. attn = softmax(scaled) - on GPU
+6. output = attn @ V - on GPU
+7. Result downloaded once (when needed)
+
+**Completed: Wire into whisper.apr encoder**
+- Added `attention_gpu_resident()` method in `src/cuda.rs`
+- Environment variable `WHISPER_GPU_RESIDENT=1` enables new path
+- Integration code ready, pending version alignment:
+  - trueno-gpu 0.4.10+ (with GpuResidentTensor, batched_multihead_attention)
+  - realizar 0.6.10+ (with updated trueno-gpu dependency)
+
+**Integration Pattern (src/cuda.rs):**
+```rust
+// GPU-resident attention via env var (WAPR-PERF-004)
+#[cfg(feature = "cuda")]
+let attn_output = if std::env::var("WHISPER_GPU_RESIDENT").is_ok() {
+    self.attention_gpu_resident(&q, &k, &v, seq_len, n_heads, head_dim)?
+} else {
+    self.attention_via_gemm(&q, &k, &v, seq_len, n_heads, head_dim)?
+};
+```
+
+**Next: Publish and benchmark**
+- Publish trueno-gpu 0.4.10 with GPU-resident features
+- Publish realizar 0.6.10 with updated dependency
+- Benchmark whisper.apr with WHISPER_GPU_RESIDENT=1 vs whisper.cpp
+
+### Citations
+
+- **[Dao2022]** FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. *NeurIPS 2022*
+- **[Kwon2023]** PagedAttention for LLM Serving with vLLM. *SOSP 2023*
+- **[Popper1934]** The Logic of Scientific Discovery - Falsificationism methodology
+- **[Ohno1988]** Toyota Production System - Jidoka (stop on defect)
+
+---
+
+## 11. Implementation Roadmap
 
 ### Phase 1: Upstream Updates (Week 1)
 
@@ -674,7 +864,7 @@ The scientific method requires attempting to **falsify** hypotheses, not confirm
 
 ---
 
-## 11. Verification Log
+## 12. Verification Log
 
 | Date | Metric/Check | Result | Notes |
 |------|--------------|--------|-------|
@@ -700,7 +890,7 @@ The scientific method requires attempting to **falsify** hypotheses, not confirm
 
 ---
 
-## 12. Success Criteria
+## 13. Success Criteria
 
 ### Minimum Viable (Must Have)
 
@@ -735,7 +925,7 @@ The scientific method requires attempting to **falsify** hypotheses, not confirm
 
 ---
 
-## 13. Immediate Next Steps
+## 14. Immediate Next Steps
 
 1.  **Execute Phase 1 Updates**:
     -   Update `Cargo.toml` dependencies to match the "Stack Health Check".
@@ -780,6 +970,195 @@ make coverage
 - `ground-truth-whisper-apr-cpp-hugging-face.md` - Ground truth validation
 - `WAPR-MEL-001-filterbank-embedding.md` - Mel filterbank specification
 - `benchmark-whisper-steps-a-z.md` - Pipeline benchmark methodology
+
+---
+
+## 10. WAPR-PERF-004: GPU-Resident Tensor Architecture
+
+**Status:** TDD Tests Passing
+**Target:** 2x whisper.cpp performance via transfer elimination
+
+### 10.1 Problem (Five Whys Root Cause)
+
+1. Why is GPU encoder slower than expected? → 0.76x speedup (actually slower than CPU)
+2. Why isn't CUDA gemm helping? → ~150 host↔device transfers per encoder pass
+3. Why so many transfers? → Data ping-pongs: CPU→GPU for gemm, GPU→CPU for softmax
+4. Why not keep data on GPU? → No GPU-resident tensor abstraction in trueno-gpu
+5. What's the fix? → Build `GpuResidentTensor` into trueno-gpu
+
+### 10.2 Solution: GPU-Resident Tensors
+
+**Key Innovation:** Tensors stay on GPU; only explicit `.to_host()` transfers back.
+
+```rust
+// Old: ~150 transfers per encoder pass
+let a_gpu = upload(a);  // H2D
+let b = gemm(&a_gpu).to_host();  // D2H (BUG: forced by old API)
+let c_gpu = upload(softmax(&b));  // H2D (BUG: re-upload)
+// ... repeat for every operation
+
+// New: 4 transfers total (Q, K, V upload + output download)
+let q = GpuResidentTensor::from_host(&ctx, &q_data)?;  // 1 H2D
+let k = GpuResidentTensor::from_host(&ctx, &k_data)?;  // 1 H2D
+let v = GpuResidentTensor::from_host(&ctx, &v_data)?;  // 1 H2D
+let output = batched_multihead_attention(&ctx, &q, &k, &v, n_heads, head_dim, seq_len)?;
+let result = output.to_host()?;  // 1 D2H
+// Total: 4 transfers (was ~150)
+```
+
+### 10.3 Implementation Progress
+
+| Component | Status | Location |
+|-----------|--------|----------|
+| `GpuResidentTensor<T>` | ✅ Complete | `trueno-gpu/src/memory/resident.rs` |
+| Transfer tracking counters | ✅ Complete | `total_h2d_transfers()`, `total_d2h_transfers()` |
+| `.matmul()` (GPU-resident) | ✅ Complete | Uses `GemmKernel::naive` |
+| `.softmax()` (GPU-resident) | ✅ Complete | Uses `SoftmaxKernel` |
+| `.scale()` (GPU-resident) | ✅ Complete | Uses new `ScaleKernel` |
+| `.add()` (GPU-resident) | ✅ Complete | Uses `ResidualAddKernel` |
+| `batched_multihead_attention()` | ✅ Complete | Single-function attention |
+| TDD Tests | ✅ 5/5 Passing | `trueno-gpu/tests/gpu_resident_tensor.rs` |
+| whisper.apr integration | ⏳ Pending | Requires trueno-gpu 0.4.10 publish |
+
+### 10.4 Bug Fix: ScaleKernel (2026-01-21)
+
+**Root Cause:** `scale()` was using `ElementwiseMulKernel` which expects TWO tensor inputs.
+We were passing a scalar float as the second argument, causing CUDA_ERROR_UNKNOWN (code 700).
+
+**Fix:** Created new `ScaleKernel` that takes:
+- `input_ptr` (u64)
+- `output_ptr` (u64)
+- `scale` (f32) - scalar constant
+- `n` (u32)
+
+Also added `load_param_f32()` to PTX builder for f32 kernel parameters.
+
+### 10.5 TDD Test Results
+
+```
+running 13 tests
+test test_batched_attention_correctness ... ignored, TDD pending
+test test_batched_attention_fused_softmax ... ignored, TDD pending
+test test_encoder_layer_minimal_transfers ... ignored, TDD pending
+test test_encoder_performance_target ... ignored, TDD pending
+test test_full_encoder_two_transfers_total ... ignored, TDD pending
+test test_memory_pool_reuse ... ignored, TDD pending
+test test_operation_chain_no_intermediate_transfers ... ignored, TDD pending
+test test_tensor_uses_memory_pool ... ignored, TDD pending
+test test_debug_isolate_crash ... ok
+test test_gpu_to_host_transfers ... ok
+test test_batched_attention_single_kernel ... ok  ✅ KEY TEST
+test test_gpu_tensor_created_on_device ... ok
+test test_gpu_operations_stay_on_device ... ok
+
+test result: ok. 5 passed; 0 failed; 8 ignored
+```
+
+### 10.6 Local Development Strategy (NO PUBLISH UNTIL VERIFIED)
+
+**CRITICAL: Do NOT publish anything until 2x whisper.cpp is verified locally.**
+
+#### Step 1: Enable Local Patches
+
+```toml
+# whisper.apr/Cargo.toml - UNCOMMENT:
+[patch.crates-io]
+trueno-gpu = { path = "../trueno/trueno-gpu" }
+realizar = { path = "../realizar" }
+
+# realizar/Cargo.toml - UNCOMMENT:
+[patch.crates-io]
+trueno-gpu = { path = "../trueno/trueno-gpu" }
+```
+
+#### Step 2: Verify Locally
+```bash
+# Run whisper.cpp baseline
+/home/noah/.local/bin/main -m /home/noah/src/whisper.cpp/models/ggml-tiny.bin \
+  -f demos/test-audio/test-speech-1.5s.wav
+
+# Run whisper.apr with GPU-resident tensors
+WHISPER_GPU_RESIDENT=1 cargo run --release --features "realizar-gpu,cuda" \
+  -- transcribe demos/test-audio/test-speech-1.5s.wav
+
+# Compare times - MUST be 2x faster or DON'T PUBLISH
+```
+
+#### Step 3: Only After 2x Verified
+1. Publish trueno-gpu 0.4.10
+2. Publish realizar with updated dep
+3. Update whisper.apr to use crates.io versions
+
+### 10.7 Bug Fix: Softmax Row Indexing (2026-01-21)
+
+**Root Cause:** `SoftmaxKernel` warp shuffle implementation was missing block index (`ctaid.x`) when
+computing memory addresses. Each block is supposed to process one row, but all blocks were reading
+from row 0.
+
+**Symptom:** Attention output had correct row 0, but row 1+ were all zeros.
+
+**Test Output Before Fix:**
+```
+Step 3 - Softmax: [0.66976154, 0.33023843, 0.0, 0.0]  # BUG: row 1 is zeros!
+Expected softmax: [0.670, 0.330, 0.330, 0.670]
+```
+
+**Fix:** Added `ctaid.x` to address calculation in `trueno-gpu/src/kernels/softmax.rs`:
+```rust
+// OLD (buggy): only uses tid, all blocks read row 0
+let offset = ctx.mul_wide_u32(tid, 4);
+
+// NEW (fixed): global_idx = ctaid * length + tid
+let ctaid = ctx.special_reg(crate::ptx::PtxReg::CtaIdX);
+let global_idx = ctx.mad_lo_u32(ctaid, length, tid);
+let offset = ctx.mul_wide_u32(global_idx, 4);
+```
+
+**Test Output After Fix:**
+```
+Step 3 - Softmax: [0.66976154, 0.33023843, 0.33023843, 0.66976154]  # ✅ Correct!
+GPU output: [1.6604768, 2.6604767, 2.339523, 3.339523]
+Max diff: 0.00000023841858  # Within tolerance
+```
+
+### 10.8 Performance Analysis (2026-01-21)
+
+**Finding:** GPU-resident attention is working correctly but NOT achieving 2x over whisper.cpp.
+
+| Implementation | Time | Notes |
+|----------------|------|-------|
+| whisper.cpp | 254ms | Full GPU encoder |
+| whisper.apr CPU | 6,381ms | SIMD-accelerated |
+| whisper.apr GPU-resident | 6,316ms | Only attention on GPU |
+
+**Root Cause:** The current GPU implementation only offloads attention to GPU. All other operations
+remain on CPU:
+- Projections (Q, K, V, O): CPU SIMD
+- FFN (2 layers per block): CPU SIMD
+- Layer norms: CPU SIMD
+- Residual connections: CPU
+
+**Why whisper.cpp is faster:**
+1. whisper.cpp runs the ENTIRE encoder on GPU
+2. Weights are pre-uploaded, tensors stay on GPU between all operations
+3. Only mel input is uploaded, only final output is downloaded
+
+**Path to 2x Performance:**
+To match whisper.cpp, whisper.apr needs:
+1. **GPU-resident projections:** All Q/K/V/O projections run on GPU
+2. **GPU-resident FFN:** Feed-forward networks run on GPU
+3. **GPU-resident layer norms:** Fused layer norms on GPU
+4. **Weight pre-upload:** Model weights uploaded once at load time
+5. **Fused kernels:** Combine operations to reduce kernel launch overhead
+
+**Current Status:** Softmax correctness FIXED, but 2x target NOT MET.
+GPU-resident attention is a building block, but full GPU encoder required.
+
+### 10.9 Citations
+
+- [Dao2022] FlashAttention: Fast and Memory-Efficient Exact Attention
+- [Kwon2023] PagedAttention for LLM Serving with vLLM
+- [Popper1934] The Logic of Scientific Discovery - Falsificationism
 
 ---
 
