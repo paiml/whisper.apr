@@ -1253,6 +1253,51 @@ TRUE BOTTLENECK: CPU Convolutional Frontend
 └────────────────────────────────────────────────────────────────┘
 ```
 
+### N.5 Implementation Progress
+
+**Status**: IN PROGRESS
+
+#### Completed Infrastructure (trueno-gpu)
+
+| Component | Commit | Description |
+|-----------|--------|-------------|
+| `incremental_attention_gpu` | `e5ba0dd` | Initial wrapper for IncrementalAttentionKernel |
+| Ghost sync removal | `f486af2` | Removed stream.synchronize() from inner kernel |
+| `incremental_attention_gpu_async` | `f486af2` | Returns (tensor, stream) for caller-controlled sync |
+| `kv_cache_scatter_gpu` | `3df5f9b` | Direct scatter to head-first cache slot |
+
+#### Completed Infrastructure (whisper.apr)
+
+| Component | Commit | Description |
+|-----------|--------|-------------|
+| `upload_decoder_weights_to_gpu()` | `8753a8c` | All 22 tensors per layer uploaded |
+| Numerical parity test | `fb2f660` | Point 154 pre-validation: max diff 6.63e-7 < 1e-5 |
+| Head-first KV cache fields | `6d7fb52` | gpu_self_k_head_first, gpu_self_v_head_first, etc. |
+| `init_gpu_decoder_kv_cache_head_first()` | `6d7fb52` | Creates [n_heads, max_seq_len, head_dim] caches |
+
+#### Point 154 Pre-Validation: PASSED
+
+```
+=== WAPR-PERF-013 Point 154: Numerical Parity Test ===
+Max absolute difference: 6.63e-7
+Elements exceeding tolerance: 0/384
+✓ GPU attention matches CPU within 1e-5
+```
+
+#### Remaining Implementation
+
+1. **GPU GEMV for projections** - Wire GpuDecoderBlockWeights for Q/K/V/O
+2. **forward_decoder_block_gpu()** - Full async forward pass
+3. **Stream chaining** - All ops on single stream, sync at token boundary only
+4. **Full correctness test** - Compare GPU decoder block vs CPU hidden state
+5. **Point 157 benchmark** - Full transcription ≤1984ms
+
+### N.6 Critical Constraints (Dr. Popper's Advice)
+
+1. **No Ghost Synchronization** (Point 149): Only sync once per token, not inside layer loop
+2. **No Layout Conversion Dark Matter**: Use kv_cache_scatter_gpu for direct head-first writes
+3. **Numerical Parity Shield**: abs_diff < 1e-5 prevents hallucination black swan
+
 ---
 
 ## 7. Implementation Roadmap
