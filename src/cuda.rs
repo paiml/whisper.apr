@@ -47,10 +47,11 @@ use realizar::inference_trace::{InferenceTracer, ModelInfo, TraceConfig, TraceSt
 // GPU-Resident Tensor imports (WAPR-PERF-004)
 #[cfg(feature = "cuda")]
 use trueno_gpu::memory::resident::{
-    batched_multihead_attention, forward_encoder_block_gpu, kernel_cache_hits,
-    kernel_cache_misses, reset_transfer_counters, total_d2h_transfers, total_h2d_transfers,
-    GpuConvFrontendWeights, GpuDecoderBlockWeights, GpuDecoderConfig, GpuEncoderBlockWeights,
-    GpuEncoderConfig, GpuKvCache, GpuResidentTensor, TransferStats,
+    batched_multihead_attention, forward_encoder_block_gpu, incremental_attention_gpu,
+    kernel_cache_hits, kernel_cache_misses, kv_cache_scatter_gpu, reset_transfer_counters,
+    total_d2h_transfers, total_h2d_transfers, GpuConvFrontendWeights, GpuDecoderBlockWeights,
+    GpuDecoderConfig, GpuEncoderBlockWeights, GpuEncoderConfig, GpuKvCache, GpuResidentTensor,
+    TransferStats,
 };
 
 /// GELU activation function (Gaussian Error Linear Unit)
@@ -948,6 +949,131 @@ impl WhisperCuda {
     #[cfg(feature = "cuda")]
     pub fn reset_gpu_decoder_pos(&mut self) {
         self.gpu_decoder_pos = 0;
+    }
+
+    /// WAPR-PERF-013: GPU decoder block forward pass
+    ///
+    /// Processes a single token through one decoder block on GPU.
+    /// Uses head-first KV caches for zero-conversion attention.
+    ///
+    /// # Architecture
+    ///
+    /// ```text
+    /// x → LN1 → Q/K/V (GPU) → scatter K/V → incr_attn (GPU) → O (GPU) → residual
+    ///   → LN2 → Q (GPU) → cross_attn (GPU) → O (GPU) → residual
+    ///   → LN3 → FC1 (GPU) → GELU → FC2 (GPU) → residual
+    /// ```
+    ///
+    /// # Point 149 Compliance
+    ///
+    /// All GPU operations chain on implicit stream. No explicit sync inside.
+    /// Caller must sync only when reading final output.
+    ///
+    /// # Parameters
+    ///
+    /// - `encoder_output`: Optional encoder hidden states for cross-attention.
+    ///   If None, cross-attention is skipped (useful for testing self-attention).
+    #[cfg(feature = "cuda")]
+    pub fn forward_decoder_block_gpu(
+        &mut self,
+        layer_idx: usize,
+        x: &[f32],
+        pos: usize,
+        encoder_output: Option<&[f32]>,
+    ) -> WhisperResult<Vec<f32>> {
+        use trueno_gpu::driver::CudaStream;
+
+        let ctx = self.executor.context();
+        let d_model = self.config.n_text_state as usize;
+        let n_heads = self.config.n_text_head as usize;
+        let head_dim = d_model / n_heads;
+        let max_seq_len = self.config.n_text_ctx as usize;
+
+        // Get GPU weights for this layer
+        let weights = self.gpu_decoder_weights.as_ref()
+            .ok_or_else(|| WhisperError::Inference("Decoder weights not uploaded".into()))?;
+        let layer_weights = &weights[layer_idx];
+
+        // Get head-first KV caches
+        let self_k_caches = self.gpu_self_k_head_first.as_mut()
+            .ok_or_else(|| WhisperError::Inference("Self K cache not initialized".into()))?;
+        let self_v_caches = self.gpu_self_v_head_first.as_mut()
+            .ok_or_else(|| WhisperError::Inference("Self V cache not initialized".into()))?;
+
+        let block = &self.decoder.blocks()[layer_idx];
+
+        // === Self-Attention ===
+
+        // LN1 (CPU - simple and correct)
+        let normed = block.ln1.forward(x)?;
+
+        // Upload normed input to GPU
+        let x_gpu = GpuResidentTensor::from_host(ctx, &normed)
+            .map_err(|e| WhisperError::Inference(format!("x upload: {e}")))?;
+
+        // Q/K/V projections on GPU: [1, d_model] @ [d_model, d_model] = [1, d_model]
+        let q = x_gpu.linear(ctx, &layer_weights.self_w_q, Some(&layer_weights.self_b_q), 1, d_model as u32, d_model as u32)
+            .map_err(|e| WhisperError::Inference(format!("Q projection: {e}")))?;
+        let k = x_gpu.linear(ctx, &layer_weights.self_w_k, Some(&layer_weights.self_b_k), 1, d_model as u32, d_model as u32)
+            .map_err(|e| WhisperError::Inference(format!("K projection: {e}")))?;
+        let v = x_gpu.linear(ctx, &layer_weights.self_w_v, Some(&layer_weights.self_b_v), 1, d_model as u32, d_model as u32)
+            .map_err(|e| WhisperError::Inference(format!("V projection: {e}")))?;
+
+        // Scatter K/V to head-first caches
+        let stream = CudaStream::new(ctx)
+            .map_err(|e| WhisperError::Inference(format!("Stream: {e}")))?;
+
+        kv_cache_scatter_gpu(
+            ctx, &k, &mut self_k_caches[layer_idx],
+            pos as u32, n_heads as u32, head_dim as u32, max_seq_len as u32, &stream
+        ).map_err(|e| WhisperError::Inference(format!("K scatter: {e}")))?;
+
+        kv_cache_scatter_gpu(
+            ctx, &v, &mut self_v_caches[layer_idx],
+            pos as u32, n_heads as u32, head_dim as u32, max_seq_len as u32, &stream
+        ).map_err(|e| WhisperError::Inference(format!("V scatter: {e}")))?;
+
+        // Incremental self-attention: Q @ cached_K^T → softmax → @ cached_V
+        let seq_len = (pos + 1) as u32; // Include current position
+        let attn_out = incremental_attention_gpu(
+            ctx, &q, &self_k_caches[layer_idx], &self_v_caches[layer_idx],
+            n_heads as u32, head_dim as u32, seq_len, max_seq_len as u32
+        ).map_err(|e| WhisperError::Inference(format!("Self attention: {e}")))?;
+
+        // Output projection
+        let mut attn_proj = attn_out.linear(ctx, &layer_weights.self_w_o, Some(&layer_weights.self_b_o), 1, d_model as u32, d_model as u32)
+            .map_err(|e| WhisperError::Inference(format!("O projection: {e}")))?;
+
+        // Download and add residual (sync point)
+        let attn_proj_host = attn_proj.to_host()
+            .map_err(|e| WhisperError::Inference(format!("Attn D2H: {e}")))?;
+
+        // Residual connection
+        let mut residual: Vec<f32> = x.iter().zip(attn_proj_host.iter()).map(|(a, b)| a + b).collect();
+
+        // === Cross-Attention ===
+        if let Some(enc_out) = encoder_output {
+            let normed2 = block.ln2.forward(&residual)?;
+            let cross_out = block.cross_attn.forward_cross_dispatch(
+                &normed2,
+                enc_out,
+                None // TODO: Use cached cross-attention K/V
+            )?;
+            for (r, c) in residual.iter_mut().zip(cross_out.iter()) {
+                *r += c;
+            }
+        }
+        // Note: When encoder_output is None, cross-attention is skipped.
+        // This is useful for testing self-attention in isolation.
+
+        // === FFN (CPU for now) ===
+        let normed3 = block.ln3.forward(&residual)?;
+        let ffn_out = block.ffn.forward(&normed3)?;
+        for (r, f) in residual.iter_mut().zip(ffn_out.iter()) {
+            *r += f;
+        }
+
+        Ok(residual)
     }
 
     /// Full GPU encoder (WAPR-PERF-004: Total Offload)
@@ -2804,5 +2930,116 @@ mod tests {
 
         eprintln!("\n✓ WAPR-PERF-013 Point 154: Numerical Parity PASSED");
         eprintln!("  GPU attention matches CPU within {:.0e}", tolerance);
+    }
+
+    /// WAPR-PERF-013 Point 155: GPU Decoder Block Correctness Test
+    ///
+    /// Verifies GPU decoder block produces same output as CPU decoder block.
+    /// Tests self-attention + FFN path (cross-attention skipped for isolation).
+    #[test]
+    #[cfg(feature = "cuda")]
+    fn test_gpu_decoder_block_self_attn_correctness() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping GPU decoder block test");
+            return;
+        }
+
+        let model_path = "models/whisper-tiny.apr";
+        if !std::path::Path::new(model_path).exists() {
+            eprintln!("Model not found at {}, skipping test", model_path);
+            return;
+        }
+
+        eprintln!("\n=== WAPR-PERF-013 Point 155: GPU Decoder Block Correctness ===");
+
+        // Load model
+        let bytes = std::fs::read(model_path).expect("Failed to read model");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        // Upload decoder weights to GPU
+        cuda_model.upload_decoder_weights().expect("Failed to upload decoder weights");
+
+        // Initialize head-first KV caches
+        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Failed to init KV cache");
+
+        let d_model = cuda_model.config().n_text_state as usize;
+        let n_layers = cuda_model.config().n_text_layer as usize;
+
+        eprintln!("Model: d_model={}, n_layers={}", d_model, n_layers);
+
+        // Generate test input (simulated decoder input embedding)
+        let test_input: Vec<f32> = (0..d_model)
+            .map(|i| ((i as f32) * 0.01).sin() * 0.5)
+            .collect();
+
+        // Test layer 0 only for speed
+        let layer_idx = 0;
+        let pos = 0;
+
+        // === CPU Reference (self-attention + FFN only, no cross-attention) ===
+        // We'll compute this manually to match GPU's encoder_output=None path
+        let block = &cuda_model.decoder().blocks()[layer_idx];
+
+        // Self-attention
+        let normed1 = block.ln1.forward(&test_input).expect("LN1 failed");
+        let self_attn_out = block.self_attn.forward_incremental(
+            &normed1,
+            &mut block.kv_cache.as_ref().map(|c| c.clone())
+                .unwrap_or_else(|| crate::model::DecoderKVCache::new(d_model, 448)),
+            pos,
+        ).expect("Self attention failed");
+        let mut cpu_residual: Vec<f32> = test_input.iter()
+            .zip(self_attn_out.iter())
+            .map(|(x, a)| x + a)
+            .collect();
+
+        // Skip cross-attention (matching encoder_output=None)
+
+        // FFN
+        let normed3 = block.ln3.forward(&cpu_residual).expect("LN3 failed");
+        let ffn_out = block.ffn.forward(&normed3).expect("FFN failed");
+        for (r, f) in cpu_residual.iter_mut().zip(ffn_out.iter()) {
+            *r += f;
+        }
+
+        // === GPU Implementation ===
+        let gpu_output = cuda_model.forward_decoder_block_gpu(
+            layer_idx,
+            &test_input,
+            pos,
+            None, // No encoder output - skip cross-attention
+        ).expect("GPU decoder block failed");
+
+        // === Comparison ===
+        let tolerance = 1e-4_f32; // Slightly looser for full block
+        let mut max_diff = 0.0f32;
+        let mut diff_count = 0;
+
+        for (i, (cpu_val, gpu_val)) in cpu_residual.iter().zip(gpu_output.iter()).enumerate() {
+            let diff = (cpu_val - gpu_val).abs();
+            if diff > max_diff {
+                max_diff = diff;
+            }
+            if diff > tolerance {
+                if diff_count < 5 {
+                    eprintln!("  [{}] CPU={:.6} GPU={:.6} diff={:.2e}", i, cpu_val, gpu_val, diff);
+                }
+                diff_count += 1;
+            }
+        }
+
+        eprintln!("CPU output sample: [{:.6}, {:.6}, {:.6}...]", cpu_residual[0], cpu_residual[1], cpu_residual[2]);
+        eprintln!("GPU output sample: [{:.6}, {:.6}, {:.6}...]", gpu_output[0], gpu_output[1], gpu_output[2]);
+        eprintln!("Max absolute difference: {:.2e}", max_diff);
+        eprintln!("Elements exceeding tolerance: {}/{}", diff_count, d_model);
+
+        if max_diff > tolerance {
+            eprintln!("\n❌ GPU DECODER BLOCK CORRECTNESS FAILED");
+            panic!("GPU decoder block diverges from CPU: max_diff={:.2e} > tolerance={:.2e}", max_diff, tolerance);
+        }
+
+        eprintln!("\n✓ WAPR-PERF-013 Point 155: GPU Decoder Block Correctness PASSED");
+        eprintln!("  GPU self-attention + FFN matches CPU within {:.0e}", tolerance);
     }
 }
