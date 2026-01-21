@@ -48,9 +48,9 @@ use realizar::inference_trace::{InferenceTracer, ModelInfo, TraceConfig, TraceSt
 #[cfg(feature = "cuda")]
 use trueno_gpu::memory::resident::{
     batched_multihead_attention, forward_encoder_block_gpu, kernel_cache_hits,
-    kernel_cache_misses, reset_transfer_counters, GpuConvFrontendWeights,
-    GpuDecoderBlockWeights, GpuDecoderConfig, GpuEncoderBlockWeights, GpuEncoderConfig,
-    GpuKvCache, GpuResidentTensor, TransferStats,
+    kernel_cache_misses, reset_transfer_counters, total_d2h_transfers, total_h2d_transfers,
+    GpuConvFrontendWeights, GpuDecoderBlockWeights, GpuDecoderConfig, GpuEncoderBlockWeights,
+    GpuEncoderConfig, GpuKvCache, GpuResidentTensor, TransferStats,
 };
 
 /// GELU activation function (Gaussian Error Linear Unit)
@@ -2588,5 +2588,134 @@ mod tests {
                 eprintln!("Falling back to old gemm-per-head path is still available.");
             }
         }
+    }
+
+    /// WAPR-PERF-013 Point 154: Numerical Parity Test for Incremental Attention
+    ///
+    /// Verifies GPU incremental attention matches CPU reference within 1e-5.
+    /// This is CRITICAL: autoregressive decoding amplifies small errors into
+    /// garbage text within 10-20 tokens.
+    #[test]
+    #[cfg(feature = "cuda")]
+    fn test_incremental_attention_numerical_parity() {
+        use trueno_gpu::memory::resident::incremental_attention_gpu;
+
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping numerical parity test");
+            return;
+        }
+
+        eprintln!("\n=== WAPR-PERF-013 Point 154: Numerical Parity Test ===");
+
+        // Whisper-tiny config
+        let n_heads: u32 = 6;
+        let head_dim: u32 = 64;
+        let max_seq_len: u32 = 448;
+        let seq_len: u32 = 10; // Test with 10 cached tokens
+        let d_model = (n_heads * head_dim) as usize;
+
+        // Generate deterministic test data
+        let q: Vec<f32> = (0..d_model).map(|i| ((i as f32) * 0.01).sin()).collect();
+
+        // K/V cache in head-first layout [n_heads, max_seq_len, head_dim]
+        let cache_size = (n_heads * max_seq_len * head_dim) as usize;
+        let k_cache: Vec<f32> = (0..cache_size)
+            .map(|i| ((i as f32) * 0.02).cos())
+            .collect();
+        let v_cache: Vec<f32> = (0..cache_size)
+            .map(|i| ((i as f32) * 0.03).sin())
+            .collect();
+
+        // === CPU Reference Implementation ===
+        let scale = 1.0 / (head_dim as f32).sqrt();
+        let mut cpu_output = vec![0.0f32; d_model];
+
+        for h in 0..n_heads as usize {
+            // Extract Q for this head
+            let q_start = h * head_dim as usize;
+            let q_h = &q[q_start..q_start + head_dim as usize];
+
+            // KV cache offset for this head
+            let kv_head_offset = h * (max_seq_len as usize) * (head_dim as usize);
+
+            // Compute attention scores for seq_len positions
+            let mut scores = vec![0.0f32; seq_len as usize];
+            for pos in 0..seq_len as usize {
+                let k_offset = kv_head_offset + pos * (head_dim as usize);
+                let mut dot = 0.0f32;
+                for e in 0..head_dim as usize {
+                    dot += q_h[e] * k_cache[k_offset + e];
+                }
+                scores[pos] = dot * scale;
+            }
+
+            // Softmax
+            let max_score = scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let mut sum_exp = 0.0f32;
+            for s in &mut scores {
+                *s = (*s - max_score).exp();
+                sum_exp += *s;
+            }
+            for s in &mut scores {
+                *s /= sum_exp;
+            }
+
+            // Weighted sum of values
+            let out_start = h * head_dim as usize;
+            for e in 0..head_dim as usize {
+                let mut weighted_sum = 0.0f32;
+                for pos in 0..seq_len as usize {
+                    let v_offset = kv_head_offset + pos * (head_dim as usize) + e;
+                    weighted_sum += scores[pos] * v_cache[v_offset];
+                }
+                cpu_output[out_start + e] = weighted_sum;
+            }
+        }
+
+        // === GPU Implementation ===
+        let executor = CudaExecutor::new(0).expect("Failed to create CUDA executor");
+        let ctx = executor.context();
+
+        let q_gpu = GpuResidentTensor::from_host(ctx, &q).expect("Q upload failed");
+        let k_gpu = GpuResidentTensor::from_host(ctx, &k_cache).expect("K upload failed");
+        let v_gpu = GpuResidentTensor::from_host(ctx, &v_cache).expect("V upload failed");
+
+        let mut gpu_output = incremental_attention_gpu(
+            ctx, &q_gpu, &k_gpu, &v_gpu,
+            n_heads, head_dim, seq_len, max_seq_len
+        ).expect("GPU attention failed");
+
+        let gpu_result = gpu_output.to_host().expect("D2H failed");
+
+        // === Numerical Parity Check ===
+        let tolerance = 1e-5_f32;
+        let mut max_diff = 0.0f32;
+        let mut diff_count = 0;
+
+        for (i, (cpu_val, gpu_val)) in cpu_output.iter().zip(gpu_result.iter()).enumerate() {
+            let diff = (cpu_val - gpu_val).abs();
+            if diff > max_diff {
+                max_diff = diff;
+            }
+            if diff > tolerance {
+                if diff_count < 5 {
+                    eprintln!("  [{}] CPU={:.6} GPU={:.6} diff={:.2e}", i, cpu_val, gpu_val, diff);
+                }
+                diff_count += 1;
+            }
+        }
+
+        eprintln!("Max absolute difference: {:.2e}", max_diff);
+        eprintln!("Elements exceeding tolerance: {}/{}", diff_count, d_model);
+
+        if max_diff > tolerance {
+            eprintln!("\n❌ NUMERICAL PARITY FAILED");
+            eprintln!("   GPU incremental attention diverges from CPU reference.");
+            eprintln!("   This WILL cause garbage text in autoregressive decoding.");
+            panic!("Numerical parity test failed: max_diff={:.2e} > tolerance={:.2e}", max_diff, tolerance);
+        }
+
+        eprintln!("\n✓ WAPR-PERF-013 Point 154: Numerical Parity PASSED");
+        eprintln!("  GPU attention matches CPU within {:.0e}", tolerance);
     }
 }
