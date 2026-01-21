@@ -1092,9 +1092,31 @@ Applied to whisper.apr:
 - If Point 144 confirms memory bound: Pivot to bandwidth optimization (quantization, memory layout)
 
 **Implementation Requirements (Phase 2.1):**
-1. Add `WmmaFp16` variant to `BatchedGemmKernel` in trueno-gpu
-2. Apply `cvta.shared.u64` pattern (WAPR-PERF-010 fix) to batched implementation
-3. Handle n_heads=6 within warp cooperative model (potential padding to 8)
+1. ✅ Add `WmmaFp16` variant to `BatchedGemmKernel` in trueno-gpu
+2. ✅ Apply `cvta.shared.u64` pattern (WAPR-PERF-010 fix) to batched implementation
+3. ✅ Handle n_heads=6 within warp cooperative model
+
+**Experimental Results (2026-01-21):**
+```
+Batched WMMA Implementation Complete:
+- batched_gemm_wmma_fp16:6:1500:1500:64 (Q@K^T)
+- batched_gemm_wmma_fp16:6:1500:64:1500 (attn@V)
+
+Performance Before WMMA: 618ms
+Performance After WMMA:  624ms (within variance)
+
+FALSIFICATION: Point 141 FAILED
+- RTF did not drop by ≥2x
+- "Attention Bottleneck" theory is FALSIFIED
+- Next investigation: Memory bound constraints, kernel launch overhead
+```
+
+**Five Whys - Post WMMA Investigation:**
+1. Why didn't batched WMMA improve performance? → WMMA overhead may exceed gains for small batch=6
+2. Why is batch=6 problematic? → WMMA 16x16 tiles, 6 batches requires padding/waste
+3. Why not pad to 8 heads? → Model architecture fixed, would require weight conversion
+4. Alternative hypothesis? → **Memory bandwidth is the bottleneck, not compute**
+5. Next experiment? → Profile memory bandwidth utilization with NSight
 
 ---
 
