@@ -66,6 +66,10 @@ pub mod vocabulary;
 /// Benchmark infrastructure for multi-backend comparison
 pub mod benchmark;
 
+/// CUDA GPU acceleration via trueno-gpu/realizar
+#[cfg(feature = "realizar-gpu")]
+pub mod cuda;
+
 /// Re-exports world-class production inference primitives from realizar.
 ///
 /// Provides: Flash Attention, Sliding Window Attention,
@@ -1265,6 +1269,37 @@ impl WhisperApr {
     /// Get mutable decoder reference (for testing/loading)
     pub fn decoder_mut(&mut self) -> &mut model::Decoder {
         &mut self.decoder
+    }
+
+    /// Get immutable encoder reference
+    pub fn encoder(&self) -> &model::Encoder {
+        &self.encoder
+    }
+
+    /// Get immutable decoder reference
+    pub fn decoder(&self) -> &model::Decoder {
+        &self.decoder
+    }
+
+    /// Convert to CUDA-accelerated model.
+    ///
+    /// Consumes self and returns a `WhisperCuda` wrapper for GPU inference.
+    ///
+    /// # Arguments
+    /// * `device_ordinal` - GPU device index (0 for first GPU)
+    ///
+    /// # Errors
+    /// Returns error if CUDA is not available or device doesn't exist.
+    #[cfg(feature = "realizar-gpu")]
+    pub fn into_cuda(self, device_ordinal: i32) -> WhisperResult<cuda::WhisperCuda> {
+        cuda::WhisperCuda::new_with_components(
+            self.encoder,
+            self.decoder,
+            self.config,
+            self.tokenizer,
+            self.mel_filters,
+            device_ordinal,
+        )
     }
 
     // =========================================================================
