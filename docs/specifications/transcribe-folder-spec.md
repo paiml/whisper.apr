@@ -4,7 +4,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | **IN PROGRESS: WMMA Fixed, Batched GEMM Pending** (WMMA path: 618ms; Target: 166ms; Gap: 3.7x) |
+| Status | **FALSIFIED: Batched GEMM (WAPR-PERF-011)** (Time: 624ms; Target: 166ms; Gap: 3.8x) - Pivot to Memory/Sync |
 | Author | Claude Code |
 | Created | 2026-01-20 |
 | Updated | 2026-01-21 |
@@ -53,15 +53,16 @@ This specification defines the systematic approach to achieve **2x performance i
   ┌────────────┬────────────────────┬─────────────┐
   │   Metric   │ whisper.apr (WMMA) │ whisper.cpp │
   ├────────────┼────────────────────┼─────────────┤
-  │ Total time │ 618.0ms            │ 83.0ms      │
+  │ Total time │ 624.0ms            │ 83.0ms      │
   ├────────────┼────────────────────┼─────────────┤
-  │ Ratio      │ 7.4x slower        │ 1.0x        │
+  │ Ratio      │ 7.5x slower        │ 1.0x        │
   ├────────────┼────────────────────┼─────────────┤
   │ Target     │ 166ms (2x w.cpp)   │ -           │
   └────────────┴────────────────────┴─────────────┘
   ✅ WMMA Path: WORKING (cvta.shared.u64 fix applied)
   ✅ Kernels used: gemm_wmma_fp16:1500x384x384, gemm_wmma_fp16:1500x384x1536
-  ⚠️  Remaining bottleneck: batched_gemm_naive (attention) - no WMMA support
+  ✅ Batched Attention: batched_gemm_wmma_fp16 implemented (WAPR-PERF-011)
+  ❌ Result: NO SPEEDUP (618ms -> 624ms). Attention Bottleneck Hypothesis FALSIFIED.
 ```
 
 **Root Cause Analysis (RESOLVED 2026-01-21):**
@@ -71,11 +72,11 @@ This specification defines the systematic approach to achieve **2x performance i
 4.  **Fix Applied**: Changed shared memory addressing from `ctx.cvt_u64_u32(smem_a_base)` to `ctx.shared_base_addr()` which generates proper `cvta.shared.u64` PTX instruction.
 5.  **Result**: WMMA kernels now produce correct output. Encoder improved from ~640ms (FMA) to ~618ms (WMMA).
 
-**Path to 2x Performance (WAPR-PERF-011 - Batched GEMM):**
+**Path to 2x Performance (WAPR-PERF-012 - Memory & Sync):**
 1.  ✅ **WMMA Fixed**: Tensor Core kernels working for encoder FFN layers
-2.  ⏳ **Batched GEMM**: Attention layers still use `batched_gemm_naive` (no WMMA)
-3.  ⏳ **Profile Bottleneck**: Identify if attention or other layers dominate
-4.  ⏳ **Add WMMA to Batched**: Implement `batched_gemm_wmma` for multi-head attention
+2.  ✅ **Batched GEMM**: Implemented `batched_gemm_wmma_fp16`, but yielded no speedup (Falsified WAPR-PERF-011).
+3.  ⏳ **Memory Bound Investigation**: Profile memory bandwidth (Roofline).
+4.  ⏳ **Hidden Synchronization**: Check for implicit cudaDeviceSynchronize in `gemm` calls.
 
 
 
@@ -1086,16 +1087,6 @@ Applied to whisper.apr:
 | 144 | **Memory Bound Falsifier** | Roofline analysis post-WMMA | **Compute bound, not memory bound** |
 | 145 | **Hidden Synchronization** | Profile cudaDeviceSynchronize calls | **< 5 syncs per encoder pass** |
 
-**Jidoka Stop Conditions:**
-- If Point 141 fails (RTF doesn't drop ≥2x): Investigate "Memory Bound Constraints" or "Hidden Synchronizations"
-- If Point 142 fails (WER > 0.1%): Stop the line, debug numerical precision in WMMA fragments
-- If Point 144 confirms memory bound: Pivot to bandwidth optimization (quantization, memory layout)
-
-**Implementation Requirements (Phase 2.1):**
-1. ✅ Add `WmmaFp16` variant to `BatchedGemmKernel` in trueno-gpu
-2. ✅ Apply `cvta.shared.u64` pattern (WAPR-PERF-010 fix) to batched implementation
-3. ✅ Handle n_heads=6 within warp cooperative model
-
 **Experimental Results (2026-01-21):**
 ```
 Batched WMMA Implementation Complete:
@@ -1110,6 +1101,18 @@ FALSIFICATION: Point 141 FAILED
 - "Attention Bottleneck" theory is FALSIFIED
 - Next investigation: Memory bound constraints, kernel launch overhead
 ```
+
+### Section M: WAPR-PERF-012 Memory & Sync Hypothesis (Points 146-150)
+
+**Hypothesis**: The system is now memory bandwidth bound (Roofline) or latency bound (Hidden Syncs), preventing WMMA speedups from manifesting.
+
+| # | Falsification Test | Method | Pass Criteria |
+|---|-------------------|--------|---------------|
+| 146 | **Roofline Position** | Calculate Arithmetic Intensity | **AI > 100 FLOPS/Byte** (if <100, we are memory bound) |
+| 147 | **PCI-E Transfer Masking** | Profile H2D/D2H concurrently | **Transfers overlap compute > 80%** |
+| 148 | **Kernel Launch Overhead** | Measure launch vs execution time | **Launch overhead < 10% of kernel time** |
+| 149 | **Sync Point Detection** | Count `cudaDeviceSynchronize` | **Zero syncs inside encoder loop** |
+| 150 | **Grid Stride Loop Efficiency** | Test varying block sizes | **Performance scales with occupancy** |
 
 **Five Whys - Post WMMA Investigation:**
 1. Why didn't batched WMMA improve performance? → WMMA overhead may exceed gains for small batch=6
