@@ -629,11 +629,18 @@ impl WhisperCuda {
         // Reset transfer counters for monitoring
         reset_transfer_counters();
 
+        // WAPR-PERF-011: Detailed timing breakdown
+        let profile_detail = std::env::var("WHISPER_PROFILE_LAYERS").is_ok();
+        let total_start = std::time::Instant::now();
+
         // Step 1: Convolutional frontend (CPU - small overhead)
+        let conv_start = std::time::Instant::now();
         let conv_output = self.encoder.conv_frontend().forward(mel)?;
+        let conv_time = conv_start.elapsed();
         let seq_len = conv_output.len() / d_model;
 
         // Step 2: Add positional embedding (CPU - small overhead)
+        let pos_start = std::time::Instant::now();
         let mut x = conv_output;
         let pos_emb = self.encoder.positional_embedding();
         for pos in 0..seq_len {
@@ -641,10 +648,18 @@ impl WhisperCuda {
                 x[pos * d_model + d] += pos_emb[pos * d_model + d];
             }
         }
+        let pos_time = pos_start.elapsed();
 
         // Step 3: Upload to GPU (1 H2D transfer)
+        let upload_start = std::time::Instant::now();
         let mut x_gpu = GpuResidentTensor::from_host(ctx, &x)
             .map_err(|e| WhisperError::Inference(format!("input upload: {e}")))?;
+        let upload_time = upload_start.elapsed();
+
+        if profile_detail {
+            eprintln!("[PROFILE-BREAKDOWN] Conv: {:.1}ms, PosEmb: {:.1}ms, Upload: {:.1}ms",
+                conv_time.as_millis(), pos_time.as_millis(), upload_time.as_millis());
+        }
 
         // Step 4: Process all encoder blocks on GPU (0 transfers)
         let weights = self.gpu_encoder_weights.as_ref()
@@ -687,6 +702,10 @@ impl WhisperCuda {
                 v.iter().sum::<f32>() / v.len() as f32);
         }
 
+        // WAPR-PERF-011: Timing instrumentation for verification matrix
+        let profile_layers = std::env::var("WHISPER_PROFILE_LAYERS").is_ok();
+        let mut layer_times: Vec<u128> = Vec::new();
+
         for layer_idx in 0..n_layers {
             if debug_layer0_only && layer_idx == 1 {
                 // Get intermediate GPU output after layer 0 only
@@ -700,13 +719,32 @@ impl WhisperCuda {
                     gpu_layer0_out.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
             }
 
+            let layer_start = std::time::Instant::now();
             x_gpu = forward_encoder_block_gpu(ctx, &x_gpu, &weights[layer_idx], config)
                 .map_err(|e| WhisperError::Inference(format!("encoder block {layer_idx}: {e}")))?;
+            let layer_elapsed = layer_start.elapsed().as_micros();
+            layer_times.push(layer_elapsed);
+        }
+
+        // Print layer timing summary
+        if profile_layers && !layer_times.is_empty() {
+            let sum: u128 = layer_times.iter().sum();
+            let avg = sum as f64 / layer_times.len() as f64;
+            let max = layer_times.iter().max().copied().unwrap_or(0);
+            let min = layer_times.iter().min().copied().unwrap_or(0);
+            eprintln!("[PROFILE-LAYERS] {} layers, total {:.1}ms, avg {:.0}µs, min {:.0}µs, max {:.0}µs, variance {:.1}x",
+                layer_times.len(), sum as f64 / 1000.0, avg, min, max, max as f64 / (min as f64 + 1.0));
         }
 
         // Step 5: Download output (1 D2H transfer)
+        let download_start = std::time::Instant::now();
         let output = x_gpu.to_host()
             .map_err(|e| WhisperError::Inference(format!("output download: {e}")))?;
+        let download_time = download_start.elapsed();
+
+        if profile_detail {
+            eprintln!("[PROFILE-BREAKDOWN] Download: {:.1}ms", download_time.as_millis());
+        }
 
         // Log transfer stats for debugging
         if std::env::var("WHISPER_DEBUG_GPU").is_ok() {
@@ -725,7 +763,26 @@ impl WhisperCuda {
 
         // Step 6: Final layer norm (CPU - small overhead)
         // TODO: Move to GPU for complete offload
-        self.encoder.ln_post().forward(&output)
+        let ln_post_start = std::time::Instant::now();
+        let result = self.encoder.ln_post().forward(&output)?;
+        let ln_post_time = ln_post_start.elapsed();
+
+        if profile_detail {
+            let total_time = total_start.elapsed();
+            let layer_sum: u128 = layer_times.iter().sum();
+            let accounted = conv_time.as_micros() + pos_time.as_micros() + upload_time.as_micros()
+                + layer_sum + download_time.as_micros() + ln_post_time.as_micros();
+            let unaccounted = total_time.as_micros().saturating_sub(accounted);
+            eprintln!("[PROFILE-BREAKDOWN] LnPost: {:.1}ms, Total: {:.1}ms", ln_post_time.as_millis(), total_time.as_millis());
+            eprintln!("[PROFILE-SUMMARY] Conv={:.0}µs PosEmb={:.0}µs Upload={:.0}µs Layers={:.0}µs Download={:.0}µs LnPost={:.0}µs",
+                conv_time.as_micros(), pos_time.as_micros(), upload_time.as_micros(),
+                layer_sum, download_time.as_micros(), ln_post_time.as_micros());
+            eprintln!("[PROFILE-SUMMARY] Accounted: {:.1}ms, Unaccounted: {:.1}ms ({:.1}%)",
+                accounted as f64 / 1000.0, unaccounted as f64 / 1000.0,
+                unaccounted as f64 / total_time.as_micros() as f64 * 100.0);
+        }
+
+        Ok(result)
     }
 
     /// Forward pass through a single encoder block with GPU attention.

@@ -1114,12 +1114,43 @@ FALSIFICATION: Point 141 FAILED
 | 149 | **Sync Point Detection** | Count `cudaDeviceSynchronize` | **Zero syncs inside encoder loop** |
 | 150 | **Grid Stride Loop Efficiency** | Test varying block sizes | **Performance scales with occupancy** |
 
-**Five Whys - Post WMMA Investigation:**
-1. Why didn't batched WMMA improve performance? → WMMA overhead may exceed gains for small batch=6
-2. Why is batch=6 problematic? → WMMA 16x16 tiles, 6 batches requires padding/waste
-3. Why not pad to 8 heads? → Model architecture fixed, would require weight conversion
-4. Alternative hypothesis? → **Memory bandwidth is the bottleneck, not compute**
-5. Next experiment? → Profile memory bandwidth utilization with NSight
+**Five Whys - Post WMMA Investigation (RESOLVED 2026-01-21):**
+1. Why didn't batched WMMA improve performance? → **GPU is not the bottleneck!**
+2. Where is the time spent? → **93% in CPU conv frontend, 6% in GPU layers**
+3. Why is conv so slow? → CPU-bound FFT/convolution not optimized
+4. GPU performance? → **38ms for 4 layers = 9.5ms/layer (FAST!)**
+5. Next step? → **Move conv frontend to GPU or optimize CPU path**
+
+### Section M: WAPR-PERF-011 Verification Matrix Results (Points 146-150)
+
+```
+PROFILE-SUMMARY (2026-01-21):
+  Conv (CPU):     588ms (93%)
+  Layers (GPU):    38ms  (6%)
+  Upload/Download:  <1ms  (0%)
+  LnPost (CPU):    <1ms  (0%)
+  Total:          630ms
+
+FALSIFICATION RESULTS:
+  Point 144 (Memory Bound): FALSIFIED - GPU compute is fast (38ms)
+  Point 145 (Hidden Sync):  FALSIFIED - No sync overhead detected
+  Point 149 (Dark Matter):  IDENTIFIED - CPU conv frontend (93%)
+
+TRUE BOTTLENECK: CPU Convolutional Frontend
+  - Whisper conv1: 80 channels → 512, kernel=3, stride=1
+  - Whisper conv2: 512 → 512, kernel=3, stride=2
+  - Processing: 3000 mel frames × 80 bins = 240K inputs
+  - Current: CPU FFT/conv in ~590ms
+  - Target: GPU conv or optimized CPU SIMD
+```
+
+**WAPR-PERF-012: GPU Conv Frontend (Next Task)**
+
+| # | Falsification Test | Method | Pass Criteria |
+|---|-------------------|--------|---------------|
+| 151 | **Conv GPU Offload** | Move conv1/conv2 to CUDA | **Conv time < 50ms** |
+| 152 | **End-to-End Target** | Full encoder with GPU conv | **Total < 100ms** |
+| 153 | **2x whisper.cpp** | Compare with whisper.cpp 83ms | **≤166ms total** |
 
 ---
 
