@@ -2180,6 +2180,91 @@ impl WhisperCuda {
         Ok(logits)
     }
 
+    /// WAPR-PERF-013: Full GPU decoder forward pass for single token
+    ///
+    /// Uses GPU self-attention with head-first KV caches for all decoder blocks.
+    /// This is the "Total Offload" path that minimizes host-device sync.
+    ///
+    /// # Architecture
+    ///
+    /// ```text
+    /// token → embed (CPU) → decoder blocks (GPU self-attn) → ln_post (CPU) → logits (GPU)
+    /// ```
+    ///
+    /// # Point 157 Compliance
+    ///
+    /// - GPU self-attention with head-first KV cache (no layout conversion)
+    /// - Cross-attention on CPU (encoder K/V not GPU-resident yet)
+    /// - Single sync point at the end (after all blocks)
+    #[cfg(feature = "cuda")]
+    pub fn forward_one_gpu_total_offload(
+        &mut self,
+        token: u32,
+        encoder_output: &[f32],
+    ) -> WhisperResult<Vec<f32>> {
+        let d_model = self.config.n_text_state as usize;
+        let n_layers = self.config.n_text_layer as usize;
+        let n_vocab = self.config.n_vocab as usize;
+
+        // Ensure GPU decoder infrastructure is initialized
+        if self.gpu_decoder_weights.is_none() {
+            self.upload_decoder_weights_to_gpu()?;
+        }
+        if self.gpu_self_k_head_first.is_none() {
+            self.init_gpu_decoder_kv_cache_head_first()?;
+        }
+
+        let pos = self.gpu_decoder_pos;
+
+        // 1. Embed token + positional embedding (CPU - fast)
+        if token as usize >= n_vocab {
+            return Err(WhisperError::Inference(format!(
+                "token {} out of vocabulary range {}",
+                token, n_vocab
+            )));
+        }
+
+        let emb_start = (token as usize) * d_model;
+        let token_emb = self.decoder.token_embedding();
+        let pos_emb = self.decoder.positional_embedding();
+        let max_len = self.config.n_text_ctx as usize;
+
+        if pos >= max_len {
+            return Err(WhisperError::Inference(format!(
+                "position {} exceeds max {}",
+                pos, max_len
+            )));
+        }
+
+        let pos_start = pos * d_model;
+        let mut x: Vec<f32> = token_emb[emb_start..emb_start + d_model]
+            .iter()
+            .zip(&pos_emb[pos_start..pos_start + d_model])
+            .map(|(t, p)| t + p)
+            .collect();
+
+        // 2. Run through all decoder blocks (GPU self-attention)
+        for layer_idx in 0..n_layers {
+            x = self.forward_decoder_block_gpu(
+                layer_idx,
+                &x,
+                pos,
+                Some(encoder_output),
+            )?;
+        }
+
+        // 3. Final layer norm (CPU - simple)
+        let blocks = self.decoder.blocks();
+        // ln_post is accessible via decoder
+        let hidden = self.decoder.ln_post().forward(&x)?;
+
+        // 4. Increment position for next token
+        self.gpu_decoder_pos += 1;
+
+        // 5. Output projection on GPU
+        self.project_to_vocab_gpu(&hidden)
+    }
+
     /// GPU-accelerated output projection using direct gemm.
     ///
     /// FIX 1 (WAPR-PERF-004): Use `executor.gemm()` directly instead of
@@ -2379,13 +2464,31 @@ impl WhisperCuda {
             .with_timestamp_suppression(!options.word_timestamps)
             .with_vocab_size(n_vocab);
 
-        // Process initial tokens (CPU decoder with SIMD)
+        // WAPR-PERF-013: Check if GPU decoder total offload is enabled
+        #[cfg(feature = "cuda")]
+        let use_gpu_decoder = std::env::var("WHISPER_GPU_DECODER_OFFLOAD").is_ok();
+        #[cfg(not(feature = "cuda"))]
+        let use_gpu_decoder = false;
+
+        if use_gpu_decoder {
+            eprintln!("[WAPR-PERF-013] Using GPU decoder total offload...");
+            // Reset GPU decoder position for new transcription
+            self.reset_gpu_decoder_pos();
+        }
+
+        // Process initial tokens
         for &token in &tokens {
+            #[cfg(feature = "cuda")]
+            if use_gpu_decoder {
+                let _ = self.forward_one_gpu_total_offload(token, &encoder_output)?;
+            } else {
+                let _ = self.decoder.forward_one(token, &encoder_output, &mut cache)?;
+            }
+            #[cfg(not(feature = "cuda"))]
             let _ = self.decoder.forward_one(token, &encoder_output, &mut cache)?;
         }
 
-        // Generate tokens using hybrid path:
-        // CPU decoder blocks → GPU output projection
+        // Generate tokens
         let debug_gpu = std::env::var("WHISPER_DEBUG_GPU").is_ok();
         for gen_idx in 0..max_tokens.saturating_sub(tokens.len()) {
             let last_token = *tokens.last().unwrap_or(&specials.sot);
@@ -2397,7 +2500,14 @@ impl WhisperCuda {
             // === TRACE: LM_HEAD (output projection) ===
             self.tracer.start_step(TraceStep::LmHead);
 
-            // Hybrid forward pass: CPU decoder + GPU output projection
+            // WAPR-PERF-013: Use GPU decoder total offload path when enabled
+            #[cfg(feature = "cuda")]
+            let mut logits = if use_gpu_decoder {
+                self.forward_one_gpu_total_offload(last_token, &encoder_output)?
+            } else {
+                self.forward_one_gpu(last_token, &encoder_output, &mut cache)?
+            };
+            #[cfg(not(feature = "cuda"))]
             let mut logits = self.forward_one_gpu(last_token, &encoder_output, &mut cache)?;
 
             // Trace output projection
