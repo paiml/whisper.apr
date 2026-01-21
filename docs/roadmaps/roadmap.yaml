@@ -1362,7 +1362,7 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'WAPR-PERF-011: Batched GEMM WMMA Support for Attention'
-  status: todo
+  status: planned
   priority: high
   assigned_to: null
   created: 2026-01-21T00:00:00.000000000+00:00
@@ -1380,3 +1380,19 @@ roadmap:
   - performance
   - gpu
   notes: 'Current state: Encoder FFN uses WMMA (gemm_wmma_fp16), but attention uses batched_gemm_naive. Gap: 618ms vs 166ms target (3.7x).'
+- id: WAPR-PERF-013
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PERF-013'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-21T16:05:18.240291691+00:00
+  updated: 2026-01-21T16:05:18.240291691+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
