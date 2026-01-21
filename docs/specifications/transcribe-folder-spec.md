@@ -1314,6 +1314,44 @@ FALSIFICATION: Point 157 FAILED
 | 163 | **KV Cache Update** | Verify graph updates KV cache in-place | **Parity maintained** |
 | 164 | **End-to-End Decoder** | Full decoder loop with graphs | **Decoder time < 200ms** |
 
+#### O.1 Root Cause Analysis (2026-01-21)
+
+**Five Whys: Stream Creation Overhead**
+
+| Level | Question | Answer |
+|-------|----------|--------|
+| Why 1 | Why is GPU decoder 10x slower than CPU? | ~16,000 kernel launches per transcription |
+| Why 2 | Why does each launch have overhead? | Each operation creates a new CUDA stream |
+| Why 3 | Why create new streams? | `GpuResidentTensor` API creates streams internally |
+| Why 4 | Why not reuse streams? | API designed for single-op simplicity |
+| Why 5 | **Root Cause** | **Need CudaExecutor's persistent `compute_stream`** |
+
+**Evidence** (from trueno-gpu/src/memory/resident.rs):
+```rust
+// Line 1032 - Every .linear() call creates a new stream:
+let stream = CudaStream::new(ctx)?;
+```
+
+With 4 decoder layers × ~10 operations per layer = ~40 stream creations per token.
+
+#### O.2 Implementation Progress
+
+| Step | Status | Description |
+|------|--------|-------------|
+| 1. Identify root cause | ✅ COMPLETE | Stream creation overhead identified |
+| 2. Upload weights to executor | ✅ COMPLETE | 112MB in 23ms via `upload_decoder_weights_to_executor()` |
+| 3. Implement executor forward | ⏸️ BLOCKED | Awaiting realizar refactoring |
+| 4. Verify parity | ⏸️ BLOCKED | Depends on step 3 |
+| 5. CUDA Graph capture | ⏸️ PENDING | Depends on steps 3-4 |
+
+**Benchmark Results** (release mode, 1.5s audio):
+```
+Weight upload: 23ms
+Encoder (CPU): 7.29s  (needs separate optimization)
+Per-token decode: ~79ms
+Status: BLOCKED pending realizar stability
+```
+
 **Implementation Strategy**:
 1. Implement `cudaStreamBeginCapture` / `EndCapture` wrapper in `CudaContext`.
 2. Refactor `forward_decoder_block_gpu` to be capturable (no CPU logic inside).
