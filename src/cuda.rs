@@ -48,8 +48,8 @@ use realizar::inference_trace::{InferenceTracer, ModelInfo, TraceConfig, TraceSt
 #[cfg(feature = "cuda")]
 use trueno_gpu::memory::resident::{
     batched_multihead_attention, forward_encoder_block_gpu, kernel_cache_hits,
-    kernel_cache_misses, reset_transfer_counters, GpuEncoderBlockWeights, GpuEncoderConfig,
-    GpuResidentTensor, TransferStats,
+    kernel_cache_misses, reset_transfer_counters, GpuConvFrontendWeights,
+    GpuEncoderBlockWeights, GpuEncoderConfig, GpuResidentTensor, TransferStats,
 };
 
 /// GELU activation function (Gaussian Error Linear Unit)
@@ -98,6 +98,9 @@ pub struct WhisperCuda {
     /// GPU encoder configuration
     #[cfg(feature = "cuda")]
     gpu_encoder_config: Option<GpuEncoderConfig>,
+    /// WAPR-PERF-012: GPU-resident conv frontend weights
+    #[cfg(feature = "cuda")]
+    gpu_conv_weights: Option<GpuConvFrontendWeights>,
 }
 
 impl WhisperCuda {
@@ -223,6 +226,8 @@ impl WhisperCuda {
             gpu_encoder_weights: None,
             #[cfg(feature = "cuda")]
             gpu_encoder_config: None,
+            #[cfg(feature = "cuda")]
+            gpu_conv_weights: None,
         };
 
         // Initialize GPU KV caches for decoder self-attention
@@ -607,6 +612,41 @@ impl WhisperCuda {
         Ok(())
     }
 
+    /// WAPR-PERF-012: Upload convolutional frontend weights to GPU
+    ///
+    /// Uploads conv1/conv2 weights and biases for GPU-accelerated audio processing.
+    /// Target: Move 588ms CPU conv to GPU (<50ms).
+    #[cfg(feature = "cuda")]
+    pub fn upload_conv_weights_to_gpu(&mut self) -> WhisperResult<()> {
+        if self.gpu_conv_weights.is_some() {
+            return Ok(()); // Already uploaded
+        }
+
+        let ctx = self.executor.context();
+        let conv_frontend = self.encoder.conv_frontend();
+
+        // Upload conv1 weights [out_channels, in_channels, kernel_size]
+        let conv1_weight = GpuResidentTensor::from_host(ctx, &conv_frontend.conv1.weight)
+            .map_err(|e| WhisperError::Inference(format!("conv1_weight upload: {e}")))?;
+        let conv1_bias = GpuResidentTensor::from_host(ctx, &conv_frontend.conv1.bias)
+            .map_err(|e| WhisperError::Inference(format!("conv1_bias upload: {e}")))?;
+
+        // Upload conv2 weights [out_channels, in_channels, kernel_size]
+        let conv2_weight = GpuResidentTensor::from_host(ctx, &conv_frontend.conv2.weight)
+            .map_err(|e| WhisperError::Inference(format!("conv2_weight upload: {e}")))?;
+        let conv2_bias = GpuResidentTensor::from_host(ctx, &conv_frontend.conv2.bias)
+            .map_err(|e| WhisperError::Inference(format!("conv2_bias upload: {e}")))?;
+
+        self.gpu_conv_weights = Some(GpuConvFrontendWeights {
+            conv1_weight,
+            conv1_bias,
+            conv2_weight,
+            conv2_bias,
+        });
+
+        Ok(())
+    }
+
     /// Full GPU encoder (WAPR-PERF-004: Total Offload)
     ///
     /// Runs the entire encoder on GPU with minimal host transfers:
@@ -622,9 +662,15 @@ impl WhisperCuda {
             self.upload_encoder_weights_to_gpu()?;
         }
 
+        // WAPR-PERF-012: Upload conv weights if not already
+        if self.gpu_conv_weights.is_none() {
+            self.upload_conv_weights_to_gpu()?;
+        }
+
         let ctx = self.executor.context();
         let d_model = self.config.n_audio_state as usize;
         let n_layers = self.config.n_audio_layer as usize;
+        let n_mels = self.config.n_mels as usize;
 
         // Reset transfer counters for monitoring
         reset_transfer_counters();
@@ -633,15 +679,57 @@ impl WhisperCuda {
         let profile_detail = std::env::var("WHISPER_PROFILE_LAYERS").is_ok();
         let total_start = std::time::Instant::now();
 
-        // Step 1: Convolutional frontend (CPU - small overhead)
+        // WAPR-PERF-012: GPU Convolutional frontend
         let conv_start = std::time::Instant::now();
-        let conv_output = self.encoder.conv_frontend().forward(mel)?;
-        let conv_time = conv_start.elapsed();
-        let seq_len = conv_output.len() / d_model;
+        let seq_len_in = mel.len() / n_mels;
 
-        // Step 2: Add positional embedding (CPU - small overhead)
+        // Upload mel to GPU
+        let mel_gpu = GpuResidentTensor::from_host(ctx, mel)
+            .map_err(|e| WhisperError::Inference(format!("mel upload: {e}")))?;
+
+        let conv_weights = self.gpu_conv_weights.as_ref()
+            .ok_or_else(|| WhisperError::Inference("GPU conv weights not uploaded".into()))?;
+
+        // Conv1: 80 → 384, kernel=3, stride=1, padding=1 + GELU
+        let conv1_out = mel_gpu.conv1d(
+            ctx,
+            &conv_weights.conv1_weight,
+            Some(&conv_weights.conv1_bias),
+            n_mels as u32,        // in_channels
+            d_model as u32,       // out_channels
+            3,                    // kernel_size
+            1,                    // stride
+            1,                    // padding
+            seq_len_in as u32,    // seq_len
+        ).map_err(|e| WhisperError::Inference(format!("conv1 GPU: {e}")))?;
+
+        // After conv1: seq_len stays same (stride=1), channels = d_model
+        let seq_len_after_conv1 = seq_len_in;
+
+        // Conv2: 384 → 384, kernel=3, stride=2, padding=1 + GELU
+        let mut conv2_out = conv1_out.conv1d(
+            ctx,
+            &conv_weights.conv2_weight,
+            Some(&conv_weights.conv2_bias),
+            d_model as u32,       // in_channels
+            d_model as u32,       // out_channels
+            3,                    // kernel_size
+            2,                    // stride
+            1,                    // padding
+            seq_len_after_conv1 as u32,
+        ).map_err(|e| WhisperError::Inference(format!("conv2 GPU: {e}")))?;
+
+        let conv_time = conv_start.elapsed();
+
+        // After conv2: seq_len halved (stride=2)
+        let seq_len = (seq_len_after_conv1 + 2 - 3) / 2 + 1;
+
+        // Download conv output to add positional embedding (CPU - small overhead)
         let pos_start = std::time::Instant::now();
-        let mut x = conv_output;
+        let mut x = conv2_out.to_host()
+            .map_err(|e| WhisperError::Inference(format!("conv output download: {e}")))?;
+
+        // Add positional embedding
         let pos_emb = self.encoder.positional_embedding();
         for pos in 0..seq_len {
             for d in 0..d_model {
@@ -650,14 +738,14 @@ impl WhisperCuda {
         }
         let pos_time = pos_start.elapsed();
 
-        // Step 3: Upload to GPU (1 H2D transfer)
+        // Upload to GPU for transformer blocks
         let upload_start = std::time::Instant::now();
         let mut x_gpu = GpuResidentTensor::from_host(ctx, &x)
             .map_err(|e| WhisperError::Inference(format!("input upload: {e}")))?;
         let upload_time = upload_start.elapsed();
 
         if profile_detail {
-            eprintln!("[PROFILE-BREAKDOWN] Conv: {:.1}ms, PosEmb: {:.1}ms, Upload: {:.1}ms",
+            eprintln!("[PROFILE-BREAKDOWN] Conv(GPU): {:.1}ms, PosEmb: {:.1}ms, Upload: {:.1}ms",
                 conv_time.as_millis(), pos_time.as_millis(), upload_time.as_millis());
         }
 
