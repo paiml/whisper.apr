@@ -49,7 +49,8 @@ use realizar::inference_trace::{InferenceTracer, ModelInfo, TraceConfig, TraceSt
 use trueno_gpu::memory::resident::{
     batched_multihead_attention, forward_encoder_block_gpu, kernel_cache_hits,
     kernel_cache_misses, reset_transfer_counters, GpuConvFrontendWeights,
-    GpuEncoderBlockWeights, GpuEncoderConfig, GpuResidentTensor, TransferStats,
+    GpuDecoderBlockWeights, GpuDecoderConfig, GpuEncoderBlockWeights, GpuEncoderConfig,
+    GpuKvCache, GpuResidentTensor, TransferStats,
 };
 
 /// GELU activation function (Gaussian Error Linear Unit)
@@ -101,6 +102,18 @@ pub struct WhisperCuda {
     /// WAPR-PERF-012: GPU-resident conv frontend weights
     #[cfg(feature = "cuda")]
     gpu_conv_weights: Option<GpuConvFrontendWeights>,
+    /// WAPR-PERF-013: GPU-resident decoder block weights
+    #[cfg(feature = "cuda")]
+    gpu_decoder_weights: Option<Vec<GpuDecoderBlockWeights>>,
+    /// WAPR-PERF-013: GPU decoder configuration
+    #[cfg(feature = "cuda")]
+    gpu_decoder_config: Option<GpuDecoderConfig>,
+    /// WAPR-PERF-013: GPU-resident KV caches (self-attention per layer)
+    #[cfg(feature = "cuda")]
+    gpu_self_kv_cache: Option<Vec<GpuKvCache>>,
+    /// WAPR-PERF-013: GPU-resident cross-attention KV cache (encoder K/V, per layer)
+    #[cfg(feature = "cuda")]
+    gpu_cross_kv_cache: Option<Vec<GpuKvCache>>,
 }
 
 impl WhisperCuda {
@@ -228,6 +241,14 @@ impl WhisperCuda {
             gpu_encoder_config: None,
             #[cfg(feature = "cuda")]
             gpu_conv_weights: None,
+            #[cfg(feature = "cuda")]
+            gpu_decoder_weights: None,
+            #[cfg(feature = "cuda")]
+            gpu_decoder_config: None,
+            #[cfg(feature = "cuda")]
+            gpu_self_kv_cache: None,
+            #[cfg(feature = "cuda")]
+            gpu_cross_kv_cache: None,
         };
 
         // Initialize GPU KV caches for decoder self-attention
@@ -643,6 +664,201 @@ impl WhisperCuda {
             conv2_weight,
             conv2_bias,
         });
+
+        Ok(())
+    }
+
+    /// WAPR-PERF-013: Upload decoder block weights to GPU
+    ///
+    /// Uploads all decoder weights for full GPU residence:
+    /// - Self-attention: LN1, Q/K/V/O projections
+    /// - Cross-attention: LN2, Q/K/V/O projections
+    /// - FFN: LN3, FC1, FC2
+    #[cfg(feature = "cuda")]
+    pub fn upload_decoder_weights_to_gpu(&mut self) -> WhisperResult<()> {
+        if self.gpu_decoder_weights.is_some() {
+            return Ok(()); // Already uploaded
+        }
+
+        // Helper to transpose weight matrix from [rows, cols] to [cols, rows]
+        fn transpose_weights(weights: &[f32], rows: usize, cols: usize) -> Vec<f32> {
+            let mut transposed = vec![0.0_f32; weights.len()];
+            for r in 0..rows {
+                for c in 0..cols {
+                    transposed[c * rows + r] = weights[r * cols + c];
+                }
+            }
+            transposed
+        }
+
+        let ctx = self.executor.context();
+        let d_model = self.config.n_text_state as usize;
+        let n_heads = self.config.n_text_head as usize;
+        let n_layers = self.config.n_text_layer as usize;
+        let d_ff = d_model * 4; // Standard 4x expansion
+        let max_seq_len = self.config.n_text_ctx as usize;
+
+        let mut gpu_weights = Vec::with_capacity(n_layers);
+
+        for layer_idx in 0..n_layers {
+            let block = &self.decoder.blocks()[layer_idx];
+
+            // Self-Attention weights
+            let ln1_gamma = GpuResidentTensor::from_host(ctx, &block.ln1.weight)
+                .map_err(|e| WhisperError::Inference(format!("dec ln1_gamma L{layer_idx}: {e}")))?;
+            let ln1_beta = GpuResidentTensor::from_host(ctx, &block.ln1.bias)
+                .map_err(|e| WhisperError::Inference(format!("dec ln1_beta L{layer_idx}: {e}")))?;
+
+            // Self-attention Q/K/V/O (transposed for GPU linear: [in, out])
+            let self_w_q_t = transpose_weights(&block.self_attn.w_q().weight, d_model, d_model);
+            let self_w_q = GpuResidentTensor::from_host(ctx, &self_w_q_t)
+                .map_err(|e| WhisperError::Inference(format!("dec self_w_q L{layer_idx}: {e}")))?;
+            let self_b_q = GpuResidentTensor::from_host(ctx, &block.self_attn.w_q().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec self_b_q L{layer_idx}: {e}")))?;
+
+            let self_w_k_t = transpose_weights(&block.self_attn.w_k().weight, d_model, d_model);
+            let self_w_k = GpuResidentTensor::from_host(ctx, &self_w_k_t)
+                .map_err(|e| WhisperError::Inference(format!("dec self_w_k L{layer_idx}: {e}")))?;
+            let self_b_k = GpuResidentTensor::from_host(ctx, &block.self_attn.w_k().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec self_b_k L{layer_idx}: {e}")))?;
+
+            let self_w_v_t = transpose_weights(&block.self_attn.w_v().weight, d_model, d_model);
+            let self_w_v = GpuResidentTensor::from_host(ctx, &self_w_v_t)
+                .map_err(|e| WhisperError::Inference(format!("dec self_w_v L{layer_idx}: {e}")))?;
+            let self_b_v = GpuResidentTensor::from_host(ctx, &block.self_attn.w_v().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec self_b_v L{layer_idx}: {e}")))?;
+
+            let self_w_o_t = transpose_weights(&block.self_attn.w_o().weight, d_model, d_model);
+            let self_w_o = GpuResidentTensor::from_host(ctx, &self_w_o_t)
+                .map_err(|e| WhisperError::Inference(format!("dec self_w_o L{layer_idx}: {e}")))?;
+            let self_b_o = GpuResidentTensor::from_host(ctx, &block.self_attn.w_o().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec self_b_o L{layer_idx}: {e}")))?;
+
+            // Cross-Attention weights
+            let ln2_gamma = GpuResidentTensor::from_host(ctx, &block.ln2.weight)
+                .map_err(|e| WhisperError::Inference(format!("dec ln2_gamma L{layer_idx}: {e}")))?;
+            let ln2_beta = GpuResidentTensor::from_host(ctx, &block.ln2.bias)
+                .map_err(|e| WhisperError::Inference(format!("dec ln2_beta L{layer_idx}: {e}")))?;
+
+            let cross_w_q_t = transpose_weights(&block.cross_attn.w_q().weight, d_model, d_model);
+            let cross_w_q = GpuResidentTensor::from_host(ctx, &cross_w_q_t)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_w_q L{layer_idx}: {e}")))?;
+            let cross_b_q = GpuResidentTensor::from_host(ctx, &block.cross_attn.w_q().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_b_q L{layer_idx}: {e}")))?;
+
+            let cross_w_k_t = transpose_weights(&block.cross_attn.w_k().weight, d_model, d_model);
+            let cross_w_k = GpuResidentTensor::from_host(ctx, &cross_w_k_t)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_w_k L{layer_idx}: {e}")))?;
+            let cross_b_k = GpuResidentTensor::from_host(ctx, &block.cross_attn.w_k().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_b_k L{layer_idx}: {e}")))?;
+
+            let cross_w_v_t = transpose_weights(&block.cross_attn.w_v().weight, d_model, d_model);
+            let cross_w_v = GpuResidentTensor::from_host(ctx, &cross_w_v_t)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_w_v L{layer_idx}: {e}")))?;
+            let cross_b_v = GpuResidentTensor::from_host(ctx, &block.cross_attn.w_v().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_b_v L{layer_idx}: {e}")))?;
+
+            let cross_w_o_t = transpose_weights(&block.cross_attn.w_o().weight, d_model, d_model);
+            let cross_w_o = GpuResidentTensor::from_host(ctx, &cross_w_o_t)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_w_o L{layer_idx}: {e}")))?;
+            let cross_b_o = GpuResidentTensor::from_host(ctx, &block.cross_attn.w_o().bias)
+                .map_err(|e| WhisperError::Inference(format!("dec cross_b_o L{layer_idx}: {e}")))?;
+
+            // FFN weights
+            let ln3_gamma = GpuResidentTensor::from_host(ctx, &block.ln3.weight)
+                .map_err(|e| WhisperError::Inference(format!("dec ln3_gamma L{layer_idx}: {e}")))?;
+            let ln3_beta = GpuResidentTensor::from_host(ctx, &block.ln3.bias)
+                .map_err(|e| WhisperError::Inference(format!("dec ln3_beta L{layer_idx}: {e}")))?;
+
+            // FFN up: [d_ff, d_model] -> transposed to [d_model, d_ff]
+            let ffn_up_t = transpose_weights(&block.ffn.fc1.weight, d_ff, d_model);
+            let ffn_up_w = GpuResidentTensor::from_host(ctx, &ffn_up_t)
+                .map_err(|e| WhisperError::Inference(format!("dec ffn_up_w L{layer_idx}: {e}")))?;
+            let ffn_up_b = GpuResidentTensor::from_host(ctx, &block.ffn.fc1.bias)
+                .map_err(|e| WhisperError::Inference(format!("dec ffn_up_b L{layer_idx}: {e}")))?;
+
+            // FFN down: [d_model, d_ff] -> transposed to [d_ff, d_model]
+            let ffn_down_t = transpose_weights(&block.ffn.fc2.weight, d_model, d_ff);
+            let ffn_down_w = GpuResidentTensor::from_host(ctx, &ffn_down_t)
+                .map_err(|e| WhisperError::Inference(format!("dec ffn_down_w L{layer_idx}: {e}")))?;
+            let ffn_down_b = GpuResidentTensor::from_host(ctx, &block.ffn.fc2.bias)
+                .map_err(|e| WhisperError::Inference(format!("dec ffn_down_b L{layer_idx}: {e}")))?;
+
+            gpu_weights.push(GpuDecoderBlockWeights {
+                ln1_gamma,
+                ln1_beta,
+                self_w_q,
+                self_b_q,
+                self_w_k,
+                self_b_k,
+                self_w_v,
+                self_b_v,
+                self_w_o,
+                self_b_o,
+                ln2_gamma,
+                ln2_beta,
+                cross_w_q,
+                cross_b_q,
+                cross_w_k,
+                cross_b_k,
+                cross_w_v,
+                cross_b_v,
+                cross_w_o,
+                cross_b_o,
+                ln3_gamma,
+                ln3_beta,
+                ffn_up_w,
+                ffn_up_b,
+                ffn_down_w,
+                ffn_down_b,
+            });
+        }
+
+        self.gpu_decoder_weights = Some(gpu_weights);
+        self.gpu_decoder_config = Some(GpuDecoderConfig {
+            d_model: d_model as u32,
+            n_heads: n_heads as u32,
+            ffn_dim: d_ff as u32,
+            max_seq_len: max_seq_len as u32,
+            n_layers: n_layers as u32,
+        });
+
+        Ok(())
+    }
+
+    /// WAPR-PERF-013: Initialize GPU KV caches for decoder
+    #[cfg(feature = "cuda")]
+    pub fn init_gpu_decoder_kv_cache(&mut self) -> WhisperResult<()> {
+        if self.gpu_self_kv_cache.is_some() {
+            return Ok(()); // Already initialized
+        }
+
+        let ctx = self.executor.context();
+        let d_model = self.config.n_text_state as usize;
+        let n_layers = self.config.n_text_layer as usize;
+        let max_seq_len = self.config.n_text_ctx as usize;
+
+        // Self-attention KV caches (one per layer)
+        let mut self_kv_caches = Vec::with_capacity(n_layers);
+        for _layer in 0..n_layers {
+            let cache = GpuKvCache::new(ctx, max_seq_len, d_model)
+                .map_err(|e| WhisperError::Inference(format!("GPU self KV cache: {e}")))?;
+            self_kv_caches.push(cache);
+        }
+
+        // Cross-attention KV caches (one per layer, for encoder K/V)
+        // These are computed once from encoder output
+        let mut cross_kv_caches = Vec::with_capacity(n_layers);
+        for _layer in 0..n_layers {
+            // Use encoder output length (1500 for Whisper tiny)
+            let enc_seq_len = 1500; // Fixed for Whisper
+            let cache = GpuKvCache::new(ctx, enc_seq_len, d_model)
+                .map_err(|e| WhisperError::Inference(format!("GPU cross KV cache: {e}")))?;
+            cross_kv_caches.push(cache);
+        }
+
+        self.gpu_self_kv_cache = Some(self_kv_caches);
+        self.gpu_cross_kv_cache = Some(cross_kv_caches);
 
         Ok(())
     }
