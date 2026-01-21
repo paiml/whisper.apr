@@ -1281,7 +1281,7 @@ roadmap:
   priority: medium
   assigned_to: null
   created: 2026-01-20T11:16:32.359652923+00:00
-  updated: 2026-01-20T13:31:11.340178513+00:00
+  updated: 2026-01-20T19:56:10.964805497+00:00
   spec: null
   acceptance_criteria: []
   phases: []
@@ -1289,3 +1289,94 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: WAPR-PERF-004-GPU
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PERF-004-GPU'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-20T16:18:36.368803227+00:00
+  updated: 2026-01-20T18:14:08.352211564+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-PERF-005
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PERF-005'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-20T18:15:08.803240859+00:00
+  updated: 2026-01-20T18:27:22.317983242+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-PERF-006
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PERF-006'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-20T18:34:10.724034201+00:00
+  updated: 2026-01-20T18:34:10.724034201+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-PERF-010
+  github_issue: null
+  item_type: task
+  title: 'WAPR-PERF-010: WMMA Tensor Core Fix - cvta.shared.u64'
+  status: completed
+  priority: high
+  assigned_to: null
+  created: 2026-01-21T00:00:00.000000000+00:00
+  updated: 2026-01-21T00:00:00.000000000+00:00
+  spec: docs/specifications/transcribe-folder-spec.md
+  acceptance_criteria:
+  - WMMA kernels produce correct numerical output
+  - Performance improves from 640ms (FMA) to 618ms (WMMA)
+  - cvta.shared.u64 PTX instruction generated for shared memory pointers
+  phases: []
+  subtasks: []
+  estimated_effort: medium
+  labels:
+  - performance
+  - gpu
+  notes: 'Root cause: WMMA wmma.load instructions require generic pointers via cvta.shared.u64, not raw shared memory offsets. Fix applied in trueno-gpu gemm.rs.'
+- id: WAPR-PERF-011
+  github_issue: null
+  item_type: task
+  title: 'WAPR-PERF-011: Batched GEMM WMMA Support for Attention'
+  status: todo
+  priority: high
+  assigned_to: null
+  created: 2026-01-21T00:00:00.000000000+00:00
+  updated: 2026-01-21T00:00:00.000000000+00:00
+  spec: docs/specifications/transcribe-folder-spec.md
+  acceptance_criteria:
+  - Implement batched_gemm_wmma for multi-head attention Q@K and attn@V
+  - Replace batched_gemm_naive with WMMA-accelerated version
+  - Target encoder time <166ms (2x whisper.cpp @ 83ms)
+  - Profile to confirm attention is the dominant bottleneck
+  phases: []
+  subtasks: []
+  estimated_effort: large
+  labels:
+  - performance
+  - gpu
+  notes: 'Current state: Encoder FFN uses WMMA (gemm_wmma_fp16), but attention uses batched_gemm_naive. Gap: 618ms vs 166ms target (3.7x).'
