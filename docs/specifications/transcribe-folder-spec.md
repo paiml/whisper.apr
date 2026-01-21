@@ -4,7 +4,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | **FALSIFIED: Batched GEMM (WAPR-PERF-011)** (Time: 624ms; Target: 166ms; Gap: 3.8x) - Pivot to Memory/Sync |
+| Status | **FALSIFIED: Decoder GPU Residence (WAPR-PERF-013)** (Time: 70s; Target: 2s) - Pivot to CUDA Graphs |
 | Author | Claude Code |
 | Created | 2026-01-20 |
 | Updated | 2026-01-21 |
@@ -1279,55 +1279,47 @@ TRUE BOTTLENECK: CPU Convolutional Frontend
 
 ```
 === WAPR-PERF-013 Point 154: Numerical Parity Test ===
-Max absolute difference: 6.63e-7
-Elements exceeding tolerance: 0/384
-✓ GPU attention matches CPU within 1e-5
+Max absolute difference: 2.74e-5 (Full Decoder)
+Argmax: CPU=50362, GPU=50362
+Text output: "The birds can use" (Identical)
+✓ GPU decoder matches CPU within tolerance
 ```
-
-#### GPU Decoder Block (whisper.apr - 2026-01-21)
-
-| Component | Commit | Description |
-|-----------|--------|-------------|
-| `forward_decoder_block_gpu()` | `561eb52` | GPU self-attention + CPU FFN, optional cross-attn |
-| Smoke test | `67b6b26` | Point 155: shape correct, no NaN/Inf, KV cache works |
-
-```
-=== WAPR-PERF-013 Point 155: GPU Decoder Block Smoke Test ===
-Model: d_model=384, n_layers=4, max_len=448
-Position 0: max_abs=1.10, mean_abs=0.36
-Position 1-2: KV cache populates correctly
-✓ Output shape correct, no NaN/Inf, KV cache works across positions
-```
-
-#### Remaining Implementation
-
-1. ✅ **GPU GEMV for projections** - Wired via `layer_weights.linear()`
-2. ✅ **forward_decoder_block_gpu()** - Self-attention + FFN (cross-attn optional)
-3. ✅ **forward_decoder_token_gpu()** - Full decoder loop through all layers (`4eac091`)
-4. ⏳ **GPU cross-attention** - Needs encoder K/V cached on GPU
-5. ⏳ **Wire GPU path into CLI** - Currently uses CPU SIMD
 
 #### Point 157 Benchmark Results (2026-01-21)
 
 ```
-=== GPU Encoder Performance (profile_encoder) ===
-whisper.cpp encoder: 83ms
-whisper.apr GPU:     42.1ms (2x FASTER than whisper.cpp!)
-Target:              166ms (2x whisper.cpp)
-Status:              EXCEEDS TARGET
+=== Full Transcription Benchmark ===
+whisper.cpp (CPU):   992ms
+whisper.apr (CPU):   ~6.7s
+whisper.apr (GPU):   ~70s (10x SLOWER than CPU!)
 
-=== Full Transcription (CLI - not using GPU primitives) ===
-CLI with --gpu flag: 6.7s (CPU SIMD encoder + CPU decoder)
-Bottleneck: CLI not wired to GPU encoder/decoder
-
-=== Component Status ===
-GPU Encoder:         42ms  ✅ (2x better than target)
-GPU Decoder Block:   Working ✅ (smoke test passed)
-CLI Wiring:          NOT CONNECTED ⏳ (uses CPU path)
+FALSIFICATION: Point 157 FAILED
+- GPU Decoder is 10x slower than CPU
+- Cause: Kernel Launch Overhead (Point 155)
+- Each token (448) x 4 layers x 9 kernels = ~16,000 kernel launches
+- Launch latency (~5-10µs) dominates execution (~1µs)
 ```
 
-**Conclusion**: GPU primitives achieve 2x whisper.cpp for encoder. Decoder primitives
-are implemented and tested. CLI needs wiring to use GPU paths.
+**Conclusion**: The "GPU Residence" hypothesis is numerically sound but performance-falsified by launch overhead. We must pivot to **CUDA Graphs** or **Persistent Kernels**.
+
+### Section O: WAPR-PERF-014 Kernel Launch Hypothesis (Points 160-165)
+
+**Hypothesis**: Replacing individual kernel launches with **CUDA Graphs** will reduce overhead from ~5-10µs per kernel to <1µs, enabling the GPU decoder to reach the <100ms target.
+
+| # | Falsification Test | Method | Pass Criteria |
+|---|-------------------|--------|---------------|
+| 160 | **Graph Capture** | Capture one decoder layer into a Graph | **Graph executes correctly** |
+| 161 | **Launch Latency** | Measure graph launch vs stream launch | **Graph is >5x faster** |
+| 162 | **Dynamic Seq Length** | Handle varying `seq_len` in graph | **No recompilation per token** |
+| 163 | **KV Cache Update** | Verify graph updates KV cache in-place | **Parity maintained** |
+| 164 | **End-to-End Decoder** | Full decoder loop with graphs | **Decoder time < 200ms** |
+
+**Implementation Strategy**:
+1. Implement `cudaStreamBeginCapture` / `EndCapture` wrapper in `CudaContext`.
+2. Refactor `forward_decoder_block_gpu` to be capturable (no CPU logic inside).
+3. Use "bucketed" graphs or max-length padding to handle dynamic sequence lengths.
+
+---
 
 ### N.6 Critical Constraints (Dr. Popper's Advice)
 
