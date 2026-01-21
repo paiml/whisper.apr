@@ -1152,6 +1152,49 @@ TRUE BOTTLENECK: CPU Convolutional Frontend
 | 152 | **End-to-End Target** | Full encoder with GPU conv | **Total < 100ms** |
 | 153 | **2x whisper.cpp** | Compare with whisper.cpp 83ms | **≤166ms total** |
 
+### L.4 WAPR-PERF-012 RESULTS (CORROBORATED)
+
+**Implementation Date**: 2026-01-21
+
+**GPU Conv1d Kernel**: `trueno-gpu/src/kernels/conv1d.rs`
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ WAPR-PERF-012: GPU CONVOLUTIONAL FRONTEND - CORROBORATED   │
+├─────────────────────────────────────────────────────────────┤
+│ BEFORE (CPU Conv):                                          │
+│   Conv (CPU):     588ms (93%)                              │
+│   GPU Layers:      38ms (6%)                               │
+│   Total:         ~640ms                                    │
+├─────────────────────────────────────────────────────────────┤
+│ AFTER (GPU Conv):                                           │
+│   Conv (GPU):       2-3ms                                  │
+│   GPU Layers:      37ms                                    │
+│   Total:          ~43ms (best: 43.1ms)                     │
+├─────────────────────────────────────────────────────────────┤
+│ IMPROVEMENT:                                                │
+│   Conv speedup:    ~200x (588ms → 3ms)                     │
+│   Total speedup:   ~15x (640ms → 43ms)                     │
+│   Target (<100ms): ✅ ACHIEVED (43ms < 100ms)              │
+│   2x whisper.cpp:  ✅ ACHIEVED (43ms < 166ms)              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Verification Matrix Final Results:**
+| Component | Time | % of Total |
+|-----------|------|------------|
+| Conv (GPU) | 3ms | 7% |
+| PosEmb | <1ms | 1% |
+| Upload | <1ms | 1% |
+| GPU Layers | 37ms | 86% |
+| Download | 1ms | 2% |
+| LnPost | 2ms | 3% |
+| **Total** | **43ms** | **100%** |
+
+**Point 151**: CORROBORATED - Conv GPU time 3ms < 50ms target
+**Point 152**: CORROBORATED - Total 43ms < 100ms target
+**Point 153**: CORROBORATED - 43ms < 166ms (2x whisper.cpp)
+
 ---
 
 ## 7. Implementation Roadmap
