@@ -1074,6 +1074,28 @@ Applied to whisper.apr:
 | 139 | **Mixed Precision Crash** | FP16 model + FP32 fallback | Handles conversion or errors gracefully |
 | 140 | **Multi-GPU Select** | `--device 1` | Runs on device 1, not 0 |
 
+### Section L: WAPR-PERF-011 Batched GEMM Hypothesis (Points 141-145)
+
+**Hypothesis**: Implementing `batched_gemm_wmma_fp16` for multi-head attention will reduce total inference time from 618ms to <200ms.
+
+| # | Falsification Test | Method | Pass Criteria |
+|---|-------------------|--------|---------------|
+| 141 | **Attention Bottleneck Theory** | Implement batched_gemm_wmma, measure RTF | **RTF drops by ≥2x** (618ms → <309ms) |
+| 142 | **Numerical Parity (Jidoka)** | Compare WER before/after WMMA attention | **WER deviation < 0.1%** |
+| 143 | **Warp Alignment** | n_heads=6 within 32-thread warp | **No race conditions, deterministic output** |
+| 144 | **Memory Bound Falsifier** | Roofline analysis post-WMMA | **Compute bound, not memory bound** |
+| 145 | **Hidden Synchronization** | Profile cudaDeviceSynchronize calls | **< 5 syncs per encoder pass** |
+
+**Jidoka Stop Conditions:**
+- If Point 141 fails (RTF doesn't drop ≥2x): Investigate "Memory Bound Constraints" or "Hidden Synchronizations"
+- If Point 142 fails (WER > 0.1%): Stop the line, debug numerical precision in WMMA fragments
+- If Point 144 confirms memory bound: Pivot to bandwidth optimization (quantization, memory layout)
+
+**Implementation Requirements (Phase 2.1):**
+1. Add `WmmaFp16` variant to `BatchedGemmKernel` in trueno-gpu
+2. Apply `cvta.shared.u64` pattern (WAPR-PERF-010 fix) to batched implementation
+3. Handle n_heads=6 within warp cooperative model (potential padding to 8)
+
 ---
 
 ## 7. Implementation Roadmap
