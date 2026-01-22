@@ -2378,30 +2378,26 @@ impl WhisperCuda {
             )));
         }
 
-        // Get token embedding weights [n_vocab × d_model]
-        let weights = self.decoder.token_embedding();
-        if weights.len() != n_vocab * d_model {
-            return Err(WhisperError::Inference(format!(
-                "Token embedding dimension mismatch: got {}, expected {}",
-                weights.len(), n_vocab * d_model
-            )));
-        }
-
-        // Output projection: logits = weights @ hidden
-        // GEMM: C[m,n] = A[m,k] @ B[k,n]
-        // A = weights [n_vocab × d_model] → m=51865, k=384
-        // B = hidden [d_model × 1] → k=384, n=1
-        // C = logits [n_vocab × 1] → m=51865, n=1
-        let m = n_vocab as u32;
-        let n = 1_u32;
-        let k = d_model as u32;
-
         let mut output = vec![0.0f32; n_vocab];
 
-        // Use direct gemm - this allocates GPU buffers but produces correct results
-        self.executor
-            .gemm(weights, hidden, &mut output, m, n, k)
-            .map_err(|e| WhisperError::Inference(format!("GPU gemm failed: {e}")))?;
+        // WAPR-PERF-014: Try cached weights first, fall back to direct gemm
+        // GEMV: y[n] = W[n,k] @ x[k] where W = token_embedding [n_vocab × d_model]
+        let k = d_model as u32;
+        let n = n_vocab as u32;
+
+        if self.executor.has_weights("dec.output_proj") {
+            // Fast path: use cached weights (persistent GPU buffer, no allocation)
+            self.executor
+                .gemv_cached("dec.output_proj", hidden, &mut output, k, n)
+                .map_err(|e| WhisperError::Inference(format!("GPU gemv_cached failed: {e}")))?;
+        } else {
+            // Fallback: allocate per-call (GPU path before executor weights uploaded)
+            let weights = self.decoder.token_embedding();
+            let m = n_vocab as u32;
+            self.executor
+                .gemm(weights, hidden, &mut output, m, 1, k)
+                .map_err(|e| WhisperError::Inference(format!("GPU gemm failed: {e}")))?;
+        }
 
         if std::env::var("WHISPER_DEBUG_GPU").is_ok() {
             let max_val = output.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
@@ -2824,8 +2820,12 @@ impl WhisperCuda {
         }
 
         // Output projection weights (token embedding)
+        // WAPR-PERF-014: Token embedding is [n_vocab, d_model] but GEMV kernel expects [k, n]
+        // where k=d_model (input) and n=n_vocab (output), so transpose to [d_model, n_vocab]
+        let n_vocab = self.config.n_vocab as usize;
         let token_emb = self.decoder.token_embedding();
-        total_bytes += self.executor.load_weights("dec.output_proj", token_emb)
+        let token_emb_t = transpose_weights(token_emb, n_vocab, d_model);
+        total_bytes += self.executor.load_weights("dec.output_proj", &token_emb_t)
             .map_err(|e| WhisperError::Inference(format!("dec output_proj: {e}")))?;
 
         // Final layer norm
