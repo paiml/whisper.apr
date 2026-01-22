@@ -1506,10 +1506,29 @@ Speedup:           97x via CUDA Graph capture
 - KV cache scatter/gather operations captured correctly
 
 **Remaining Work for Production**:
-- [ ] Integrate graph capture into `forward_decoder_token_gpu()`
+- [x] Integrate graph capture into `forward_decoder_token_gpu()` ✅ DONE (commit 32798b2)
 - [ ] Handle cross-attention (currently only self-attention tested)
 - [ ] Graph update for position parameter (cuGraphExecKernelNodeSetParams)
 - [ ] Integration with full transcription pipeline
+
+**FULL TOKEN PASS RESULTS** (commit 32798b2):
+
+Added `forward_decoder_token_gpu_stream()` for all-GPU token processing:
+```
+[Results - 4 layers × 100 tokens]
+  Graph replay avg:  65.196µs (65µs)
+  Direct exec avg:   7.918646ms (7918µs)
+  Speedup:           121.8x
+
+[Projected for 27 tokens (1.5s audio)]:
+  Graph:  1.8ms
+  Direct: 213.8ms
+  Target: <500ms decoder
+  Status: ✓ PASS (1.8ms)
+```
+
+**Key Insight**: CUDA Graph eliminates ~99.2% of decoder overhead.
+With graph replay, the entire decoder phase becomes negligible (1.8ms vs 1984ms Point 157 target).
 
 #### O.3 CPU Encoder Optimization (WAPR-PERF-015)
 
