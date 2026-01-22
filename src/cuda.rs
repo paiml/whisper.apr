@@ -2881,66 +2881,40 @@ impl WhisperCuda {
         let head_dim = d_model / n_heads;
         let max_seq_len = self.config.n_text_ctx as usize;
 
-        // Copy biases first (before any mutable borrows)
+        // Copy O bias (for output projection after attention)
         let block = &self.decoder.blocks()[layer_idx];
-        let b_q = block.self_attn.w_q().bias.clone();
-        let b_k = block.self_attn.w_k().bias.clone();
-        let b_v = block.self_attn.w_v().bias.clone();
         let b_o = block.self_attn.w_o().bias.clone();
 
         // LN1 (CPU - simple and correct)
         let normed = block.ln1.forward(x)?;
 
-        // === Q/K/V projections via executor (persistent stream, no new streams!) ===
-        let mut q = vec![0.0f32; d_model];
-        let mut k = vec![0.0f32; d_model];
-        let mut v = vec![0.0f32; d_model];
-
-        self.executor.gemv_cached(
-            &format!("dec.L{layer_idx}.self_w_q"),
-            &normed, &mut q,
-            d_model as u32, d_model as u32,
-        ).map_err(|e| WhisperError::Inference(format!("Q projection: {e}")))?;
-
-        self.executor.gemv_cached(
-            &format!("dec.L{layer_idx}.self_w_k"),
-            &normed, &mut k,
-            d_model as u32, d_model as u32,
-        ).map_err(|e| WhisperError::Inference(format!("K projection: {e}")))?;
-
-        self.executor.gemv_cached(
-            &format!("dec.L{layer_idx}.self_w_v"),
-            &normed, &mut v,
-            d_model as u32, d_model as u32,
-        ).map_err(|e| WhisperError::Inference(format!("V projection: {e}")))?;
-
-        // Add biases (CPU - fast)
-        for i in 0..d_model {
-            q[i] += b_q[i];
-            k[i] += b_k[i];
-            v[i] += b_v[i];
-        }
-
-        // Now get context for GPU tensor operations (after gemv_cached calls)
+        // Get context and GPU weights for this layer
         let ctx = self.executor.context();
+        let weights = self.gpu_decoder_weights.as_ref()
+            .ok_or_else(|| WhisperError::Inference("Decoder weights not uploaded (call upload_decoder_weights_to_gpu)".into()))?;
+        let layer_weights = &weights[layer_idx];
 
-        // Get head-first KV caches
+        // === Q/K/V projections on GPU (WAPR-PERF-014: GPU-resident, no double H2D) ===
+        // Upload normed input ONCE, then all projections stay on GPU
+        let x_gpu = GpuResidentTensor::from_host(ctx, &normed)
+            .map_err(|e| WhisperError::Inference(format!("x upload: {e}")))?;
+
+        // Q/K/V via GPU-resident linear: [1, d_model] @ [d_model, d_model] → [1, d_model]
+        let q_gpu = x_gpu.linear(ctx, &layer_weights.self_w_q, Some(&layer_weights.self_b_q), 1, d_model as u32, d_model as u32)
+            .map_err(|e| WhisperError::Inference(format!("Q projection: {e}")))?;
+        let k_gpu = x_gpu.linear(ctx, &layer_weights.self_w_k, Some(&layer_weights.self_b_k), 1, d_model as u32, d_model as u32)
+            .map_err(|e| WhisperError::Inference(format!("K projection: {e}")))?;
+        let v_gpu = x_gpu.linear(ctx, &layer_weights.self_w_v, Some(&layer_weights.self_b_v), 1, d_model as u32, d_model as u32)
+            .map_err(|e| WhisperError::Inference(format!("V projection: {e}")))?;
+
+        // Get head-first KV caches (after weights borrow ends)
         let self_k_caches = self.gpu_self_k_head_first.as_mut()
             .ok_or_else(|| WhisperError::Inference("Self K cache not initialized".into()))?;
         let self_v_caches = self.gpu_self_v_head_first.as_mut()
             .ok_or_else(|| WhisperError::Inference("Self V cache not initialized".into()))?;
 
-        // Upload Q/K/V for KV cache scatter + attention
-        let q_gpu = GpuResidentTensor::from_host(ctx, &q)
-            .map_err(|e| WhisperError::Inference(format!("Q upload: {e}")))?;
-        let k_gpu = GpuResidentTensor::from_host(ctx, &k)
-            .map_err(|e| WhisperError::Inference(format!("K upload: {e}")))?;
-        let v_gpu = GpuResidentTensor::from_host(ctx, &v)
-            .map_err(|e| WhisperError::Inference(format!("V upload: {e}")))?;
-
-        // Create stream for scatter + attention (TODO: reuse executor stream to avoid allocation)
-        let stream = CudaStream::new(ctx)
-            .map_err(|e| WhisperError::Inference(format!("Stream: {e}")))?;
+        // WAPR-PERF-014: Reuse executor's persistent compute_stream (no allocation!)
+        let stream = self.executor.compute_stream();
 
         kv_cache_scatter_gpu(
             ctx, &k_gpu, &mut self_k_caches[layer_idx],
@@ -2960,26 +2934,15 @@ impl WhisperCuda {
             &stream  // Reuse stream from KV scatter (no new stream creation!)
         ).map_err(|e| WhisperError::Inference(format!("Self attention: {e}")))?;
 
-        // Sync before reading back (all kernels launched on shared stream)
+        // O projection on GPU (WAPR-PERF-014: keeps result on GPU, single D2H at end)
+        let mut attn_proj_gpu = attn_out.linear(ctx, &layer_weights.self_w_o, Some(&layer_weights.self_b_o), 1, d_model as u32, d_model as u32)
+            .map_err(|e| WhisperError::Inference(format!("O projection: {e}")))?;
+
+        // Sync and download O projection result (single sync per self-attention block)
         stream.synchronize()
             .map_err(|e| WhisperError::Inference(format!("Stream sync: {e}")))?;
-
-        // WAPR-PERF-014: Drop ctx/stream borrows (NLL ends them) before &mut self.executor
-        let mut attn_out = attn_out;  // Move to local
-        let attn_out_host = attn_out.to_host()
-            .map_err(|e| WhisperError::Inference(format!("Attn D2H: {e}")))?;
-
-        let mut attn_proj = vec![0.0f32; d_model];
-        self.executor.gemv_cached(
-            &format!("dec.L{layer_idx}.self_w_o"),
-            &attn_out_host, &mut attn_proj,
-            d_model as u32, d_model as u32,
-        ).map_err(|e| WhisperError::Inference(format!("O projection: {e}")))?;
-
-        // Add O bias (using pre-copied b_o)
-        for i in 0..d_model {
-            attn_proj[i] += b_o[i];
-        }
+        let attn_proj = attn_proj_gpu.to_host()
+            .map_err(|e| WhisperError::Inference(format!("O proj D2H: {e}")))?;
 
         // Residual connection
         let mut residual: Vec<f32> = x.iter().zip(attn_proj.iter()).map(|(a, b)| a + b).collect();
@@ -4270,8 +4233,8 @@ mod tests {
         let cpu_final: Vec<f32> = cpu_residual.iter().zip(ffn_out.iter()).map(|(a, b)| a + b).collect();
         eprintln!("\n[Step 9] CPU (no cross-attn): sum={:.4}", cpu_final.iter().sum::<f32>());
 
-        // Now drop the immutable block borrow
-        drop(block);
+        // NLL ends block borrow here (reference drops implicitly)
+        let _ = block;
 
         // GPU path (no encoder output = no cross-attention)
         eprintln!("[Step 9] GPU block forward (self-attention + FFN only):");
@@ -4317,7 +4280,7 @@ mod tests {
         // Self-attention on CPU
         let normed = block.ln1.forward(&x).expect("LN1");
         let cpu_q = block.self_attn.w_q().forward(&normed, 1).expect("CPU Q");
-        let cpu_k = block.self_attn.w_k().forward(&normed, 1).expect("CPU K");
+        let _cpu_k = block.self_attn.w_k().forward(&normed, 1).expect("CPU K");
         let cpu_v = block.self_attn.w_v().forward(&normed, 1).expect("CPU V");
 
         // For single position, attention output = V
@@ -4339,8 +4302,8 @@ mod tests {
             .zip(cpu_ffn_out.iter()).map(|(a, b)| a + b).collect();
         eprintln!("         CPU block (with cross-attn): sum={:.4}", cpu_block_out.iter().sum::<f32>());
 
-        // Drop block borrow before mutable call
-        drop(block);
+        // NLL ends block borrow here (reference drops implicitly)
+        let _ = block;
 
         // Reset GPU decoder position (important!)
         cuda_model.reset_gpu_decoder_pos();
@@ -4454,7 +4417,7 @@ mod tests {
         std::env::set_var("WHISPER_GPU_DECODER_OFFLOAD", "1");
 
         // Run transcription with timing
-        let options = crate::TranscribeOptions::default();
+        let _options = crate::TranscribeOptions::default();
 
         eprintln!("\n[Benchmark] Starting GPU decoder transcription...");
         let total_start = std::time::Instant::now();
@@ -4494,7 +4457,7 @@ mod tests {
         let max_tokens = cuda_model.config().n_text_ctx as usize;
         let mut token_times: Vec<u128> = Vec::new();
 
-        for gen_idx in 0..max_tokens.saturating_sub(tokens.len()) {
+        for _gen_idx in 0..max_tokens.saturating_sub(tokens.len()) {
             let last_token = *tokens.last().unwrap_or(&specials.sot);
 
             let token_start = std::time::Instant::now();
@@ -4709,7 +4672,7 @@ mod tests {
 
         // Time single encoder block
         let block_start = std::time::Instant::now();
-        let block_output = apr.encoder.blocks()[0].forward(&x).expect("Block 0 failed");
+        let _block_output = apr.encoder.blocks()[0].forward(&x).expect("Block 0 failed");
         let block_time = block_start.elapsed();
         eprintln!("\n[Single Encoder Block (Layer 0)]");
         eprintln!("  Time: {:?}", block_time);

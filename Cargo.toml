@@ -42,6 +42,8 @@ realizar-inference = ["dep:realizar"]
 # Enable realizar's CUDA backend (50x speedup via trueno-gpu)
 # WAPR-PERF-004: Include cuda feature to enable GPU-resident tensor architecture
 realizar-gpu = ["dep:realizar", "realizar/cuda", "cuda"]
+# Experimental probar APIs (zero-js validation, worker harness)
+probar-experimental = []
 
 [dependencies]
 # Core dependencies
