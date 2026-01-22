@@ -1499,6 +1499,34 @@ TOTAL: 1.77s vs 1.98s target
 - Uses rayon for multi-threaded attention head computation
 - WASM users should use `wasm` feature which excludes parallel
 
+#### O.4 GPU Encoder Stream Overhead (WAPR-PERF-016)
+
+**Problem**: GPU encoder is 3x SLOWER than CPU encoder (3.0s vs 0.9s)
+
+**Benchmark** (2026-01-22):
+```
+CPU Encoder: 896ms
+GPU Encoder: 3067ms
+Speedup: 0.29x (GPU is 3.4x SLOWER)
+```
+
+**Root Cause Analysis** (Five Whys):
+
+| Level | Question | Answer |
+|-------|----------|--------|
+| Why 1 | Why is GPU encoder 3x slower? | Stream creation overhead exceeds computation benefit |
+| Why 2 | Why stream overhead? | Each `forward_encoder_block_gpu()` creates streams internally |
+| Why 3 | Why internal streams? | `GpuResidentTensor::layer_norm()`, `linear()`, etc. create streams |
+| Why 4 | Why not persistent stream? | trueno_gpu API not modified for external stream parameters |
+| Why 5 | **Root Cause** | **Same issue as decoder - need persistent stream pattern** |
+
+**Solution Path**:
+1. Modify trueno_gpu `forward_encoder_block_gpu()` to accept external stream
+2. Use `executor.compute_stream()` for all encoder operations
+3. Keep all tensors GPU-resident between layers (no D2H/H2D mid-encode)
+
+**Status**: CPU encoder (896ms) is sufficient for Point 157. GPU encoder optimization deferred.
+
 ---
 
 ### N.6 Critical Constraints (Dr. Popper's Advice)
