@@ -14,8 +14,7 @@ repository = "https://github.com/paiml/whisper.apr"
 
 [workspace.dependencies]
 # Core whisper-apr library (with tracing for renacer integration)
-# Use absolute path for cargo-mutants compatibility (relative paths fail in temp dirs)
-whisper-apr = { path = "/home/noah/src/whisper.apr", features = ["tracing"] }
+whisper-apr = { version = "0.2.0", features = ["tracing"] }
 
 # WASM bindings
 wasm-bindgen = "0.2"
@@ -29,9 +28,7 @@ tracing-subscriber = { version = "0.3", features = ["json"] }
 tracing-wasm = "0.2"
 
 # Testing with Probar (Playwright-compatible, pure Rust)
-# Using local version with console capture support (Issue #8)
-# Use absolute path for cargo-mutants compatibility
-probar = { package = "jugar-probar", path = "/home/noah/src/probar/crates/probar", default-features = false, features = ["browser", "tui"] }
+probar = { package = "jugar-probar", version = "0.4", default-features = false, features = ["browser", "tui"] }
 
 # Async runtime for browser tests
 tokio = { version = "1", features = ["full"] }

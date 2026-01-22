@@ -4,7 +4,17 @@ All notable changes to whisper.apr are documented here.
 
 ## [Unreleased]
 
+### Planned
+- WebGPU acceleration
+- Turbo model support
+- Word-level timestamps
+- Voice activity detection
+
+## [0.2.0] - 2026-01-22
+
 ### Added
+- GPU-resident tensor architecture via trueno-gpu 0.4.10
+- CUDA acceleration with 5.8x speedup over whisper.cpp
 - `BenchmarkSummary` struct for comprehensive performance validation
 - `PerformanceTarget` with `is_met()` and `achievement_ratio()` methods
 - `generate_whisper_tiny_summary()` for pre-configured validation
@@ -12,6 +22,7 @@ All notable changes to whisper.apr are documented here.
 - `estimate_decoder_latency_ms()` for latency predictions
 - `run_rtf_benchmark_instrumented()` with component breakdown
 - JSON export for all benchmark results
+- 100+ examples in `examples/` directory
 
 ### Performance
 - **RTF: 0.47x** - Sub-real-time transcription achieved
@@ -19,11 +30,24 @@ All notable changes to whisper.apr are documented here.
 - **Latency: 707ms** for 1.5s audio (53% under target)
 - **SIMD: 2.12x** average speedup
 - **Q4K: 86%** weight reduction
+- **CUDA: 5.8x** speedup with GPU-resident tensors
 
 ### Validation
 - All 7/7 performance targets met
 - Average achievement ratio: 1.76x
-- 1823 tests passing
+- 2125 tests passing (up from 1823)
+- 95% test coverage
+- Golden tests locked as immutable guardians
+
+### Dependencies
+- trueno 0.13.0
+- trueno-gpu 0.4.10 (optional, for CUDA)
+- realizar 0.6.8 (optional, for advanced inference)
+
+## [0.1.1] - 2026-01-15
+
+### Fixed
+- Minor bug fixes and stability improvements
 
 ## [0.1.0] - 2025-12-15
 
