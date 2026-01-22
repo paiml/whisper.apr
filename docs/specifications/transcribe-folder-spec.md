@@ -1420,28 +1420,64 @@ Per-token latency:        63.5ms
 6. **NEXT**: CUDA Graph capture for sub-10ms decode latency
 7. **FUTURE**: Fused decoder kernel to eliminate H2D/D2H per operation
 
-**CUDA Graph Investigation** (2026-01-22):
+**CUDA Graph Investigation** (WAPR-PERF-017, 2026-01-22):
 
-trueno_gpu has graph support (`CudaStream::begin_capture/end_capture`, `CudaGraphExec::launch`),
-but internal functions create new streams:
+trueno_gpu has full CUDA Graph support:
+- `stream.begin_capture(mode)` - Start capture mode
+- `stream.end_capture()` - Get captured graph
+- `graph.instantiate()` - Create executable
+- `stream.launch_graph(&exec)` - Launch with ~3-10µs overhead
+
+**Five Whys: Why Can't We Use CUDA Graphs Now?**
+
+| Level | Question | Answer |
+|-------|----------|--------|
+| Why 1 | Why not capture decoder forward as CUDA Graph? | Multiple streams created during execution |
+| Why 2 | Why multiple streams? | Internal `GpuResidentTensor` ops create own streams |
+| Why 3 | Why create own streams? | API design prioritizes single-op simplicity |
+| Why 4 | Why not use external stream? | Only 3 ops have `*_with_stream` variants |
+| Why 5 | **Root Cause** | **Need all resident.rs ops to accept external stream** |
+
+**Current `*_with_stream` Coverage** (trueno_gpu/src/memory/resident.rs):
 ```rust
-// trueno_gpu/src/memory/resident.rs:2496
-let stream = CudaStream::new(ctx)?;  // Created inside incremental_attention_gpu_async
+// Available:
+matmul_with_stream()                    // Line 568
+bias_add_with_stream()                  // Line 1064
+incremental_attention_gpu_with_stream() // Line 2615
+
+// Missing (would need for graph capture):
+layer_norm_with_stream()      // CPU fallback in forward_decoder_block_gpu
+linear_with_stream()          // Uses matmul internally
+softmax_with_stream()         // Used in attention
+kv_scatter_with_stream()      // Uses internal stream
 ```
 
+**Additional Blockers for Graph Capture**:
+1. **CPU LayerNorm**: `forward_decoder_block_gpu()` runs LN1/LN2/LN3 on CPU between GPU ops
+2. **Token embedding**: Done on CPU in `forward_one_gpu_total_offload()`
+3. **Position update**: CPU increments `gpu_decoder_pos` each token
+4. **Dynamic allocations**: KV cache scatter may allocate during execution
+
 **Conclusion**: Full graph capture requires either:
-1. Modifying trueno_gpu to accept external stream (significant effort)
-2. Implementing custom GPU-only decoder path (no CPU LayerNorm/bias)
+1. Modifying trueno_gpu to accept external stream for ALL ops (significant effort)
+2. Implementing custom GPU-only decoder path (no CPU LN/bias)
+3. Moving LayerNorm to GPU (existing `GpuResidentTensor::layer_norm()` but needs stream)
 
-**Decision**: Point 157 is already PASSED (1.4s vs 1.98s target). CUDA Graph marked as
-future optimization for sub-100ms decode latency when required.
+**Decision**: Point 157 is already PASSED (1645ms ≤ 1984ms target). CUDA Graph marked as
+future optimization (WAPR-PERF-017) for sub-100ms decode latency when required.
 
-**Implementation Strategy** (for future):
-1. Implement `cudaStreamBeginCapture` / `EndCapture` wrapper in `CudaContext`.
-2. Refactor `forward_decoder_block_gpu` to be capturable (no CPU logic inside).
-3. Pre-allocate workspace buffers with stable addresses.
-4. Use device-side position buffer (update via memcpy before replay).
-5. Use "bucketed" graphs or max-length padding to handle dynamic sequence lengths.
+**Implementation Strategy** (for future WAPR-PERF-017):
+1. Add `*_with_stream` variants for all resident.rs operations
+2. Move LayerNorm to GPU using existing `GpuResidentTensor::layer_norm()`
+3. Pre-allocate all workspace buffers with stable addresses
+4. Use device-side position buffer (update via `cuMemcpyDtoD` before replay)
+5. Capture entire decoder layer as graph, not per-token (reuse across tokens)
+6. Use "bucketed" graphs for sequence length ranges (e.g., 0-128, 128-256, etc.)
+
+**Expected Benefit** (based on PAR-037):
+- Current: ~160ms/token (includes stream overhead)
+- With CUDA Graph: ~10-20ms/token (3-10µs graph launch vs 20-50µs per kernel)
+- Speedup: ~8-16x decoder latency reduction
 
 #### O.3 CPU Encoder Optimization (WAPR-PERF-015)
 
