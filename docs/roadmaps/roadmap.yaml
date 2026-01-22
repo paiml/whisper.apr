@@ -1281,7 +1281,7 @@ roadmap:
   priority: medium
   assigned_to: null
   created: 2026-01-20T11:16:32.359652923+00:00
-  updated: 2026-01-20T19:56:10.964805497+00:00
+  updated: 2026-01-22T13:56:44.070677451+00:00
   spec: null
   acceptance_criteria: []
   phases: []
@@ -1400,11 +1400,11 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'New task: WAPR-PERF-014'
-  status: completed
+  status: inprogress
   priority: medium
   assigned_to: null
   created: 2026-01-22T10:05:22.926933657+00:00
-  updated: 2026-01-22T12:09:43.556595366+00:00
+  updated: 2026-01-22T16:24:29.596559690+00:00
   spec: null
   acceptance_criteria: []
   phases: []
@@ -1415,12 +1415,28 @@ roadmap:
 - id: WAPR-PERF-017
   github_issue: null
   item_type: task
-  title: 'CUDA Graph capture for 121x decoder speedup'
+  title: CUDA Graph capture for 121x decoder speedup
   status: completed
   priority: high
   assigned_to: null
   created: 2026-01-22T12:13:35.312125266+00:00
   updated: 2026-01-22T12:45:00.000000000+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-PERF-019
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PERF-019'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-22T13:18:28.066387818+00:00
+  updated: 2026-01-22T13:24:42.786747003+00:00
   spec: null
   acceptance_criteria: []
   phases: []

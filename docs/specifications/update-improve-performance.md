@@ -1238,7 +1238,50 @@ Output: max_diff = 0.000000  ✓
 3. Move ln_post to GPU
 4. Profile and optimize individual transformer layer kernels
 
-### 10.10 Citations
+### 10.11 CUDA Graph Performance Breakthrough (2026-01-22)
+
+**Key Finding:** CUDA graphs provide 21-41x speedup for decoder operations!
+
+| Metric | Without Graphs | With Graphs | Speedup |
+|--------|---------------|-------------|---------|
+| Decoder (self-attn only) | 2.74ms/token | 67.6µs/token | 41x |
+| Decoder (+ cross-attn) | 3.71ms/token | 176µs/token | 21x |
+
+**GPU Encoder Performance (after kernel warmup):**
+```
+Conv: 7.3ms
+Layers: 40-50ms (4 layers)
+Total: 50ms
+vs whisper.cpp: 114ms
+Speedup: 2.3x faster than whisper.cpp!
+```
+
+**WMMA FP16 Precision Fix:**
+- Issue: WMMA FP16 causes max_diff = 22 in encoder
+- Root cause: FP32→FP16 conversion loses precision for large attention scores (max=50.4)
+- Fix: `TRUENO_FORCE_FP32_GEMM=1` uses FP32 GEMM (max_diff = 0.00015)
+- Transcription still correct with FP16 due to argmax stability
+
+**Kernel Compilation Overhead:**
+- First run: ~2.8s (16 kernels compiled)
+- Subsequent runs: ~50ms (kernels cached in memory)
+- Fix: Call `warmup()` at model initialization to pre-compile
+
+**Projected End-to-End Performance:**
+| Component | Time | Notes |
+|-----------|------|-------|
+| GPU encoder | 50ms | 2.3x faster than whisper.cpp |
+| GPU decoder (27 tokens, graphs) | 4.8ms | 21x speedup with CUDA graphs |
+| Total | ~55ms | vs whisper.cpp 462ms = **8.4x faster** |
+
+**Integration Status:**
+- [x] GPU encoder with FP32 GEMM: Working, 50ms
+- [x] CUDA graph decoder: Working, 176µs/token
+- [ ] Integrate graphs into transcribe_gpu path
+- [ ] Add automatic warmup() at model load
+- [ ] Persistent kernel cache (disk-based)
+
+### 10.12 Citations
 
 - [Dao2022] FlashAttention: Fast and Memory-Efficient Exact Attention
 - [Kwon2023] PagedAttention for LLM Serving with vLLM
