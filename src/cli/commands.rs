@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use crate::audio::wav::{parse_wav_file, resample};
 use crate::parallel::configure_thread_pool;
-use crate::{DecodingStrategy, Task, TranscribeOptions, WhisperApr};
+use crate::{DecodingStrategy, ProfilingStats, Task, TranscribeOptions, WhisperApr};
 
 use super::args::{
     Args, BackendArg, BatchArgs, BenchmarkArgs, Command, CommandArgs, ConvertArgs, DiagnoseArgs,
@@ -273,6 +273,7 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
             DecodingStrategy::Greedy
         },
         word_timestamps: args.word_timestamps,
+        profile: global.verbose,
     };
 
     // Run transcription on GPU or CPU based on --gpu flag
@@ -541,6 +542,7 @@ pub fn run_translate(args: TranslateArgs, global: &Args) -> CliResult<CommandRes
         task: Task::Translate,
         strategy: DecodingStrategy::Greedy,
         word_timestamps: false,
+        profile: false,
     };
 
     let result = whisper.transcribe(&samples, options)?;
@@ -1331,6 +1333,16 @@ pub fn run_transcribe_folder(
 
                         // Collect profile data for report
                         if args.profile || args.report.is_some() {
+                            let (audio_ms, encoder_ms, decoder_ms) = if let Some(stats) = &result.profiling {
+                                (
+                                    stats.breakdown.get("audio_ms").copied(),
+                                    stats.breakdown.get("encoder_ms").copied(),
+                                    stats.breakdown.get("decoder_ms").copied(),
+                                )
+                            } else {
+                                (None, None, None)
+                            };
+
                             profile_entries.push(FolderProfileEntry {
                                 file: input_path.display().to_string(),
                                 audio_duration_secs,
@@ -1338,6 +1350,9 @@ pub fn run_transcribe_folder(
                                 tokens_generated,
                                 tokens_per_sec,
                                 budget_met,
+                                audio_ms,
+                                encoder_ms,
+                                decoder_ms,
                             });
                         }
                     }
@@ -1401,6 +1416,10 @@ struct FolderProfileEntry {
     tokens_generated: usize,
     tokens_per_sec: f64,
     budget_met: bool,
+    // Breakdown stats (if available)
+    audio_ms: Option<f64>,
+    encoder_ms: Option<f64>,
+    decoder_ms: Option<f64>,
 }
 
 /// Result from transcribing a single file
@@ -1410,6 +1429,7 @@ struct FolderTranscribeResult {
     segments: Vec<String>,
     audio_duration_secs: f64,
     tokens_generated: usize,
+    profiling: Option<ProfilingStats>,
 }
 
 /// Transcribe a single file using the provided model
@@ -1435,6 +1455,7 @@ fn transcribe_single_file(
         task,
         strategy: DecodingStrategy::Greedy,
         word_timestamps: false,
+        profile: args.profile,
     };
 
     // Transcribe
@@ -1458,6 +1479,7 @@ fn transcribe_single_file(
         segments: result.segments.iter().map(|s| s.text.clone()).collect(),
         audio_duration_secs,
         tokens_generated,
+        profiling: result.profiling,
     })
 }
 
@@ -1564,8 +1586,21 @@ fn format_folder_output_with_profile(
 ) -> String {
     match format {
         OutputFormatArg::Json | OutputFormatArg::JsonFull => {
+            let breakdown = if let Some(stats) = &result.profiling {
+                let mut b = String::from(r#","breakdown":{"#);
+                let mut parts = Vec::new();
+                if let Some(v) = stats.breakdown.get("audio_ms") { parts.push(format!(r#""audio_ms":{:.1}"#, v)); }
+                if let Some(v) = stats.breakdown.get("encoder_ms") { parts.push(format!(r#""encoder_ms":{:.1}"#, v)); }
+                if let Some(v) = stats.breakdown.get("decoder_ms") { parts.push(format!(r#""decoder_ms":{:.1}"#, v)); }
+                b.push_str(&parts.join(","));
+                b.push('}');
+                b
+            } else {
+                String::new()
+            };
+
             format!(
-                r#"{{"text":"{}","segments":[],"profiling":{{"total_ms":{:.1},"tokens_per_sec":{:.0},"budget_met":{}}}}}"#,
+                r#"{{"text":"{}","segments":[],"profiling":{{"total_ms":{:.1},"tokens_per_sec":{:.0},"budget_met":{}{}}}}}"#,
                 result
                     .text
                     .replace('\\', "\\\\")
@@ -1573,7 +1608,8 @@ fn format_folder_output_with_profile(
                     .replace('\n', "\\n"),
                 total_ms,
                 tokens_per_sec,
-                budget_met
+                budget_met,
+                breakdown
             )
         }
         // For non-JSON formats, just return the regular output
@@ -1596,29 +1632,48 @@ fn generate_folder_profile_report(
     };
     let budget_met_count = entries.iter().filter(|e| e.budget_met).count();
 
+    // Calculate aggregated breakdown
+    let (avg_audio, avg_enc, avg_dec) = if !entries.is_empty() {
+        let sum_audio: f64 = entries.iter().filter_map(|e| e.audio_ms).sum();
+        let sum_enc: f64 = entries.iter().filter_map(|e| e.encoder_ms).sum();
+        let sum_dec: f64 = entries.iter().filter_map(|e| e.decoder_ms).sum();
+        let count = entries.len() as f64;
+        (sum_audio / count, sum_enc / count, sum_dec / count)
+    } else {
+        (0.0, 0.0, 0.0)
+    };
+
     let files_json: String = entries
         .iter()
         .map(|e| {
+            let breakdown = format!(
+                ",\"audio_ms\":{:.1},\"encoder_ms\":{:.1},\"decoder_ms\":{:.1}",
+                e.audio_ms.unwrap_or(0.0),
+                e.encoder_ms.unwrap_or(0.0),
+                e.decoder_ms.unwrap_or(0.0)
+            );
             format!(
-                "    {{\"file\":\"{}\",\"audio_secs\":{:.1},\"ms\":{:.1},\"tokens\":{},\"tok_s\":{:.0},\"budget_met\":{}}}",
+                "    {{\"file\":\"{}\",\"audio_secs\":{:.1},\"ms\":{:.1},\"tokens\":{},\"tok_s\":{:.0},\"budget_met\":{}{}}}",
                 e.file.replace('\\', "\\\\").replace('"', "\\\""),
                 e.audio_duration_secs,
                 e.transcribe_ms,
                 e.tokens_generated,
                 e.tokens_per_sec,
-                e.budget_met
+                e.budget_met,
+                breakdown
             )
         })
         .collect::<Vec<_>>()
         .join(",\n");
 
     format!(
-        "{{\n  \"file_count\": {},\n  \"total_audio_secs\": {:.1},\n  \"total_elapsed_secs\": {:.1},\n  \"total_tokens\": {},\n  \"avg_tokens_per_sec\": {:.0},\n  \"budget_met_count\": {},\n  \"budget_target_tok_s\": 7692,\n  \"files\": [\n{}\n  ]\n}}",
+        "{{\n  \"file_count\": {},\n  \"total_audio_secs\": {:.1},\n  \"total_elapsed_secs\": {:.1},\n  \"total_tokens\": {},\n  \"avg_tokens_per_sec\": {:.0},\n  \"avg_breakdown_ms\": {{\"audio\":{:.1},\"encoder\":{:.1},\"decoder\":{:.1}}},\n  \"budget_met_count\": {},\n  \"budget_target_tok_s\": 7692,\n  \"files\": [\n{}\n  ]\n}}",
         file_count,
         total_audio_secs,
         total_elapsed_secs,
         total_tokens,
         avg_tok_s,
+        avg_audio, avg_enc, avg_dec,
         budget_met_count,
         files_json
     )
@@ -1636,6 +1691,15 @@ fn print_folder_profile_summary(entries: &[FolderProfileEntry], total_elapsed_se
     let budget_met_count = entries.iter().filter(|e| e.budget_met).count();
     let budget_target = 7692.0;
 
+    // Calculate aggregated breakdown
+    let (avg_audio, avg_enc, avg_dec) = {
+        let sum_audio: f64 = entries.iter().filter_map(|e| e.audio_ms).sum();
+        let sum_enc: f64 = entries.iter().filter_map(|e| e.encoder_ms).sum();
+        let sum_dec: f64 = entries.iter().filter_map(|e| e.decoder_ms).sum();
+        let count = entries.len() as f64;
+        (sum_audio / count, sum_enc / count, sum_dec / count)
+    };
+
     eprintln!();
     eprintln!("=== Folder Profiling Summary ===");
     eprintln!("Files processed:     {}", entries.len());
@@ -1643,6 +1707,7 @@ fn print_folder_profile_summary(entries: &[FolderProfileEntry], total_elapsed_se
     eprintln!("Total elapsed:       {:.1}s", total_elapsed_secs);
     eprintln!("Total tokens:        {}", total_tokens);
     eprintln!("Avg throughput:      {:.0} tok/s", avg_tok_s);
+    eprintln!("Avg breakdown (ms):  Audio={:.1}, Enc={:.1}, Dec={:.1}", avg_audio, avg_enc, avg_dec);
     eprintln!("Budget target:       {:.0} tok/s", budget_target);
     eprintln!(
         "Budget status:       {}/{} files met budget ({}%)",
@@ -1698,6 +1763,7 @@ fn run_transcribe_internal(
             DecodingStrategy::Greedy
         },
         word_timestamps: args.word_timestamps,
+        profile: global.verbose,
     };
 
     // Load model using the shared loader
