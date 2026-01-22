@@ -7,8 +7,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/paiml/whisper.apr/actions/workflows/ci.yml">
-    <img src="https://github.com/paiml/whisper.apr/actions/workflows/ci.yml/badge.svg" alt="CI Status">
+  <a href="https://crates.io/crates/whisper-apr">
+    <img src="https://img.shields.io/crates/v/whisper-apr.svg" alt="crates.io">
+  </a>
+  <a href="https://docs.rs/whisper-apr">
+    <img src="https://docs.rs/whisper-apr/badge.svg" alt="docs.rs">
   </a>
   <a href="https://opensource.org/licenses/MIT">
     <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
@@ -48,8 +51,10 @@
 - [Performance](#performance)
 - [API Reference](#api-reference)
 - [Demo Applications](#demo-applications)
+- [Running Examples](#running-examples)
 - [Development](#development)
 - [Quality Metrics](#quality-metrics)
+- [Roadmap](#roadmap)
 - [License](#license)
 
 ---
@@ -414,6 +419,45 @@ probar coverage               # Pixel regression tests
 
 ---
 
+## Running Examples
+
+The `examples/` directory contains 100+ examples demonstrating various features:
+
+```bash
+# Basic transcription
+cargo run --example basic_transcription --release
+
+# Benchmark pipeline performance
+cargo run --example benchmark_pipeline --release
+
+# TUI-based benchmark visualization
+cargo run --example benchmark_tui --release --features tui
+
+# Format comparison (APR vs SafeTensors)
+cargo run --example format_comparison --release
+
+# Debug decoder output
+cargo run --example debug_decoder --release
+
+# Profile encoder performance
+cargo run --example profile_encoder --release
+
+# List all available examples
+ls examples/*.rs | xargs -I {} basename {} .rs
+```
+
+### Example Categories
+
+| Category | Examples | Description |
+|----------|----------|-------------|
+| **Basic** | `basic_transcription`, `cli_usage` | Getting started |
+| **Benchmark** | `benchmark_pipeline`, `benchmark_tui` | Performance measurement |
+| **Debug** | `debug_decoder`, `debug_encoder_output` | Model debugging |
+| **Comparison** | `compare_hf_outputs`, `format_comparison` | Validation against reference |
+| **Pipeline** | `pipeline_tui`, `pipeline_falsification` | Full pipeline analysis |
+
+---
+
 ## Development
 
 ### Project Structure
@@ -478,7 +522,7 @@ whisper.apr follows **EXTREME TDD** methodology with comprehensive quality gates
 
 | Metric | Target | Achieved |
 |--------|--------|----------|
-| **Test Count** | 1500+ | 1868 |
+| **Test Count** | 2000+ | 2125 |
 | **Line Coverage** | 95% | 95% |
 | **Property Tests** | 15+ | 19 |
 | **WASM Binary** | <700 KB | 668 KB |
@@ -493,7 +537,7 @@ whisper.apr follows **EXTREME TDD** methodology with comprehensive quality gates
 total_tickets = 64
 completed_tickets = 64
 completion_rate = 100.0
-test_count = 1868
+test_count = 2125
 line_coverage = 95.0
 property_tests = 19
 source_loc = 24500
@@ -510,16 +554,18 @@ wasm_binary_kb = 668
 
 ## Roadmap
 
-### v0.1.0 (Current Release)
+### v0.2.0 (Current Release)
 - [x] Full Whisper architecture (encoder-decoder transformer)
 - [x] Int4/Int8 quantization with .apr format
 - [x] WASM SIMD acceleration
 - [x] Streaming transcription
 - [x] 99 language support with auto-detection
 - [x] Greedy and beam search decoding
+- [x] GPU-resident tensor architecture via trueno-gpu
+- [x] CUDA acceleration with 5.8x speedup
+- [x] 2125+ tests with 95% coverage
 
-### v0.2.0 (Planned)
-- [ ] Batched decoder with shared KV cache
+### v0.3.0 (Planned)
 - [ ] WebGPU acceleration
 - [ ] Turbo model support
 - [ ] Word-level timestamps
