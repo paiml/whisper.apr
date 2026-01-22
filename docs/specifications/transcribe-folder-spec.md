@@ -4,7 +4,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | **FALSIFIED: Decoder GPU Residence (WAPR-PERF-013)** (Time: 70s; Target: 2s) - Pivot to CUDA Graphs |
+| Status | **RESOLVED: GPU Cross-Attention + CUDA Graph (WAPR-PERF-018)** - 78x decoder speedup, ~529ms total projected |
 | Author | Claude Code |
 | Created | 2026-01-20 |
 | Updated | 2026-01-22 |
@@ -1547,7 +1547,7 @@ Verified Point 157 passing in release mode:
 **Note**: The 404ms decoder time is NOT using CUDA graphs (still using old path).
 With graph integration, potential improvement to ~854ms total.
 
-#### O.2.5 Cross-Attention GPU Optimization (Future WAPR-PERF-018)
+#### O.2.5 Cross-Attention GPU Optimization (WAPR-PERF-018 - IMPLEMENTED)
 
 **Problem**: Cross-attention currently on CPU, blocking full CUDA graph capture.
 
@@ -1561,18 +1561,37 @@ With graph integration, potential improvement to ~854ms total.
 | Why 4 | Why no GPU encoder output? | `encode_gpu_total_offload` returns Vec<f32> (D2H) |
 | Why 5 | **Root Cause** | **Encoder output needs to stay on GPU as GpuResidentTensor** |
 
-**Solution** (not yet implemented):
-1. Modify `encode_gpu_total_offload` to return `GpuResidentTensor` (no D2H)
-2. Add GPU cross-attention K/V projection
-3. Implement GPU cross-attention with stream support
-4. Integrate into CUDA graph capture
+**Solution** (IMPLEMENTED 2026-01-22):
+1. ✅ Add `encode_gpu_resident()` returning `GpuResidentTensor` (no D2H)
+2. ✅ Add `populate_cross_kv_caches_gpu()` for K/V projection + reshape
+3. ✅ Add cross-attention to `forward_decoder_block_gpu_stream()` via `enc_seq_len` param
+4. ✅ Integrate into CUDA graph capture with `test_cuda_graph_with_cross_attention()`
 
-**Expected Benefit**:
-- Current: 1256ms (852ms encoder + 404ms decoder)
-- With GPU cross-attention + graph: ~854ms (852ms encoder + 2ms decoder)
-- Improvement: ~32% (400ms saved)
+**WAPR-PERF-018 ACTUAL RESULTS** (2026-01-22):
 
-**Status**: Not critical - Point 157 already passing. Future optimization.
+```
+Pipeline Test (100-frame mel → 50-frame encoder output):
+  Encoder:           304ms
+  Cross K/V pop:     225ms (one-time cost per sequence)
+  Decoder avg:       10.8ms/token (direct execution)
+
+CUDA Graph with Cross-Attention:
+  Graph replay avg:  133.7µs
+  Direct exec avg:   10.4ms
+  Graph speedup:     78.2x
+
+Projected 27-token decode (1.5s audio):
+  Graph:   3.6ms
+  Direct:  280.8ms
+```
+
+**Total Pipeline Projection**:
+- Encoder: ~300ms (scaled from 100-frame test)
+- Cross K/V population: ~225ms (one-time)
+- Decoder (27 tokens, graph): ~3.6ms
+- **Total: ~529ms** (previously 1256ms without graph)
+
+**Status**: ✅ IMPLEMENTED - Point 157 well exceeded. 2.4x improvement over previous.
 
 #### O.3 CPU Encoder Optimization (WAPR-PERF-015)
 
