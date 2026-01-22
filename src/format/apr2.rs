@@ -1,7 +1,7 @@
-//! APR2 Format - Extended format for LLM support
+//! APR Format - LLM Architecture Support
 //!
-//! This module implements the APR2 format extension designed for LLM architectures
-//! like LFM2-2.6B-Transcript. It extends APR1 with support for:
+//! This module provides LLM-specific model configuration for architectures
+//! like LFM2-2.6B-Transcript, extending the canonical APR format with:
 //!
 //! - Grouped Query Attention (GQA)
 //! - SwiGLU FFN activation
@@ -9,29 +9,7 @@
 //! - RoPE positional encoding
 //! - int4 AWQ/GPTQ quantization
 //!
-//! # Format Overview
-//!
-//! ```text
-//! ┌─────────────────┐
-//! │ Magic (4 bytes) │  "APR2"
-//! ├─────────────────┤
-//! │ Version (2)     │  Format version
-//! ├─────────────────┤
-//! │ Model Family    │  Whisper | Lfm2 | Llama
-//! ├─────────────────┤
-//! │ Arch Config     │  Architecture-specific header
-//! ├─────────────────┤
-//! │ Quant Config    │  Quantization parameters
-//! ├─────────────────┤
-//! │ Layer Types     │  Per-layer type info
-//! ├─────────────────┤
-//! │ Tensor Index    │  Tensor descriptors
-//! ├─────────────────┤
-//! │ Tensor Data     │  Weight data (quantized)
-//! ├─────────────────┤
-//! │ CRC32 (4 bytes) │  File integrity checksum
-//! └─────────────────┘
-//! ```
+//! Uses the canonical APR format from aprender::format::v2 ("APR\0" magic).
 //!
 //! # Spec Reference
 //!
@@ -39,11 +17,11 @@
 
 use crate::error::{WhisperError, WhisperResult};
 
-/// Magic number for .apr2 files: "APR2"
-pub const MAGIC_APR2: [u8; 4] = [b'A', b'P', b'R', b'2'];
+// Use canonical APR v2 magic from aprender
+pub use aprender::format::v2::MAGIC_V2 as MAGIC_APR2;
 
-/// APR2 format version
-pub const APR2_VERSION: u16 = 1;
+/// APR format version (matches aprender::format::v2)
+pub const APR2_VERSION: u16 = 2;
 
 // =============================================================================
 // Model Family
@@ -1080,7 +1058,7 @@ impl Apr2Reader {
             return Err(WhisperError::Format("file too short".into()));
         }
         if data[..4] != MAGIC_APR2 {
-            return Err(WhisperError::Format("invalid APR2 magic".into()));
+            return Err(WhisperError::Format("invalid APR magic".into()));
         }
 
         // Parse header
