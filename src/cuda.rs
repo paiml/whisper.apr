@@ -956,12 +956,17 @@ impl WhisperCuda {
     ///
     /// Clears all head-first KV caches to force fresh allocation on next init.
     /// Call this before switching between GPU path and Executor path in benchmarks.
+    /// Resets BOTH cache formats to ensure clean state.
     #[cfg(feature = "cuda")]
     pub fn reset_gpu_decoder_kv_cache(&mut self) {
+        // Head-first format (Executor path)
         self.gpu_self_k_head_first = None;
         self.gpu_self_v_head_first = None;
         self.gpu_cross_k_head_first = None;
         self.gpu_cross_v_head_first = None;
+        // Layer-major format (GPU path)
+        self.gpu_self_kv_cache = None;
+        self.gpu_cross_kv_cache = None;
     }
 
     /// WAPR-PERF-013: GPU decoder block forward pass
@@ -2933,7 +2938,7 @@ impl WhisperCuda {
         let v_gpu = GpuResidentTensor::from_host(ctx, &v)
             .map_err(|e| WhisperError::Inference(format!("V upload: {e}")))?;
 
-        // Use executor's stream for scatter (avoid new stream creation)
+        // Create stream for scatter + attention (TODO: reuse executor stream to avoid allocation)
         let stream = CudaStream::new(ctx)
             .map_err(|e| WhisperError::Inference(format!("Stream: {e}")))?;
 
@@ -2959,13 +2964,10 @@ impl WhisperCuda {
         stream.synchronize()
             .map_err(|e| WhisperError::Inference(format!("Stream sync: {e}")))?;
 
-        // Output projection via executor (need to drop ctx borrow first)
+        // WAPR-PERF-014: Drop ctx/stream borrows (NLL ends them) before &mut self.executor
         let mut attn_out = attn_out;  // Move to local
         let attn_out_host = attn_out.to_host()
             .map_err(|e| WhisperError::Inference(format!("Attn D2H: {e}")))?;
-
-        // Drop stream after sync
-        drop(stream);
 
         let mut attn_proj = vec![0.0f32; d_model];
         self.executor.gemv_cached(
@@ -3862,9 +3864,11 @@ mod tests {
         let num_decode_tokens = 10; // Decode 10 tokens for benchmarking
 
         // === GPU Path Benchmark ===
+        // Both paths use head-first KV caches (init_gpu_decoder_kv_cache_head_first)
         cuda_model.reset_gpu_decoder_pos();
+        cuda_model.reset_gpu_decoder_kv_cache();
         cuda_model.upload_decoder_weights_to_gpu().expect("Upload GPU weights");
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache");
+        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache (head-first)");
 
         // Warmup (JIT compilation)
         for &token in &initial_tokens {
@@ -3959,6 +3963,131 @@ mod tests {
         eprintln!("\n✓ WAPR-PERF-014: GPU vs Executor Benchmark PASSED");
         eprintln!("  - Tokens match");
         eprintln!("  - Speedup: {:.2}x", speedup);
+    }
+
+    /// WAPR-PERF-014: Detailed timing breakdown for executor forward pass
+    ///
+    /// Measures each component to identify bottlenecks for CUDA Graph optimization.
+    #[test]
+    #[cfg(feature = "cuda")]
+    fn test_executor_timing_breakdown() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        let model_path = "models/whisper-tiny.apr";
+        if !std::path::Path::new(model_path).exists() {
+            eprintln!("Model not found at {}, skipping test", model_path);
+            return;
+        }
+
+        let audio_path = "demos/test-audio/test-speech-1.5s.wav";
+        if !std::path::Path::new(audio_path).exists() {
+            eprintln!("Audio not found at {}, skipping test", audio_path);
+            return;
+        }
+
+        eprintln!("\n=== WAPR-PERF-014: Executor Timing Breakdown ===");
+
+        // Load model and compute mel
+        let bytes = std::fs::read(model_path).expect("Failed to read model");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+        let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio");
+        let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+        let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
+
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        // Get encoder output
+        let encoder_output = cuda_model.encoder.forward_mel(&mel).expect("Encoder failed");
+
+        // Initialize
+        cuda_model.reset_gpu_decoder_pos();
+        cuda_model.upload_decoder_weights_to_gpu().expect("Upload GPU weights");
+        cuda_model.reset_gpu_decoder_kv_cache();
+        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache");
+        cuda_model.upload_decoder_weights_to_executor().expect("Upload executor weights");
+
+        // Warmup
+        use crate::tokenizer::special_tokens::SpecialTokens;
+        let specials = SpecialTokens::for_vocab_size(cuda_model.config().n_vocab as usize);
+        let initial_tokens = vec![specials.sot, specials.lang_base, specials.transcribe, specials.no_timestamps];
+        for &token in &initial_tokens {
+            let _ = cuda_model.forward_one_executor(token, &encoder_output).expect("Warmup failed");
+        }
+
+        // Reset for profiling
+        cuda_model.reset_gpu_decoder_pos();
+        cuda_model.reset_gpu_decoder_kv_cache();
+        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init KV cache");
+
+        // Profile each component
+        let d_model = cuda_model.config().n_text_state as usize;
+        let n_layers = cuda_model.config().n_text_layer as usize;
+        let n_vocab = cuda_model.config().n_vocab as usize;
+
+        let mut total_embed_time = std::time::Duration::ZERO;
+        let mut total_block_time = std::time::Duration::ZERO;
+        let mut total_ln_time = std::time::Duration::ZERO;
+        let mut total_proj_time = std::time::Duration::ZERO;
+
+        let num_tokens = 5;
+        for token_idx in 0..num_tokens {
+            let token = initial_tokens[token_idx % initial_tokens.len()];
+            let pos = cuda_model.gpu_decoder_pos;
+
+            // 1. Token embedding (CPU)
+            let t0 = std::time::Instant::now();
+            let emb_start = (token as usize) * d_model;
+            let token_emb = cuda_model.decoder.token_embedding();
+            let pos_emb = cuda_model.decoder.positional_embedding();
+            let pos_start = pos * d_model;
+            let mut x: Vec<f32> = token_emb[emb_start..emb_start + d_model]
+                .iter()
+                .zip(&pos_emb[pos_start..pos_start + d_model])
+                .map(|(t, p)| t + p)
+                .collect();
+            total_embed_time += t0.elapsed();
+
+            // 2. Decoder blocks
+            let t1 = std::time::Instant::now();
+            for layer_idx in 0..n_layers {
+                x = cuda_model.forward_decoder_block_executor(
+                    layer_idx, &x, pos, Some(&encoder_output)
+                ).expect("Block failed");
+            }
+            total_block_time += t1.elapsed();
+
+            // 3. Final LayerNorm (CPU)
+            let t2 = std::time::Instant::now();
+            let hidden = cuda_model.decoder.ln_post().forward(&x).expect("LN failed");
+            total_ln_time += t2.elapsed();
+
+            // 4. Vocab projection (GPU)
+            let t3 = std::time::Instant::now();
+            let _logits = cuda_model.project_to_vocab_gpu(&hidden).expect("Proj failed");
+            total_proj_time += t3.elapsed();
+
+            cuda_model.gpu_decoder_pos += 1;
+        }
+
+        let avg_embed = total_embed_time.as_micros() as f64 / num_tokens as f64;
+        let avg_block = total_block_time.as_micros() as f64 / num_tokens as f64;
+        let avg_ln = total_ln_time.as_micros() as f64 / num_tokens as f64;
+        let avg_proj = total_proj_time.as_micros() as f64 / num_tokens as f64;
+        let total = avg_embed + avg_block + avg_ln + avg_proj;
+
+        eprintln!("\nTiming breakdown (average over {} tokens):", num_tokens);
+        eprintln!("  Token embedding (CPU): {:>8.1}µs ({:>5.1}%)", avg_embed, avg_embed / total * 100.0);
+        eprintln!("  Decoder blocks (GPU):  {:>8.1}µs ({:>5.1}%)", avg_block, avg_block / total * 100.0);
+        eprintln!("  Final LayerNorm (CPU): {:>8.1}µs ({:>5.1}%)", avg_ln, avg_ln / total * 100.0);
+        eprintln!("  Vocab projection (GPU):{:>8.1}µs ({:>5.1}%)", avg_proj, avg_proj / total * 100.0);
+        eprintln!("  ────────────────────────────────────────");
+        eprintln!("  TOTAL:                 {:>8.1}µs", total);
+        eprintln!("  Per-token latency:     {:>8.2}ms", total / 1000.0);
+
+        eprintln!("\n✓ WAPR-PERF-014: Timing breakdown complete");
     }
 
     /// WAPR-PERF-013 Point 156b: Step-by-step divergence diagnostic

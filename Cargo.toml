@@ -185,7 +185,7 @@ harness = false
 # 1. trueno-gpu 0.4.10+ (with GpuResidentTensor, batched_multihead_attention)
 # 2. realizar 0.6.8+ (CudaExecutor with stable API)
 #
-# LOCAL TESTING - trueno-gpu uses local path, realizar uses crates.io
+# LOCAL TESTING - trueno-gpu uses local path, realizar uses local (WAPR-PERF-014)
 [patch.crates-io]
 trueno-gpu = { path = "../trueno/trueno-gpu" }
-# realizar = { path = "../realizar" }  # Use crates.io 0.6.8 for stability
+realizar = { path = "../realizar" }  # WAPR-PERF-014: compute_stream() getter
