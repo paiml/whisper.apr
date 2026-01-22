@@ -39,7 +39,67 @@ This specification defines the systematic approach to achieve **2x performance i
 - whisper.apr: `whisper-apr-cli transcribe --file audio.wav`
 - GPU: RTX 4090, CUDA 12.x
 
-**Conclusion:** whisper.apr **achieves the 2x target** on CPU:
+**Conclusion:** whisper.apr **achieves the 2x target** on CPU. GPU path needs fixes.
+
+---
+
+## 🚨 KNOWN ISSUES (Five Whys Analysis)
+
+### Issue 1: GPU Convolution Frontend Produces Wrong Output
+
+**Symptom:** `encode_gpu_total_offload` and `encode_gpu_resident` produce wrong transcription.
+
+**Five Whys:**
+1. **Why wrong output?** Encoder produces different values than CPU encoder
+2. **Why different values?** GPU convolution output differs from CPU convolution
+3. **Why different convolution?** GPU conv1d kernel may have wrong stride/padding handling
+4. **Why wrong handling?** The conv1d kernel parameters (stride=2, padding=1) may not match Whisper's exact convolution
+5. **Why parameter mismatch?** Whisper uses specific convolution semantics that weren't validated against reference
+
+**Root Cause:** GPU `conv1d` kernel likely has different padding/output semantics than PyTorch's Conv1d.
+
+**Fix Strategy:**
+- [ ] Add test comparing GPU conv1d output with CPU conv output element-by-element
+- [ ] Verify conv1d kernel parameters match Whisper's frontend exactly
+- [ ] Check if output length calculation `(seq_len + 2*padding - kernel_size) / stride + 1` is correct
+
+### Issue 2: Stream Decoder Cross-Attention Produces Wrong Output
+
+**Symptom:** `forward_decoder_token_gpu_stream` with pre-populated cross-attention K/V produces garbage.
+
+**Five Whys:**
+1. **Why garbage output?** Cross-attention uses wrong K/V values
+2. **Why wrong K/V?** `populate_cross_kv_caches_gpu` may have wrong tensor layout
+3. **Why wrong layout?** `interleaved_to_head_first` permutation may be incorrect
+4. **Why wrong permutation?** Whisper expects `[n_heads, seq_len, head_dim]` but we may produce different
+5. **Why different?** The permute kernel wasn't validated against CPU reference
+
+**Root Cause:** Tensor layout mismatch between populated K/V and what attention kernel expects.
+
+**Fix Strategy:**
+- [ ] Add test comparing GPU cross-K/V with CPU-computed K/V element-by-element
+- [ ] Verify `interleaved_to_head_first` produces correct `[n_heads, seq_len, head_dim]` layout
+- [ ] Check incremental_attention kernel expects same layout
+
+### Issue 3: GPU Path Slower Than CPU Due to Kernel Compilation
+
+**Symptom:** GPU decoder (2273ms) slower than CPU (1699ms) in CLI.
+
+**Five Whys:**
+1. **Why GPU slower?** ~300ms+ kernel compilation overhead per invocation
+2. **Why compile every time?** Kernel cache is per-process, not persisted
+3. **Why not persisted?** trueno-gpu uses in-memory cache only
+4. **Why in-memory only?** No disk-based PTX cache implemented
+5. **Why not implemented?** Feature not prioritized
+
+**Root Cause:** Per-process kernel JIT compilation overhead (~300ms) dominates short transcriptions.
+
+**Fix Strategy:**
+- [ ] Add `warmup()` call at CLI startup to pre-compile kernels
+- [ ] Consider adding PTX disk cache to trueno-gpu (future)
+- [ ] For batch processing, amortize warmup across multiple files
+
+---
 
 **GPU IS AVAILABLE AND SHOULD BE DEFAULT:**
 - Hardware: RTX 4090 (8.9 compute, 24GB VRAM)
