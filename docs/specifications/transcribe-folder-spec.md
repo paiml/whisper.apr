@@ -1347,7 +1347,7 @@ With 4 decoder layers × ~10 operations per layer = ~40 stream creations per tok
 **Benchmark Results** (release mode, 1.5s audio):
 ```
 Weight upload: 23ms
-Encoder (CPU): 7.29s  (needs separate optimization)
+Encoder (CPU): 3.7s   (was 7.3s - improved 2x with FFN SIMD fix)
 Per-token decode: ~79ms
 Status: BLOCKED pending realizar stability
 ```
@@ -1356,6 +1356,49 @@ Status: BLOCKED pending realizar stability
 1. Implement `cudaStreamBeginCapture` / `EndCapture` wrapper in `CudaContext`.
 2. Refactor `forward_decoder_block_gpu` to be capturable (no CPU logic inside).
 3. Use "bucketed" graphs or max-length padding to handle dynamic sequence lengths.
+
+#### O.3 CPU Encoder Optimization (WAPR-PERF-015)
+
+**Problem**: Encoder taking 7.3s for 1.5s audio (target: ~200ms)
+
+**Root Cause Analysis** (Five Whys):
+
+| Level | Question | Answer |
+|-------|----------|--------|
+| Why 1 | Why is encoder 36x slower than expected? | Single encoder block takes 1.7s |
+| Why 2 | Why does block take 1.7s? | FFN takes 1.15s, attention 670ms |
+| Why 3 | Why is FFN so slow? | Using `fc1.forward()` (naive O(n³)) instead of `forward_simd()` |
+| Why 4 | Why naive forward? | FFN implementation never updated for SIMD |
+| Why 5 | **Root Cause 1** | **FeedForward.forward() must use forward_simd()** |
+
+**Additional Root Causes Identified**:
+
+| Root Cause | Impact | Fix Needed |
+|------------|--------|------------|
+| FFN uses `fc1.forward()` not `forward_simd()` | **1156ms → 97ms** | ✅ FIXED |
+| Conv1d uses naive O(n⁴) nested loops | **596ms** | Needs SIMD conv1d |
+| FlashAttention-2 creates tensors per head | **656ms overhead** | Reuse Attention object |
+
+**Encoder Block Breakdown (per layer)**:
+
+| Component | Before Fix | After Fix | Expected |
+|-----------|-----------|-----------|----------|
+| LayerNorm | 0.9ms | 0.9ms | ~1ms ✓ |
+| QKV projections | 29ms | 29ms | ~30ms ✓ |
+| Attention (FlashAttn) | 670ms | 683ms | ~50ms |
+| FFN | **1156ms** | **97ms** | ~30ms ✓ |
+| Total Block | 1.71s | 660ms | ~100ms |
+
+**Results After FFN Fix**:
+```
+Encoder: 7.3s → 3.3s (2.2x speedup)
+Per block: 1.71s → 660ms
+FFN: 1156ms → 97ms (12x speedup)
+```
+
+**Remaining Bottlenecks**:
+1. **Conv1d**: 585ms (should be ~10ms with SIMD)
+2. **FlashAttention-2 overhead**: 656ms per block (per-head RealizarTensor allocation)
 
 ---
 
