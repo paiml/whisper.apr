@@ -1362,6 +1362,22 @@ Executor vs GPU forward pass timing (single block):
 - Keeps LayerNorm on CPU (fast enough, avoids gamma/beta upload overhead)
 - Uses existing KV cache scatter/attention (GpuResidentTensor still needed here)
 
+**Benchmark Results** (commit 6516411, 10 tokens, release mode):
+```
+GPU path:      75ms/token (creates new streams per operation)
+Executor path: 78ms/token (persistent stream for GEMV only)
+Speedup:       0.96x (4% slower)
+```
+
+**Root Cause Analysis**: Executor path is slightly slower because:
+1. KV cache scatter still creates new stream per call (dominant cost)
+2. Incremental attention still creates new stream per call
+3. GEMV persistent stream benefit (4 ops/layer) is offset by transfer overhead
+
+**Path Forward**: Two options to realize speedup:
+1. **Option A**: Modify trueno_gpu to expose stream parameter for KV cache ops
+2. **Option B**: CUDA Graph capture to eliminate ALL stream creation (~280 launches → 1 replay)
+
 **Implementation Strategy**:
 1. Implement `cudaStreamBeginCapture` / `EndCapture` wrapper in `CudaContext`.
 2. Refactor `forward_decoder_block_gpu` to be capturable (no CPU logic inside).
