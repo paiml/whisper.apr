@@ -2265,6 +2265,81 @@ impl WhisperCuda {
         self.project_to_vocab_gpu(&hidden)
     }
 
+    /// WAPR-PERF-014: Executor-based single token forward pass
+    ///
+    /// Uses `forward_decoder_block_executor()` which uses the executor's
+    /// persistent stream for GEMV operations, avoiding stream creation overhead.
+    #[cfg(feature = "cuda")]
+    pub fn forward_one_executor(
+        &mut self,
+        token: u32,
+        encoder_output: &[f32],
+    ) -> WhisperResult<Vec<f32>> {
+        let d_model = self.config.n_text_state as usize;
+        let n_layers = self.config.n_text_layer as usize;
+        let n_vocab = self.config.n_vocab as usize;
+
+        // Ensure GPU decoder infrastructure is initialized
+        if self.gpu_decoder_weights.is_none() {
+            self.upload_decoder_weights_to_gpu()?;
+        }
+        if self.gpu_self_k_head_first.is_none() {
+            self.init_gpu_decoder_kv_cache_head_first()?;
+        }
+        // Also ensure executor weights are uploaded
+        if self.executor.cached_weight_count() == 0 {
+            self.upload_decoder_weights_to_executor()?;
+        }
+
+        let pos = self.gpu_decoder_pos;
+
+        // 1. Embed token + positional embedding (CPU - fast)
+        if token as usize >= n_vocab {
+            return Err(WhisperError::Inference(format!(
+                "token {} out of vocabulary range {}",
+                token, n_vocab
+            )));
+        }
+
+        let emb_start = (token as usize) * d_model;
+        let token_emb = self.decoder.token_embedding();
+        let pos_emb = self.decoder.positional_embedding();
+        let max_len = self.config.n_text_ctx as usize;
+
+        if pos >= max_len {
+            return Err(WhisperError::Inference(format!(
+                "position {} exceeds max {}",
+                pos, max_len
+            )));
+        }
+
+        let pos_start = pos * d_model;
+        let mut x: Vec<f32> = token_emb[emb_start..emb_start + d_model]
+            .iter()
+            .zip(&pos_emb[pos_start..pos_start + d_model])
+            .map(|(t, p)| t + p)
+            .collect();
+
+        // 2. Run through all decoder blocks (executor path)
+        for layer_idx in 0..n_layers {
+            x = self.forward_decoder_block_executor(
+                layer_idx,
+                &x,
+                pos,
+                Some(encoder_output),
+            )?;
+        }
+
+        // 3. Final layer norm (CPU - simple)
+        let hidden = self.decoder.ln_post().forward(&x)?;
+
+        // 4. Increment position for next token
+        self.gpu_decoder_pos += 1;
+
+        // 5. Output projection on GPU
+        self.project_to_vocab_gpu(&hidden)
+    }
+
     /// GPU-accelerated output projection using direct gemm.
     ///
     /// FIX 1 (WAPR-PERF-004): Use `executor.gemm()` directly instead of
@@ -3718,6 +3793,133 @@ mod tests {
 
         eprintln!("\n✓ WAPR-PERF-013 Point 156: GPU vs CPU Decoder Parity PASSED");
         eprintln!("  Argmax matches, max_diff={:.2e}", max_diff);
+    }
+
+    /// WAPR-PERF-014: GPU vs Executor Decoder Performance Benchmark
+    ///
+    /// Compares decode performance between:
+    /// 1. GPU path (GpuResidentTensor creates streams per operation)
+    /// 2. Executor path (persistent compute_stream)
+    #[test]
+    #[cfg(feature = "cuda")]
+    fn test_gpu_vs_executor_decode_benchmark() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping benchmark");
+            return;
+        }
+
+        let model_path = "models/whisper-tiny.apr";
+        if !std::path::Path::new(model_path).exists() {
+            eprintln!("Model not found at {}, skipping benchmark", model_path);
+            return;
+        }
+
+        let audio_path = "demos/test-audio/test-speech-1.5s.wav";
+        if !std::path::Path::new(audio_path).exists() {
+            eprintln!("Audio not found at {}, skipping benchmark", audio_path);
+            return;
+        }
+
+        eprintln!("\n=== WAPR-PERF-014: GPU vs Executor Decode Benchmark ===");
+
+        // Load audio and compute mel
+        let bytes = std::fs::read(model_path).expect("Failed to read model");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+        let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio");
+        let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+        let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
+
+        // Create CUDA model
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        // Run encoder
+        let encoder_output = cuda_model.encoder.forward_mel(&mel).expect("Encoder failed");
+        eprintln!("Encoder output: {} elements", encoder_output.len());
+
+        // Initial tokens
+        use crate::tokenizer::special_tokens::SpecialTokens;
+        let specials = SpecialTokens::for_vocab_size(cuda_model.config().n_vocab as usize);
+        let initial_tokens = vec![specials.sot, specials.lang_base, specials.transcribe, specials.no_timestamps];
+
+        let num_decode_tokens = 10; // Decode 10 tokens for benchmarking
+
+        // === GPU Path Benchmark ===
+        cuda_model.reset_gpu_decoder_pos();
+        cuda_model.upload_decoder_weights_to_gpu().expect("Upload GPU weights");
+        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache");
+
+        // Warmup
+        for &token in &initial_tokens {
+            let _ = cuda_model.forward_one_gpu_total_offload(token, &encoder_output).expect("Warmup failed");
+        }
+
+        // Benchmark GPU path
+        let gpu_start = std::time::Instant::now();
+        let mut gpu_tokens = initial_tokens.clone();
+        for _ in 0..num_decode_tokens {
+            let last_token = *gpu_tokens.last().unwrap_or(&specials.sot);
+            let logits = cuda_model.forward_one_gpu_total_offload(last_token, &encoder_output)
+                .expect("GPU forward failed");
+            let next_token = logits.iter().enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(idx, _)| idx as u32)
+                .unwrap_or(specials.eot);
+            if next_token == specials.eot { break; }
+            gpu_tokens.push(next_token);
+        }
+        let gpu_time = gpu_start.elapsed();
+        let gpu_tokens_generated = gpu_tokens.len() - initial_tokens.len();
+
+        // === Executor Path Benchmark ===
+        cuda_model.reset_gpu_decoder_pos();
+        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache");
+        cuda_model.upload_decoder_weights_to_executor().expect("Upload executor weights");
+
+        // Warmup
+        for &token in &initial_tokens {
+            let _ = cuda_model.forward_one_executor(token, &encoder_output).expect("Warmup failed");
+        }
+
+        // Benchmark Executor path
+        let exec_start = std::time::Instant::now();
+        let mut exec_tokens = initial_tokens.clone();
+        for _ in 0..num_decode_tokens {
+            let last_token = *exec_tokens.last().unwrap_or(&specials.sot);
+            let logits = cuda_model.forward_one_executor(last_token, &encoder_output)
+                .expect("Executor forward failed");
+            let next_token = logits.iter().enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(idx, _)| idx as u32)
+                .unwrap_or(specials.eot);
+            if next_token == specials.eot { break; }
+            exec_tokens.push(next_token);
+        }
+        let exec_time = exec_start.elapsed();
+        let exec_tokens_generated = exec_tokens.len() - initial_tokens.len();
+
+        // Results
+        let gpu_ms_per_token = gpu_time.as_millis() as f64 / gpu_tokens_generated.max(1) as f64;
+        let exec_ms_per_token = exec_time.as_millis() as f64 / exec_tokens_generated.max(1) as f64;
+        let speedup = gpu_ms_per_token / exec_ms_per_token;
+
+        eprintln!("\nResults ({} tokens decoded):", num_decode_tokens);
+        eprintln!("  GPU path:      {:?} ({:.1} ms/token)", gpu_time, gpu_ms_per_token);
+        eprintln!("  Executor path: {:?} ({:.1} ms/token)", exec_time, exec_ms_per_token);
+        eprintln!("  Speedup:       {:.2}x", speedup);
+
+        // Decode text for comparison
+        let gpu_text = cuda_model.tokenizer.decode_with_options(&gpu_tokens, true).unwrap_or_default();
+        let exec_text = cuda_model.tokenizer.decode_with_options(&exec_tokens, true).unwrap_or_default();
+
+        eprintln!("\nGPU text:  \"{}\"", gpu_text.trim());
+        eprintln!("Exec text: \"{}\"", exec_text.trim());
+
+        // Verify tokens match
+        assert_eq!(gpu_tokens, exec_tokens, "GPU and Executor paths should produce same tokens");
+
+        eprintln!("\n✓ WAPR-PERF-014: GPU vs Executor Benchmark PASSED");
+        eprintln!("  - Tokens match");
+        eprintln!("  - Speedup: {:.2}x", speedup);
     }
 
     /// WAPR-PERF-013 Point 156b: Step-by-step divergence diagnostic
