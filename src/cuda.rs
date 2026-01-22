@@ -8129,6 +8129,21 @@ mod tests {
         eprintln!("[GPU Attn] mean={:.6}, max_diff={:.6}",
             gpu_attn_output.iter().sum::<f32>() / gpu_attn_output.len() as f32, attn_diff);
 
+        // Per-head divergence tracking (WAPR-PERF-014 Brick tracing)
+        eprintln!("  Per-head max_diff:");
+        for h in 0..n_heads {
+            let head_start = h * head_dim;
+            let mut head_max_diff = 0.0f32;
+            for pos in 0..seq_len {
+                for d in 0..head_dim {
+                    let idx = pos * d_model + head_start + d;
+                    let diff = (cpu_attn_output[idx] - gpu_attn_output[idx]).abs();
+                    head_max_diff = head_max_diff.max(diff);
+                }
+            }
+            eprintln!("    head {}: max_diff = {:.6}", h, head_max_diff);
+        }
+
         eprintln!("\n=== STEP 4: Output Projection ===");
         let cpu_attn_proj = block.self_attn.w_o().forward(&cpu_attn_output, seq_len).expect("CPU O");
         eprintln!("[CPU O_proj] mean={:.6}", cpu_attn_proj.iter().sum::<f32>() / cpu_attn_proj.len() as f32);

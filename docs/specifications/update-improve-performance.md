@@ -1154,7 +1154,44 @@ To match whisper.cpp, whisper.apr needs:
 **Current Status:** Softmax correctness FIXED, but 2x target NOT MET.
 GPU-resident attention is a building block, but full GPU encoder required.
 
-### 10.9 Performance Profile (2026-01-22)
+### 10.9 Five Whys Root Cause Analysis (2026-01-22)
+
+**Problem:** GPU attention has max_diff = 2.818 vs CPU attention (all other steps < 0.003)
+
+| Level | Question | Answer |
+|-------|----------|--------|
+| Why 1 | Why is GPU encoder diverging from CPU? | Attention step has max_diff = 2.818 |
+| Why 2 | Why does attention diverge? | One or more heads producing different output |
+| Why 3 | Which kernel is wrong? | Need to isolate: extract_head, transpose, gemm, scale, softmax, or copy_head |
+| Why 4 | What's the pattern of divergence? | Means match (-0.017647 vs -0.017658), but some values differ by 2.8 |
+| Why 5 | Root cause hypothesis | FP16 WMMA precision with large attention scores (max=50.4) |
+
+**Brick Trace Results:**
+```
+LN1:    max_diff = 0.000007  ✓
+Q:      max_diff = 0.001629  ✓
+K:      max_diff = 0.002359  ✓
+V:      max_diff = 0.000820  ✓
+Attn:   max_diff = 2.818108  ✗ BUG
+O_proj: max_diff = 0.000688  ✓
+Res1:   max_diff = 0.000000  ✓
+LN2:    max_diff = 0.000014  ✓
+FFN:    max_diff = 0.000392  ✓
+Output: max_diff = 0.000000  ✓
+```
+
+**Attention Debug (head 0):**
+- Pre-scale scores: mean=10.03, max=50.39
+- Post-softmax first_row_sum = 0.999999 (correct)
+- Output mean = -0.088195
+
+**Investigation Path:**
+1. Isolate which head diverges (1-6)
+2. Profile pre/post scale to verify scale kernel
+3. Check WMMA GEMM accumulation precision
+4. Test with FP32 GEMM fallback
+
+### 10.10 Performance Profile (2026-01-22)
 
 **encode_gpu_total_offload profiling breakdown (tiny model, 1.5s audio):**
 
