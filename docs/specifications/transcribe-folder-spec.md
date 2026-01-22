@@ -27,19 +27,30 @@ This specification defines the systematic approach to achieve **2x performance i
 
 **Whisper Tiny (39M params) - ACTUAL BENCHMARKS (2026-01-22):**
 
-| Implementation | Backend | RTF | Time (30s) | Status |
-|----------------|---------|-----|------------|--------|
+**CPU vs CPU Comparison (30s audio):**
+| Implementation | Backend | RTF | Time | Status |
+|----------------|---------|-----|------|--------|
 | whisper.cpp | CPU (4T, AVX512) | 0.12x | 3735ms | baseline |
 | whisper.apr | **CPU (parallel)** | **0.06x** | **1699ms** | **2.2x FASTER** ✓ |
-| whisper.apr | GPU decoder | 0.08x | 2273ms | kernel compilation overhead |
+
+**GPU Comparison (33.6s audio, test-speech-full.wav):**
+| Implementation | Backend | RTF | Time | Status |
+|----------------|---------|-----|------|--------|
+| whisper.cpp | **GPU (RTX 4090)** | **0.011x** | **375ms** | GPU baseline |
+| whisper.apr | Hybrid (CPU+GPU proj) | 0.11x | 3600ms | **9.6x slower** ✗ |
+| whisper.apr | CPU only | 0.12x | 4100ms | 11x slower ✗ |
 
 **Benchmark Methodology:**
-- Test file: `demos/test-audio/test-30s.wav` (30 seconds audio)
-- whisper.cpp: `main -m models/ggml-tiny.bin -f audio.wav`
-- whisper.apr: `whisper-apr-cli transcribe --file audio.wav`
-- GPU: RTX 4090, CUDA 12.x
+- Test files: `demos/test-audio/test-30s.wav`, `demos/test-audio/test-speech-full.wav`
+- whisper.cpp CPU: `main -m models/ggml-tiny.bin -f audio.wav` (no GPU)
+- whisper.cpp GPU: `main -m models/ggml-tiny.bin -f audio.wav --beam-size 1 --best-of 1`
+- whisper.apr: `whisper-apr-cli transcribe --file audio.wav [--gpu]`
+- Hardware: RTX 4090, CUDA 12.x, 48-core CPU
 
-**Conclusion:** whisper.apr **achieves the 2x target** on CPU. GPU path needs fixes.
+**Conclusions:**
+- ✅ **CPU target ACHIEVED**: whisper.apr is **2.2x faster** than whisper.cpp CPU
+- ❌ **GPU target NOT MET**: whisper.apr is **9.6x slower** than whisper.cpp GPU
+- **Root cause**: GPU encoder/decoder paths have bugs (see Known Issues below)
 
 ---
 
@@ -98,6 +109,21 @@ This specification defines the systematic approach to achieve **2x performance i
 - [ ] Add `warmup()` call at CLI startup to pre-compile kernels
 - [ ] Consider adding PTX disk cache to trueno-gpu (future)
 - [ ] For batch processing, amortize warmup across multiple files
+
+### Issue 4: Weight Key Mismatch (FIXED 2026-01-22)
+
+**Symptom:** GPU output projection always used fallback path instead of cached weights.
+
+**Five Whys:**
+1. **Why fallback used?** `has_weights("dec.output_proj")` returned false
+2. **Why false?** Key mismatch - weights uploaded with different key
+3. **Why different key?** `upload_weights` uses `"whisper_output_proj"`
+4. **Why inconsistent?** Typo/refactoring oversight between two functions
+5. **Why not caught?** No test for cached vs uncached path
+
+**Root Cause:** Key mismatch between `upload_weights` (`"whisper_output_proj"`) and `project_to_vocab_gpu` (`"dec.output_proj"`).
+
+**Fix (APPLIED):** Changed `project_to_vocab_gpu` to use `"whisper_output_proj"` key.
 
 ---
 
