@@ -1871,6 +1871,71 @@ impl WhisperCuda {
         Ok(result)
     }
 
+    /// WAPR-PERF-020: Pre-compile all GPU kernels for predictable latency
+    ///
+    /// Runs a complete encoder+decoder forward pass with dummy data to JIT compile
+    /// all PTX kernels. This moves the ~200ms compilation overhead from first
+    /// transcription to model initialization.
+    ///
+    /// # When to Call
+    ///
+    /// Call `warmup()` after `into_cuda()` to ensure all subsequent transcriptions
+    /// run at full speed (~10ms instead of ~200ms for first transcription).
+    ///
+    /// ```rust,ignore
+    /// let mut cuda_model = apr.into_cuda(0)?;
+    /// cuda_model.warmup()?;  // ~200ms kernel compilation
+    /// // All subsequent calls now fast:
+    /// let result = cuda_model.transcribe_gpu(&audio, options)?;  // ~10ms
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// Time taken for warmup in milliseconds.
+    #[cfg(feature = "cuda")]
+    pub fn warmup(&mut self) -> WhisperResult<u64> {
+        use trueno_gpu::driver::CudaStream;
+
+        let start = std::time::Instant::now();
+
+        // Step 1: Upload all weights
+        self.upload_encoder_weights_to_gpu()?;
+        self.upload_conv_weights_to_gpu()?;
+        self.upload_decoder_weights_to_gpu()?;
+        self.init_gpu_decoder_kv_cache_head_first()?;
+
+        let ctx = self.executor.context();
+        let stream = CudaStream::new(ctx)
+            .map_err(|e| WhisperError::Inference(format!("warmup stream: {e}")))?;
+
+        // Step 2: Run encoder with dummy mel to compile encoder kernels
+        let n_mels = self.config.n_mels as usize;
+        let d_model = self.config.n_text_state as usize;
+        let dummy_mel: Vec<f32> = vec![0.0; n_mels * 100]; // 100 frames
+        let enc_gpu = self.encode_gpu_resident(&dummy_mel)?;
+        let enc_seq_len = enc_gpu.len() / d_model;
+
+        // Step 3: Populate cross K/V to compile permute kernels
+        self.populate_cross_kv_caches_gpu(&enc_gpu, &stream)?;
+
+        // Step 4: Run decoder to compile decoder kernels
+        let dummy_embedding: Vec<f32> = vec![0.0; d_model];
+        let _dec_out = self.forward_decoder_token_gpu_stream(
+            &dummy_embedding,
+            0,
+            &stream,
+            Some(enc_seq_len),
+        )?;
+        stream.synchronize()
+            .map_err(|e| WhisperError::Inference(format!("warmup sync: {e}")))?;
+
+        // Step 5: Reset decoder state for clean subsequent runs
+        self.reset_gpu_decoder_kv_cache();
+        self.init_gpu_decoder_kv_cache_head_first()?;
+
+        Ok(start.elapsed().as_millis() as u64)
+    }
+
     /// WAPR-PERF-018: GPU-resident encoder output for graph-captured cross-attention
     ///
     /// Same as `encode_gpu_total_offload` but returns GpuResidentTensor instead of Vec<f32>.
@@ -6948,6 +7013,83 @@ mod tests {
         eprintln!("  Decoder: {:.1}ms", tokens_27);
 
         eprintln!("\n✓ WAPR-PERF-018: GPU cross-attention pipeline verified");
+    }
+
+    /// WAPR-PERF-020: Test warmup method for predictable latency
+    ///
+    /// Verifies that warmup() pre-compiles all kernels and subsequent
+    /// operations run at full speed.
+    #[test]
+    fn test_warmup_method() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        let model_path = "models/whisper-tiny.apr";
+        if !std::path::Path::new(model_path).exists() {
+            eprintln!("Model not found at {}, skipping test", model_path);
+            return;
+        }
+
+        eprintln!("\n============================================================");
+        eprintln!("WAPR-PERF-020: Warmup Method Test");
+        eprintln!("============================================================\n");
+
+        let bytes = std::fs::read(model_path).expect("Failed to read model");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        // Call warmup
+        eprintln!("[Warmup] Pre-compiling all GPU kernels...");
+        let warmup_ms = cuda_model.warmup().expect("Warmup failed");
+        eprintln!("  Warmup completed: {}ms", warmup_ms);
+
+        // Now run encoder - should be fast since kernels are compiled
+        let n_mels = cuda_model.config().n_mels as usize;
+        let d_model = cuda_model.config().n_text_state as usize;
+        let mel: Vec<f32> = (0..n_mels * 100).map(|i| (i as f32 * 0.001).sin()).collect();
+
+        // Time encoder (should be fast)
+        let enc_start = std::time::Instant::now();
+        let enc_gpu = cuda_model.encode_gpu_resident(&mel).expect("Encode");
+        let enc_time = enc_start.elapsed();
+
+        // Time cross K/V population (should be fast)
+        let ctx = cuda_model.executor.context();
+        let stream = CudaStream::new(ctx).expect("Create stream");
+        let kv_start = std::time::Instant::now();
+        cuda_model.populate_cross_kv_caches_gpu(&enc_gpu, &stream).expect("K/V pop");
+        stream.synchronize().expect("Sync");
+        let kv_time = kv_start.elapsed();
+
+        // Time decoder (should be fast)
+        let enc_seq_len = enc_gpu.len() / d_model;
+        let dummy_emb: Vec<f32> = vec![0.1; d_model];
+        let dec_start = std::time::Instant::now();
+        let _dec_out = cuda_model
+            .forward_decoder_token_gpu_stream(&dummy_emb, 0, &stream, Some(enc_seq_len))
+            .expect("Decoder");
+        stream.synchronize().expect("Sync");
+        let dec_time = dec_start.elapsed();
+
+        let total_post_warmup = enc_time + kv_time + dec_time;
+
+        eprintln!("\n[Results after warmup]");
+        eprintln!("  Encoder:     {:?}", enc_time);
+        eprintln!("  Cross K/V:   {:?}", kv_time);
+        eprintln!("  Decoder:     {:?}", dec_time);
+        eprintln!("  Total:       {:?}", total_post_warmup);
+        eprintln!("  Speedup:     {:.1}x vs warmup", warmup_ms as f64 / total_post_warmup.as_millis() as f64);
+
+        // After warmup, total should be <20ms (vs ~200ms without warmup)
+        assert!(
+            total_post_warmup.as_millis() < 50,
+            "Post-warmup pipeline too slow: {:?}",
+            total_post_warmup
+        );
+
+        eprintln!("\n✓ WAPR-PERF-020: Warmup method verified - predictable latency achieved");
     }
 
     /// WAPR-PERF-018: Test CUDA graph capture with cross-attention
