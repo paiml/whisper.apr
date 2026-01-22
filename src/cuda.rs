@@ -7595,4 +7595,1168 @@ mod tests {
 
         eprintln!("\n============================================================");
     }
+
+    /// WAPR-PERF-022: Layer-by-layer encoder comparison (Brick tracing)
+    ///
+    /// Traces where GPU encoder diverges from CPU encoder by comparing
+    /// output at each step: conv frontend -> pos emb -> layer 0 -> layer 1 -> ...
+    #[test]
+    fn test_encoder_layer_by_layer_divergence() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        let model_path = "models/whisper-tiny.apr";
+        if !std::path::Path::new(model_path).exists() {
+            eprintln!("Model not found at {model_path}, skipping test");
+            return;
+        }
+
+        let audio_path = "demos/test-audio/test-speech-1.5s.wav";
+        if !std::path::Path::new(audio_path).exists() {
+            eprintln!("Test audio not found at {audio_path}, skipping test");
+            return;
+        }
+
+        eprintln!("\n============================================================");
+        eprintln!("WAPR-PERF-022: Layer-by-Layer Encoder Divergence (Brick Trace)");
+        eprintln!("============================================================\n");
+
+        // Load model
+        let bytes = std::fs::read(model_path).expect("Failed to read model");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+
+        // Compute mel BEFORE converting to CUDA
+        let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio file");
+        let wav_data =
+            crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+        let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
+
+        // Convert to CUDA
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        let d_model = cuda_model.config.n_audio_state as usize;
+        let n_heads = cuda_model.config.n_audio_head as usize;
+        let head_dim = d_model / n_heads;
+        let n_layers = cuda_model.config.n_audio_layer as usize;
+        let n_mels = cuda_model.config.n_mels as usize;
+
+        eprintln!("[Config] d_model={}, n_heads={}, head_dim={}, n_layers={}",
+            d_model, n_heads, head_dim, n_layers);
+
+        // ========== STEP 1: Conv Frontend + Pos Emb (all CPU data extraction first) ==========
+        eprintln!("\n=== BRICK 1: Conv Frontend ===");
+
+        // CPU conv frontend
+        let cpu_conv_output = cuda_model.encoder.conv_frontend().forward(&mel).expect("CPU conv");
+        let seq_len = cpu_conv_output.len() / d_model;
+        eprintln!("[CPU Conv] shape: {} x {}, mean={:.6}, std={:.6}",
+            seq_len, d_model,
+            cpu_conv_output.iter().sum::<f32>() / cpu_conv_output.len() as f32,
+            (cpu_conv_output.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_conv_output.len() as f32).sqrt());
+
+        // Get positional embedding (need before mutable borrow)
+        let pos_emb = cuda_model.encoder.positional_embedding().to_vec();
+
+        // ========== GPU conv frontend ==========
+        cuda_model.upload_conv_weights_to_gpu().expect("Upload conv");
+
+        let (gpu_conv_output, gpu_seq_len) = {
+            let ctx = cuda_model.executor.context();
+            let conv_weights = cuda_model.gpu_conv_weights.as_ref().expect("Conv weights");
+
+            let seq_len_in = mel.len() / n_mels;
+            let mel_gpu = GpuResidentTensor::from_host(ctx, &mel).expect("mel upload");
+
+            let conv1_out = mel_gpu.conv1d(
+                ctx, &conv_weights.conv1_weight, Some(&conv_weights.conv1_bias),
+                n_mels as u32, d_model as u32, 3, 1, 1, seq_len_in as u32
+            ).expect("GPU conv1");
+
+            let mut conv2_out = conv1_out.conv1d(
+                ctx, &conv_weights.conv2_weight, Some(&conv_weights.conv2_bias),
+                d_model as u32, d_model as u32, 3, 2, 1, seq_len_in as u32
+            ).expect("GPU conv2");
+
+            let output = conv2_out.to_host().expect("Download conv");
+            let seq_len = output.len() / d_model;
+            (output, seq_len)
+        };
+
+        eprintln!("[GPU Conv] shape: {} x {}, mean={:.6}, std={:.6}",
+            gpu_seq_len, d_model,
+            gpu_conv_output.iter().sum::<f32>() / gpu_conv_output.len() as f32,
+            (gpu_conv_output.iter().map(|x| x.powi(2)).sum::<f32>() / gpu_conv_output.len() as f32).sqrt());
+
+        // Compare conv outputs
+        let conv_max_diff = if cpu_conv_output.len() == gpu_conv_output.len() {
+            cpu_conv_output.iter().zip(gpu_conv_output.iter())
+                .map(|(c, g)| (c - g).abs())
+                .fold(0.0f32, f32::max)
+        } else {
+            eprintln!("  ✗ Conv shape mismatch: CPU={}, GPU={}", cpu_conv_output.len(), gpu_conv_output.len());
+            f32::MAX
+        };
+        eprintln!("[Conv Diff] max={:.6}", conv_max_diff);
+
+        // ========== STEP 2: Positional Embedding ==========
+        eprintln!("\n=== BRICK 2: Position Embedding ===");
+
+        // CPU: add positional embedding
+        let mut cpu_with_pos = cpu_conv_output.clone();
+        for pos in 0..seq_len {
+            for d in 0..d_model {
+                cpu_with_pos[pos * d_model + d] += pos_emb[pos * d_model + d];
+            }
+        }
+        eprintln!("[CPU+PosEmb] mean={:.6}, std={:.6}",
+            cpu_with_pos.iter().sum::<f32>() / cpu_with_pos.len() as f32,
+            (cpu_with_pos.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_with_pos.len() as f32).sqrt());
+
+        // GPU: add positional embedding (done on CPU, re-upload)
+        let mut gpu_with_pos = gpu_conv_output.clone();
+        for pos in 0..gpu_seq_len.min(seq_len) {
+            for d in 0..d_model {
+                gpu_with_pos[pos * d_model + d] += pos_emb[pos * d_model + d];
+            }
+        }
+        eprintln!("[GPU+PosEmb] mean={:.6}, std={:.6}",
+            gpu_with_pos.iter().sum::<f32>() / gpu_with_pos.len() as f32,
+            (gpu_with_pos.iter().map(|x| x.powi(2)).sum::<f32>() / gpu_with_pos.len() as f32).sqrt());
+
+        // Compare after pos emb
+        let pos_max_diff = if cpu_with_pos.len() == gpu_with_pos.len() {
+            cpu_with_pos.iter().zip(gpu_with_pos.iter())
+                .map(|(c, g)| (c - g).abs())
+                .fold(0.0f32, f32::max)
+        } else {
+            f32::MAX
+        };
+        eprintln!("[PosEmb Diff] max={:.6}", pos_max_diff);
+
+        // ========== STEP 3: Layer-by-Layer Transformer ==========
+        eprintln!("\n=== BRICK 3: Transformer Layers (Layer-by-Layer) ===");
+
+        // Upload encoder weights for GPU path
+        cuda_model.upload_encoder_weights_to_gpu().expect("Upload encoder weights");
+
+        // Store each CPU layer's output for proper comparison
+        let mut cpu_layer_outputs: Vec<Vec<f32>> = Vec::with_capacity(n_layers);
+
+        // Run CPU layers independently (not using attention_via_gemm which has borrow issues)
+        let mut cpu_x = cpu_with_pos.clone();
+        for layer_idx in 0..n_layers {
+            // CPU layer forward - use the encoder's forward method
+            let block = &cuda_model.encoder.blocks()[layer_idx];
+
+            // Pre-norm
+            let ln1_out = block.ln1.forward(&cpu_x).expect("CPU LN1");
+
+            // Self-attention Q/K/V projections
+            let q = block.self_attn.w_q().forward(&ln1_out, seq_len).expect("CPU Q");
+            let k = block.self_attn.w_k().forward(&ln1_out, seq_len).expect("CPU K");
+            let v = block.self_attn.w_v().forward(&ln1_out, seq_len).expect("CPU V");
+
+            // Self-attention (use scaled dot product)
+            let scale = 1.0 / (head_dim as f32).sqrt();
+            let mut attn_output = vec![0.0f32; seq_len * d_model];
+
+            for h in 0..n_heads {
+                // Extract Q, K, V for this head
+                let q_head: Vec<f32> = (0..seq_len)
+                    .flat_map(|pos| {
+                        let start = pos * d_model + h * head_dim;
+                        q[start..start + head_dim].iter().copied()
+                    })
+                    .collect();
+                let k_head: Vec<f32> = (0..seq_len)
+                    .flat_map(|pos| {
+                        let start = pos * d_model + h * head_dim;
+                        k[start..start + head_dim].iter().copied()
+                    })
+                    .collect();
+                let v_head: Vec<f32> = (0..seq_len)
+                    .flat_map(|pos| {
+                        let start = pos * d_model + h * head_dim;
+                        v[start..start + head_dim].iter().copied()
+                    })
+                    .collect();
+
+                // Compute attention scores: Q @ K^T
+                let mut scores = vec![0.0f32; seq_len * seq_len];
+                for i in 0..seq_len {
+                    for j in 0..seq_len {
+                        let mut sum = 0.0f32;
+                        for d in 0..head_dim {
+                            sum += q_head[i * head_dim + d] * k_head[j * head_dim + d];
+                        }
+                        scores[i * seq_len + j] = sum * scale;
+                    }
+                }
+
+                // Softmax
+                for i in 0..seq_len {
+                    let row_start = i * seq_len;
+                    let max_val = scores[row_start..row_start + seq_len]
+                        .iter()
+                        .cloned()
+                        .fold(f32::NEG_INFINITY, f32::max);
+                    let mut sum = 0.0f32;
+                    for j in 0..seq_len {
+                        scores[row_start + j] = (scores[row_start + j] - max_val).exp();
+                        sum += scores[row_start + j];
+                    }
+                    for j in 0..seq_len {
+                        scores[row_start + j] /= sum;
+                    }
+                }
+
+                // Apply attention to V: scores @ V
+                for i in 0..seq_len {
+                    for d in 0..head_dim {
+                        let mut sum = 0.0f32;
+                        for j in 0..seq_len {
+                            sum += scores[i * seq_len + j] * v_head[j * head_dim + d];
+                        }
+                        attn_output[i * d_model + h * head_dim + d] = sum;
+                    }
+                }
+            }
+
+            // Output projection
+            let attn_proj = block.self_attn.w_o().forward(&attn_output, seq_len).expect("CPU O");
+
+            // First residual
+            let mut residual1: Vec<f32> = cpu_x.iter().zip(attn_proj.iter()).map(|(a, b)| a + b).collect();
+
+            // FFN
+            let ln2_out = block.ln2.forward(&residual1).expect("CPU LN2");
+            let ffn_out = block.ffn.forward(&ln2_out).expect("CPU FFN");
+
+            // Second residual
+            for (r, f) in residual1.iter_mut().zip(ffn_out.iter()) {
+                *r += f;
+            }
+            cpu_x = residual1.clone();
+
+            // Store this layer's output for comparison
+            cpu_layer_outputs.push(residual1);
+
+            eprintln!("[CPU Layer {}] mean={:.6}", layer_idx,
+                cpu_x.iter().sum::<f32>() / cpu_x.len() as f32);
+        }
+
+        // Now run GPU layers with SAME INPUT as CPU (cpu_with_pos) for fair comparison
+        eprintln!("\n--- GPU Layers (same input as CPU for fair comparison) ---");
+        {
+            let ctx = cuda_model.executor.context();
+            let weights = cuda_model.gpu_encoder_weights.as_ref().expect("Encoder weights");
+            let config = cuda_model.gpu_encoder_config.as_ref().expect("Encoder config");
+
+            // Start from CPU input (not GPU conv output) for fair layer-by-layer comparison
+            let mut gpu_x_tensor = GpuResidentTensor::from_host(ctx, &cpu_with_pos).expect("Upload");
+
+            for layer_idx in 0..n_layers {
+                // GPU layer forward
+                gpu_x_tensor = forward_encoder_block_gpu(ctx, &gpu_x_tensor, &weights[layer_idx], config)
+                    .expect("GPU layer");
+
+                let gpu_layer_out = gpu_x_tensor.to_host().expect("Download layer");
+
+                // Compare with CPU result for THIS layer
+                let layer_max_diff = cpu_layer_outputs[layer_idx].iter().zip(gpu_layer_out.iter())
+                    .map(|(c, g)| (c - g).abs())
+                    .fold(0.0f32, f32::max);
+
+                eprintln!("[GPU Layer {}] mean={:.6}, vs_CPU_max_diff={:.6}",
+                    layer_idx,
+                    gpu_layer_out.iter().sum::<f32>() / gpu_layer_out.len() as f32,
+                    layer_max_diff);
+
+                // Reset to CPU layer output for next layer (isolate errors)
+                gpu_x_tensor = GpuResidentTensor::from_host(ctx, &cpu_layer_outputs[layer_idx]).expect("Re-upload");
+            }
+        }
+
+        // ========== STEP 4: Final LayerNorm ==========
+        eprintln!("\n=== BRICK 4: Final LayerNorm ===");
+
+        let cpu_final = cuda_model.encoder.ln_post().forward(&cpu_x).expect("CPU ln_post");
+        eprintln!("[CPU Final] mean={:.6}, std={:.6}",
+            cpu_final.iter().sum::<f32>() / cpu_final.len() as f32,
+            (cpu_final.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_final.len() as f32).sqrt());
+
+        eprintln!("\n============================================================");
+        eprintln!("Brick Trace Complete: Check layer-by-layer diffs above");
+        eprintln!("============================================================");
+    }
+
+    /// WAPR-PERF-023: Step-by-step single layer comparison (Tile tracing)
+    ///
+    /// Compares CPU vs GPU at each step within a single encoder layer to
+    /// isolate exactly which operation diverges.
+    #[test]
+    fn test_encoder_single_layer_step_by_step() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        let model_path = "models/whisper-tiny.apr";
+        if !std::path::Path::new(model_path).exists() {
+            eprintln!("Model not found at {model_path}, skipping test");
+            return;
+        }
+
+        let audio_path = "demos/test-audio/test-speech-1.5s.wav";
+        if !std::path::Path::new(audio_path).exists() {
+            eprintln!("Test audio not found at {audio_path}, skipping test");
+            return;
+        }
+
+        eprintln!("\n============================================================");
+        eprintln!("WAPR-PERF-023: Single Layer Step-by-Step (Tile Trace)");
+        eprintln!("============================================================\n");
+
+        // Load model
+        let bytes = std::fs::read(model_path).expect("Failed to read model");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+
+        // Compute mel BEFORE converting to CUDA
+        let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio file");
+        let wav_data =
+            crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+        let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
+
+        // Convert to CUDA
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        let d_model = cuda_model.config.n_audio_state as usize;
+        let n_heads = cuda_model.config.n_audio_head as usize;
+        let head_dim = d_model / n_heads;
+
+        eprintln!("[Config] d_model={}, n_heads={}, head_dim={}", d_model, n_heads, head_dim);
+
+        // Get CPU conv output + pos embedding as the input
+        let cpu_conv_output = cuda_model.encoder.conv_frontend().forward(&mel).expect("CPU conv");
+        let seq_len = cpu_conv_output.len() / d_model;
+        let pos_emb = cuda_model.encoder.positional_embedding().to_vec();
+
+        let mut input_x = cpu_conv_output.clone();
+        for pos in 0..seq_len {
+            for d in 0..d_model {
+                input_x[pos * d_model + d] += pos_emb[pos * d_model + d];
+            }
+        }
+
+        eprintln!("[Input] seq_len={}, mean={:.6}", seq_len,
+            input_x.iter().sum::<f32>() / input_x.len() as f32);
+
+        // Upload encoder weights
+        cuda_model.upload_encoder_weights_to_gpu().expect("Upload encoder weights");
+
+        // We'll compare Layer 0 step by step
+        let block = &cuda_model.encoder.blocks()[0];
+
+        eprintln!("\n=== STEP 1: LayerNorm 1 ===");
+        let cpu_ln1 = block.ln1.forward(&input_x).expect("CPU LN1");
+        eprintln!("[CPU LN1] mean={:.6}, std={:.6}",
+            cpu_ln1.iter().sum::<f32>() / cpu_ln1.len() as f32,
+            (cpu_ln1.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_ln1.len() as f32).sqrt());
+
+        // GPU LN1
+        let gpu_ln1 = {
+            let ctx = cuda_model.executor.context();
+            let weights = &cuda_model.gpu_encoder_weights.as_ref().expect("Weights")[0];
+            let x_gpu = GpuResidentTensor::from_host(ctx, &input_x).expect("Upload");
+            x_gpu.layer_norm(ctx, &weights.ln1_gamma, &weights.ln1_beta, d_model as u32, seq_len as u32)
+                .expect("GPU LN1")
+                .to_host().expect("Download")
+        };
+        let ln1_diff = cpu_ln1.iter().zip(gpu_ln1.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!("[GPU LN1] mean={:.6}, max_diff={:.6}",
+            gpu_ln1.iter().sum::<f32>() / gpu_ln1.len() as f32, ln1_diff);
+
+        eprintln!("\n=== STEP 2: Q/K/V Projections ===");
+
+        // Diagnostic: Compare CPU weights (transposed) vs GPU weights
+        {
+            let weights = &mut cuda_model.gpu_encoder_weights.as_mut().expect("Weights")[0];
+
+            // Get CPU weights (transposed to match GPU format) - inline transpose
+            let transpose = |w: &[f32], rows: usize, cols: usize| -> Vec<f32> {
+                let mut t = vec![0.0f32; rows * cols];
+                for r in 0..rows {
+                    for c in 0..cols {
+                        t[c * rows + r] = w[r * cols + c];
+                    }
+                }
+                t
+            };
+
+            let w_q_cpu_t = transpose(&block.self_attn.w_q().weight, d_model, d_model);
+            let w_k_cpu_t = transpose(&block.self_attn.w_k().weight, d_model, d_model);
+            let w_v_cpu_t = transpose(&block.self_attn.w_v().weight, d_model, d_model);
+
+            // Get GPU weights
+            let w_q_gpu = weights.w_q.to_host().expect("Download w_q");
+            let w_k_gpu = weights.w_k.to_host().expect("Download w_k");
+            let w_v_gpu = weights.w_v.to_host().expect("Download w_v");
+
+            // Compare
+            let w_q_diff: f32 = w_q_cpu_t.iter().zip(w_q_gpu.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+            let w_k_diff: f32 = w_k_cpu_t.iter().zip(w_k_gpu.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+            let w_v_diff: f32 = w_v_cpu_t.iter().zip(w_v_gpu.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+
+            eprintln!("[WEIGHT CHECK] w_q max_diff={:.6}, w_k max_diff={:.6}, w_v max_diff={:.6}",
+                      w_q_diff, w_k_diff, w_v_diff);
+
+            // Also check biases
+            let b_q_gpu = weights.b_q.to_host().expect("Download b_q");
+            let b_k_gpu = weights.b_k.to_host().expect("Download b_k");
+            let b_v_gpu = weights.b_v.to_host().expect("Download b_v");
+
+            let b_q_diff: f32 = block.self_attn.w_q().bias.iter().zip(b_q_gpu.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+            let b_k_diff: f32 = block.self_attn.w_k().bias.iter().zip(b_k_gpu.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+            let b_v_diff: f32 = block.self_attn.w_v().bias.iter().zip(b_v_gpu.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+
+            eprintln!("[BIAS CHECK] b_q max_diff={:.6}, b_k max_diff={:.6}, b_v max_diff={:.6}",
+                      b_q_diff, b_k_diff, b_v_diff);
+        }
+
+        let cpu_q = block.self_attn.w_q().forward(&cpu_ln1, seq_len).expect("CPU Q");
+        let cpu_k = block.self_attn.w_k().forward(&cpu_ln1, seq_len).expect("CPU K");
+        let cpu_v = block.self_attn.w_v().forward(&cpu_ln1, seq_len).expect("CPU V");
+        eprintln!("[CPU Q] mean={:.6}", cpu_q.iter().sum::<f32>() / cpu_q.len() as f32);
+        eprintln!("[CPU K] mean={:.6}", cpu_k.iter().sum::<f32>() / cpu_k.len() as f32);
+        eprintln!("[CPU V] mean={:.6}", cpu_v.iter().sum::<f32>() / cpu_v.len() as f32);
+
+        // GPU Q/K/V - test ORDER dependency: compute K FIRST to see if first call always succeeds
+        let (gpu_q, gpu_k, gpu_v) = {
+            let ctx = cuda_model.executor.context();
+            let weights = &cuda_model.gpu_encoder_weights.as_ref().expect("Weights")[0];
+
+            // HYPOTHESIS: Does the FIRST GEMM call always succeed, regardless of which projection?
+            // Test: K first, then Q, then V
+            let ln1_for_k = GpuResidentTensor::from_host(ctx, &cpu_ln1).expect("Upload LN1 for K");
+            let k = ln1_for_k.linear(ctx, &weights.w_k, Some(&weights.b_k), seq_len as u32, d_model as u32, d_model as u32)
+                .expect("GPU K").to_host().expect("Download K");
+
+            let ln1_for_q = GpuResidentTensor::from_host(ctx, &cpu_ln1).expect("Upload LN1 for Q");
+            let q = ln1_for_q.linear(ctx, &weights.w_q, Some(&weights.b_q), seq_len as u32, d_model as u32, d_model as u32)
+                .expect("GPU Q").to_host().expect("Download Q");
+
+            let ln1_for_v = GpuResidentTensor::from_host(ctx, &cpu_ln1).expect("Upload LN1 for V");
+            let v = ln1_for_v.linear(ctx, &weights.w_v, Some(&weights.b_v), seq_len as u32, d_model as u32, d_model as u32)
+                .expect("GPU V").to_host().expect("Download V");
+            (q, k, v)
+        };
+        let q_diff = cpu_q.iter().zip(gpu_q.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+        let k_diff = cpu_k.iter().zip(gpu_k.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+        let v_diff = cpu_v.iter().zip(gpu_v.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+        eprintln!("[GPU Q] mean={:.6}, max_diff={:.6}", gpu_q.iter().sum::<f32>() / gpu_q.len() as f32, q_diff);
+        eprintln!("[GPU K] mean={:.6}, max_diff={:.6}", gpu_k.iter().sum::<f32>() / gpu_k.len() as f32, k_diff);
+        eprintln!("[GPU V] mean={:.6}, max_diff={:.6}", gpu_v.iter().sum::<f32>() / gpu_v.len() as f32, v_diff);
+
+        eprintln!("\n=== STEP 3: Self-Attention ===");
+        // CPU attention (use the CPU Q/K/V)
+        let scale = 1.0 / (head_dim as f32).sqrt();
+        let mut cpu_attn_output = vec![0.0f32; seq_len * d_model];
+        for h in 0..n_heads {
+            let q_head: Vec<f32> = (0..seq_len)
+                .flat_map(|pos| cpu_q[pos * d_model + h * head_dim..pos * d_model + (h + 1) * head_dim].iter().copied())
+                .collect();
+            let k_head: Vec<f32> = (0..seq_len)
+                .flat_map(|pos| cpu_k[pos * d_model + h * head_dim..pos * d_model + (h + 1) * head_dim].iter().copied())
+                .collect();
+            let v_head: Vec<f32> = (0..seq_len)
+                .flat_map(|pos| cpu_v[pos * d_model + h * head_dim..pos * d_model + (h + 1) * head_dim].iter().copied())
+                .collect();
+
+            let mut scores = vec![0.0f32; seq_len * seq_len];
+            for i in 0..seq_len {
+                for j in 0..seq_len {
+                    let mut sum = 0.0f32;
+                    for d in 0..head_dim {
+                        sum += q_head[i * head_dim + d] * k_head[j * head_dim + d];
+                    }
+                    scores[i * seq_len + j] = sum * scale;
+                }
+            }
+
+            for i in 0..seq_len {
+                let row_start = i * seq_len;
+                let max_val = scores[row_start..row_start + seq_len].iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                let mut sum = 0.0f32;
+                for j in 0..seq_len {
+                    scores[row_start + j] = (scores[row_start + j] - max_val).exp();
+                    sum += scores[row_start + j];
+                }
+                for j in 0..seq_len {
+                    scores[row_start + j] /= sum;
+                }
+            }
+
+            for i in 0..seq_len {
+                for d in 0..head_dim {
+                    let mut sum = 0.0f32;
+                    for j in 0..seq_len {
+                        sum += scores[i * seq_len + j] * v_head[j * head_dim + d];
+                    }
+                    cpu_attn_output[i * d_model + h * head_dim + d] = sum;
+                }
+            }
+        }
+        eprintln!("[CPU Attn] mean={:.6}", cpu_attn_output.iter().sum::<f32>() / cpu_attn_output.len() as f32);
+
+        // GPU attention (using CPU Q/K/V for fair comparison)
+        let gpu_attn_output = {
+            let ctx = cuda_model.executor.context();
+            let q_gpu = GpuResidentTensor::from_host(ctx, &cpu_q).expect("Upload Q");
+            let k_gpu = GpuResidentTensor::from_host(ctx, &cpu_k).expect("Upload K");
+            let v_gpu = GpuResidentTensor::from_host(ctx, &cpu_v).expect("Upload V");
+
+            batched_multihead_attention(ctx, &q_gpu, &k_gpu, &v_gpu, n_heads as u32, head_dim as u32, seq_len as u32)
+                .expect("GPU attention")
+                .to_host().expect("Download attention")
+        };
+        let attn_diff = cpu_attn_output.iter().zip(gpu_attn_output.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!("[GPU Attn] mean={:.6}, max_diff={:.6}",
+            gpu_attn_output.iter().sum::<f32>() / gpu_attn_output.len() as f32, attn_diff);
+
+        eprintln!("\n=== STEP 4: Output Projection ===");
+        let cpu_attn_proj = block.self_attn.w_o().forward(&cpu_attn_output, seq_len).expect("CPU O");
+        eprintln!("[CPU O_proj] mean={:.6}", cpu_attn_proj.iter().sum::<f32>() / cpu_attn_proj.len() as f32);
+
+        // GPU output projection (using CPU attention output for fair comparison)
+        let gpu_attn_proj = {
+            let ctx = cuda_model.executor.context();
+            let weights = &cuda_model.gpu_encoder_weights.as_ref().expect("Weights")[0];
+            let attn_gpu = GpuResidentTensor::from_host(ctx, &cpu_attn_output).expect("Upload attn");
+            attn_gpu.linear(ctx, &weights.w_o, Some(&weights.b_o), seq_len as u32, d_model as u32, d_model as u32)
+                .expect("GPU O").to_host().expect("Download O")
+        };
+        let o_diff = cpu_attn_proj.iter().zip(gpu_attn_proj.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!("[GPU O_proj] mean={:.6}, max_diff={:.6}",
+            gpu_attn_proj.iter().sum::<f32>() / gpu_attn_proj.len() as f32, o_diff);
+
+        eprintln!("\n=== STEP 5: First Residual ===");
+        let cpu_residual1: Vec<f32> = input_x.iter().zip(cpu_attn_proj.iter()).map(|(a, b)| a + b).collect();
+        eprintln!("[CPU Res1] mean={:.6}", cpu_residual1.iter().sum::<f32>() / cpu_residual1.len() as f32);
+
+        // GPU residual (using CPU values for fair comparison)
+        let gpu_residual1 = {
+            let ctx = cuda_model.executor.context();
+            let x_gpu = GpuResidentTensor::from_host(ctx, &input_x).expect("Upload x");
+            let proj_gpu = GpuResidentTensor::from_host(ctx, &cpu_attn_proj).expect("Upload proj");
+            x_gpu.add(ctx, &proj_gpu).expect("GPU add").to_host().expect("Download")
+        };
+        let res1_diff = cpu_residual1.iter().zip(gpu_residual1.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!("[GPU Res1] mean={:.6}, max_diff={:.6}",
+            gpu_residual1.iter().sum::<f32>() / gpu_residual1.len() as f32, res1_diff);
+
+        eprintln!("\n=== STEP 6: LayerNorm 2 ===");
+        let cpu_ln2 = block.ln2.forward(&cpu_residual1).expect("CPU LN2");
+        eprintln!("[CPU LN2] mean={:.6}", cpu_ln2.iter().sum::<f32>() / cpu_ln2.len() as f32);
+
+        // GPU LN2
+        let gpu_ln2 = {
+            let ctx = cuda_model.executor.context();
+            let weights = &cuda_model.gpu_encoder_weights.as_ref().expect("Weights")[0];
+            let res_gpu = GpuResidentTensor::from_host(ctx, &cpu_residual1).expect("Upload res");
+            res_gpu.layer_norm(ctx, &weights.ln2_gamma, &weights.ln2_beta, d_model as u32, seq_len as u32)
+                .expect("GPU LN2")
+                .to_host().expect("Download")
+        };
+        let ln2_diff = cpu_ln2.iter().zip(gpu_ln2.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!("[GPU LN2] mean={:.6}, max_diff={:.6}",
+            gpu_ln2.iter().sum::<f32>() / gpu_ln2.len() as f32, ln2_diff);
+
+        eprintln!("\n=== STEP 7: FFN ===");
+        let cpu_ffn = block.ffn.forward(&cpu_ln2).expect("CPU FFN");
+        eprintln!("[CPU FFN] mean={:.6}", cpu_ffn.iter().sum::<f32>() / cpu_ffn.len() as f32);
+
+        // GPU FFN (fused linear + GELU + linear)
+        let ffn_dim = cuda_model.config.n_audio_state as usize * 4; // Typically 4x d_model
+        let gpu_ffn = {
+            let ctx = cuda_model.executor.context();
+            let weights = &cuda_model.gpu_encoder_weights.as_ref().expect("Weights")[0];
+            let ln2_gpu = GpuResidentTensor::from_host(ctx, &cpu_ln2).expect("Upload ln2");
+
+            // FFN up + GELU (fused)
+            let ffn_gelu = ln2_gpu.fused_linear_gelu(
+                ctx, &weights.ffn_up_w, &weights.ffn_up_b,
+                seq_len as u32, d_model as u32, ffn_dim as u32
+            ).expect("GPU FFN up+GELU");
+
+            // FFN down
+            ffn_gelu.linear(ctx, &weights.ffn_down_w, Some(&weights.ffn_down_b),
+                seq_len as u32, ffn_dim as u32, d_model as u32)
+                .expect("GPU FFN down")
+                .to_host().expect("Download")
+        };
+        let ffn_diff = cpu_ffn.iter().zip(gpu_ffn.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!("[GPU FFN] mean={:.6}, max_diff={:.6}",
+            gpu_ffn.iter().sum::<f32>() / gpu_ffn.len() as f32, ffn_diff);
+
+        eprintln!("\n=== STEP 8: Final Output (Second Residual) ===");
+        let cpu_output: Vec<f32> = cpu_residual1.iter().zip(cpu_ffn.iter()).map(|(a, b)| a + b).collect();
+        eprintln!("[CPU Output] mean={:.6}", cpu_output.iter().sum::<f32>() / cpu_output.len() as f32);
+
+        // GPU final output
+        let gpu_output = {
+            let ctx = cuda_model.executor.context();
+            let res_gpu = GpuResidentTensor::from_host(ctx, &cpu_residual1).expect("Upload res");
+            let ffn_gpu = GpuResidentTensor::from_host(ctx, &cpu_ffn).expect("Upload ffn");
+            res_gpu.add(ctx, &ffn_gpu).expect("GPU add").to_host().expect("Download")
+        };
+        let output_diff = cpu_output.iter().zip(gpu_output.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!("[GPU Output] mean={:.6}, max_diff={:.6}",
+            gpu_output.iter().sum::<f32>() / gpu_output.len() as f32, output_diff);
+
+        eprintln!("\n============================================================");
+        eprintln!("Step-by-Step Summary:");
+        eprintln!("  LN1:    max_diff = {:.6}", ln1_diff);
+        eprintln!("  Q:      max_diff = {:.6}", q_diff);
+        eprintln!("  K:      max_diff = {:.6}", k_diff);
+        eprintln!("  V:      max_diff = {:.6}", v_diff);
+        eprintln!("  Attn:   max_diff = {:.6}", attn_diff);
+        eprintln!("  O_proj: max_diff = {:.6}", o_diff);
+        eprintln!("  Res1:   max_diff = {:.6}", res1_diff);
+        eprintln!("  LN2:    max_diff = {:.6}", ln2_diff);
+        eprintln!("  FFN:    max_diff = {:.6}", ffn_diff);
+        eprintln!("  Output: max_diff = {:.6}", output_diff);
+        eprintln!("============================================================\n");
+
+        // Assert reasonable tolerances
+        assert!(ln1_diff < 0.01, "LN1 diff too high: {}", ln1_diff);
+        assert!(q_diff < 0.5, "Q diff too high: {}", q_diff);
+        assert!(k_diff < 0.5, "K diff too high: {}", k_diff);
+        assert!(v_diff < 0.5, "V diff too high: {}", v_diff);
+        // Attention might have some numerical error due to softmax
+        assert!(attn_diff < 1.0, "Attn diff too high: {}", attn_diff);
+    }
+
+    /// WAPR-PERF-024: Debug weight transpose and linear operation
+    ///
+    /// Uses small known matrices to verify the weight transpose and GPU linear
+    /// match CPU linear computation.
+    #[test]
+    fn test_linear_weight_transpose_correctness() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        eprintln!("\n============================================================");
+        eprintln!("WAPR-PERF-024: Weight Transpose & Linear Debug Test");
+        eprintln!("============================================================\n");
+
+        let executor = CudaExecutor::new(0).expect("Failed to create executor");
+        let ctx = executor.context();
+
+        // Small dimensions for easy debugging
+        let batch = 2;
+        let in_feat = 4;
+        let out_feat = 3;
+
+        // Create input: [batch, in_feat] = [2, 4]
+        // Values: [[1, 2, 3, 4], [5, 6, 7, 8]]
+        let input: Vec<f32> = (1..=8).map(|x| x as f32).collect();
+        eprintln!("[Input] shape: {}x{}", batch, in_feat);
+        eprintln!("  {:?}", &input[..in_feat]);
+        eprintln!("  {:?}", &input[in_feat..]);
+
+        // Create CPU weight: [out_feat, in_feat] = [3, 4] (row-major)
+        // Each row is an output feature's weights
+        // Row 0: [1, 0, 0, 0] -> output 0 = input[0]
+        // Row 1: [0, 1, 0, 0] -> output 1 = input[1]
+        // Row 2: [0, 0, 1, 1] -> output 2 = input[2] + input[3]
+        let cpu_weight: Vec<f32> = vec![
+            1.0, 0.0, 0.0, 0.0,  // output 0 = input[0]
+            0.0, 1.0, 0.0, 0.0,  // output 1 = input[1]
+            0.0, 0.0, 1.0, 1.0,  // output 2 = input[2] + input[3]
+        ];
+        let cpu_bias: Vec<f32> = vec![0.1, 0.2, 0.3]; // Small biases
+
+        eprintln!("[CPU Weight] shape: {}x{} (out_feat x in_feat)", out_feat, in_feat);
+        for o in 0..out_feat {
+            eprintln!("  row {}: {:?}", o, &cpu_weight[o * in_feat..(o + 1) * in_feat]);
+        }
+        eprintln!("[CPU Bias] {:?}", cpu_bias);
+
+        // Compute CPU reference: output[b, o] = sum_i(input[b, i] * weight[o, i]) + bias[o]
+        let mut cpu_output = vec![0.0f32; batch * out_feat];
+        for b in 0..batch {
+            for o in 0..out_feat {
+                let mut sum = cpu_bias[o];
+                for i in 0..in_feat {
+                    sum += input[b * in_feat + i] * cpu_weight[o * in_feat + i];
+                }
+                cpu_output[b * out_feat + o] = sum;
+            }
+        }
+        eprintln!("[CPU Output] shape: {}x{}", batch, out_feat);
+        eprintln!("  batch 0: {:?}", &cpu_output[..out_feat]);
+        eprintln!("  batch 1: {:?}", &cpu_output[out_feat..]);
+
+        // Expected:
+        // Batch 0: [1*1 + 0.1, 1*2 + 0.2, 1*3 + 1*4 + 0.3] = [1.1, 2.2, 7.3]
+        // Batch 1: [1*5 + 0.1, 1*6 + 0.2, 1*7 + 1*8 + 0.3] = [5.1, 6.2, 15.3]
+
+        // Transpose weight for GPU: [out_feat, in_feat] -> [in_feat, out_feat]
+        // GPU expects [in_feat, out_feat] for input @ weight = output
+        let mut gpu_weight = vec![0.0f32; cpu_weight.len()];
+        for o in 0..out_feat {
+            for i in 0..in_feat {
+                gpu_weight[i * out_feat + o] = cpu_weight[o * in_feat + i];
+            }
+        }
+        eprintln!("\n[GPU Weight after transpose] shape: {}x{} (in_feat x out_feat)", in_feat, out_feat);
+        for i in 0..in_feat {
+            eprintln!("  row {}: {:?}", i, &gpu_weight[i * out_feat..(i + 1) * out_feat]);
+        }
+
+        // Upload to GPU
+        let input_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input");
+        let weight_gpu = GpuResidentTensor::from_host(ctx, &gpu_weight).expect("Upload weight");
+        let bias_gpu = GpuResidentTensor::from_host(ctx, &cpu_bias).expect("Upload bias");
+
+        // Compute GPU linear
+        let mut output_gpu = input_gpu.linear(
+            ctx, &weight_gpu, Some(&bias_gpu),
+            batch as u32, in_feat as u32, out_feat as u32
+        ).expect("GPU linear");
+
+        let gpu_output = output_gpu.to_host().expect("Download output");
+        eprintln!("\n[GPU Output] shape: {}x{}", batch, out_feat);
+        eprintln!("  batch 0: {:?}", &gpu_output[..out_feat]);
+        eprintln!("  batch 1: {:?}", &gpu_output[out_feat..]);
+
+        // Compare
+        let max_diff = cpu_output.iter().zip(gpu_output.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!("\n[Comparison] max_diff = {:.6}", max_diff);
+
+        // Verify expected values
+        let expected = vec![1.1, 2.2, 7.3, 5.1, 6.2, 15.3];
+        let cpu_matches = cpu_output.iter().zip(expected.iter())
+            .all(|(a, b)| (a - b).abs() < 0.001);
+        eprintln!("[CPU matches expected] {}", cpu_matches);
+
+        assert!(max_diff < 0.01, "GPU output differs from CPU by {}", max_diff);
+        eprintln!("\n✓ Small matrix test PASSED");
+    }
+
+    /// WAPR-PERF-025: Test WMMA FP16 GEMM kernel correctness
+    ///
+    /// Tests with larger matrices that trigger the WMMA Tensor Core path.
+    #[test]
+    fn test_wmma_gemm_correctness() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        eprintln!("\n============================================================");
+        eprintln!("WAPR-PERF-025: WMMA FP16 GEMM Correctness Test");
+        eprintln!("============================================================\n");
+
+        let executor = CudaExecutor::new(0).expect("Failed to create executor");
+        let ctx = executor.context();
+
+        // Dimensions that trigger WMMA: k >= 64 && m >= 64 && n >= 64
+        let batch = 128;  // M
+        let in_feat = 128; // K
+        let out_feat = 128; // N
+
+        eprintln!("[Dims] batch={}, in_feat={}, out_feat={}", batch, in_feat, out_feat);
+
+        // Create input: identity-like pattern for easy verification
+        let mut input = vec![0.0f32; batch * in_feat];
+        for b in 0..batch {
+            input[b * in_feat + (b % in_feat)] = 1.0; // Diagonal-like
+        }
+        eprintln!("[Input] First few values: {:?}", &input[..10]);
+
+        // Create CPU weight: identity matrix [out_feat, in_feat]
+        // When weight is identity, output should equal input (if batch <= out_feat == in_feat)
+        let mut cpu_weight = vec![0.0f32; out_feat * in_feat];
+        for i in 0..out_feat.min(in_feat) {
+            cpu_weight[i * in_feat + i] = 1.0; // Identity: W[i,i] = 1
+        }
+        let cpu_bias = vec![0.0f32; out_feat]; // Zero bias
+
+        // Compute CPU reference
+        let mut cpu_output = vec![0.0f32; batch * out_feat];
+        for b in 0..batch {
+            for o in 0..out_feat {
+                let mut sum = cpu_bias[o];
+                for i in 0..in_feat {
+                    sum += input[b * in_feat + i] * cpu_weight[o * in_feat + i];
+                }
+                cpu_output[b * out_feat + o] = sum;
+            }
+        }
+        eprintln!("[CPU Output] First few: {:?}", &cpu_output[..10]);
+
+        // Transpose for GPU
+        let mut gpu_weight = vec![0.0f32; cpu_weight.len()];
+        for o in 0..out_feat {
+            for i in 0..in_feat {
+                gpu_weight[i * out_feat + o] = cpu_weight[o * in_feat + i];
+            }
+        }
+
+        // Upload to GPU
+        let input_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input");
+        let weight_gpu = GpuResidentTensor::from_host(ctx, &gpu_weight).expect("Upload weight");
+        let bias_gpu = GpuResidentTensor::from_host(ctx, &cpu_bias).expect("Upload bias");
+
+        // Compute GPU linear
+        let mut output_gpu = input_gpu.linear(
+            ctx, &weight_gpu, Some(&bias_gpu),
+            batch as u32, in_feat as u32, out_feat as u32
+        ).expect("GPU linear");
+
+        let gpu_output = output_gpu.to_host().expect("Download output");
+        eprintln!("[GPU Output] First few: {:?}", &gpu_output[..10]);
+
+        // Compare
+        let max_diff = cpu_output.iter().zip(gpu_output.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
+
+        let mean_diff = cpu_output.iter().zip(gpu_output.iter())
+            .map(|(c, g)| (c - g).abs())
+            .sum::<f32>() / cpu_output.len() as f32;
+
+        eprintln!("\n[Comparison] max_diff = {:.6}, mean_diff = {:.6}", max_diff, mean_diff);
+
+        // Find where the max diff occurs
+        let (max_idx, _) = cpu_output.iter().zip(gpu_output.iter())
+            .enumerate()
+            .map(|(i, (c, g))| (i, (c - g).abs()))
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            .unwrap();
+        let b = max_idx / out_feat;
+        let o = max_idx % out_feat;
+        eprintln!("[Max diff location] batch={}, out_feat={}, cpu={:.6}, gpu={:.6}",
+            b, o, cpu_output[max_idx], gpu_output[max_idx]);
+
+        // WMMA uses FP16 internally, so allow some tolerance
+        assert!(max_diff < 0.1, "WMMA GEMM diff too high: {}", max_diff);
+        eprintln!("\n✓ WMMA GEMM test PASSED");
+    }
+
+    /// WAPR-PERF-026: Test WMMA with encoder-like dimensions and random weights
+    #[test]
+    fn test_wmma_encoder_like_dims() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        eprintln!("\n============================================================");
+        eprintln!("WAPR-PERF-026: WMMA with Encoder-Like Dimensions");
+        eprintln!("============================================================\n");
+
+        let executor = CudaExecutor::new(0).expect("Failed to create executor");
+        let ctx = executor.context();
+
+        // Encoder-like dimensions: 1500 seq_len, 384 d_model
+        let batch = 1500;  // M (seq_len)
+        let in_feat = 384; // K (d_model)
+        let out_feat = 384; // N (d_model)
+
+        eprintln!("[Dims] batch={}, in_feat={}, out_feat={}", batch, in_feat, out_feat);
+
+        // Create pseudo-random input using simple linear congruential generator
+        // LCG: x' = (a * x + c) mod m, scaled to [-1, 1]
+        let mut input = vec![0.0f32; batch * in_feat];
+        let mut seed = 12345u32;
+        for v in input.iter_mut() {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            *v = ((seed as f32) / (u32::MAX as f32)) * 2.0 - 1.0; // Range [-1, 1]
+        }
+        let input_mean = input.iter().sum::<f32>() / input.len() as f32;
+        let input_max = input.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        eprintln!("[Input] mean={:.6}, max={:.6}", input_mean, input_max);
+
+        // Create pseudo-random weight [out_feat, in_feat]
+        let mut cpu_weight = vec![0.0f32; out_feat * in_feat];
+        seed = 67890u32;
+        for v in cpu_weight.iter_mut() {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            *v = ((seed as f32) / (u32::MAX as f32)) * 2.0 - 1.0;
+        }
+        let weight_mean = cpu_weight.iter().sum::<f32>() / cpu_weight.len() as f32;
+        eprintln!("[Weight] mean={:.6}", weight_mean);
+
+        // Small random bias
+        let mut cpu_bias = vec![0.0f32; out_feat];
+        seed = 11111u32;
+        for v in cpu_bias.iter_mut() {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            *v = ((seed as f32) / (u32::MAX as f32)) * 0.1 - 0.05; // Small values [-0.05, 0.05]
+        }
+
+        // Compute CPU reference
+        let mut cpu_output = vec![0.0f32; batch * out_feat];
+        for b in 0..batch {
+            for o in 0..out_feat {
+                let mut sum = cpu_bias[o];
+                for i in 0..in_feat {
+                    sum += input[b * in_feat + i] * cpu_weight[o * in_feat + i];
+                }
+                cpu_output[b * out_feat + o] = sum;
+            }
+        }
+        let cpu_mean = cpu_output.iter().sum::<f32>() / cpu_output.len() as f32;
+        let cpu_max = cpu_output.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        eprintln!("[CPU Output] mean={:.6}, max={:.6}", cpu_mean, cpu_max);
+
+        // Transpose for GPU
+        let mut gpu_weight = vec![0.0f32; cpu_weight.len()];
+        for o in 0..out_feat {
+            for i in 0..in_feat {
+                gpu_weight[i * out_feat + o] = cpu_weight[o * in_feat + i];
+            }
+        }
+
+        // Upload to GPU
+        let input_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input");
+        let weight_gpu = GpuResidentTensor::from_host(ctx, &gpu_weight).expect("Upload weight");
+        let bias_gpu = GpuResidentTensor::from_host(ctx, &cpu_bias).expect("Upload bias");
+
+        // Compute GPU linear
+        let mut output_gpu = input_gpu.linear(
+            ctx, &weight_gpu, Some(&bias_gpu),
+            batch as u32, in_feat as u32, out_feat as u32
+        ).expect("GPU linear");
+
+        let gpu_output = output_gpu.to_host().expect("Download output");
+        let gpu_mean = gpu_output.iter().sum::<f32>() / gpu_output.len() as f32;
+        let gpu_max = gpu_output.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        eprintln!("[GPU Output] mean={:.6}, max={:.6}", gpu_mean, gpu_max);
+
+        // Compare
+        let max_diff = cpu_output.iter().zip(gpu_output.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
+        let mean_diff = cpu_output.iter().zip(gpu_output.iter())
+            .map(|(c, g)| (c - g).abs())
+            .sum::<f32>() / cpu_output.len() as f32;
+
+        eprintln!("\n[Comparison] max_diff = {:.6}, mean_diff = {:.6}", max_diff, mean_diff);
+
+        // Find worst positions
+        let mut diffs: Vec<(usize, f32)> = cpu_output.iter().zip(gpu_output.iter())
+            .enumerate()
+            .map(|(i, (c, g))| (i, (c - g).abs()))
+            .collect();
+        diffs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        eprintln!("\n[Top 5 worst positions]");
+        for (idx, diff) in diffs.iter().take(5) {
+            let b = idx / out_feat;
+            let o = idx % out_feat;
+            eprintln!("  batch={}, out={}: cpu={:.6}, gpu={:.6}, diff={:.6}",
+                b, o, cpu_output[*idx], gpu_output[*idx], diff);
+        }
+
+        // FP16 WMMA can have some precision loss, especially for larger accumulations
+        // With 384 multiplications per output, expect ~0.5 max diff for random values
+        if max_diff > 1.0 {
+            eprintln!("\n[WARN] max_diff > 1.0, investigating further...");
+        }
+
+        assert!(max_diff < 2.0, "WMMA GEMM diff too high: {}", max_diff);
+        eprintln!("\n✓ Encoder-like dimensions test PASSED");
+    }
+
+    /// WAPR-PERF-027: Test multiple consecutive GEMM calls with different weights
+    /// Hypothesis: First call succeeds, subsequent calls fail
+    #[test]
+    fn test_wmma_multiple_consecutive_calls() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        eprintln!("\n============================================================");
+        eprintln!("WAPR-PERF-027: Multiple Consecutive WMMA GEMM Calls");
+        eprintln!("============================================================\n");
+
+        let executor = CudaExecutor::new(0).expect("Failed to create executor");
+        let ctx = executor.context();
+
+        let batch = 1500;  // M
+        let in_feat = 384; // K
+        let out_feat = 384; // N
+
+        // Create fixed input - same for all calls
+        let mut input = vec![0.0f32; batch * in_feat];
+        let mut seed = 12345u32;
+        for v in input.iter_mut() {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            *v = ((seed as f32) / (u32::MAX as f32)) * 2.0 - 1.0;
+        }
+
+        // Create 3 different weight matrices (like Q, K, V)
+        let create_weights = |seed_init: u32| -> (Vec<f32>, Vec<f32>) {
+            let mut weights = vec![0.0f32; out_feat * in_feat];
+            let mut bias = vec![0.0f32; out_feat];
+            let mut s = seed_init;
+            for v in weights.iter_mut() {
+                s = s.wrapping_mul(1103515245).wrapping_add(12345);
+                *v = ((s as f32) / (u32::MAX as f32)) * 2.0 - 1.0;
+            }
+            for v in bias.iter_mut() {
+                s = s.wrapping_mul(1103515245).wrapping_add(12345);
+                *v = ((s as f32) / (u32::MAX as f32)) * 0.1 - 0.05;
+            }
+            (weights, bias)
+        };
+
+        let (weights_1, bias_1) = create_weights(11111);
+        let (weights_2, bias_2) = create_weights(22222);
+        let (weights_3, bias_3) = create_weights(33333);
+
+        // CPU reference computations
+        let cpu_forward = |input: &[f32], weights: &[f32], bias: &[f32]| -> Vec<f32> {
+            let mut output = vec![0.0f32; batch * out_feat];
+            for b in 0..batch {
+                for o in 0..out_feat {
+                    let mut sum = bias[o];
+                    for i in 0..in_feat {
+                        sum += input[b * in_feat + i] * weights[o * in_feat + i];
+                    }
+                    output[b * out_feat + o] = sum;
+                }
+            }
+            output
+        };
+
+        let cpu_out_1 = cpu_forward(&input, &weights_1, &bias_1);
+        let cpu_out_2 = cpu_forward(&input, &weights_2, &bias_2);
+        let cpu_out_3 = cpu_forward(&input, &weights_3, &bias_3);
+
+        // Transpose weights for GPU (out_feat x in_feat) -> (in_feat x out_feat)
+        let transpose = |w: &[f32], rows: usize, cols: usize| -> Vec<f32> {
+            let mut t = vec![0.0f32; rows * cols];
+            for r in 0..rows {
+                for c in 0..cols {
+                    t[c * rows + r] = w[r * cols + c];
+                }
+            }
+            t
+        };
+
+        let w1_t = transpose(&weights_1, out_feat, in_feat);
+        let w2_t = transpose(&weights_2, out_feat, in_feat);
+        let w3_t = transpose(&weights_3, out_feat, in_feat);
+
+        // Upload weights to GPU
+        let w1_gpu = GpuResidentTensor::from_host(ctx, &w1_t).expect("Upload w1");
+        let b1_gpu = GpuResidentTensor::from_host(ctx, &bias_1).expect("Upload b1");
+        let w2_gpu = GpuResidentTensor::from_host(ctx, &w2_t).expect("Upload w2");
+        let b2_gpu = GpuResidentTensor::from_host(ctx, &bias_2).expect("Upload b2");
+        let w3_gpu = GpuResidentTensor::from_host(ctx, &w3_t).expect("Upload w3");
+        let b3_gpu = GpuResidentTensor::from_host(ctx, &bias_3).expect("Upload b3");
+
+        // Test 1: WITH cache clearing between calls
+        eprintln!("Test 1: 3 calls WITH cache clearing between each...\n");
+
+        let input1_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input 1");
+        let gpu_same_1 = input1_gpu.linear(ctx, &w1_gpu, Some(&b1_gpu),
+            batch as u32, in_feat as u32, out_feat as u32)
+            .expect("GPU GEMM 1").to_host().expect("Download 1");
+        let diff_clear_1: f32 = cpu_out_1.iter().zip(gpu_same_1.iter())
+            .map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+        eprintln!("[Cache-clear call 1] max_diff = {:.6}", diff_clear_1);
+
+        // Clear cache before second call
+        trueno_gpu::memory::resident::clear_kernel_cache();
+
+        let input2_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input 2");
+        let gpu_same_2 = input2_gpu.linear(ctx, &w2_gpu, Some(&b2_gpu),
+            batch as u32, in_feat as u32, out_feat as u32)
+            .expect("GPU GEMM 2").to_host().expect("Download 2");
+        let diff_clear_2: f32 = cpu_out_2.iter().zip(gpu_same_2.iter())
+            .map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+        eprintln!("[Cache-clear call 2] max_diff = {:.6}", diff_clear_2);
+
+        // Clear cache before third call
+        trueno_gpu::memory::resident::clear_kernel_cache();
+
+        let input3_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input 3");
+        let gpu_same_3 = input3_gpu.linear(ctx, &w3_gpu, Some(&b3_gpu),
+            batch as u32, in_feat as u32, out_feat as u32)
+            .expect("GPU GEMM 3").to_host().expect("Download 3");
+        let diff_clear_3: f32 = cpu_out_3.iter().zip(gpu_same_3.iter())
+            .map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+        eprintln!("[Cache-clear call 3] max_diff = {:.6}\n", diff_clear_3);
+
+        // Test 2: WITH BIAS (after fix) - no cache clearing
+        eprintln!("Test 2: 3 calls WITH BIAS (testing fix)...\n");
+
+        // GPU call 1 (with bias)
+        let input4_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input 4");
+        let gpu_out_1 = input4_gpu.linear(ctx, &w1_gpu, Some(&b1_gpu),
+            batch as u32, in_feat as u32, out_feat as u32)
+            .expect("GPU LINEAR 1").to_host().expect("Download 1");
+        let diff_1: f32 = cpu_out_1.iter().zip(gpu_out_1.iter())
+            .map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+        eprintln!("[With-bias call 1] max_diff = {:.6}", diff_1);
+
+        let input5_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input 5");
+        let gpu_out_2 = input5_gpu.linear(ctx, &w2_gpu, Some(&b2_gpu),
+            batch as u32, in_feat as u32, out_feat as u32)
+            .expect("GPU LINEAR 2").to_host().expect("Download 2");
+        let diff_2: f32 = cpu_out_2.iter().zip(gpu_out_2.iter())
+            .map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+        eprintln!("[With-bias call 2] max_diff = {:.6}", diff_2);
+
+        let input6_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input 6");
+        let gpu_out_3 = input6_gpu.linear(ctx, &w3_gpu, Some(&b3_gpu),
+            batch as u32, in_feat as u32, out_feat as u32)
+            .expect("GPU LINEAR 3").to_host().expect("Download 3");
+        let diff_3: f32 = cpu_out_3.iter().zip(gpu_out_3.iter())
+            .map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+        eprintln!("[With-bias call 3] max_diff = {:.6}",diff_3);
+
+        eprintln!("\n============================================================");
+        eprintln!("With cache-clear: {:.6}, {:.6}, {:.6}", diff_clear_1, diff_clear_2, diff_clear_3);
+        eprintln!("With-bias (no cache-clear): {:.6}, {:.6}, {:.6}", diff_1, diff_2, diff_3);
+        eprintln!("============================================================\n");
+
+        // Cache-cleared calls should all work
+        assert!(diff_clear_1 < 0.5, "Cache-clear call 1 diff too high: {}", diff_clear_1);
+        assert!(diff_clear_2 < 0.5, "Cache-clear call 2 diff too high: {}", diff_clear_2);
+        assert!(diff_clear_3 < 0.5, "Cache-clear call 3 diff too high: {}", diff_clear_3);
+
+        // WAPR-PERF-027 FIX: With-bias calls should also work now (no cache clearing needed)
+        assert!(diff_1 < 0.5, "With-bias call 1 diff too high: {}", diff_1);
+        assert!(diff_2 < 0.5, "With-bias call 2 diff too high: {}", diff_2);
+        assert!(diff_3 < 0.5, "With-bias call 3 diff too high: {}", diff_3);
+
+        eprintln!("✓ All calls PASSED - bias_add stream race condition FIXED");
+    }
 }

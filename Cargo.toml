@@ -19,6 +19,11 @@ name = "whisper-apr-cli"
 path = "src/bin/whisper-apr-cli.rs"
 required-features = ["cli"]
 
+[[bin]]
+name = "whisper-convert"
+path = "tools/convert.rs"
+required-features = ["converter"]
+
 [features]
 # Enable parallel by default for ~2x encoder speedup on multi-core systems
 # WASM users should use "wasm" feature which doesn't include parallel
