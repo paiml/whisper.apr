@@ -6758,6 +6758,7 @@ mod tests {
     /// WAPR-PERF-018: Test GPU-resident encoder output
     ///
     /// Verifies encoder output stays on GPU for cross-attention.
+    /// Includes warmup to measure true encoder performance after kernel compilation.
     #[test]
     fn test_encode_gpu_resident() {
         if !CudaExecutor::is_available() {
@@ -6787,20 +6788,39 @@ mod tests {
 
         eprintln!("[Input] {} mels × {} frames", n_mels, seq_len);
 
-        // Run GPU-resident encoder
-        let start = std::time::Instant::now();
-        let enc_gpu = cuda_model.encode_gpu_resident(&mel).expect("Encode GPU resident");
-        let elapsed = start.elapsed();
+        // Warmup run to compile kernels
+        eprintln!("[Warmup] Compiling PTX kernels...");
+        let warmup_start = std::time::Instant::now();
+        let _enc_warmup = cuda_model.encode_gpu_resident(&mel).expect("Warmup encode");
+        let warmup_time = warmup_start.elapsed();
+        eprintln!("  Warmup (incl. kernel compile): {:?}", warmup_time);
 
-        let enc_len = enc_gpu.len();
-        let expected_seq_len = (seq_len + 2 - 3) / 2 + 1; // After stride-2 conv
+        // Benchmark 5 iterations after warmup
+        const ITERATIONS: usize = 5;
+        let mut times = Vec::with_capacity(ITERATIONS);
+        eprintln!("[Benchmark] Running {} iterations...", ITERATIONS);
+        for _ in 0..ITERATIONS {
+            let start = std::time::Instant::now();
+            let enc_gpu = cuda_model.encode_gpu_resident(&mel).expect("Encode GPU resident");
+            times.push(start.elapsed());
+            // Verify size on first iteration
+            if times.len() == 1 {
+                let enc_len = enc_gpu.len();
+                let expected_seq_len = (seq_len + 2 - 3) / 2 + 1;
+                assert_eq!(enc_len, expected_seq_len * d_model, "Unexpected encoder output size");
+            }
+        }
 
-        eprintln!("[Output] GPU tensor: {} elements ({} × {})", enc_len, expected_seq_len, d_model);
-        eprintln!("[Time] {:?}", elapsed);
-        eprintln!("[Result] Encoder output stays on GPU ✓");
+        let avg_time = times.iter().map(|t| t.as_micros()).sum::<u128>() / ITERATIONS as u128;
+        let min_time = times.iter().min().unwrap();
+        let max_time = times.iter().max().unwrap();
 
-        // Verify size
-        assert_eq!(enc_len, expected_seq_len * d_model, "Unexpected encoder output size");
+        eprintln!("\n[Results]");
+        eprintln!("  Warmup:  {:?} (incl. kernel compile)", warmup_time);
+        eprintln!("  Average: {}µs", avg_time);
+        eprintln!("  Min:     {:?}", min_time);
+        eprintln!("  Max:     {:?}", max_time);
+        eprintln!("  Speedup vs warmup: {:.1}x", warmup_time.as_micros() as f64 / avg_time as f64);
 
         eprintln!("\n✓ WAPR-PERF-018: GPU-resident encoder output verified");
     }
@@ -6808,6 +6828,7 @@ mod tests {
     /// WAPR-PERF-018: Test full pipeline with GPU cross-attention
     ///
     /// Tests the complete encoder -> cross-attention K/V population -> decoder flow.
+    /// Includes warmup to measure true performance after kernel compilation.
     #[test]
     fn test_gpu_cross_attention_pipeline() {
         if !CudaExecutor::is_available() {
@@ -6835,22 +6856,37 @@ mod tests {
         let seq_len = 100;
         let mel: Vec<f32> = (0..n_mels * seq_len).map(|i| (i as f32 * 0.001).sin()).collect();
 
-        eprintln!("[Step 1] GPU-resident encoder...");
+        // Create stream
+        let ctx = cuda_model.executor.context();
+        let stream = CudaStream::new(ctx).expect("Create stream");
+
+        // === WARMUP PHASE ===
+        eprintln!("[Warmup] Compiling PTX kernels...");
+        let warmup_start = std::time::Instant::now();
+        let enc_warmup = cuda_model.encode_gpu_resident(&mel).expect("Warmup encode");
+        cuda_model.populate_cross_kv_caches_gpu(&enc_warmup, &stream).expect("Warmup K/V");
+        stream.synchronize().expect("Sync");
+        let warmup_time = warmup_start.elapsed();
+        eprintln!("  Total warmup: {:?}", warmup_time);
+
+        // Reset for benchmark
+        cuda_model.reset_gpu_decoder_kv_cache();
+        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init");
+
+        // === BENCHMARK PHASE ===
+        eprintln!("\n[Step 1] GPU-resident encoder (warmed up)...");
         let enc_start = std::time::Instant::now();
         let enc_gpu = cuda_model.encode_gpu_resident(&mel).expect("Encode GPU resident");
         let enc_time = enc_start.elapsed();
         let enc_seq_len = enc_gpu.len() / d_model;
         eprintln!("  Encoder: {:?} ({} × {})", enc_time, enc_seq_len, d_model);
 
-        // Create stream
-        let ctx = cuda_model.executor.context();
-        let stream = CudaStream::new(ctx).expect("Create stream");
-
-        eprintln!("[Step 2] Populate cross-attention K/V caches...");
+        eprintln!("[Step 2] Populate cross-attention K/V caches (warmed up)...");
         let kv_start = std::time::Instant::now();
         cuda_model
             .populate_cross_kv_caches_gpu(&enc_gpu, &stream)
             .expect("Populate cross KV");
+        stream.synchronize().expect("Sync K/V");
         let kv_time = kv_start.elapsed();
         eprintln!("  Cross K/V population: {:?}", kv_time);
 
