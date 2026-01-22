@@ -2004,7 +2004,7 @@ impl WhisperCuda {
             let layer_weights = &weights[layer_idx];
 
             // Project K: [enc_len, d_model] @ W_k^T -> [enc_len, d_model]
-            let mut k_proj = encoder_output_gpu
+            let k_proj = encoder_output_gpu
                 .linear(
                     ctx,
                     &layer_weights.cross_w_k,
@@ -2016,7 +2016,7 @@ impl WhisperCuda {
                 .map_err(|e| WhisperError::Inference(format!("cross K proj L{layer_idx}: {e}")))?;
 
             // Project V: [enc_len, d_model] @ W_v^T -> [enc_len, d_model]
-            let mut v_proj = encoder_output_gpu
+            let v_proj = encoder_output_gpu
                 .linear(
                     ctx,
                     &layer_weights.cross_w_v,
@@ -2027,45 +2027,33 @@ impl WhisperCuda {
                 )
                 .map_err(|e| WhisperError::Inference(format!("cross V proj L{layer_idx}: {e}")))?;
 
-            // Reshape from [enc_len, d_model] to [n_heads, enc_len, head_dim]
-            // This requires downloading, reshaping on CPU, and re-uploading
-            // TODO: Add GPU kernel for in-place transpose to eliminate this transfer
-            let k_host = k_proj
-                .to_host()
-                .map_err(|e| WhisperError::Inference(format!("cross K D2H L{layer_idx}: {e}")))?;
-            let v_host = v_proj
-                .to_host()
-                .map_err(|e| WhisperError::Inference(format!("cross V D2H L{layer_idx}: {e}")))?;
+            // Reshape from [enc_len, d_model] to [n_heads, enc_len, head_dim] on GPU
+            // Uses InterleavedToBatchedKernel for zero-copy permute
+            let k_head_first = k_proj
+                .interleaved_to_head_first(
+                    ctx,
+                    enc_len as u32,
+                    n_heads as u32,
+                    head_dim as u32,
+                    stream,
+                )
+                .map_err(|e| WhisperError::Inference(format!("cross K permute L{layer_idx}: {e}")))?;
 
-            // Reshape: [enc_len, n_heads, head_dim] -> [n_heads, enc_len, head_dim]
-            let mut k_head_first = vec![0.0f32; n_heads * enc_len * head_dim];
-            let mut v_head_first = vec![0.0f32; n_heads * enc_len * head_dim];
+            let v_head_first = v_proj
+                .interleaved_to_head_first(
+                    ctx,
+                    enc_len as u32,
+                    n_heads as u32,
+                    head_dim as u32,
+                    stream,
+                )
+                .map_err(|e| WhisperError::Inference(format!("cross V permute L{layer_idx}: {e}")))?;
 
-            for pos in 0..enc_len {
-                for h in 0..n_heads {
-                    for d in 0..head_dim {
-                        // Source: [pos, h, d] = pos * d_model + h * head_dim + d
-                        // Dest: [h, pos, d] = h * enc_len * head_dim + pos * head_dim + d
-                        let src_idx = pos * d_model + h * head_dim + d;
-                        let dst_idx = h * enc_len * head_dim + pos * head_dim + d;
-                        k_head_first[dst_idx] = k_host[src_idx];
-                        v_head_first[dst_idx] = v_host[src_idx];
-                    }
-                }
-            }
-
-            // Upload reshaped K/V to GPU caches
-            // Note: The caches are pre-allocated with size [n_heads, 1500, head_dim]
-            // We need to fill only the first enc_len positions
+            // Store in caches (direct assignment, both are now GPU-resident)
             let cache_k = &mut cross_k_caches[layer_idx];
             let cache_v = &mut cross_v_caches[layer_idx];
-
-            // For now, replace entire cache (enc_len should match 1500 for Whisper)
-            // TODO: Handle variable-length encoder output
-            *cache_k = GpuResidentTensor::from_host(ctx, &k_head_first)
-                .map_err(|e| WhisperError::Inference(format!("cross K H2D L{layer_idx}: {e}")))?;
-            *cache_v = GpuResidentTensor::from_host(ctx, &v_head_first)
-                .map_err(|e| WhisperError::Inference(format!("cross V H2D L{layer_idx}: {e}")))?;
+            *cache_k = k_head_first;
+            *cache_v = v_head_first;
         }
 
         // Sync stream to ensure all uploads complete
