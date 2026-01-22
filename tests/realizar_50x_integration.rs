@@ -939,7 +939,7 @@ fn test_combined_compression_target() {
     // Required compression: 39x
 
     let fp32_size_mb = 145.0f64;
-    let target_size_mb = 3.7f64;
+    let _target_size_mb = 3.7f64; // Documentation reference for target
 
     // Q2K alone: ~10x compression (32/3.125)
     let q2k_compression = 32.0 / 3.125;

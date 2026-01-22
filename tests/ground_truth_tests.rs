@@ -14,16 +14,19 @@ use std::path::Path;
 
 /// Expected ground truth transcriptions from whisper.cpp and HuggingFace
 const GROUND_TRUTH_1_5S: &str = "The birds can use";
+#[allow(dead_code)] // Reserved for 3-second tests
 const GROUND_TRUTH_3S: &str = ""; // TBD after running whisper.cpp
 
 /// Test audio file paths
 const TEST_AUDIO_1_5S: &str = "demos/test-audio/test-speech-1.5s.wav";
+#[allow(dead_code)] // Reserved for 3-second tests
 const TEST_AUDIO_3S: &str = "demos/test-audio/test-speech-3s.wav";
 
 /// Model paths
 /// Note: whisper-tiny-fb.apr includes full vocabulary (51865 tokens).
 /// The whisper-tiny.apr has incomplete vocab (50258 tokens) which causes decode issues.
 const MODEL_TINY: &str = "models/whisper-tiny-fb.apr";
+#[allow(dead_code)] // Reserved for INT8 quantization tests
 const MODEL_TINY_INT8: &str = "models/whisper-tiny-int8-fb.apr";
 
 // =============================================================================
@@ -493,6 +496,7 @@ mod pipeline_step_tests {
     use whisper_apr::WhisperApr;
 
     /// Ground truth statistics from reference_summary.json
+    #[allow(dead_code)] // Constants reserved for comprehensive pipeline validation
     mod ground_truth {
         pub const STEP_A_AUDIO_MEAN: f32 = 0.000_177_77;
         pub const STEP_A_AUDIO_STD: f32 = 0.069_628_54;
