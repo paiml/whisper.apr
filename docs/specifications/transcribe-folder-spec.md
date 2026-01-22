@@ -1355,6 +1355,21 @@ Executor vs GPU forward pass timing (single decoder block):
 - Parity:                   max_diff=0.000000 (exact match)
 ```
 
+**GPU-Resident Q/K/V/O Benchmark** (release mode, 2026-01-22, commit 1104605):
+```
+Single block:
+- GPU (GPU-resident linear): 6.06ms
+- Executor (gemv_cached):    0.85ms
+- Speedup:                   7.1x (executor still faster)
+- Parity:                    max_diff=0.000000 (exact match)
+
+Full decode (10 tokens):
+- GPU path:      164ms (16.4ms/token)
+- Executor path: 128ms (12.8ms/token)
+- Speedup:       1.28x (Executor is faster)
+- Output:        Both paths produce identical tokens ("I")
+```
+
 **Full Decode Benchmark** (release mode, 10 tokens, 2026-01-22):
 ```
 GPU path:      140ms (140ms/token)
@@ -1396,11 +1411,13 @@ Per-token latency:        63.5ms
 1. ✅ **DONE**: Shared stream for KV ops (`incremental_attention_gpu_with_stream`)
 2. ✅ **DONE**: Cache vocab projection weights (32x single-block speedup)
 3. ✅ **DONE**: Fix stream sync bug in `incremental_attention_gpu` (trueno-gpu b530dc8)
-4. ⏳ **IN PROGRESS**: Keep Q/K/V on GPU (avoid double H2D transfer)
-   - Current: gemv_cached → host → re-upload for attention
-   - Goal: Q/K/V projections stay GPU-resident
-5. ⏳ **PLANNED**: Reuse executor's persistent compute_stream (realizar e03c123)
-6. **FUTURE**: CUDA Graph capture for sub-10ms decode latency
+4. ✅ **DONE**: Keep Q/K/V on GPU (commit 1104605)
+   - Moved Q/K/V projections to GPU-resident linear() calls
+   - Upload normed input ONCE, compute Q/K/V on GPU
+   - O projection also GPU-resident with single D2H at end
+5. ✅ **DONE**: Reuse executor's persistent compute_stream (commit 1104605)
+   - `executor.compute_stream()` used instead of creating new streams
+6. **NEXT**: CUDA Graph capture for sub-10ms decode latency
 7. **FUTURE**: Fused decoder kernel to eliminate H2D/D2H per operation
 
 **CUDA Graph Investigation** (2026-01-22):
