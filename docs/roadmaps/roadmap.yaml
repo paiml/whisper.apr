@@ -1415,12 +1415,12 @@ roadmap:
 - id: WAPR-PERF-017
   github_issue: null
   item_type: task
-  title: 'New task: WAPR-PERF-017'
-  status: inprogress
-  priority: medium
+  title: 'CUDA Graph capture for 121x decoder speedup'
+  status: completed
+  priority: high
   assigned_to: null
   created: 2026-01-22T12:13:35.312125266+00:00
-  updated: 2026-01-22T12:13:35.312125266+00:00
+  updated: 2026-01-22T12:45:00.000000000+00:00
   spec: null
   acceptance_criteria: []
   phases: []
