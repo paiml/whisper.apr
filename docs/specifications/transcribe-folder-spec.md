@@ -1357,15 +1357,31 @@ Executor vs GPU forward pass timing (single decoder block):
 
 **Full Decode Benchmark** (release mode, 10 tokens, 2026-01-22):
 ```
-GPU path:      145ms for 10 tokens (~14.5ms/token)
-Executor path: 131ms for 10 tokens (~13.1ms/token)
-Speedup:       1.11x
+GPU path:      140ms (140ms/token)
+Executor path: 124ms (124ms/token)
+Speedup:       1.13x (Executor is faster)
+Output:        Both paths produce identical tokens ("I")
 ```
 
-**Root Cause Analysis**: Single block 32x speedup results in 1.11x full decode improvement because:
-1. Decoder blocks: 4 × 1.36ms = 5.4ms (now fast with cached GEMV)
-2. Vocab projection: Uses `gemv_cached` with transposed weights (~0.5ms)
-3. Remaining overhead: Token embedding lookup, LayerNorm (CPU), H2D/D2H transfers
+**BUG FIXED (2026-01-22)**: `incremental_attention_gpu` was not syncing stream before returning.
+The stream was dropped while kernel still running, causing undefined behavior (garbage output).
+Fixed in trueno-gpu commit b530dc8.
+
+**Current Timing Breakdown** (release mode, 5 tokens avg):
+```
+Token embedding (CPU):      0.8µs (  0.0%)
+Decoder blocks (GPU):   62329µs ( 98.2%)  ← Main bottleneck
+Final LayerNorm (CPU):      1.2µs (  0.0%)
+Vocab projection (GPU):  1139µs (  1.8%)
+─────────────────────────────────────────
+TOTAL:                  63471µs
+Per-token latency:        63.5ms
+```
+
+**Root Cause Analysis**: 63ms/token is dominated by decoder blocks (98%). The issue is:
+1. **Double H2D transfer**: `gemv_cached` downloads Q/K/V to host, then we re-upload for attention
+2. **Stream creation per layer**: Still creating new stream (CudaStream::new) per layer call
+3. **gemv_cached overhead**: Each call does H2D + kernel + sync + D2H (~10ms per call)
 
 **Implementation Details** (commits bcfec1f):
 - `forward_decoder_block_executor()`: Uses `executor.gemv_cached()` for Q/K/V/O projections
@@ -1376,11 +1392,16 @@ Speedup:       1.11x
 - Token embedding transposed during upload: [n_vocab, d_model] → [d_model, n_vocab]
 - Vocab projection via `gemv_cached("dec.output_proj", ...)` with fallback to gemm
 
-**Path Forward**:
-1. ✅ **DONE**: Shared stream for KV ops
+**Path Forward** (Priority Order):
+1. ✅ **DONE**: Shared stream for KV ops (`incremental_attention_gpu_with_stream`)
 2. ✅ **DONE**: Cache vocab projection weights (32x single-block speedup)
-3. **FUTURE**: CUDA Graph capture for sub-10ms decode latency
-4. **FUTURE**: Fused decoder kernel to eliminate H2D/D2H per operation
+3. ✅ **DONE**: Fix stream sync bug in `incremental_attention_gpu` (trueno-gpu b530dc8)
+4. ⏳ **IN PROGRESS**: Keep Q/K/V on GPU (avoid double H2D transfer)
+   - Current: gemv_cached → host → re-upload for attention
+   - Goal: Q/K/V projections stay GPU-resident
+5. ⏳ **PLANNED**: Reuse executor's persistent compute_stream (realizar e03c123)
+6. **FUTURE**: CUDA Graph capture for sub-10ms decode latency
+7. **FUTURE**: Fused decoder kernel to eliminate H2D/D2H per operation
 
 **CUDA Graph Investigation** (2026-01-22):
 
