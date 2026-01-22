@@ -144,6 +144,12 @@ pub struct WhisperCuda {
     /// WAPR-PERF-013: Current sequence position for decoder
     #[cfg(feature = "cuda")]
     gpu_decoder_pos: usize,
+    /// WAPR-PERF-019: GPU-resident encoder post-norm gamma (final layer norm)
+    #[cfg(feature = "cuda")]
+    gpu_enc_ln_post_gamma: Option<GpuResidentTensor<f32>>,
+    /// WAPR-PERF-019: GPU-resident encoder post-norm beta (final layer norm)
+    #[cfg(feature = "cuda")]
+    gpu_enc_ln_post_beta: Option<GpuResidentTensor<f32>>,
 }
 
 impl WhisperCuda {
@@ -295,6 +301,10 @@ impl WhisperCuda {
             gpu_cross_v_head_first: None,
             #[cfg(feature = "cuda")]
             gpu_decoder_pos: 0,
+            #[cfg(feature = "cuda")]
+            gpu_enc_ln_post_gamma: None,
+            #[cfg(feature = "cuda")]
+            gpu_enc_ln_post_beta: None,
         };
 
         // Initialize GPU KV caches for decoder self-attention
@@ -711,6 +721,17 @@ impl WhisperCuda {
             n_heads: n_heads as u32,
             ffn_dim: d_ff as u32,
         });
+
+        // WAPR-PERF-019: Upload encoder post-norm weights to eliminate D2H→CPU→H2D round-trip
+        let ln_post = self.encoder.ln_post();
+        self.gpu_enc_ln_post_gamma = Some(
+            GpuResidentTensor::from_host(ctx, &ln_post.weight)
+                .map_err(|e| WhisperError::Inference(format!("enc ln_post_gamma upload: {e}")))?
+        );
+        self.gpu_enc_ln_post_beta = Some(
+            GpuResidentTensor::from_host(ctx, &ln_post.bias)
+                .map_err(|e| WhisperError::Inference(format!("enc ln_post_beta upload: {e}")))?
+        );
 
         Ok(())
     }
@@ -1935,14 +1956,19 @@ impl WhisperCuda {
                 .map_err(|e| WhisperError::Inference(format!("encoder block {layer_idx}: {e}")))?;
         }
 
-        // Step 4: Final layer norm (D2H → CPU LN → H2D)
-        // TODO: Add GPU layer norm weights to eliminate this transfer
-        let output_host = x_gpu
-            .to_host()
-            .map_err(|e| WhisperError::Inference(format!("encoder D2H: {e}")))?;
-        let ln_result = self.encoder.ln_post().forward(&output_host)?;
-        let result_gpu = GpuResidentTensor::from_host(ctx, &ln_result)
-            .map_err(|e| WhisperError::Inference(format!("encoder H2D: {e}")))?;
+        // Step 4: Final layer norm on GPU (WAPR-PERF-019: eliminates D2H→CPU→H2D round-trip)
+        let ln_post_gamma = self
+            .gpu_enc_ln_post_gamma
+            .as_ref()
+            .ok_or_else(|| WhisperError::Inference("enc ln_post_gamma not uploaded".into()))?;
+        let ln_post_beta = self
+            .gpu_enc_ln_post_beta
+            .as_ref()
+            .ok_or_else(|| WhisperError::Inference("enc ln_post_beta not uploaded".into()))?;
+
+        let result_gpu = x_gpu
+            .layer_norm(ctx, ln_post_gamma, ln_post_beta, d_model as u32, seq_len as u32)
+            .map_err(|e| WhisperError::Inference(format!("encoder ln_post: {e}")))?;
 
         Ok(result_gpu)
     }
