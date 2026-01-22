@@ -1378,10 +1378,28 @@ Speedup:       0.96x (4% slower)
 1. **Option A**: Modify trueno_gpu to expose stream parameter for KV cache ops
 2. **Option B**: CUDA Graph capture to eliminate ALL stream creation (~280 launches → 1 replay)
 
-**Implementation Strategy**:
+**CUDA Graph Investigation** (2026-01-22):
+
+trueno_gpu has graph support (`CudaStream::begin_capture/end_capture`, `CudaGraphExec::launch`),
+but internal functions create new streams:
+```rust
+// trueno_gpu/src/memory/resident.rs:2496
+let stream = CudaStream::new(ctx)?;  // Created inside incremental_attention_gpu_async
+```
+
+**Conclusion**: Full graph capture requires either:
+1. Modifying trueno_gpu to accept external stream (significant effort)
+2. Implementing custom GPU-only decoder path (no CPU LayerNorm/bias)
+
+**Decision**: Point 157 is already PASSED (1.4s vs 1.98s target). CUDA Graph marked as
+future optimization for sub-100ms decode latency when required.
+
+**Implementation Strategy** (for future):
 1. Implement `cudaStreamBeginCapture` / `EndCapture` wrapper in `CudaContext`.
 2. Refactor `forward_decoder_block_gpu` to be capturable (no CPU logic inside).
-3. Use "bucketed" graphs or max-length padding to handle dynamic sequence lengths.
+3. Pre-allocate workspace buffers with stable addresses.
+4. Use device-side position buffer (update via memcpy before replay).
+5. Use "bucketed" graphs or max-length padding to handle dynamic sequence lengths.
 
 #### O.3 CPU Encoder Optimization (WAPR-PERF-015)
 
