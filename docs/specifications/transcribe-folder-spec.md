@@ -1609,6 +1609,41 @@ Release mode results (100-frame mel):
 
 **Status**: ✅ IMPLEMENTED - Point 157 well exceeded. 4.3x faster than target (293ms vs 1256ms).
 
+#### O.2.6 Encoder GPU Post-Norm (WAPR-PERF-019 - IMPLEMENTED)
+
+**Problem**: Encoder final layer norm requires D2H → CPU → H2D round-trip
+
+**Root Cause Analysis** (Five Whys):
+
+| Level | Question | Answer |
+|-------|----------|--------|
+| Why 1 | Where is the encoder time going? | Conv frontend + 4 blocks + final ln_post |
+| Why 2 | Why does ln_post need CPU? | ln_post weights not uploaded to GPU |
+| Why 3 | Why not uploaded? | Stored in encoder struct, not GpuEncoderBlockWeights |
+| Why 4 | Why is this a problem? | ~4.6MB PCIe transfer (2.3MB each direction) |
+| Why 5 | **Root Cause** | **Need separate GPU upload for ln_post gamma/beta** |
+
+**Solution** (IMPLEMENTED 2026-01-22):
+1. ✅ Add `gpu_enc_ln_post_gamma/beta` fields to `WhisperCuda` struct
+2. ✅ Upload ln_post weights in `upload_encoder_weights_to_gpu()`
+3. ✅ Replace CPU `ln_post.forward()` with GPU `layer_norm()` in `encode_gpu_resident()`
+
+**WAPR-PERF-019 ACTUAL RESULTS** (2026-01-22):
+
+```
+Pipeline Test (100-frame mel):
+  Encoder:         177ms (GPU post-norm, no CPU round-trip)
+  Cross K/V pop:    70ms (down from 78ms)
+  Decoder:         2.8ms/token
+  Total:           275ms
+
+Improvements:
+  Cross K/V pop:   78ms → 70ms (10% faster)
+  PCIe eliminated: ~4.6MB round-trip removed
+```
+
+**Status**: ✅ IMPLEMENTED - Encoder final layer norm now fully GPU-resident.
+
 #### O.3 CPU Encoder Optimization (WAPR-PERF-015)
 
 **Problem**: Encoder taking 7.3s for 1.5s audio (target: ~200ms)
