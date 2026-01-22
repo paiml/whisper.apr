@@ -72,13 +72,19 @@ impl Conv1d {
         }
     }
 
-    /// Forward pass
+    /// Forward pass using SIMD-accelerated im2col + matmul
     ///
     /// # Arguments
     /// * `input` - Input tensor (seq_len x in_channels) flattened row-major
     ///
     /// # Returns
     /// Output tensor (out_seq_len x out_channels) flattened row-major
+    ///
+    /// # Algorithm
+    /// Converts conv1d to matrix multiplication via im2col:
+    /// 1. im2col: Extract patches into (out_seq_len × patch_size) matrix
+    /// 2. matmul: patches @ weights^T → (out_seq_len × out_channels)
+    /// 3. Add bias
     pub fn forward(&self, input: &[f32]) -> WhisperResult<Vec<f32>> {
         let seq_len = input.len() / self.in_channels;
         if input.len() % self.in_channels != 0 {
@@ -87,34 +93,56 @@ impl Conv1d {
 
         // Calculate output sequence length
         let out_seq_len = (seq_len + 2 * self.padding - self.kernel_size) / self.stride + 1;
+        let patch_size = self.kernel_size * self.in_channels;
 
-        let mut output = vec![0.0_f32; out_seq_len * self.out_channels];
+        // im2col: Extract patches into matrix (out_seq_len × patch_size)
+        // Each row is a flattened (kernel_size × in_channels) patch
+        let mut patches = vec![0.0_f32; out_seq_len * patch_size];
 
-        // Convolution with padding
         for out_pos in 0..out_seq_len {
             let in_start = out_pos as isize * self.stride as isize - self.padding as isize;
+            let patch_row = out_pos * patch_size;
 
-            for out_ch in 0..self.out_channels {
-                let mut sum = self.bias[out_ch];
+            for k in 0..self.kernel_size {
+                let in_pos = in_start + k as isize;
+                let patch_col = k * self.in_channels;
 
-                for k in 0..self.kernel_size {
-                    let in_pos = in_start + k as isize;
-
-                    // Skip if outside padded region
-                    if in_pos >= 0 && (in_pos as usize) < seq_len {
-                        for in_ch in 0..self.in_channels {
-                            let weight_idx = out_ch * self.in_channels * self.kernel_size
-                                + in_ch * self.kernel_size
-                                + k;
-                            let input_idx = (in_pos as usize) * self.in_channels + in_ch;
-                            sum += self.weight[weight_idx] * input[input_idx];
-                        }
-                    }
+                if in_pos >= 0 && (in_pos as usize) < seq_len {
+                    // Copy input row to patch
+                    let input_row = (in_pos as usize) * self.in_channels;
+                    patches[patch_row + patch_col..patch_row + patch_col + self.in_channels]
+                        .copy_from_slice(&input[input_row..input_row + self.in_channels]);
                 }
-
-                output[out_pos * self.out_channels + out_ch] = sum;
+                // else: zeros (already initialized)
             }
         }
+
+        // Reshape weights: (out_channels × in_channels × kernel_size) → (out_channels × patch_size)
+        // Current layout: weight[out_ch][in_ch][k] but we need weight[out_ch][k * in_channels + in_ch]
+        // The weight layout is: out_ch * (in_channels * kernel_size) + in_ch * kernel_size + k
+        // We need: out_ch * patch_size + k * in_channels + in_ch
+        let mut weight_reshaped = vec![0.0_f32; self.out_channels * patch_size];
+        for out_ch in 0..self.out_channels {
+            for k in 0..self.kernel_size {
+                for in_ch in 0..self.in_channels {
+                    let old_idx = out_ch * self.in_channels * self.kernel_size
+                        + in_ch * self.kernel_size
+                        + k;
+                    let new_idx = out_ch * patch_size + k * self.in_channels + in_ch;
+                    weight_reshaped[new_idx] = self.weight[old_idx];
+                }
+            }
+        }
+
+        // Transpose weights for matmul: (out_channels × patch_size) → (patch_size × out_channels)
+        let weight_t = crate::simd::transpose(&weight_reshaped, self.out_channels, patch_size);
+
+        // SIMD matmul: patches (out_seq_len × patch_size) @ weight_t (patch_size × out_channels)
+        // Result: (out_seq_len × out_channels)
+        let mut output = crate::simd::matmul(&patches, &weight_t, out_seq_len, patch_size, self.out_channels);
+
+        // Add bias using SIMD broadcast add
+        crate::simd::broadcast_add_inplace(&mut output, &self.bias, out_seq_len, self.out_channels);
 
         Ok(output)
     }
