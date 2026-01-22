@@ -1191,6 +1191,23 @@ Output: max_diff = 0.000000  ✓
 3. Check WMMA GEMM accumulation precision
 4. Test with FP32 GEMM fallback
 
+### 10.9.1 GPU Decoder Bug Fix (2026-01-22)
+
+**Problem:** GPU transcription producing garbage output ("Nano i67jŁ..." instead of "The birds can use")
+
+**Five Whys:**
+| Level | Question | Answer |
+|-------|----------|--------|
+| Why 1 | Why garbage output? | GEMV producing wrong logits |
+| Why 2 | Why wrong logits? | Weight matrix layout mismatch |
+| Why 3 | Why layout mismatch? | GEMV expects [K×N], got [N×K] |
+| Why 4 | Why different layout? | Token embedding is [n_vocab×d_model], GEMV needs [d_model×n_vocab] |
+| Why 5 | Root cause | `load_weights` doesn't transpose, must transpose before upload |
+
+**Fix:** Transpose token embedding from `[n_vocab × d_model]` to `[d_model × n_vocab]` in `upload_weights()`.
+
+**Result:** GPU transcription now produces correct output "The birds can use".
+
 ### 10.10 Performance Profile (2026-01-22)
 
 **encode_gpu_total_offload profiling breakdown (tiny model, 1.5s audio):**

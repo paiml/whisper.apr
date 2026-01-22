@@ -417,10 +417,22 @@ impl WhisperCuda {
 
         // Upload the most expensive weight: token embedding for output projection
         // This is [n_vocab × d_model] = [51865 × 384] ≈ 80MB for tiny model
+        // WAPR-PERF-014 FIX: GEMV kernel expects [K × N] but token_emb is [N × K]
+        // Must transpose from [n_vocab × d_model] to [d_model × n_vocab]
         let token_emb = self.decoder.token_embedding();
+        let n_vocab = self.config.n_vocab as usize;
+        let d_model = self.config.n_text_state as usize;
+        let mut token_emb_transposed = vec![0.0f32; n_vocab * d_model];
+        for row in 0..n_vocab {
+            for col in 0..d_model {
+                // Source: [row, col] = row * d_model + col
+                // Dest: [col, row] = col * n_vocab + row
+                token_emb_transposed[col * n_vocab + row] = token_emb[row * d_model + col];
+            }
+        }
         let bytes = self
             .executor
-            .load_weights("whisper_output_proj", token_emb)
+            .load_weights("whisper_output_proj", &token_emb_transposed)
             .map_err(|e| {
                 WhisperError::Inference(format!("Failed to upload output projection: {e}"))
             })?;
