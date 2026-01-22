@@ -1349,35 +1349,38 @@ With 4 decoder layers × ~10 operations per layer = ~40 stream creations per tok
 **Single Block Benchmark** (release mode, 2026-01-22):
 ```
 Executor vs GPU forward pass timing (single decoder block):
-- GPU (GpuResidentTensor): 12.79ms (creates new stream per op)
-- Executor (gemv_cached):   0.95ms (persistent stream)
-- Speedup:                  13.5x 🚀
+- GPU (GpuResidentTensor): 43.7ms (creates new stream per op)
+- Executor (gemv_cached):   1.36ms (persistent stream + cached weights)
+- Speedup:                  32x 🚀🚀
 - Parity:                   max_diff=0.000000 (exact match)
 ```
 
 **Full Decode Benchmark** (release mode, 10 tokens, 2026-01-22):
 ```
-GPU path:      137-140ms for 10 tokens (~14ms/token)
-Executor path: 133-140ms for 10 tokens (~14ms/token)
-Speedup:       ~1.0x (no improvement for full decode)
+GPU path:      145ms for 10 tokens (~14.5ms/token)
+Executor path: 131ms for 10 tokens (~13.1ms/token)
+Speedup:       1.11x
 ```
 
-**Root Cause Analysis**: Single block 13.5x speedup NOT reflected in full decode because:
-1. `project_to_vocab_gpu()` uses `executor.gemm()` which allocates per-call
-2. Full decode: 4 blocks × 0.95ms = 3.8ms, but vocab projection dominates
-3. Vocab projection: GEMM 51865 × 384 = 19.9M elements per token
+**Root Cause Analysis**: Single block 32x speedup results in 1.11x full decode improvement because:
+1. Decoder blocks: 4 × 1.36ms = 5.4ms (now fast with cached GEMV)
+2. Vocab projection: Uses `gemv_cached` with transposed weights (~0.5ms)
+3. Remaining overhead: Token embedding lookup, LayerNorm (CPU), H2D/D2H transfers
 
-**Implementation Details** (commits 49e9b4a):
+**Implementation Details** (commits bcfec1f):
 - `forward_decoder_block_executor()`: Uses `executor.gemv_cached()` for Q/K/V/O projections
 - Pre-copies biases to avoid borrow conflicts
 - Keeps LayerNorm on CPU (fast enough, avoids gamma/beta upload overhead)
 - `incremental_attention_gpu_with_stream()`: Accepts external stream parameter
 - `reset_gpu_decoder_kv_cache()`: Clears head-first KV caches for clean benchmark
+- Token embedding transposed during upload: [n_vocab, d_model] → [d_model, n_vocab]
+- Vocab projection via `gemv_cached("dec.output_proj", ...)` with fallback to gemm
 
 **Path Forward**:
-1. **DONE**: Shared stream for KV ops (13.5x single block improvement verified)
-2. **NEXT**: Cache vocab projection weights in executor for persistent buffer reuse
+1. ✅ **DONE**: Shared stream for KV ops
+2. ✅ **DONE**: Cache vocab projection weights (32x single-block speedup)
 3. **FUTURE**: CUDA Graph capture for sub-10ms decode latency
+4. **FUTURE**: Fused decoder kernel to eliminate H2D/D2H per operation
 
 **CUDA Graph Investigation** (2026-01-22):
 
