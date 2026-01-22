@@ -20,12 +20,15 @@ path = "src/bin/whisper-apr-cli.rs"
 required-features = ["cli"]
 
 [features]
-default = ["std", "simd", "realizar-inference"]
+# Enable parallel by default for ~2x encoder speedup on multi-core systems
+# WASM users should use "wasm" feature which doesn't include parallel
+default = ["std", "simd", "realizar-inference", "parallel"]
 std = []
 wasm = ["wasm-bindgen", "js-sys", "web-sys", "console_error_panic_hook"]
 webgpu = ["wgpu", "bytemuck", "tokio", "pollster"]
 cuda = ["trueno/gpu", "dep:trueno-gpu", "trueno-gpu/cuda"]
 simd = []
+# Parallel execution via rayon (native) or wasm-bindgen-rayon (WASM with Web Workers)
 parallel = ["rayon", "wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
 converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs", "zip"]
