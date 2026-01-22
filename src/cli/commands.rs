@@ -302,7 +302,10 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
                 eprintln!("[WARN] GPU warmup failed: {}", e);
             }
         } else if global.verbose {
-            eprintln!("[INFO] GPU warmup: {:.1}ms", warmup_start.elapsed().as_millis());
+            eprintln!(
+                "[INFO] GPU warmup: {:.1}ms",
+                warmup_start.elapsed().as_millis()
+            );
         }
 
         // WAPR-PERF-004: Use GPU-accelerated transcription path
@@ -1333,15 +1336,16 @@ pub fn run_transcribe_folder(
 
                         // Collect profile data for report
                         if args.profile || args.report.is_some() {
-                            let (audio_ms, encoder_ms, decoder_ms) = if let Some(stats) = &result.profiling {
-                                (
-                                    stats.breakdown.get("audio_ms").copied(),
-                                    stats.breakdown.get("encoder_ms").copied(),
-                                    stats.breakdown.get("decoder_ms").copied(),
-                                )
-                            } else {
-                                (None, None, None)
-                            };
+                            let (audio_ms, encoder_ms, decoder_ms) =
+                                if let Some(stats) = &result.profiling {
+                                    (
+                                        stats.breakdown.get("audio_ms").copied(),
+                                        stats.breakdown.get("encoder_ms").copied(),
+                                        stats.breakdown.get("decoder_ms").copied(),
+                                    )
+                                } else {
+                                    (None, None, None)
+                                };
 
                             profile_entries.push(FolderProfileEntry {
                                 file: input_path.display().to_string(),
@@ -1589,9 +1593,15 @@ fn format_folder_output_with_profile(
             let breakdown = if let Some(stats) = &result.profiling {
                 let mut b = String::from(r#","breakdown":{"#);
                 let mut parts = Vec::new();
-                if let Some(v) = stats.breakdown.get("audio_ms") { parts.push(format!(r#""audio_ms":{:.1}"#, v)); }
-                if let Some(v) = stats.breakdown.get("encoder_ms") { parts.push(format!(r#""encoder_ms":{:.1}"#, v)); }
-                if let Some(v) = stats.breakdown.get("decoder_ms") { parts.push(format!(r#""decoder_ms":{:.1}"#, v)); }
+                if let Some(v) = stats.breakdown.get("audio_ms") {
+                    parts.push(format!(r#""audio_ms":{:.1}"#, v));
+                }
+                if let Some(v) = stats.breakdown.get("encoder_ms") {
+                    parts.push(format!(r#""encoder_ms":{:.1}"#, v));
+                }
+                if let Some(v) = stats.breakdown.get("decoder_ms") {
+                    parts.push(format!(r#""decoder_ms":{:.1}"#, v));
+                }
                 b.push_str(&parts.join(","));
                 b.push('}');
                 b
@@ -1707,7 +1717,10 @@ fn print_folder_profile_summary(entries: &[FolderProfileEntry], total_elapsed_se
     eprintln!("Total elapsed:       {:.1}s", total_elapsed_secs);
     eprintln!("Total tokens:        {}", total_tokens);
     eprintln!("Avg throughput:      {:.0} tok/s", avg_tok_s);
-    eprintln!("Avg breakdown (ms):  Audio={:.1}, Enc={:.1}, Dec={:.1}", avg_audio, avg_enc, avg_dec);
+    eprintln!(
+        "Avg breakdown (ms):  Audio={:.1}, Enc={:.1}, Dec={:.1}",
+        avg_audio, avg_enc, avg_dec
+    );
     eprintln!("Budget target:       {:.0} tok/s", budget_target);
     eprintln!(
         "Budget status:       {}/{} files met budget ({}%)",

@@ -86,6 +86,32 @@ WHISPER_GPU_TOTAL_OFFLOAD=1 WHISPER_PROFILE_LAYERS=1 cargo run --release \
 
 ---
 
+## 🆕 WAPR-PERF-024 Investigation (2026-01-22) - FALSIFIED
+
+**Summary:** The reported decoder regression (1117ms) was a measurement artifact.
+
+**Actual Decoder Performance (with `WHISPER_GPU_DECODER_OFFLOAD=1`):**
+| Component | Time | Per-Token | Status |
+|-----------|------|-----------|--------|
+| Prefill | 95ms | 23.8ms/token (4 tokens) | ✅ |
+| Decoder | **131ms** | **14.6ms/token** (9 tokens) | ✅ |
+| **Inference Total** | **421ms** | - | 🚀 **2.4x faster** |
+
+**Hypothesis Test - "New CudaStream per token causes overhead":**
+- **FALSIFIED**: Testing showed `forward_one_gpu_total_offload` (creates streams) is 2.7x faster than `forward_one_executor` (persistent stream).
+- Root cause: `gemv_cached` name lookups add overhead despite cache hits.
+
+**Benchmark Command:**
+```bash
+WHISPER_GPU_TOTAL_OFFLOAD=1 WHISPER_GPU_DECODER_OFFLOAD=1 WHISPER_PROFILE_DECODER=1 \
+  cargo run --release --features "realizar-gpu,cli" --bin whisper-apr-cli -- \
+  -v transcribe --gpu --file demos/test-audio/test-speech-1.5s.wav
+```
+
+**Conclusion:** No decoder optimization needed. Current implementation achieves 14.6ms/token.
+
+---
+
 ## 🚨 KNOWN ISSUES (Five Whys Analysis)
 
 ### Issue 1: GPU Convolution Frontend Produces Wrong Output

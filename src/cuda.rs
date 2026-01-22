@@ -738,11 +738,11 @@ impl WhisperCuda {
         let ln_post = self.encoder.ln_post();
         self.gpu_enc_ln_post_gamma = Some(
             GpuResidentTensor::from_host(ctx, &ln_post.weight)
-                .map_err(|e| WhisperError::Inference(format!("enc ln_post_gamma upload: {e}")))?
+                .map_err(|e| WhisperError::Inference(format!("enc ln_post_gamma upload: {e}")))?,
         );
         self.gpu_enc_ln_post_beta = Some(
             GpuResidentTensor::from_host(ctx, &ln_post.bias)
-                .map_err(|e| WhisperError::Inference(format!("enc ln_post_beta upload: {e}")))?
+                .map_err(|e| WhisperError::Inference(format!("enc ln_post_beta upload: {e}")))?,
         );
 
         Ok(())
@@ -1403,76 +1403,75 @@ impl WhisperCuda {
             .map_err(|e| WhisperError::Inference(format!("Residual 1: {e}")))?;
 
         // === Cross-Attention (GPU, if encoder output provided) ===
-        let residual2 = if let Some(enc_len) = enc_seq_len {
-            // Get cross-attention K/V caches
-            let cross_k_caches = self
-                .gpu_cross_k_head_first
-                .as_ref()
-                .ok_or_else(|| WhisperError::Inference("Cross K cache not initialized".into()))?;
-            let cross_v_caches = self
-                .gpu_cross_v_head_first
-                .as_ref()
-                .ok_or_else(|| WhisperError::Inference("Cross V cache not initialized".into()))?;
+        let residual2 =
+            if let Some(enc_len) = enc_seq_len {
+                // Get cross-attention K/V caches
+                let cross_k_caches = self.gpu_cross_k_head_first.as_ref().ok_or_else(|| {
+                    WhisperError::Inference("Cross K cache not initialized".into())
+                })?;
+                let cross_v_caches = self.gpu_cross_v_head_first.as_ref().ok_or_else(|| {
+                    WhisperError::Inference("Cross V cache not initialized".into())
+                })?;
 
-            // LN2 on residual1
-            let normed2 = residual1
-                .layer_norm_with_stream(
+                // LN2 on residual1
+                let normed2 = residual1
+                    .layer_norm_with_stream(
+                        ctx,
+                        &layer_weights.ln2_gamma,
+                        &layer_weights.ln2_beta,
+                        d_model as u32,
+                        1,
+                        stream,
+                    )
+                    .map_err(|e| WhisperError::Inference(format!("LN2: {e}")))?;
+
+                // Cross-attention Q from decoder hidden state
+                let q_cross = normed2
+                    .linear(
+                        ctx,
+                        &layer_weights.cross_w_q,
+                        Some(&layer_weights.cross_b_q),
+                        1,
+                        d_model as u32,
+                        d_model as u32,
+                    )
+                    .map_err(|e| WhisperError::Inference(format!("Cross Q: {e}")))?;
+
+                // Cross-attention using cached encoder K/V
+                // Note: We use incremental_attention_gpu but with full enc_len as seq_len
+                let cross_attn_out = incremental_attention_gpu_with_stream(
                     ctx,
-                    &layer_weights.ln2_gamma,
-                    &layer_weights.ln2_beta,
-                    d_model as u32,
-                    1,
+                    &q_cross,
+                    &cross_k_caches[layer_idx],
+                    &cross_v_caches[layer_idx],
+                    n_heads as u32,
+                    head_dim as u32,
+                    enc_len as u32,
+                    enc_len as u32, // max_seq_len = enc_len for cross-attention
                     stream,
                 )
-                .map_err(|e| WhisperError::Inference(format!("LN2: {e}")))?;
+                .map_err(|e| WhisperError::Inference(format!("Cross attention: {e}")))?;
 
-            // Cross-attention Q from decoder hidden state
-            let q_cross = normed2
-                .linear(
-                    ctx,
-                    &layer_weights.cross_w_q,
-                    Some(&layer_weights.cross_b_q),
-                    1,
-                    d_model as u32,
-                    d_model as u32,
-                )
-                .map_err(|e| WhisperError::Inference(format!("Cross Q: {e}")))?;
+                // Output projection
+                let cross_proj = cross_attn_out
+                    .linear(
+                        ctx,
+                        &layer_weights.cross_w_o,
+                        Some(&layer_weights.cross_b_o),
+                        1,
+                        d_model as u32,
+                        d_model as u32,
+                    )
+                    .map_err(|e| WhisperError::Inference(format!("Cross O: {e}")))?;
 
-            // Cross-attention using cached encoder K/V
-            // Note: We use incremental_attention_gpu but with full enc_len as seq_len
-            let cross_attn_out = incremental_attention_gpu_with_stream(
-                ctx,
-                &q_cross,
-                &cross_k_caches[layer_idx],
-                &cross_v_caches[layer_idx],
-                n_heads as u32,
-                head_dim as u32,
-                enc_len as u32,
-                enc_len as u32, // max_seq_len = enc_len for cross-attention
-                stream,
-            )
-            .map_err(|e| WhisperError::Inference(format!("Cross attention: {e}")))?;
-
-            // Output projection
-            let cross_proj = cross_attn_out
-                .linear(
-                    ctx,
-                    &layer_weights.cross_w_o,
-                    Some(&layer_weights.cross_b_o),
-                    1,
-                    d_model as u32,
-                    d_model as u32,
-                )
-                .map_err(|e| WhisperError::Inference(format!("Cross O: {e}")))?;
-
-            // Cross-attention residual
-            residual1
-                .add_with_stream(ctx, &cross_proj, stream)
-                .map_err(|e| WhisperError::Inference(format!("Cross residual: {e}")))?
-        } else {
-            // No cross-attention (self-attention only path for testing)
-            residual1
-        };
+                // Cross-attention residual
+                residual1
+                    .add_with_stream(ctx, &cross_proj, stream)
+                    .map_err(|e| WhisperError::Inference(format!("Cross residual: {e}")))?
+            } else {
+                // No cross-attention (self-attention only path for testing)
+                residual1
+            };
 
         // === FFN (all GPU, using external stream) ===
 
@@ -1609,8 +1608,11 @@ impl WhisperCuda {
             .map_err(|e| WhisperError::Inference(format!("embedding upload: {e}")))?;
         if profile_layers {
             stream.synchronize().ok();
-            eprintln!("[PROFILE-DEC-EMBED] pos={} embed_upload: {:.2}ms",
-                pos, embed_start.elapsed().as_secs_f64() * 1000.0);
+            eprintln!(
+                "[PROFILE-DEC-EMBED] pos={} embed_upload: {:.2}ms",
+                pos,
+                embed_start.elapsed().as_secs_f64() * 1000.0
+            );
         }
 
         // Process through all layers using stream-based path
@@ -1625,8 +1627,12 @@ impl WhisperCuda {
             )?;
             if profile_layers {
                 stream.synchronize().ok();
-                eprintln!("[PROFILE-DEC-LAYER] pos={} layer={} time: {:.2}ms",
-                    pos, layer_idx, layer_start.elapsed().as_secs_f64() * 1000.0);
+                eprintln!(
+                    "[PROFILE-DEC-LAYER] pos={} layer={} time: {:.2}ms",
+                    pos,
+                    layer_idx,
+                    layer_start.elapsed().as_secs_f64() * 1000.0
+                );
             }
         }
 
@@ -1973,13 +1979,10 @@ impl WhisperCuda {
 
         // Step 4: Run decoder to compile decoder kernels
         let dummy_embedding: Vec<f32> = vec![0.0; d_model];
-        let _dec_out = self.forward_decoder_token_gpu_stream(
-            &dummy_embedding,
-            0,
-            &stream,
-            Some(enc_seq_len),
-        )?;
-        stream.synchronize()
+        let _dec_out =
+            self.forward_decoder_token_gpu_stream(&dummy_embedding, 0, &stream, Some(enc_seq_len))?;
+        stream
+            .synchronize()
             .map_err(|e| WhisperError::Inference(format!("warmup sync: {e}")))?;
 
         // Step 5: Reset decoder state for clean subsequent runs
@@ -2030,7 +2033,9 @@ impl WhisperCuda {
                 Some(&conv_weights.conv1_bias),
                 n_mels as u32,
                 d_model as u32,
-                3, 1, 1,
+                3,
+                1,
+                1,
                 seq_len_in as u32,
             )
             .map_err(|e| WhisperError::Inference(format!("conv1: {e}")))?;
@@ -2043,7 +2048,9 @@ impl WhisperCuda {
                 Some(&conv_weights.conv2_bias),
                 d_model as u32,
                 d_model as u32,
-                3, 2, 1,
+                3,
+                2,
+                1,
                 seq_len_in as u32,
             )
             .map_err(|e| WhisperError::Inference(format!("conv2: {e}")))?;
@@ -2085,7 +2092,13 @@ impl WhisperCuda {
             .ok_or_else(|| WhisperError::Inference("enc ln_post_beta not uploaded".into()))?;
 
         let result_gpu = x_gpu
-            .layer_norm(ctx, ln_post_gamma, ln_post_beta, d_model as u32, seq_len as u32)
+            .layer_norm(
+                ctx,
+                ln_post_gamma,
+                ln_post_beta,
+                d_model as u32,
+                seq_len as u32,
+            )
             .map_err(|e| WhisperError::Inference(format!("encoder ln_post: {e}")))?;
 
         Ok(result_gpu)
@@ -2181,7 +2194,9 @@ impl WhisperCuda {
                     head_dim as u32,
                     stream,
                 )
-                .map_err(|e| WhisperError::Inference(format!("cross K permute L{layer_idx}: {e}")))?;
+                .map_err(|e| {
+                    WhisperError::Inference(format!("cross K permute L{layer_idx}: {e}"))
+                })?;
 
             let v_head_first = v_proj
                 .interleaved_to_head_first(
@@ -2191,7 +2206,9 @@ impl WhisperCuda {
                     head_dim as u32,
                     stream,
                 )
-                .map_err(|e| WhisperError::Inference(format!("cross V permute L{layer_idx}: {e}")))?;
+                .map_err(|e| {
+                    WhisperError::Inference(format!("cross V permute L{layer_idx}: {e}"))
+                })?;
 
             // Store in caches (direct assignment, both are now GPU-resident)
             let cache_k = &mut cross_k_caches[layer_idx];
@@ -3053,9 +3070,19 @@ impl WhisperCuda {
         let pos = cache.seq_len().saturating_sub(1);
         if pos < 5 && std::env::var("WHISPER_DEBUG_GPU").is_ok() {
             let hidden_mean = hidden.iter().sum::<f32>() / hidden.len() as f32;
-            let hidden_std = (hidden.iter().map(|v| (v - hidden_mean).powi(2)).sum::<f32>() / hidden.len() as f32).sqrt();
-            eprintln!("[DEBUG-CPU-HIDDEN] pos={} after_ln: len={} mean={:.4} std={:.4}",
-                pos, hidden.len(), hidden_mean, hidden_std);
+            let hidden_std = (hidden
+                .iter()
+                .map(|v| (v - hidden_mean).powi(2))
+                .sum::<f32>()
+                / hidden.len() as f32)
+                .sqrt();
+            eprintln!(
+                "[DEBUG-CPU-HIDDEN] pos={} after_ln: len={} mean={:.4} std={:.4}",
+                pos,
+                hidden.len(),
+                hidden_mean,
+                hidden_std
+            );
         }
 
         // Output projection on GPU using direct gemm
@@ -3135,11 +3162,23 @@ impl WhisperCuda {
 
         // Debug: print encoder output stats on first token
         if pos == 0 {
-            eprintln!("[DEBUG-GPU-DEC] enc_output: len={} seq_len={} d_model={}",
-                encoder_output.len(), enc_seq_len, d_model);
+            eprintln!(
+                "[DEBUG-GPU-DEC] enc_output: len={} seq_len={} d_model={}",
+                encoder_output.len(),
+                enc_seq_len,
+                d_model
+            );
             let enc_mean = encoder_output.iter().sum::<f32>() / encoder_output.len() as f32;
-            let enc_std = (encoder_output.iter().map(|x| (x - enc_mean).powi(2)).sum::<f32>() / encoder_output.len() as f32).sqrt();
-            eprintln!("[DEBUG-GPU-DEC] enc_output stats: mean={:.4} std={:.4}", enc_mean, enc_std);
+            let enc_std = (encoder_output
+                .iter()
+                .map(|x| (x - enc_mean).powi(2))
+                .sum::<f32>()
+                / encoder_output.len() as f32)
+                .sqrt();
+            eprintln!(
+                "[DEBUG-GPU-DEC] enc_output stats: mean={:.4} std={:.4}",
+                enc_mean, enc_std
+            );
         }
 
         // 3. Populate cross K/V on first token (pos=0) - encoder output changes per transcription
@@ -3152,7 +3191,8 @@ impl WhisperCuda {
             let enc_gpu = GpuResidentTensor::from_host(ctx, encoder_output)
                 .map_err(|e| WhisperError::Inference(format!("enc upload: {e}")))?;
             self.populate_cross_kv_caches_gpu(&enc_gpu, &stream)?;
-            stream.synchronize()
+            stream
+                .synchronize()
                 .map_err(|e| WhisperError::Inference(format!("cross kv sync: {e}")))?;
             eprintln!("[DEBUG-GPU-DEC] Cross K/V populated successfully");
         }
@@ -3171,17 +3211,25 @@ impl WhisperCuda {
         )?;
 
         // 6. Download hidden state for final layer norm
-        stream.synchronize()
+        stream
+            .synchronize()
             .map_err(|e| WhisperError::Inference(format!("stream sync: {e}")))?;
-        let x = hidden_gpu.to_host()
+        let x = hidden_gpu
+            .to_host()
             .map_err(|e| WhisperError::Inference(format!("hidden download: {e}")))?;
 
         // Debug: print hidden state stats
         if pos < 5 && std::env::var("WHISPER_DEBUG_GPU").is_ok() {
             let hidden_mean = x.iter().sum::<f32>() / x.len() as f32;
-            let hidden_std = (x.iter().map(|v| (v - hidden_mean).powi(2)).sum::<f32>() / x.len() as f32).sqrt();
-            eprintln!("[DEBUG-GPU-HIDDEN] pos={} before_ln: len={} mean={:.4} std={:.4}",
-                pos, x.len(), hidden_mean, hidden_std);
+            let hidden_std =
+                (x.iter().map(|v| (v - hidden_mean).powi(2)).sum::<f32>() / x.len() as f32).sqrt();
+            eprintln!(
+                "[DEBUG-GPU-HIDDEN] pos={} before_ln: len={} mean={:.4} std={:.4}",
+                pos,
+                x.len(),
+                hidden_mean,
+                hidden_std
+            );
         }
 
         // 7. Final layer norm (CPU - simple)
@@ -3190,9 +3238,19 @@ impl WhisperCuda {
         // Debug: print hidden state after ln
         if pos < 5 && std::env::var("WHISPER_DEBUG_GPU").is_ok() {
             let hidden_mean = hidden.iter().sum::<f32>() / hidden.len() as f32;
-            let hidden_std = (hidden.iter().map(|v| (v - hidden_mean).powi(2)).sum::<f32>() / hidden.len() as f32).sqrt();
-            eprintln!("[DEBUG-GPU-HIDDEN] pos={} after_ln: len={} mean={:.4} std={:.4}",
-                pos, hidden.len(), hidden_mean, hidden_std);
+            let hidden_std = (hidden
+                .iter()
+                .map(|v| (v - hidden_mean).powi(2))
+                .sum::<f32>()
+                / hidden.len() as f32)
+                .sqrt();
+            eprintln!(
+                "[DEBUG-GPU-HIDDEN] pos={} after_ln: len={} mean={:.4} std={:.4}",
+                pos,
+                hidden.len(),
+                hidden_mean,
+                hidden_std
+            );
         }
 
         // 8. Increment position for next token
@@ -3393,7 +3451,10 @@ impl WhisperCuda {
             .mel_filters
             .compute(&padded_audio, crate::audio::HOP_LENGTH)?;
         if profile_all {
-            eprintln!("[PROFILE-MEL] Mel spectrogram: {:.1}ms", mel_start.elapsed().as_millis());
+            eprintln!(
+                "[PROFILE-MEL] Mel spectrogram: {:.1}ms",
+                mel_start.elapsed().as_millis()
+            );
         }
         let actual_frames = mel.len() / N_MELS;
 
@@ -3521,10 +3582,12 @@ impl WhisperCuda {
         }
         if prefill_profile {
             let prefill_time = prefill_start.elapsed();
-            eprintln!("[PROFILE-PREFILL] {} tokens in {:.1}ms ({:.1}ms/token)",
+            eprintln!(
+                "[PROFILE-PREFILL] {} tokens in {:.1}ms ({:.1}ms/token)",
                 tokens.len(),
                 prefill_time.as_millis(),
-                prefill_time.as_millis() as f64 / tokens.len() as f64);
+                prefill_time.as_millis() as f64 / tokens.len() as f64
+            );
         }
 
         // Generate tokens
@@ -3547,6 +3610,8 @@ impl WhisperCuda {
             self.tracer.start_step(TraceStep::LmHead);
 
             // WAPR-PERF-013: Use GPU decoder when enabled
+            // WAPR-PERF-024: FALSIFIED - executor path is 2.7x slower due to gemv_cached overhead
+            // Keeping forward_one_gpu_total_offload which achieves 14.6ms/token
             #[cfg(feature = "cuda")]
             let mut logits = if use_gpu_decoder {
                 self.forward_one_gpu_total_offload(last_token, &encoder_output)?
@@ -3563,11 +3628,20 @@ impl WhisperCuda {
             if debug_gpu && gen_idx < 3 {
                 let logits_mean = logits.iter().sum::<f32>() / logits.len() as f32;
                 let logits_max = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                let argmax = logits.iter().enumerate()
+                let argmax = logits
+                    .iter()
+                    .enumerate()
                     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                    .map(|(i, _)| i).unwrap_or(0);
-                eprintln!("[DEBUG-LOGITS] gen_idx={} len={} mean={:.4} max={:.4} argmax={}",
-                    gen_idx, logits.len(), logits_mean, logits_max, argmax);
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                eprintln!(
+                    "[DEBUG-LOGITS] gen_idx={} len={} mean={:.4} max={:.4} argmax={}",
+                    gen_idx,
+                    logits.len(),
+                    logits_mean,
+                    logits_max,
+                    argmax
+                );
             }
 
             // === TRACE: SAMPLE (token selection) ===
@@ -3613,12 +3687,14 @@ impl WhisperCuda {
             let avg = sum as f64 / decoder_token_times.len() as f64;
             let max = decoder_token_times.iter().max().copied().unwrap_or(0);
             let min = decoder_token_times.iter().min().copied().unwrap_or(0);
-            eprintln!("[PROFILE-DECODER] {} tokens, total {:.1}ms, avg {:.1}ms, min {:.1}ms, max {:.1}ms",
+            eprintln!(
+                "[PROFILE-DECODER] {} tokens, total {:.1}ms, avg {:.1}ms, min {:.1}ms, max {:.1}ms",
                 decoder_token_times.len(),
                 decoder_total.as_millis(),
                 avg / 1000.0,
                 min as f64 / 1000.0,
-                max as f64 / 1000.0);
+                max as f64 / 1000.0
+            );
         }
 
         // === TRACE: DECODE (detokenization) ===
@@ -3633,7 +3709,10 @@ impl WhisperCuda {
         let language = options.language.clone().unwrap_or_else(|| "en".to_string());
 
         if profile_all {
-            eprintln!("[PROFILE-TRANSCRIBE] Total transcribe_gpu: {:.1}ms", transcribe_start.elapsed().as_millis());
+            eprintln!(
+                "[PROFILE-TRANSCRIBE] Total transcribe_gpu: {:.1}ms",
+                transcribe_start.elapsed().as_millis()
+            );
         }
 
         Ok(TranscriptionResult {
@@ -6765,7 +6844,8 @@ mod tests {
         }
 
         // Run decoder block during capture
-        let capture_result = cuda_model.forward_decoder_block_gpu_stream(0, &x_gpu, 0, &stream, None);
+        let capture_result =
+            cuda_model.forward_decoder_block_gpu_stream(0, &x_gpu, 0, &stream, None);
 
         // End capture
         let graph_result = stream.end_capture();
@@ -6895,8 +6975,9 @@ mod tests {
         let stream = CudaStream::new(ctx).expect("Create stream");
 
         // Create test token embedding
-        let token_embedding: Vec<f32> =
-            (0..d_model).map(|i| (i as f32 * 0.01).sin() * 0.1).collect();
+        let token_embedding: Vec<f32> = (0..d_model)
+            .map(|i| (i as f32 * 0.01).sin() * 0.1)
+            .collect();
 
         // Warmup to compile kernels
         eprintln!("[Warmup] Running full token pass to compile kernels...");
@@ -6912,10 +6993,16 @@ mod tests {
             .expect("Re-init KV cache");
 
         // Capture full token pass
-        eprintln!("[Capture] Beginning CUDA graph capture for {} layers...", n_layers);
-        stream.begin_capture(CaptureMode::Global).expect("Begin capture");
+        eprintln!(
+            "[Capture] Beginning CUDA graph capture for {} layers...",
+            n_layers
+        );
+        stream
+            .begin_capture(CaptureMode::Global)
+            .expect("Begin capture");
 
-        let capture_result = cuda_model.forward_decoder_token_gpu_stream(&token_embedding, 0, &stream, None);
+        let capture_result =
+            cuda_model.forward_decoder_token_gpu_stream(&token_embedding, 0, &stream, None);
 
         let graph = stream.end_capture().expect("End capture");
 
@@ -6952,7 +7039,9 @@ mod tests {
             let pos = i % 10;
             if i % 10 == 0 && i > 0 {
                 cuda_model.reset_gpu_decoder_kv_cache();
-                cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init");
+                cuda_model
+                    .init_gpu_decoder_kv_cache_head_first()
+                    .expect("Re-init");
             }
             let start = std::time::Instant::now();
             let _out = cuda_model
@@ -6970,8 +7059,16 @@ mod tests {
         let direct_min = *direct_times.iter().min().expect("min");
 
         eprintln!("\n[Results - {} layers × {} tokens]", n_layers, NUM_TOKENS);
-        eprintln!("  Graph replay avg:  {:?} ({:.0}µs)", graph_avg, graph_avg.as_micros());
-        eprintln!("  Direct exec avg:   {:?} ({:.0}µs)", direct_avg, direct_avg.as_micros());
+        eprintln!(
+            "  Graph replay avg:  {:?} ({:.0}µs)",
+            graph_avg,
+            graph_avg.as_micros()
+        );
+        eprintln!(
+            "  Direct exec avg:   {:?} ({:.0}µs)",
+            direct_avg,
+            direct_avg.as_micros()
+        );
         eprintln!("  Graph min:         {:?}", graph_min);
         eprintln!("  Direct min:        {:?}", direct_min);
         eprintln!(
@@ -7032,7 +7129,9 @@ mod tests {
         // Create dummy mel input
         let n_mels = cuda_model.config().n_mels as usize;
         let seq_len = 100;
-        let mel: Vec<f32> = (0..n_mels * seq_len).map(|i| (i as f32 * 0.001).sin()).collect();
+        let mel: Vec<f32> = (0..n_mels * seq_len)
+            .map(|i| (i as f32 * 0.001).sin())
+            .collect();
 
         eprintln!("[Input] {} mels × {} frames", n_mels, seq_len);
 
@@ -7049,13 +7148,19 @@ mod tests {
         eprintln!("[Benchmark] Running {} iterations...", ITERATIONS);
         for _ in 0..ITERATIONS {
             let start = std::time::Instant::now();
-            let enc_gpu = cuda_model.encode_gpu_resident(&mel).expect("Encode GPU resident");
+            let enc_gpu = cuda_model
+                .encode_gpu_resident(&mel)
+                .expect("Encode GPU resident");
             times.push(start.elapsed());
             // Verify size on first iteration
             if times.len() == 1 {
                 let enc_len = enc_gpu.len();
                 let expected_seq_len = (seq_len + 2 - 3) / 2 + 1;
-                assert_eq!(enc_len, expected_seq_len * d_model, "Unexpected encoder output size");
+                assert_eq!(
+                    enc_len,
+                    expected_seq_len * d_model,
+                    "Unexpected encoder output size"
+                );
             }
         }
 
@@ -7068,7 +7173,10 @@ mod tests {
         eprintln!("  Average: {}µs", avg_time);
         eprintln!("  Min:     {:?}", min_time);
         eprintln!("  Max:     {:?}", max_time);
-        eprintln!("  Speedup vs warmup: {:.1}x", warmup_time.as_micros() as f64 / avg_time as f64);
+        eprintln!(
+            "  Speedup vs warmup: {:.1}x",
+            warmup_time.as_micros() as f64 / avg_time as f64
+        );
 
         eprintln!("\n✓ WAPR-PERF-018: GPU-resident encoder output verified");
     }
@@ -7102,7 +7210,9 @@ mod tests {
         // Create dummy mel input
         let n_mels = cuda_model.config().n_mels as usize;
         let seq_len = 100;
-        let mel: Vec<f32> = (0..n_mels * seq_len).map(|i| (i as f32 * 0.001).sin()).collect();
+        let mel: Vec<f32> = (0..n_mels * seq_len)
+            .map(|i| (i as f32 * 0.001).sin())
+            .collect();
 
         // Create stream
         let ctx = cuda_model.executor.context();
@@ -7112,19 +7222,25 @@ mod tests {
         eprintln!("[Warmup] Compiling PTX kernels...");
         let warmup_start = std::time::Instant::now();
         let enc_warmup = cuda_model.encode_gpu_resident(&mel).expect("Warmup encode");
-        cuda_model.populate_cross_kv_caches_gpu(&enc_warmup, &stream).expect("Warmup K/V");
+        cuda_model
+            .populate_cross_kv_caches_gpu(&enc_warmup, &stream)
+            .expect("Warmup K/V");
         stream.synchronize().expect("Sync");
         let warmup_time = warmup_start.elapsed();
         eprintln!("  Total warmup: {:?}", warmup_time);
 
         // Reset for benchmark
         cuda_model.reset_gpu_decoder_kv_cache();
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Re-init");
 
         // === BENCHMARK PHASE ===
         eprintln!("\n[Step 1] GPU-resident encoder (warmed up)...");
         let enc_start = std::time::Instant::now();
-        let enc_gpu = cuda_model.encode_gpu_resident(&mel).expect("Encode GPU resident");
+        let enc_gpu = cuda_model
+            .encode_gpu_resident(&mel)
+            .expect("Encode GPU resident");
         let enc_time = enc_start.elapsed();
         let enc_seq_len = enc_gpu.len() / d_model;
         eprintln!("  Encoder: {:?} ({} × {})", enc_time, enc_seq_len, d_model);
@@ -7174,21 +7290,21 @@ mod tests {
             if i == 0 {
                 // Verify output size on first token
                 let output = output_gpu.to_host().expect("Download");
-                assert_eq!(
-                    output.len(),
-                    d_model,
-                    "Unexpected decoder output size"
-                );
+                assert_eq!(output.len(), d_model, "Unexpected decoder output size");
             }
         }
 
-        let avg: std::time::Duration = times.iter().sum::<std::time::Duration>() / NUM_TOKENS as u32;
+        let avg: std::time::Duration =
+            times.iter().sum::<std::time::Duration>() / NUM_TOKENS as u32;
 
         eprintln!("\n[Results]");
         eprintln!("  Encoder:         {:?}", enc_time);
         eprintln!("  Cross K/V pop:   {:?}", kv_time);
         eprintln!("  Decoder avg:     {:?} ({} tokens)", avg, NUM_TOKENS);
-        eprintln!("  Total pipeline:  {:?}", enc_time + kv_time + avg * NUM_TOKENS as u32);
+        eprintln!(
+            "  Total pipeline:  {:?}",
+            enc_time + kv_time + avg * NUM_TOKENS as u32
+        );
 
         // For 1.5s audio (27 tokens), project decoder time
         let tokens_27 = avg.as_micros() as f64 * 27.0 / 1000.0;
@@ -7231,7 +7347,9 @@ mod tests {
         // Now run encoder - should be fast since kernels are compiled
         let n_mels = cuda_model.config().n_mels as usize;
         let d_model = cuda_model.config().n_text_state as usize;
-        let mel: Vec<f32> = (0..n_mels * 100).map(|i| (i as f32 * 0.001).sin()).collect();
+        let mel: Vec<f32> = (0..n_mels * 100)
+            .map(|i| (i as f32 * 0.001).sin())
+            .collect();
 
         // Time encoder (should be fast)
         let enc_start = std::time::Instant::now();
@@ -7242,7 +7360,9 @@ mod tests {
         let ctx = cuda_model.executor.context();
         let stream = CudaStream::new(ctx).expect("Create stream");
         let kv_start = std::time::Instant::now();
-        cuda_model.populate_cross_kv_caches_gpu(&enc_gpu, &stream).expect("K/V pop");
+        cuda_model
+            .populate_cross_kv_caches_gpu(&enc_gpu, &stream)
+            .expect("K/V pop");
         stream.synchronize().expect("Sync");
         let kv_time = kv_start.elapsed();
 
@@ -7263,7 +7383,10 @@ mod tests {
         eprintln!("  Cross K/V:   {:?}", kv_time);
         eprintln!("  Decoder:     {:?}", dec_time);
         eprintln!("  Total:       {:?}", total_post_warmup);
-        eprintln!("  Speedup:     {:.1}x vs warmup", warmup_ms as f64 / total_post_warmup.as_millis() as f64);
+        eprintln!(
+            "  Speedup:     {:.1}x vs warmup",
+            warmup_ms as f64 / total_post_warmup.as_millis() as f64
+        );
 
         // After warmup, total should be <20ms (vs ~200ms without warmup)
         assert!(
@@ -7306,7 +7429,9 @@ mod tests {
         // Create dummy mel input
         let n_mels = cuda_model.config().n_mels as usize;
         let seq_len = 100;
-        let mel: Vec<f32> = (0..n_mels * seq_len).map(|i| (i as f32 * 0.001).sin()).collect();
+        let mel: Vec<f32> = (0..n_mels * seq_len)
+            .map(|i| (i as f32 * 0.001).sin())
+            .collect();
 
         // Step 1: Encode and populate cross K/V caches
         eprintln!("[Setup] Encoding and populating cross K/V caches...");
@@ -7343,7 +7468,10 @@ mod tests {
             .expect("Re-populate cross KV");
 
         // Step 3: Capture CUDA graph
-        eprintln!("[Capture] Beginning CUDA graph capture ({} layers + cross-attn)...", n_layers);
+        eprintln!(
+            "[Capture] Beginning CUDA graph capture ({} layers + cross-attn)...",
+            n_layers
+        );
 
         match stream.begin_capture(CaptureMode::Global) {
             Ok(()) => eprintln!("  Stream capture started"),
@@ -7387,7 +7515,9 @@ mod tests {
 
                         // Direct execution benchmark
                         cuda_model.reset_gpu_decoder_kv_cache();
-                        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init");
+                        cuda_model
+                            .init_gpu_decoder_kv_cache_head_first()
+                            .expect("Re-init");
                         cuda_model
                             .populate_cross_kv_caches_gpu(&enc_gpu, &stream)
                             .expect("Re-populate");
@@ -7396,18 +7526,22 @@ mod tests {
                             let pos = i % 10;
                             if i % 10 == 0 && i > 0 {
                                 cuda_model.reset_gpu_decoder_kv_cache();
-                                cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init");
+                                cuda_model
+                                    .init_gpu_decoder_kv_cache_head_first()
+                                    .expect("Re-init");
                                 cuda_model
                                     .populate_cross_kv_caches_gpu(&enc_gpu, &stream)
                                     .expect("Re-populate");
                             }
                             let start = std::time::Instant::now();
-                            let _out = cuda_model.forward_decoder_token_gpu_stream(
-                                &token_embedding,
-                                pos,
-                                &stream,
-                                Some(enc_seq_len),
-                            ).expect("Direct");
+                            let _out = cuda_model
+                                .forward_decoder_token_gpu_stream(
+                                    &token_embedding,
+                                    pos,
+                                    &stream,
+                                    Some(enc_seq_len),
+                                )
+                                .expect("Direct");
                             stream.synchronize().expect("Sync");
                             direct_times.push(start.elapsed());
                         }
@@ -7483,9 +7617,11 @@ mod tests {
             .collect();
 
         eprintln!("\n[Input] mel shape: {} x {}", test_seq_len, n_mels);
-        eprintln!("        mean={:.6}, std={:.6}",
+        eprintln!(
+            "        mean={:.6}, std={:.6}",
             mel.iter().sum::<f32>() / mel.len() as f32,
-            (mel.iter().map(|x| x.powi(2)).sum::<f32>() / mel.len() as f32).sqrt());
+            (mel.iter().map(|x| x.powi(2)).sum::<f32>() / mel.len() as f32).sqrt()
+        );
 
         // === CPU Conv1d (do all CPU work first to avoid borrow issues) ===
         let (cpu_conv1_gelu, cpu_conv2_gelu, cpu_frontend, cpu_seq_after_conv1) = {
@@ -7495,52 +7631,82 @@ mod tests {
             let cpu_conv1 = conv_frontend.conv1.forward(&mel).expect("CPU conv1");
             let cpu_seq_after_conv1 = cpu_conv1.len() / d_model;
             eprintln!("  Output shape: {} x {}", cpu_seq_after_conv1, d_model);
-            eprintln!("  mean={:.6}, std={:.6}",
+            eprintln!(
+                "  mean={:.6}, std={:.6}",
                 cpu_conv1.iter().sum::<f32>() / cpu_conv1.len() as f32,
-                (cpu_conv1.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_conv1.len() as f32).sqrt());
+                (cpu_conv1.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_conv1.len() as f32).sqrt()
+            );
 
             // Apply GELU (CPU conv doesn't include activation)
-            let cpu_conv1_gelu: Vec<f32> = cpu_conv1.iter().map(|x| {
-                let x = *x;
-                x * 0.5 * (1.0 + (x * 0.7978845608028654 * (1.0 + 0.044715 * x * x)).tanh())
-            }).collect();
-            eprintln!("  After GELU: mean={:.6}",
-                cpu_conv1_gelu.iter().sum::<f32>() / cpu_conv1_gelu.len() as f32);
+            let cpu_conv1_gelu: Vec<f32> = cpu_conv1
+                .iter()
+                .map(|x| {
+                    let x = *x;
+                    x * 0.5 * (1.0 + (x * 0.7978845608028654 * (1.0 + 0.044715 * x * x)).tanh())
+                })
+                .collect();
+            eprintln!(
+                "  After GELU: mean={:.6}",
+                cpu_conv1_gelu.iter().sum::<f32>() / cpu_conv1_gelu.len() as f32
+            );
 
             eprintln!("\n[Step 2] CPU Conv2...");
-            let cpu_conv2 = conv_frontend.conv2.forward(&cpu_conv1_gelu).expect("CPU conv2");
+            let cpu_conv2 = conv_frontend
+                .conv2
+                .forward(&cpu_conv1_gelu)
+                .expect("CPU conv2");
             let cpu_seq_after_conv2 = cpu_conv2.len() / d_model;
             eprintln!("  Output shape: {} x {}", cpu_seq_after_conv2, d_model);
-            eprintln!("  mean={:.6}, std={:.6}",
+            eprintln!(
+                "  mean={:.6}, std={:.6}",
                 cpu_conv2.iter().sum::<f32>() / cpu_conv2.len() as f32,
-                (cpu_conv2.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_conv2.len() as f32).sqrt());
+                (cpu_conv2.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_conv2.len() as f32).sqrt()
+            );
 
-            let cpu_conv2_gelu: Vec<f32> = cpu_conv2.iter().map(|x| {
-                let x = *x;
-                x * 0.5 * (1.0 + (x * 0.7978845608028654 * (1.0 + 0.044715 * x * x)).tanh())
-            }).collect();
-            eprintln!("  After GELU: mean={:.6}",
-                cpu_conv2_gelu.iter().sum::<f32>() / cpu_conv2_gelu.len() as f32);
+            let cpu_conv2_gelu: Vec<f32> = cpu_conv2
+                .iter()
+                .map(|x| {
+                    let x = *x;
+                    x * 0.5 * (1.0 + (x * 0.7978845608028654 * (1.0 + 0.044715 * x * x)).tanh())
+                })
+                .collect();
+            eprintln!(
+                "  After GELU: mean={:.6}",
+                cpu_conv2_gelu.iter().sum::<f32>() / cpu_conv2_gelu.len() as f32
+            );
 
             eprintln!("\n[Step 3] Full CPU Frontend...");
             let cpu_frontend = conv_frontend.forward(&mel).expect("CPU frontend");
-            eprintln!("  Output shape: {} x {}", cpu_frontend.len() / d_model, d_model);
-            eprintln!("  mean={:.6}, std={:.6}",
+            eprintln!(
+                "  Output shape: {} x {}",
+                cpu_frontend.len() / d_model,
+                d_model
+            );
+            eprintln!(
+                "  mean={:.6}, std={:.6}",
                 cpu_frontend.iter().sum::<f32>() / cpu_frontend.len() as f32,
-                (cpu_frontend.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_frontend.len() as f32).sqrt());
+                (cpu_frontend.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_frontend.len() as f32)
+                    .sqrt()
+            );
 
-            (cpu_conv1_gelu, cpu_conv2_gelu, cpu_frontend, cpu_seq_after_conv1)
+            (
+                cpu_conv1_gelu,
+                cpu_conv2_gelu,
+                cpu_frontend,
+                cpu_seq_after_conv1,
+            )
         };
 
         // === GPU Conv1d ===
         eprintln!("\n[Step 4] GPU Conv1...");
-        cuda_model.upload_conv_weights_to_gpu().expect("Upload conv weights");
+        cuda_model
+            .upload_conv_weights_to_gpu()
+            .expect("Upload conv weights");
 
         let ctx = cuda_model.executor.context();
         let conv_weights = cuda_model.gpu_conv_weights.as_ref().expect("Conv weights");
 
-        let mel_gpu = GpuResidentTensor::from_host(ctx, &mel)
-            .expect("mel upload");
+        let mel_gpu = GpuResidentTensor::from_host(ctx, &mel).expect("mel upload");
 
         let mut gpu_conv1 = mel_gpu
             .conv1d(
@@ -7549,7 +7715,9 @@ mod tests {
                 Some(&conv_weights.conv1_bias),
                 n_mels as u32,
                 d_model as u32,
-                3, 1, 1,
+                3,
+                1,
+                1,
                 test_seq_len as u32,
             )
             .expect("GPU conv1");
@@ -7557,9 +7725,12 @@ mod tests {
         let gpu_conv1_host = gpu_conv1.to_host().expect("Download");
         let gpu_seq_after_conv1 = gpu_conv1_host.len() / d_model;
         eprintln!("  Output shape: {} x {}", gpu_seq_after_conv1, d_model);
-        eprintln!("  mean={:.6}, std={:.6}",
+        eprintln!(
+            "  mean={:.6}, std={:.6}",
             gpu_conv1_host.iter().sum::<f32>() / gpu_conv1_host.len() as f32,
-            (gpu_conv1_host.iter().map(|x| x.powi(2)).sum::<f32>() / gpu_conv1_host.len() as f32).sqrt());
+            (gpu_conv1_host.iter().map(|x| x.powi(2)).sum::<f32>() / gpu_conv1_host.len() as f32)
+                .sqrt()
+        );
 
         // === Compare ===
         eprintln!("\n[Step 3] Comparing CPU vs GPU Conv1 output...");
@@ -7567,15 +7738,18 @@ mod tests {
         // Note: GPU conv1d includes GELU, CPU doesn't
         // Compare GPU output with CPU GELU output
         if cpu_conv1_gelu.len() == gpu_conv1_host.len() {
-            let max_diff: f32 = cpu_conv1_gelu.iter()
+            let max_diff: f32 = cpu_conv1_gelu
+                .iter()
                 .zip(gpu_conv1_host.iter())
                 .map(|(c, g)| (c - g).abs())
                 .fold(0.0f32, f32::max);
 
-            let avg_diff: f32 = cpu_conv1_gelu.iter()
+            let avg_diff: f32 = cpu_conv1_gelu
+                .iter()
                 .zip(gpu_conv1_host.iter())
                 .map(|(c, g)| (c - g).abs())
-                .sum::<f32>() / cpu_conv1_gelu.len() as f32;
+                .sum::<f32>()
+                / cpu_conv1_gelu.len() as f32;
 
             eprintln!("  Max difference: {:.6}", max_diff);
             eprintln!("  Avg difference: {:.6}", avg_diff);
@@ -7583,9 +7757,13 @@ mod tests {
             // Show first few elements
             eprintln!("\n  First 10 elements comparison:");
             for i in 0..10.min(cpu_conv1_gelu.len()) {
-                eprintln!("    [{}] CPU: {:.6}, GPU: {:.6}, diff: {:.6}",
-                    i, cpu_conv1_gelu[i], gpu_conv1_host[i],
-                    (cpu_conv1_gelu[i] - gpu_conv1_host[i]).abs());
+                eprintln!(
+                    "    [{}] CPU: {:.6}, GPU: {:.6}, diff: {:.6}",
+                    i,
+                    cpu_conv1_gelu[i],
+                    gpu_conv1_host[i],
+                    (cpu_conv1_gelu[i] - gpu_conv1_host[i]).abs()
+                );
             }
 
             if max_diff < 0.05 {
@@ -7594,8 +7772,11 @@ mod tests {
                 eprintln!("\n✗ Conv1 output MISMATCH (max_diff = {:.6})", max_diff);
             }
         } else {
-            eprintln!("  ✗ Shape mismatch: CPU={}, GPU={}",
-                cpu_conv1_gelu.len(), gpu_conv1_host.len());
+            eprintln!(
+                "  ✗ Shape mismatch: CPU={}, GPU={}",
+                cpu_conv1_gelu.len(),
+                gpu_conv1_host.len()
+            );
         }
 
         // === GPU Conv2 ===
@@ -7607,7 +7788,9 @@ mod tests {
                 Some(&conv_weights.conv2_bias),
                 d_model as u32,
                 d_model as u32,
-                3, 2, 1, // stride=2 for conv2
+                3,
+                2,
+                1, // stride=2 for conv2
                 gpu_seq_after_conv1 as u32,
             )
             .expect("GPU conv2");
@@ -7615,22 +7798,28 @@ mod tests {
         let gpu_conv2_host = gpu_conv2.to_host().expect("Download");
         let gpu_seq_after_conv2 = gpu_conv2_host.len() / d_model;
         eprintln!("  Output shape: {} x {}", gpu_seq_after_conv2, d_model);
-        eprintln!("  mean={:.6}, std={:.6}",
+        eprintln!(
+            "  mean={:.6}, std={:.6}",
             gpu_conv2_host.iter().sum::<f32>() / gpu_conv2_host.len() as f32,
-            (gpu_conv2_host.iter().map(|x| x.powi(2)).sum::<f32>() / gpu_conv2_host.len() as f32).sqrt());
+            (gpu_conv2_host.iter().map(|x| x.powi(2)).sum::<f32>() / gpu_conv2_host.len() as f32)
+                .sqrt()
+        );
 
         // === Compare Conv2 ===
         eprintln!("\n[Step 6] Comparing CPU vs GPU Conv2 output...");
         if cpu_conv2_gelu.len() == gpu_conv2_host.len() {
-            let max_diff: f32 = cpu_conv2_gelu.iter()
+            let max_diff: f32 = cpu_conv2_gelu
+                .iter()
                 .zip(gpu_conv2_host.iter())
                 .map(|(c, g)| (c - g).abs())
                 .fold(0.0f32, f32::max);
 
-            let avg_diff: f32 = cpu_conv2_gelu.iter()
+            let avg_diff: f32 = cpu_conv2_gelu
+                .iter()
                 .zip(gpu_conv2_host.iter())
                 .map(|(c, g)| (c - g).abs())
-                .sum::<f32>() / cpu_conv2_gelu.len() as f32;
+                .sum::<f32>()
+                / cpu_conv2_gelu.len() as f32;
 
             eprintln!("  Max difference: {:.6}", max_diff);
             eprintln!("  Avg difference: {:.6}", avg_diff);
@@ -7638,9 +7827,13 @@ mod tests {
             // Show first few elements
             eprintln!("\n  First 10 elements comparison:");
             for i in 0..10.min(cpu_conv2_gelu.len()) {
-                eprintln!("    [{}] CPU: {:.6}, GPU: {:.6}, diff: {:.6}",
-                    i, cpu_conv2_gelu[i], gpu_conv2_host[i],
-                    (cpu_conv2_gelu[i] - gpu_conv2_host[i]).abs());
+                eprintln!(
+                    "    [{}] CPU: {:.6}, GPU: {:.6}, diff: {:.6}",
+                    i,
+                    cpu_conv2_gelu[i],
+                    gpu_conv2_host[i],
+                    (cpu_conv2_gelu[i] - gpu_conv2_host[i]).abs()
+                );
             }
 
             if max_diff < 0.05 {
@@ -7649,26 +7842,40 @@ mod tests {
                 eprintln!("\n✗ Conv2 output MISMATCH (max_diff = {:.6})", max_diff);
             }
         } else {
-            eprintln!("  ✗ Shape mismatch: CPU={}, GPU={}",
-                cpu_conv2_gelu.len(), gpu_conv2_host.len());
+            eprintln!(
+                "  ✗ Shape mismatch: CPU={}, GPU={}",
+                cpu_conv2_gelu.len(),
+                gpu_conv2_host.len()
+            );
         }
 
         // === Compare Full Frontend ===
         eprintln!("\n[Step 8] Comparing Full Frontend CPU vs GPU Conv2+GELU...");
-        eprintln!("  CPU frontend shape: {} x {}", cpu_frontend.len() / d_model, d_model);
-        eprintln!("  GPU conv2 shape: {} x {}", gpu_conv2_host.len() / d_model, d_model);
+        eprintln!(
+            "  CPU frontend shape: {} x {}",
+            cpu_frontend.len() / d_model,
+            d_model
+        );
+        eprintln!(
+            "  GPU conv2 shape: {} x {}",
+            gpu_conv2_host.len() / d_model,
+            d_model
+        );
 
         // Full frontend is conv1->GELU->conv2->GELU, so compare with gpu_conv2
         if cpu_frontend.len() == gpu_conv2_host.len() {
-            let max_diff: f32 = cpu_frontend.iter()
+            let max_diff: f32 = cpu_frontend
+                .iter()
                 .zip(gpu_conv2_host.iter())
                 .map(|(c, g)| (c - g).abs())
                 .fold(0.0f32, f32::max);
 
-            let avg_diff: f32 = cpu_frontend.iter()
+            let avg_diff: f32 = cpu_frontend
+                .iter()
                 .zip(gpu_conv2_host.iter())
                 .map(|(c, g)| (c - g).abs())
-                .sum::<f32>() / cpu_frontend.len() as f32;
+                .sum::<f32>()
+                / cpu_frontend.len() as f32;
 
             eprintln!("  Max difference (full frontend): {:.6}", max_diff);
             eprintln!("  Avg difference (full frontend): {:.6}", avg_diff);
@@ -7679,8 +7886,11 @@ mod tests {
                 eprintln!("\n✗ Full frontend MISMATCH (max_diff = {:.6})", max_diff);
             }
         } else {
-            eprintln!("  ✗ Shape mismatch: CPU frontend={}, GPU conv2={}",
-                cpu_frontend.len(), gpu_conv2_host.len());
+            eprintln!(
+                "  ✗ Shape mismatch: CPU frontend={}, GPU conv2={}",
+                cpu_frontend.len(),
+                gpu_conv2_host.len()
+            );
         }
 
         eprintln!("\n============================================================");
@@ -7729,38 +7939,68 @@ mod tests {
         let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
 
         let d_model = cuda_model.config.n_audio_state as usize;
-        eprintln!("[Config] d_model={}, n_layers={}", d_model, cuda_model.config.n_audio_layer);
-        eprintln!("[Input] mel length: {} ({} frames)", mel.len(), mel.len() / 80);
+        eprintln!(
+            "[Config] d_model={}, n_layers={}",
+            d_model, cuda_model.config.n_audio_layer
+        );
+        eprintln!(
+            "[Input] mel length: {} ({} frames)",
+            mel.len(),
+            mel.len() / 80
+        );
 
         // Run encode_gpu (CPU conv + GPU attention) - known working
         eprintln!("\n[Step 1] Running encode_gpu (CPU conv + GPU attention)...");
         let encoder_output_cpu_conv = cuda_model.encode_gpu(&mel).expect("encode_gpu failed");
         let seq_len = encoder_output_cpu_conv.len() / d_model;
         eprintln!("  Output shape: {} x {}", seq_len, d_model);
-        eprintln!("  mean={:.6}, std={:.6}",
+        eprintln!(
+            "  mean={:.6}, std={:.6}",
             encoder_output_cpu_conv.iter().sum::<f32>() / encoder_output_cpu_conv.len() as f32,
-            (encoder_output_cpu_conv.iter().map(|x| x.powi(2)).sum::<f32>() / encoder_output_cpu_conv.len() as f32).sqrt());
+            (encoder_output_cpu_conv
+                .iter()
+                .map(|x| x.powi(2))
+                .sum::<f32>()
+                / encoder_output_cpu_conv.len() as f32)
+                .sqrt()
+        );
 
         // Run encode_gpu_total_offload (GPU conv + GPU attention) - known broken
         eprintln!("\n[Step 2] Running encode_gpu_total_offload (GPU conv + GPU attention)...");
-        let encoder_output_gpu_conv = cuda_model.encode_gpu_total_offload(&mel).expect("encode_gpu_total_offload failed");
-        eprintln!("  Output shape: {} x {}", encoder_output_gpu_conv.len() / d_model, d_model);
-        eprintln!("  mean={:.6}, std={:.6}",
+        let encoder_output_gpu_conv = cuda_model
+            .encode_gpu_total_offload(&mel)
+            .expect("encode_gpu_total_offload failed");
+        eprintln!(
+            "  Output shape: {} x {}",
+            encoder_output_gpu_conv.len() / d_model,
+            d_model
+        );
+        eprintln!(
+            "  mean={:.6}, std={:.6}",
             encoder_output_gpu_conv.iter().sum::<f32>() / encoder_output_gpu_conv.len() as f32,
-            (encoder_output_gpu_conv.iter().map(|x| x.powi(2)).sum::<f32>() / encoder_output_gpu_conv.len() as f32).sqrt());
+            (encoder_output_gpu_conv
+                .iter()
+                .map(|x| x.powi(2))
+                .sum::<f32>()
+                / encoder_output_gpu_conv.len() as f32)
+                .sqrt()
+        );
 
         // Compare
         eprintln!("\n[Step 3] Comparing encoder outputs...");
         if encoder_output_cpu_conv.len() == encoder_output_gpu_conv.len() {
-            let max_diff: f32 = encoder_output_cpu_conv.iter()
+            let max_diff: f32 = encoder_output_cpu_conv
+                .iter()
                 .zip(encoder_output_gpu_conv.iter())
                 .map(|(c, g)| (c - g).abs())
                 .fold(0.0f32, f32::max);
 
-            let avg_diff: f32 = encoder_output_cpu_conv.iter()
+            let avg_diff: f32 = encoder_output_cpu_conv
+                .iter()
                 .zip(encoder_output_gpu_conv.iter())
                 .map(|(c, g)| (c - g).abs())
-                .sum::<f32>() / encoder_output_cpu_conv.len() as f32;
+                .sum::<f32>()
+                / encoder_output_cpu_conv.len() as f32;
 
             eprintln!("  Max difference: {:.6}", max_diff);
             eprintln!("  Avg difference: {:.6}", avg_diff);
@@ -7768,9 +8008,13 @@ mod tests {
             // Show first few elements
             eprintln!("\n  First 10 elements comparison:");
             for i in 0..10.min(encoder_output_cpu_conv.len()) {
-                eprintln!("    [{}] CPU_conv: {:.6}, GPU_conv: {:.6}, diff: {:.6}",
-                    i, encoder_output_cpu_conv[i], encoder_output_gpu_conv[i],
-                    (encoder_output_cpu_conv[i] - encoder_output_gpu_conv[i]).abs());
+                eprintln!(
+                    "    [{}] CPU_conv: {:.6}, GPU_conv: {:.6}, diff: {:.6}",
+                    i,
+                    encoder_output_cpu_conv[i],
+                    encoder_output_gpu_conv[i],
+                    (encoder_output_cpu_conv[i] - encoder_output_gpu_conv[i]).abs()
+                );
             }
 
             if max_diff < 0.1 {
@@ -7779,8 +8023,11 @@ mod tests {
                 eprintln!("\n✗ Encoder output MISMATCH (max_diff = {:.6})", max_diff);
             }
         } else {
-            eprintln!("  ✗ Shape mismatch: CPU_conv={}, GPU_conv={}",
-                encoder_output_cpu_conv.len(), encoder_output_gpu_conv.len());
+            eprintln!(
+                "  ✗ Shape mismatch: CPU_conv={}, GPU_conv={}",
+                encoder_output_cpu_conv.len(),
+                encoder_output_gpu_conv.len()
+            );
         }
 
         eprintln!("\n============================================================");
@@ -7832,25 +8079,37 @@ mod tests {
         let n_layers = cuda_model.config.n_audio_layer as usize;
         let n_mels = cuda_model.config.n_mels as usize;
 
-        eprintln!("[Config] d_model={}, n_heads={}, head_dim={}, n_layers={}",
-            d_model, n_heads, head_dim, n_layers);
+        eprintln!(
+            "[Config] d_model={}, n_heads={}, head_dim={}, n_layers={}",
+            d_model, n_heads, head_dim, n_layers
+        );
 
         // ========== STEP 1: Conv Frontend + Pos Emb (all CPU data extraction first) ==========
         eprintln!("\n=== BRICK 1: Conv Frontend ===");
 
         // CPU conv frontend
-        let cpu_conv_output = cuda_model.encoder.conv_frontend().forward(&mel).expect("CPU conv");
+        let cpu_conv_output = cuda_model
+            .encoder
+            .conv_frontend()
+            .forward(&mel)
+            .expect("CPU conv");
         let seq_len = cpu_conv_output.len() / d_model;
-        eprintln!("[CPU Conv] shape: {} x {}, mean={:.6}, std={:.6}",
-            seq_len, d_model,
+        eprintln!(
+            "[CPU Conv] shape: {} x {}, mean={:.6}, std={:.6}",
+            seq_len,
+            d_model,
             cpu_conv_output.iter().sum::<f32>() / cpu_conv_output.len() as f32,
-            (cpu_conv_output.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_conv_output.len() as f32).sqrt());
+            (cpu_conv_output.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_conv_output.len() as f32)
+                .sqrt()
+        );
 
         // Get positional embedding (need before mutable borrow)
         let pos_emb = cuda_model.encoder.positional_embedding().to_vec();
 
         // ========== GPU conv frontend ==========
-        cuda_model.upload_conv_weights_to_gpu().expect("Upload conv");
+        cuda_model
+            .upload_conv_weights_to_gpu()
+            .expect("Upload conv");
 
         let (gpu_conv_output, gpu_seq_len) = {
             let ctx = cuda_model.executor.context();
@@ -7859,33 +8118,61 @@ mod tests {
             let seq_len_in = mel.len() / n_mels;
             let mel_gpu = GpuResidentTensor::from_host(ctx, &mel).expect("mel upload");
 
-            let conv1_out = mel_gpu.conv1d(
-                ctx, &conv_weights.conv1_weight, Some(&conv_weights.conv1_bias),
-                n_mels as u32, d_model as u32, 3, 1, 1, seq_len_in as u32
-            ).expect("GPU conv1");
+            let conv1_out = mel_gpu
+                .conv1d(
+                    ctx,
+                    &conv_weights.conv1_weight,
+                    Some(&conv_weights.conv1_bias),
+                    n_mels as u32,
+                    d_model as u32,
+                    3,
+                    1,
+                    1,
+                    seq_len_in as u32,
+                )
+                .expect("GPU conv1");
 
-            let mut conv2_out = conv1_out.conv1d(
-                ctx, &conv_weights.conv2_weight, Some(&conv_weights.conv2_bias),
-                d_model as u32, d_model as u32, 3, 2, 1, seq_len_in as u32
-            ).expect("GPU conv2");
+            let mut conv2_out = conv1_out
+                .conv1d(
+                    ctx,
+                    &conv_weights.conv2_weight,
+                    Some(&conv_weights.conv2_bias),
+                    d_model as u32,
+                    d_model as u32,
+                    3,
+                    2,
+                    1,
+                    seq_len_in as u32,
+                )
+                .expect("GPU conv2");
 
             let output = conv2_out.to_host().expect("Download conv");
             let seq_len = output.len() / d_model;
             (output, seq_len)
         };
 
-        eprintln!("[GPU Conv] shape: {} x {}, mean={:.6}, std={:.6}",
-            gpu_seq_len, d_model,
+        eprintln!(
+            "[GPU Conv] shape: {} x {}, mean={:.6}, std={:.6}",
+            gpu_seq_len,
+            d_model,
             gpu_conv_output.iter().sum::<f32>() / gpu_conv_output.len() as f32,
-            (gpu_conv_output.iter().map(|x| x.powi(2)).sum::<f32>() / gpu_conv_output.len() as f32).sqrt());
+            (gpu_conv_output.iter().map(|x| x.powi(2)).sum::<f32>() / gpu_conv_output.len() as f32)
+                .sqrt()
+        );
 
         // Compare conv outputs
         let conv_max_diff = if cpu_conv_output.len() == gpu_conv_output.len() {
-            cpu_conv_output.iter().zip(gpu_conv_output.iter())
+            cpu_conv_output
+                .iter()
+                .zip(gpu_conv_output.iter())
                 .map(|(c, g)| (c - g).abs())
                 .fold(0.0f32, f32::max)
         } else {
-            eprintln!("  ✗ Conv shape mismatch: CPU={}, GPU={}", cpu_conv_output.len(), gpu_conv_output.len());
+            eprintln!(
+                "  ✗ Conv shape mismatch: CPU={}, GPU={}",
+                cpu_conv_output.len(),
+                gpu_conv_output.len()
+            );
             f32::MAX
         };
         eprintln!("[Conv Diff] max={:.6}", conv_max_diff);
@@ -7900,9 +8187,12 @@ mod tests {
                 cpu_with_pos[pos * d_model + d] += pos_emb[pos * d_model + d];
             }
         }
-        eprintln!("[CPU+PosEmb] mean={:.6}, std={:.6}",
+        eprintln!(
+            "[CPU+PosEmb] mean={:.6}, std={:.6}",
             cpu_with_pos.iter().sum::<f32>() / cpu_with_pos.len() as f32,
-            (cpu_with_pos.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_with_pos.len() as f32).sqrt());
+            (cpu_with_pos.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_with_pos.len() as f32)
+                .sqrt()
+        );
 
         // GPU: add positional embedding (done on CPU, re-upload)
         let mut gpu_with_pos = gpu_conv_output.clone();
@@ -7911,13 +8201,18 @@ mod tests {
                 gpu_with_pos[pos * d_model + d] += pos_emb[pos * d_model + d];
             }
         }
-        eprintln!("[GPU+PosEmb] mean={:.6}, std={:.6}",
+        eprintln!(
+            "[GPU+PosEmb] mean={:.6}, std={:.6}",
             gpu_with_pos.iter().sum::<f32>() / gpu_with_pos.len() as f32,
-            (gpu_with_pos.iter().map(|x| x.powi(2)).sum::<f32>() / gpu_with_pos.len() as f32).sqrt());
+            (gpu_with_pos.iter().map(|x| x.powi(2)).sum::<f32>() / gpu_with_pos.len() as f32)
+                .sqrt()
+        );
 
         // Compare after pos emb
         let pos_max_diff = if cpu_with_pos.len() == gpu_with_pos.len() {
-            cpu_with_pos.iter().zip(gpu_with_pos.iter())
+            cpu_with_pos
+                .iter()
+                .zip(gpu_with_pos.iter())
                 .map(|(c, g)| (c - g).abs())
                 .fold(0.0f32, f32::max)
         } else {
@@ -7929,7 +8224,9 @@ mod tests {
         eprintln!("\n=== BRICK 3: Transformer Layers (Layer-by-Layer) ===");
 
         // Upload encoder weights for GPU path
-        cuda_model.upload_encoder_weights_to_gpu().expect("Upload encoder weights");
+        cuda_model
+            .upload_encoder_weights_to_gpu()
+            .expect("Upload encoder weights");
 
         // Store each CPU layer's output for proper comparison
         let mut cpu_layer_outputs: Vec<Vec<f32>> = Vec::with_capacity(n_layers);
@@ -7944,9 +8241,21 @@ mod tests {
             let ln1_out = block.ln1.forward(&cpu_x).expect("CPU LN1");
 
             // Self-attention Q/K/V projections
-            let q = block.self_attn.w_q().forward(&ln1_out, seq_len).expect("CPU Q");
-            let k = block.self_attn.w_k().forward(&ln1_out, seq_len).expect("CPU K");
-            let v = block.self_attn.w_v().forward(&ln1_out, seq_len).expect("CPU V");
+            let q = block
+                .self_attn
+                .w_q()
+                .forward(&ln1_out, seq_len)
+                .expect("CPU Q");
+            let k = block
+                .self_attn
+                .w_k()
+                .forward(&ln1_out, seq_len)
+                .expect("CPU K");
+            let v = block
+                .self_attn
+                .w_v()
+                .forward(&ln1_out, seq_len)
+                .expect("CPU V");
 
             // Self-attention (use scaled dot product)
             let scale = 1.0 / (head_dim as f32).sqrt();
@@ -8015,10 +8324,18 @@ mod tests {
             }
 
             // Output projection
-            let attn_proj = block.self_attn.w_o().forward(&attn_output, seq_len).expect("CPU O");
+            let attn_proj = block
+                .self_attn
+                .w_o()
+                .forward(&attn_output, seq_len)
+                .expect("CPU O");
 
             // First residual
-            let mut residual1: Vec<f32> = cpu_x.iter().zip(attn_proj.iter()).map(|(a, b)| a + b).collect();
+            let mut residual1: Vec<f32> = cpu_x
+                .iter()
+                .zip(attn_proj.iter())
+                .map(|(a, b)| a + b)
+                .collect();
 
             // FFN
             let ln2_out = block.ln2.forward(&residual1).expect("CPU LN2");
@@ -8033,49 +8350,71 @@ mod tests {
             // Store this layer's output for comparison
             cpu_layer_outputs.push(residual1);
 
-            eprintln!("[CPU Layer {}] mean={:.6}", layer_idx,
-                cpu_x.iter().sum::<f32>() / cpu_x.len() as f32);
+            eprintln!(
+                "[CPU Layer {}] mean={:.6}",
+                layer_idx,
+                cpu_x.iter().sum::<f32>() / cpu_x.len() as f32
+            );
         }
 
         // Now run GPU layers with SAME INPUT as CPU (cpu_with_pos) for fair comparison
         eprintln!("\n--- GPU Layers (same input as CPU for fair comparison) ---");
         {
             let ctx = cuda_model.executor.context();
-            let weights = cuda_model.gpu_encoder_weights.as_ref().expect("Encoder weights");
-            let config = cuda_model.gpu_encoder_config.as_ref().expect("Encoder config");
+            let weights = cuda_model
+                .gpu_encoder_weights
+                .as_ref()
+                .expect("Encoder weights");
+            let config = cuda_model
+                .gpu_encoder_config
+                .as_ref()
+                .expect("Encoder config");
 
             // Start from CPU input (not GPU conv output) for fair layer-by-layer comparison
-            let mut gpu_x_tensor = GpuResidentTensor::from_host(ctx, &cpu_with_pos).expect("Upload");
+            let mut gpu_x_tensor =
+                GpuResidentTensor::from_host(ctx, &cpu_with_pos).expect("Upload");
 
             for layer_idx in 0..n_layers {
                 // GPU layer forward
-                gpu_x_tensor = forward_encoder_block_gpu(ctx, &gpu_x_tensor, &weights[layer_idx], config)
-                    .expect("GPU layer");
+                gpu_x_tensor =
+                    forward_encoder_block_gpu(ctx, &gpu_x_tensor, &weights[layer_idx], config)
+                        .expect("GPU layer");
 
                 let gpu_layer_out = gpu_x_tensor.to_host().expect("Download layer");
 
                 // Compare with CPU result for THIS layer
-                let layer_max_diff = cpu_layer_outputs[layer_idx].iter().zip(gpu_layer_out.iter())
+                let layer_max_diff = cpu_layer_outputs[layer_idx]
+                    .iter()
+                    .zip(gpu_layer_out.iter())
                     .map(|(c, g)| (c - g).abs())
                     .fold(0.0f32, f32::max);
 
-                eprintln!("[GPU Layer {}] mean={:.6}, vs_CPU_max_diff={:.6}",
+                eprintln!(
+                    "[GPU Layer {}] mean={:.6}, vs_CPU_max_diff={:.6}",
                     layer_idx,
                     gpu_layer_out.iter().sum::<f32>() / gpu_layer_out.len() as f32,
-                    layer_max_diff);
+                    layer_max_diff
+                );
 
                 // Reset to CPU layer output for next layer (isolate errors)
-                gpu_x_tensor = GpuResidentTensor::from_host(ctx, &cpu_layer_outputs[layer_idx]).expect("Re-upload");
+                gpu_x_tensor = GpuResidentTensor::from_host(ctx, &cpu_layer_outputs[layer_idx])
+                    .expect("Re-upload");
             }
         }
 
         // ========== STEP 4: Final LayerNorm ==========
         eprintln!("\n=== BRICK 4: Final LayerNorm ===");
 
-        let cpu_final = cuda_model.encoder.ln_post().forward(&cpu_x).expect("CPU ln_post");
-        eprintln!("[CPU Final] mean={:.6}, std={:.6}",
+        let cpu_final = cuda_model
+            .encoder
+            .ln_post()
+            .forward(&cpu_x)
+            .expect("CPU ln_post");
+        eprintln!(
+            "[CPU Final] mean={:.6}, std={:.6}",
             cpu_final.iter().sum::<f32>() / cpu_final.len() as f32,
-            (cpu_final.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_final.len() as f32).sqrt());
+            (cpu_final.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_final.len() as f32).sqrt()
+        );
 
         eprintln!("\n============================================================");
         eprintln!("Brick Trace Complete: Check layer-by-layer diffs above");
@@ -8126,10 +8465,17 @@ mod tests {
         let n_heads = cuda_model.config.n_audio_head as usize;
         let head_dim = d_model / n_heads;
 
-        eprintln!("[Config] d_model={}, n_heads={}, head_dim={}", d_model, n_heads, head_dim);
+        eprintln!(
+            "[Config] d_model={}, n_heads={}, head_dim={}",
+            d_model, n_heads, head_dim
+        );
 
         // Get CPU conv output + pos embedding as the input
-        let cpu_conv_output = cuda_model.encoder.conv_frontend().forward(&mel).expect("CPU conv");
+        let cpu_conv_output = cuda_model
+            .encoder
+            .conv_frontend()
+            .forward(&mel)
+            .expect("CPU conv");
         let seq_len = cpu_conv_output.len() / d_model;
         let pos_emb = cuda_model.encoder.positional_embedding().to_vec();
 
@@ -8140,35 +8486,55 @@ mod tests {
             }
         }
 
-        eprintln!("[Input] seq_len={}, mean={:.6}", seq_len,
-            input_x.iter().sum::<f32>() / input_x.len() as f32);
+        eprintln!(
+            "[Input] seq_len={}, mean={:.6}",
+            seq_len,
+            input_x.iter().sum::<f32>() / input_x.len() as f32
+        );
 
         // Upload encoder weights
-        cuda_model.upload_encoder_weights_to_gpu().expect("Upload encoder weights");
+        cuda_model
+            .upload_encoder_weights_to_gpu()
+            .expect("Upload encoder weights");
 
         // We'll compare Layer 0 step by step
         let block = &cuda_model.encoder.blocks()[0];
 
         eprintln!("\n=== STEP 1: LayerNorm 1 ===");
         let cpu_ln1 = block.ln1.forward(&input_x).expect("CPU LN1");
-        eprintln!("[CPU LN1] mean={:.6}, std={:.6}",
+        eprintln!(
+            "[CPU LN1] mean={:.6}, std={:.6}",
             cpu_ln1.iter().sum::<f32>() / cpu_ln1.len() as f32,
-            (cpu_ln1.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_ln1.len() as f32).sqrt());
+            (cpu_ln1.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_ln1.len() as f32).sqrt()
+        );
 
         // GPU LN1
         let gpu_ln1 = {
             let ctx = cuda_model.executor.context();
             let weights = &cuda_model.gpu_encoder_weights.as_ref().expect("Weights")[0];
             let x_gpu = GpuResidentTensor::from_host(ctx, &input_x).expect("Upload");
-            x_gpu.layer_norm(ctx, &weights.ln1_gamma, &weights.ln1_beta, d_model as u32, seq_len as u32)
+            x_gpu
+                .layer_norm(
+                    ctx,
+                    &weights.ln1_gamma,
+                    &weights.ln1_beta,
+                    d_model as u32,
+                    seq_len as u32,
+                )
                 .expect("GPU LN1")
-                .to_host().expect("Download")
+                .to_host()
+                .expect("Download")
         };
-        let ln1_diff = cpu_ln1.iter().zip(gpu_ln1.iter())
+        let ln1_diff = cpu_ln1
+            .iter()
+            .zip(gpu_ln1.iter())
             .map(|(c, g)| (c - g).abs())
             .fold(0.0f32, f32::max);
-        eprintln!("[GPU LN1] mean={:.6}, max_diff={:.6}",
-            gpu_ln1.iter().sum::<f32>() / gpu_ln1.len() as f32, ln1_diff);
+        eprintln!(
+            "[GPU LN1] mean={:.6}, max_diff={:.6}",
+            gpu_ln1.iter().sum::<f32>() / gpu_ln1.len() as f32,
+            ln1_diff
+        );
 
         eprintln!("\n=== STEP 2: Q/K/V Projections ===");
 
@@ -8197,32 +8563,90 @@ mod tests {
             let w_v_gpu = weights.w_v.to_host().expect("Download w_v");
 
             // Compare
-            let w_q_diff: f32 = w_q_cpu_t.iter().zip(w_q_gpu.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
-            let w_k_diff: f32 = w_k_cpu_t.iter().zip(w_k_gpu.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
-            let w_v_diff: f32 = w_v_cpu_t.iter().zip(w_v_gpu.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+            let w_q_diff: f32 = w_q_cpu_t
+                .iter()
+                .zip(w_q_gpu.iter())
+                .map(|(c, g)| (c - g).abs())
+                .fold(0.0f32, f32::max);
+            let w_k_diff: f32 = w_k_cpu_t
+                .iter()
+                .zip(w_k_gpu.iter())
+                .map(|(c, g)| (c - g).abs())
+                .fold(0.0f32, f32::max);
+            let w_v_diff: f32 = w_v_cpu_t
+                .iter()
+                .zip(w_v_gpu.iter())
+                .map(|(c, g)| (c - g).abs())
+                .fold(0.0f32, f32::max);
 
-            eprintln!("[WEIGHT CHECK] w_q max_diff={:.6}, w_k max_diff={:.6}, w_v max_diff={:.6}",
-                      w_q_diff, w_k_diff, w_v_diff);
+            eprintln!(
+                "[WEIGHT CHECK] w_q max_diff={:.6}, w_k max_diff={:.6}, w_v max_diff={:.6}",
+                w_q_diff, w_k_diff, w_v_diff
+            );
 
             // Also check biases
             let b_q_gpu = weights.b_q.to_host().expect("Download b_q");
             let b_k_gpu = weights.b_k.to_host().expect("Download b_k");
             let b_v_gpu = weights.b_v.to_host().expect("Download b_v");
 
-            let b_q_diff: f32 = block.self_attn.w_q().bias.iter().zip(b_q_gpu.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
-            let b_k_diff: f32 = block.self_attn.w_k().bias.iter().zip(b_k_gpu.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
-            let b_v_diff: f32 = block.self_attn.w_v().bias.iter().zip(b_v_gpu.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+            let b_q_diff: f32 = block
+                .self_attn
+                .w_q()
+                .bias
+                .iter()
+                .zip(b_q_gpu.iter())
+                .map(|(c, g)| (c - g).abs())
+                .fold(0.0f32, f32::max);
+            let b_k_diff: f32 = block
+                .self_attn
+                .w_k()
+                .bias
+                .iter()
+                .zip(b_k_gpu.iter())
+                .map(|(c, g)| (c - g).abs())
+                .fold(0.0f32, f32::max);
+            let b_v_diff: f32 = block
+                .self_attn
+                .w_v()
+                .bias
+                .iter()
+                .zip(b_v_gpu.iter())
+                .map(|(c, g)| (c - g).abs())
+                .fold(0.0f32, f32::max);
 
-            eprintln!("[BIAS CHECK] b_q max_diff={:.6}, b_k max_diff={:.6}, b_v max_diff={:.6}",
-                      b_q_diff, b_k_diff, b_v_diff);
+            eprintln!(
+                "[BIAS CHECK] b_q max_diff={:.6}, b_k max_diff={:.6}, b_v max_diff={:.6}",
+                b_q_diff, b_k_diff, b_v_diff
+            );
         }
 
-        let cpu_q = block.self_attn.w_q().forward(&cpu_ln1, seq_len).expect("CPU Q");
-        let cpu_k = block.self_attn.w_k().forward(&cpu_ln1, seq_len).expect("CPU K");
-        let cpu_v = block.self_attn.w_v().forward(&cpu_ln1, seq_len).expect("CPU V");
-        eprintln!("[CPU Q] mean={:.6}", cpu_q.iter().sum::<f32>() / cpu_q.len() as f32);
-        eprintln!("[CPU K] mean={:.6}", cpu_k.iter().sum::<f32>() / cpu_k.len() as f32);
-        eprintln!("[CPU V] mean={:.6}", cpu_v.iter().sum::<f32>() / cpu_v.len() as f32);
+        let cpu_q = block
+            .self_attn
+            .w_q()
+            .forward(&cpu_ln1, seq_len)
+            .expect("CPU Q");
+        let cpu_k = block
+            .self_attn
+            .w_k()
+            .forward(&cpu_ln1, seq_len)
+            .expect("CPU K");
+        let cpu_v = block
+            .self_attn
+            .w_v()
+            .forward(&cpu_ln1, seq_len)
+            .expect("CPU V");
+        eprintln!(
+            "[CPU Q] mean={:.6}",
+            cpu_q.iter().sum::<f32>() / cpu_q.len() as f32
+        );
+        eprintln!(
+            "[CPU K] mean={:.6}",
+            cpu_k.iter().sum::<f32>() / cpu_k.len() as f32
+        );
+        eprintln!(
+            "[CPU V] mean={:.6}",
+            cpu_v.iter().sum::<f32>() / cpu_v.len() as f32
+        );
 
         // GPU Q/K/V - test ORDER dependency: compute K FIRST to see if first call always succeeds
         let (gpu_q, gpu_k, gpu_v) = {
@@ -8232,24 +8656,78 @@ mod tests {
             // HYPOTHESIS: Does the FIRST GEMM call always succeed, regardless of which projection?
             // Test: K first, then Q, then V
             let ln1_for_k = GpuResidentTensor::from_host(ctx, &cpu_ln1).expect("Upload LN1 for K");
-            let k = ln1_for_k.linear(ctx, &weights.w_k, Some(&weights.b_k), seq_len as u32, d_model as u32, d_model as u32)
-                .expect("GPU K").to_host().expect("Download K");
+            let k = ln1_for_k
+                .linear(
+                    ctx,
+                    &weights.w_k,
+                    Some(&weights.b_k),
+                    seq_len as u32,
+                    d_model as u32,
+                    d_model as u32,
+                )
+                .expect("GPU K")
+                .to_host()
+                .expect("Download K");
 
             let ln1_for_q = GpuResidentTensor::from_host(ctx, &cpu_ln1).expect("Upload LN1 for Q");
-            let q = ln1_for_q.linear(ctx, &weights.w_q, Some(&weights.b_q), seq_len as u32, d_model as u32, d_model as u32)
-                .expect("GPU Q").to_host().expect("Download Q");
+            let q = ln1_for_q
+                .linear(
+                    ctx,
+                    &weights.w_q,
+                    Some(&weights.b_q),
+                    seq_len as u32,
+                    d_model as u32,
+                    d_model as u32,
+                )
+                .expect("GPU Q")
+                .to_host()
+                .expect("Download Q");
 
             let ln1_for_v = GpuResidentTensor::from_host(ctx, &cpu_ln1).expect("Upload LN1 for V");
-            let v = ln1_for_v.linear(ctx, &weights.w_v, Some(&weights.b_v), seq_len as u32, d_model as u32, d_model as u32)
-                .expect("GPU V").to_host().expect("Download V");
+            let v = ln1_for_v
+                .linear(
+                    ctx,
+                    &weights.w_v,
+                    Some(&weights.b_v),
+                    seq_len as u32,
+                    d_model as u32,
+                    d_model as u32,
+                )
+                .expect("GPU V")
+                .to_host()
+                .expect("Download V");
             (q, k, v)
         };
-        let q_diff = cpu_q.iter().zip(gpu_q.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
-        let k_diff = cpu_k.iter().zip(gpu_k.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
-        let v_diff = cpu_v.iter().zip(gpu_v.iter()).map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
-        eprintln!("[GPU Q] mean={:.6}, max_diff={:.6}", gpu_q.iter().sum::<f32>() / gpu_q.len() as f32, q_diff);
-        eprintln!("[GPU K] mean={:.6}, max_diff={:.6}", gpu_k.iter().sum::<f32>() / gpu_k.len() as f32, k_diff);
-        eprintln!("[GPU V] mean={:.6}, max_diff={:.6}", gpu_v.iter().sum::<f32>() / gpu_v.len() as f32, v_diff);
+        let q_diff = cpu_q
+            .iter()
+            .zip(gpu_q.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
+        let k_diff = cpu_k
+            .iter()
+            .zip(gpu_k.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
+        let v_diff = cpu_v
+            .iter()
+            .zip(gpu_v.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!(
+            "[GPU Q] mean={:.6}, max_diff={:.6}",
+            gpu_q.iter().sum::<f32>() / gpu_q.len() as f32,
+            q_diff
+        );
+        eprintln!(
+            "[GPU K] mean={:.6}, max_diff={:.6}",
+            gpu_k.iter().sum::<f32>() / gpu_k.len() as f32,
+            k_diff
+        );
+        eprintln!(
+            "[GPU V] mean={:.6}, max_diff={:.6}",
+            gpu_v.iter().sum::<f32>() / gpu_v.len() as f32,
+            v_diff
+        );
 
         eprintln!("\n=== STEP 3: Self-Attention ===");
         // CPU attention (use the CPU Q/K/V)
@@ -8257,13 +8735,25 @@ mod tests {
         let mut cpu_attn_output = vec![0.0f32; seq_len * d_model];
         for h in 0..n_heads {
             let q_head: Vec<f32> = (0..seq_len)
-                .flat_map(|pos| cpu_q[pos * d_model + h * head_dim..pos * d_model + (h + 1) * head_dim].iter().copied())
+                .flat_map(|pos| {
+                    cpu_q[pos * d_model + h * head_dim..pos * d_model + (h + 1) * head_dim]
+                        .iter()
+                        .copied()
+                })
                 .collect();
             let k_head: Vec<f32> = (0..seq_len)
-                .flat_map(|pos| cpu_k[pos * d_model + h * head_dim..pos * d_model + (h + 1) * head_dim].iter().copied())
+                .flat_map(|pos| {
+                    cpu_k[pos * d_model + h * head_dim..pos * d_model + (h + 1) * head_dim]
+                        .iter()
+                        .copied()
+                })
                 .collect();
             let v_head: Vec<f32> = (0..seq_len)
-                .flat_map(|pos| cpu_v[pos * d_model + h * head_dim..pos * d_model + (h + 1) * head_dim].iter().copied())
+                .flat_map(|pos| {
+                    cpu_v[pos * d_model + h * head_dim..pos * d_model + (h + 1) * head_dim]
+                        .iter()
+                        .copied()
+                })
                 .collect();
 
             let mut scores = vec![0.0f32; seq_len * seq_len];
@@ -8279,7 +8769,10 @@ mod tests {
 
             for i in 0..seq_len {
                 let row_start = i * seq_len;
-                let max_val = scores[row_start..row_start + seq_len].iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                let max_val = scores[row_start..row_start + seq_len]
+                    .iter()
+                    .cloned()
+                    .fold(f32::NEG_INFINITY, f32::max);
                 let mut sum = 0.0f32;
                 for j in 0..seq_len {
                     scores[row_start + j] = (scores[row_start + j] - max_val).exp();
@@ -8300,7 +8793,10 @@ mod tests {
                 }
             }
         }
-        eprintln!("[CPU Attn] mean={:.6}", cpu_attn_output.iter().sum::<f32>() / cpu_attn_output.len() as f32);
+        eprintln!(
+            "[CPU Attn] mean={:.6}",
+            cpu_attn_output.iter().sum::<f32>() / cpu_attn_output.len() as f32
+        );
 
         // GPU attention (using CPU Q/K/V for fair comparison)
         let gpu_attn_output = {
@@ -8309,15 +8805,29 @@ mod tests {
             let k_gpu = GpuResidentTensor::from_host(ctx, &cpu_k).expect("Upload K");
             let v_gpu = GpuResidentTensor::from_host(ctx, &cpu_v).expect("Upload V");
 
-            batched_multihead_attention(ctx, &q_gpu, &k_gpu, &v_gpu, n_heads as u32, head_dim as u32, seq_len as u32)
-                .expect("GPU attention")
-                .to_host().expect("Download attention")
+            batched_multihead_attention(
+                ctx,
+                &q_gpu,
+                &k_gpu,
+                &v_gpu,
+                n_heads as u32,
+                head_dim as u32,
+                seq_len as u32,
+            )
+            .expect("GPU attention")
+            .to_host()
+            .expect("Download attention")
         };
-        let attn_diff = cpu_attn_output.iter().zip(gpu_attn_output.iter())
+        let attn_diff = cpu_attn_output
+            .iter()
+            .zip(gpu_attn_output.iter())
             .map(|(c, g)| (c - g).abs())
             .fold(0.0f32, f32::max);
-        eprintln!("[GPU Attn] mean={:.6}, max_diff={:.6}",
-            gpu_attn_output.iter().sum::<f32>() / gpu_attn_output.len() as f32, attn_diff);
+        eprintln!(
+            "[GPU Attn] mean={:.6}, max_diff={:.6}",
+            gpu_attn_output.iter().sum::<f32>() / gpu_attn_output.len() as f32,
+            attn_diff
+        );
 
         // Per-head divergence tracking (WAPR-PERF-014 Brick tracing)
         eprintln!("  Per-head max_diff:");
@@ -8335,62 +8845,120 @@ mod tests {
         }
 
         eprintln!("\n=== STEP 4: Output Projection ===");
-        let cpu_attn_proj = block.self_attn.w_o().forward(&cpu_attn_output, seq_len).expect("CPU O");
-        eprintln!("[CPU O_proj] mean={:.6}", cpu_attn_proj.iter().sum::<f32>() / cpu_attn_proj.len() as f32);
+        let cpu_attn_proj = block
+            .self_attn
+            .w_o()
+            .forward(&cpu_attn_output, seq_len)
+            .expect("CPU O");
+        eprintln!(
+            "[CPU O_proj] mean={:.6}",
+            cpu_attn_proj.iter().sum::<f32>() / cpu_attn_proj.len() as f32
+        );
 
         // GPU output projection (using CPU attention output for fair comparison)
         let gpu_attn_proj = {
             let ctx = cuda_model.executor.context();
             let weights = &cuda_model.gpu_encoder_weights.as_ref().expect("Weights")[0];
-            let attn_gpu = GpuResidentTensor::from_host(ctx, &cpu_attn_output).expect("Upload attn");
-            attn_gpu.linear(ctx, &weights.w_o, Some(&weights.b_o), seq_len as u32, d_model as u32, d_model as u32)
-                .expect("GPU O").to_host().expect("Download O")
+            let attn_gpu =
+                GpuResidentTensor::from_host(ctx, &cpu_attn_output).expect("Upload attn");
+            attn_gpu
+                .linear(
+                    ctx,
+                    &weights.w_o,
+                    Some(&weights.b_o),
+                    seq_len as u32,
+                    d_model as u32,
+                    d_model as u32,
+                )
+                .expect("GPU O")
+                .to_host()
+                .expect("Download O")
         };
-        let o_diff = cpu_attn_proj.iter().zip(gpu_attn_proj.iter())
+        let o_diff = cpu_attn_proj
+            .iter()
+            .zip(gpu_attn_proj.iter())
             .map(|(c, g)| (c - g).abs())
             .fold(0.0f32, f32::max);
-        eprintln!("[GPU O_proj] mean={:.6}, max_diff={:.6}",
-            gpu_attn_proj.iter().sum::<f32>() / gpu_attn_proj.len() as f32, o_diff);
+        eprintln!(
+            "[GPU O_proj] mean={:.6}, max_diff={:.6}",
+            gpu_attn_proj.iter().sum::<f32>() / gpu_attn_proj.len() as f32,
+            o_diff
+        );
 
         eprintln!("\n=== STEP 5: First Residual ===");
-        let cpu_residual1: Vec<f32> = input_x.iter().zip(cpu_attn_proj.iter()).map(|(a, b)| a + b).collect();
-        eprintln!("[CPU Res1] mean={:.6}", cpu_residual1.iter().sum::<f32>() / cpu_residual1.len() as f32);
+        let cpu_residual1: Vec<f32> = input_x
+            .iter()
+            .zip(cpu_attn_proj.iter())
+            .map(|(a, b)| a + b)
+            .collect();
+        eprintln!(
+            "[CPU Res1] mean={:.6}",
+            cpu_residual1.iter().sum::<f32>() / cpu_residual1.len() as f32
+        );
 
         // GPU residual (using CPU values for fair comparison)
         let gpu_residual1 = {
             let ctx = cuda_model.executor.context();
             let x_gpu = GpuResidentTensor::from_host(ctx, &input_x).expect("Upload x");
             let proj_gpu = GpuResidentTensor::from_host(ctx, &cpu_attn_proj).expect("Upload proj");
-            x_gpu.add(ctx, &proj_gpu).expect("GPU add").to_host().expect("Download")
+            x_gpu
+                .add(ctx, &proj_gpu)
+                .expect("GPU add")
+                .to_host()
+                .expect("Download")
         };
-        let res1_diff = cpu_residual1.iter().zip(gpu_residual1.iter())
+        let res1_diff = cpu_residual1
+            .iter()
+            .zip(gpu_residual1.iter())
             .map(|(c, g)| (c - g).abs())
             .fold(0.0f32, f32::max);
-        eprintln!("[GPU Res1] mean={:.6}, max_diff={:.6}",
-            gpu_residual1.iter().sum::<f32>() / gpu_residual1.len() as f32, res1_diff);
+        eprintln!(
+            "[GPU Res1] mean={:.6}, max_diff={:.6}",
+            gpu_residual1.iter().sum::<f32>() / gpu_residual1.len() as f32,
+            res1_diff
+        );
 
         eprintln!("\n=== STEP 6: LayerNorm 2 ===");
         let cpu_ln2 = block.ln2.forward(&cpu_residual1).expect("CPU LN2");
-        eprintln!("[CPU LN2] mean={:.6}", cpu_ln2.iter().sum::<f32>() / cpu_ln2.len() as f32);
+        eprintln!(
+            "[CPU LN2] mean={:.6}",
+            cpu_ln2.iter().sum::<f32>() / cpu_ln2.len() as f32
+        );
 
         // GPU LN2
         let gpu_ln2 = {
             let ctx = cuda_model.executor.context();
             let weights = &cuda_model.gpu_encoder_weights.as_ref().expect("Weights")[0];
             let res_gpu = GpuResidentTensor::from_host(ctx, &cpu_residual1).expect("Upload res");
-            res_gpu.layer_norm(ctx, &weights.ln2_gamma, &weights.ln2_beta, d_model as u32, seq_len as u32)
+            res_gpu
+                .layer_norm(
+                    ctx,
+                    &weights.ln2_gamma,
+                    &weights.ln2_beta,
+                    d_model as u32,
+                    seq_len as u32,
+                )
                 .expect("GPU LN2")
-                .to_host().expect("Download")
+                .to_host()
+                .expect("Download")
         };
-        let ln2_diff = cpu_ln2.iter().zip(gpu_ln2.iter())
+        let ln2_diff = cpu_ln2
+            .iter()
+            .zip(gpu_ln2.iter())
             .map(|(c, g)| (c - g).abs())
             .fold(0.0f32, f32::max);
-        eprintln!("[GPU LN2] mean={:.6}, max_diff={:.6}",
-            gpu_ln2.iter().sum::<f32>() / gpu_ln2.len() as f32, ln2_diff);
+        eprintln!(
+            "[GPU LN2] mean={:.6}, max_diff={:.6}",
+            gpu_ln2.iter().sum::<f32>() / gpu_ln2.len() as f32,
+            ln2_diff
+        );
 
         eprintln!("\n=== STEP 7: FFN ===");
         let cpu_ffn = block.ffn.forward(&cpu_ln2).expect("CPU FFN");
-        eprintln!("[CPU FFN] mean={:.6}", cpu_ffn.iter().sum::<f32>() / cpu_ffn.len() as f32);
+        eprintln!(
+            "[CPU FFN] mean={:.6}",
+            cpu_ffn.iter().sum::<f32>() / cpu_ffn.len() as f32
+        );
 
         // GPU FFN (fused linear + GELU + linear)
         let ffn_dim = cuda_model.config.n_audio_state as usize * 4; // Typically 4x d_model
@@ -8400,39 +8968,74 @@ mod tests {
             let ln2_gpu = GpuResidentTensor::from_host(ctx, &cpu_ln2).expect("Upload ln2");
 
             // FFN up + GELU (fused)
-            let ffn_gelu = ln2_gpu.fused_linear_gelu(
-                ctx, &weights.ffn_up_w, &weights.ffn_up_b,
-                seq_len as u32, d_model as u32, ffn_dim as u32
-            ).expect("GPU FFN up+GELU");
+            let ffn_gelu = ln2_gpu
+                .fused_linear_gelu(
+                    ctx,
+                    &weights.ffn_up_w,
+                    &weights.ffn_up_b,
+                    seq_len as u32,
+                    d_model as u32,
+                    ffn_dim as u32,
+                )
+                .expect("GPU FFN up+GELU");
 
             // FFN down
-            ffn_gelu.linear(ctx, &weights.ffn_down_w, Some(&weights.ffn_down_b),
-                seq_len as u32, ffn_dim as u32, d_model as u32)
+            ffn_gelu
+                .linear(
+                    ctx,
+                    &weights.ffn_down_w,
+                    Some(&weights.ffn_down_b),
+                    seq_len as u32,
+                    ffn_dim as u32,
+                    d_model as u32,
+                )
                 .expect("GPU FFN down")
-                .to_host().expect("Download")
+                .to_host()
+                .expect("Download")
         };
-        let ffn_diff = cpu_ffn.iter().zip(gpu_ffn.iter())
+        let ffn_diff = cpu_ffn
+            .iter()
+            .zip(gpu_ffn.iter())
             .map(|(c, g)| (c - g).abs())
             .fold(0.0f32, f32::max);
-        eprintln!("[GPU FFN] mean={:.6}, max_diff={:.6}",
-            gpu_ffn.iter().sum::<f32>() / gpu_ffn.len() as f32, ffn_diff);
+        eprintln!(
+            "[GPU FFN] mean={:.6}, max_diff={:.6}",
+            gpu_ffn.iter().sum::<f32>() / gpu_ffn.len() as f32,
+            ffn_diff
+        );
 
         eprintln!("\n=== STEP 8: Final Output (Second Residual) ===");
-        let cpu_output: Vec<f32> = cpu_residual1.iter().zip(cpu_ffn.iter()).map(|(a, b)| a + b).collect();
-        eprintln!("[CPU Output] mean={:.6}", cpu_output.iter().sum::<f32>() / cpu_output.len() as f32);
+        let cpu_output: Vec<f32> = cpu_residual1
+            .iter()
+            .zip(cpu_ffn.iter())
+            .map(|(a, b)| a + b)
+            .collect();
+        eprintln!(
+            "[CPU Output] mean={:.6}",
+            cpu_output.iter().sum::<f32>() / cpu_output.len() as f32
+        );
 
         // GPU final output
         let gpu_output = {
             let ctx = cuda_model.executor.context();
             let res_gpu = GpuResidentTensor::from_host(ctx, &cpu_residual1).expect("Upload res");
             let ffn_gpu = GpuResidentTensor::from_host(ctx, &cpu_ffn).expect("Upload ffn");
-            res_gpu.add(ctx, &ffn_gpu).expect("GPU add").to_host().expect("Download")
+            res_gpu
+                .add(ctx, &ffn_gpu)
+                .expect("GPU add")
+                .to_host()
+                .expect("Download")
         };
-        let output_diff = cpu_output.iter().zip(gpu_output.iter())
+        let output_diff = cpu_output
+            .iter()
+            .zip(gpu_output.iter())
             .map(|(c, g)| (c - g).abs())
             .fold(0.0f32, f32::max);
-        eprintln!("[GPU Output] mean={:.6}, max_diff={:.6}",
-            gpu_output.iter().sum::<f32>() / gpu_output.len() as f32, output_diff);
+        eprintln!(
+            "[GPU Output] mean={:.6}, max_diff={:.6}",
+            gpu_output.iter().sum::<f32>() / gpu_output.len() as f32,
+            output_diff
+        );
 
         eprintln!("\n============================================================");
         eprintln!("Step-by-Step Summary:");
@@ -8493,15 +9096,22 @@ mod tests {
         // Row 1: [0, 1, 0, 0] -> output 1 = input[1]
         // Row 2: [0, 0, 1, 1] -> output 2 = input[2] + input[3]
         let cpu_weight: Vec<f32> = vec![
-            1.0, 0.0, 0.0, 0.0,  // output 0 = input[0]
-            0.0, 1.0, 0.0, 0.0,  // output 1 = input[1]
-            0.0, 0.0, 1.0, 1.0,  // output 2 = input[2] + input[3]
+            1.0, 0.0, 0.0, 0.0, // output 0 = input[0]
+            0.0, 1.0, 0.0, 0.0, // output 1 = input[1]
+            0.0, 0.0, 1.0, 1.0, // output 2 = input[2] + input[3]
         ];
         let cpu_bias: Vec<f32> = vec![0.1, 0.2, 0.3]; // Small biases
 
-        eprintln!("[CPU Weight] shape: {}x{} (out_feat x in_feat)", out_feat, in_feat);
+        eprintln!(
+            "[CPU Weight] shape: {}x{} (out_feat x in_feat)",
+            out_feat, in_feat
+        );
         for o in 0..out_feat {
-            eprintln!("  row {}: {:?}", o, &cpu_weight[o * in_feat..(o + 1) * in_feat]);
+            eprintln!(
+                "  row {}: {:?}",
+                o,
+                &cpu_weight[o * in_feat..(o + 1) * in_feat]
+            );
         }
         eprintln!("[CPU Bias] {:?}", cpu_bias);
 
@@ -8532,9 +9142,16 @@ mod tests {
                 gpu_weight[i * out_feat + o] = cpu_weight[o * in_feat + i];
             }
         }
-        eprintln!("\n[GPU Weight after transpose] shape: {}x{} (in_feat x out_feat)", in_feat, out_feat);
+        eprintln!(
+            "\n[GPU Weight after transpose] shape: {}x{} (in_feat x out_feat)",
+            in_feat, out_feat
+        );
         for i in 0..in_feat {
-            eprintln!("  row {}: {:?}", i, &gpu_weight[i * out_feat..(i + 1) * out_feat]);
+            eprintln!(
+                "  row {}: {:?}",
+                i,
+                &gpu_weight[i * out_feat..(i + 1) * out_feat]
+            );
         }
 
         // Upload to GPU
@@ -8543,10 +9160,16 @@ mod tests {
         let bias_gpu = GpuResidentTensor::from_host(ctx, &cpu_bias).expect("Upload bias");
 
         // Compute GPU linear
-        let mut output_gpu = input_gpu.linear(
-            ctx, &weight_gpu, Some(&bias_gpu),
-            batch as u32, in_feat as u32, out_feat as u32
-        ).expect("GPU linear");
+        let mut output_gpu = input_gpu
+            .linear(
+                ctx,
+                &weight_gpu,
+                Some(&bias_gpu),
+                batch as u32,
+                in_feat as u32,
+                out_feat as u32,
+            )
+            .expect("GPU linear");
 
         let gpu_output = output_gpu.to_host().expect("Download output");
         eprintln!("\n[GPU Output] shape: {}x{}", batch, out_feat);
@@ -8554,18 +9177,26 @@ mod tests {
         eprintln!("  batch 1: {:?}", &gpu_output[out_feat..]);
 
         // Compare
-        let max_diff = cpu_output.iter().zip(gpu_output.iter())
+        let max_diff = cpu_output
+            .iter()
+            .zip(gpu_output.iter())
             .map(|(c, g)| (c - g).abs())
             .fold(0.0f32, f32::max);
         eprintln!("\n[Comparison] max_diff = {:.6}", max_diff);
 
         // Verify expected values
         let expected = vec![1.1, 2.2, 7.3, 5.1, 6.2, 15.3];
-        let cpu_matches = cpu_output.iter().zip(expected.iter())
+        let cpu_matches = cpu_output
+            .iter()
+            .zip(expected.iter())
             .all(|(a, b)| (a - b).abs() < 0.001);
         eprintln!("[CPU matches expected] {}", cpu_matches);
 
-        assert!(max_diff < 0.01, "GPU output differs from CPU by {}", max_diff);
+        assert!(
+            max_diff < 0.01,
+            "GPU output differs from CPU by {}",
+            max_diff
+        );
         eprintln!("\n✓ Small matrix test PASSED");
     }
 
@@ -8587,11 +9218,14 @@ mod tests {
         let ctx = executor.context();
 
         // Dimensions that trigger WMMA: k >= 64 && m >= 64 && n >= 64
-        let batch = 128;  // M
+        let batch = 128; // M
         let in_feat = 128; // K
         let out_feat = 128; // N
 
-        eprintln!("[Dims] batch={}, in_feat={}, out_feat={}", batch, in_feat, out_feat);
+        eprintln!(
+            "[Dims] batch={}, in_feat={}, out_feat={}",
+            batch, in_feat, out_feat
+        );
 
         // Create input: identity-like pattern for easy verification
         let mut input = vec![0.0f32; batch * in_feat];
@@ -8635,35 +9269,53 @@ mod tests {
         let bias_gpu = GpuResidentTensor::from_host(ctx, &cpu_bias).expect("Upload bias");
 
         // Compute GPU linear
-        let mut output_gpu = input_gpu.linear(
-            ctx, &weight_gpu, Some(&bias_gpu),
-            batch as u32, in_feat as u32, out_feat as u32
-        ).expect("GPU linear");
+        let mut output_gpu = input_gpu
+            .linear(
+                ctx,
+                &weight_gpu,
+                Some(&bias_gpu),
+                batch as u32,
+                in_feat as u32,
+                out_feat as u32,
+            )
+            .expect("GPU linear");
 
         let gpu_output = output_gpu.to_host().expect("Download output");
         eprintln!("[GPU Output] First few: {:?}", &gpu_output[..10]);
 
         // Compare
-        let max_diff = cpu_output.iter().zip(gpu_output.iter())
+        let max_diff = cpu_output
+            .iter()
+            .zip(gpu_output.iter())
             .map(|(c, g)| (c - g).abs())
             .fold(0.0f32, f32::max);
 
-        let mean_diff = cpu_output.iter().zip(gpu_output.iter())
+        let mean_diff = cpu_output
+            .iter()
+            .zip(gpu_output.iter())
             .map(|(c, g)| (c - g).abs())
-            .sum::<f32>() / cpu_output.len() as f32;
+            .sum::<f32>()
+            / cpu_output.len() as f32;
 
-        eprintln!("\n[Comparison] max_diff = {:.6}, mean_diff = {:.6}", max_diff, mean_diff);
+        eprintln!(
+            "\n[Comparison] max_diff = {:.6}, mean_diff = {:.6}",
+            max_diff, mean_diff
+        );
 
         // Find where the max diff occurs
-        let (max_idx, _) = cpu_output.iter().zip(gpu_output.iter())
+        let (max_idx, _) = cpu_output
+            .iter()
+            .zip(gpu_output.iter())
             .enumerate()
             .map(|(i, (c, g))| (i, (c - g).abs()))
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
             .unwrap();
         let b = max_idx / out_feat;
         let o = max_idx % out_feat;
-        eprintln!("[Max diff location] batch={}, out_feat={}, cpu={:.6}, gpu={:.6}",
-            b, o, cpu_output[max_idx], gpu_output[max_idx]);
+        eprintln!(
+            "[Max diff location] batch={}, out_feat={}, cpu={:.6}, gpu={:.6}",
+            b, o, cpu_output[max_idx], gpu_output[max_idx]
+        );
 
         // WMMA uses FP16 internally, so allow some tolerance
         assert!(max_diff < 0.1, "WMMA GEMM diff too high: {}", max_diff);
@@ -8686,11 +9338,14 @@ mod tests {
         let ctx = executor.context();
 
         // Encoder-like dimensions: 1500 seq_len, 384 d_model
-        let batch = 1500;  // M (seq_len)
+        let batch = 1500; // M (seq_len)
         let in_feat = 384; // K (d_model)
         let out_feat = 384; // N (d_model)
 
-        eprintln!("[Dims] batch={}, in_feat={}, out_feat={}", batch, in_feat, out_feat);
+        eprintln!(
+            "[Dims] batch={}, in_feat={}, out_feat={}",
+            batch, in_feat, out_feat
+        );
 
         // Create pseudo-random input using simple linear congruential generator
         // LCG: x' = (a * x + c) mod m, scaled to [-1, 1]
@@ -8751,10 +9406,16 @@ mod tests {
         let bias_gpu = GpuResidentTensor::from_host(ctx, &cpu_bias).expect("Upload bias");
 
         // Compute GPU linear
-        let mut output_gpu = input_gpu.linear(
-            ctx, &weight_gpu, Some(&bias_gpu),
-            batch as u32, in_feat as u32, out_feat as u32
-        ).expect("GPU linear");
+        let mut output_gpu = input_gpu
+            .linear(
+                ctx,
+                &weight_gpu,
+                Some(&bias_gpu),
+                batch as u32,
+                in_feat as u32,
+                out_feat as u32,
+            )
+            .expect("GPU linear");
 
         let gpu_output = output_gpu.to_host().expect("Download output");
         let gpu_mean = gpu_output.iter().sum::<f32>() / gpu_output.len() as f32;
@@ -8762,17 +9423,27 @@ mod tests {
         eprintln!("[GPU Output] mean={:.6}, max={:.6}", gpu_mean, gpu_max);
 
         // Compare
-        let max_diff = cpu_output.iter().zip(gpu_output.iter())
+        let max_diff = cpu_output
+            .iter()
+            .zip(gpu_output.iter())
             .map(|(c, g)| (c - g).abs())
             .fold(0.0f32, f32::max);
-        let mean_diff = cpu_output.iter().zip(gpu_output.iter())
+        let mean_diff = cpu_output
+            .iter()
+            .zip(gpu_output.iter())
             .map(|(c, g)| (c - g).abs())
-            .sum::<f32>() / cpu_output.len() as f32;
+            .sum::<f32>()
+            / cpu_output.len() as f32;
 
-        eprintln!("\n[Comparison] max_diff = {:.6}, mean_diff = {:.6}", max_diff, mean_diff);
+        eprintln!(
+            "\n[Comparison] max_diff = {:.6}, mean_diff = {:.6}",
+            max_diff, mean_diff
+        );
 
         // Find worst positions
-        let mut diffs: Vec<(usize, f32)> = cpu_output.iter().zip(gpu_output.iter())
+        let mut diffs: Vec<(usize, f32)> = cpu_output
+            .iter()
+            .zip(gpu_output.iter())
             .enumerate()
             .map(|(i, (c, g))| (i, (c - g).abs()))
             .collect();
@@ -8782,8 +9453,10 @@ mod tests {
         for (idx, diff) in diffs.iter().take(5) {
             let b = idx / out_feat;
             let o = idx % out_feat;
-            eprintln!("  batch={}, out={}: cpu={:.6}, gpu={:.6}, diff={:.6}",
-                b, o, cpu_output[*idx], gpu_output[*idx], diff);
+            eprintln!(
+                "  batch={}, out={}: cpu={:.6}, gpu={:.6}, diff={:.6}",
+                b, o, cpu_output[*idx], gpu_output[*idx], diff
+            );
         }
 
         // FP16 WMMA can have some precision loss, especially for larger accumulations
@@ -8812,7 +9485,7 @@ mod tests {
         let executor = CudaExecutor::new(0).expect("Failed to create executor");
         let ctx = executor.context();
 
-        let batch = 1500;  // M
+        let batch = 1500; // M
         let in_feat = 384; // K
         let out_feat = 384; // N
 
@@ -8890,33 +9563,69 @@ mod tests {
         eprintln!("Test 1: 3 calls WITH cache clearing between each...\n");
 
         let input1_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input 1");
-        let gpu_same_1 = input1_gpu.linear(ctx, &w1_gpu, Some(&b1_gpu),
-            batch as u32, in_feat as u32, out_feat as u32)
-            .expect("GPU GEMM 1").to_host().expect("Download 1");
-        let diff_clear_1: f32 = cpu_out_1.iter().zip(gpu_same_1.iter())
-            .map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+        let gpu_same_1 = input1_gpu
+            .linear(
+                ctx,
+                &w1_gpu,
+                Some(&b1_gpu),
+                batch as u32,
+                in_feat as u32,
+                out_feat as u32,
+            )
+            .expect("GPU GEMM 1")
+            .to_host()
+            .expect("Download 1");
+        let diff_clear_1: f32 = cpu_out_1
+            .iter()
+            .zip(gpu_same_1.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
         eprintln!("[Cache-clear call 1] max_diff = {:.6}", diff_clear_1);
 
         // Clear cache before second call
         trueno_gpu::memory::resident::clear_kernel_cache();
 
         let input2_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input 2");
-        let gpu_same_2 = input2_gpu.linear(ctx, &w2_gpu, Some(&b2_gpu),
-            batch as u32, in_feat as u32, out_feat as u32)
-            .expect("GPU GEMM 2").to_host().expect("Download 2");
-        let diff_clear_2: f32 = cpu_out_2.iter().zip(gpu_same_2.iter())
-            .map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+        let gpu_same_2 = input2_gpu
+            .linear(
+                ctx,
+                &w2_gpu,
+                Some(&b2_gpu),
+                batch as u32,
+                in_feat as u32,
+                out_feat as u32,
+            )
+            .expect("GPU GEMM 2")
+            .to_host()
+            .expect("Download 2");
+        let diff_clear_2: f32 = cpu_out_2
+            .iter()
+            .zip(gpu_same_2.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
         eprintln!("[Cache-clear call 2] max_diff = {:.6}", diff_clear_2);
 
         // Clear cache before third call
         trueno_gpu::memory::resident::clear_kernel_cache();
 
         let input3_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input 3");
-        let gpu_same_3 = input3_gpu.linear(ctx, &w3_gpu, Some(&b3_gpu),
-            batch as u32, in_feat as u32, out_feat as u32)
-            .expect("GPU GEMM 3").to_host().expect("Download 3");
-        let diff_clear_3: f32 = cpu_out_3.iter().zip(gpu_same_3.iter())
-            .map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+        let gpu_same_3 = input3_gpu
+            .linear(
+                ctx,
+                &w3_gpu,
+                Some(&b3_gpu),
+                batch as u32,
+                in_feat as u32,
+                out_feat as u32,
+            )
+            .expect("GPU GEMM 3")
+            .to_host()
+            .expect("Download 3");
+        let diff_clear_3: f32 = cpu_out_3
+            .iter()
+            .zip(gpu_same_3.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
         eprintln!("[Cache-clear call 3] max_diff = {:.6}\n", diff_clear_3);
 
         // Test 2: WITH BIAS (after fix) - no cache clearing
@@ -8924,38 +9633,92 @@ mod tests {
 
         // GPU call 1 (with bias)
         let input4_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input 4");
-        let gpu_out_1 = input4_gpu.linear(ctx, &w1_gpu, Some(&b1_gpu),
-            batch as u32, in_feat as u32, out_feat as u32)
-            .expect("GPU LINEAR 1").to_host().expect("Download 1");
-        let diff_1: f32 = cpu_out_1.iter().zip(gpu_out_1.iter())
-            .map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+        let gpu_out_1 = input4_gpu
+            .linear(
+                ctx,
+                &w1_gpu,
+                Some(&b1_gpu),
+                batch as u32,
+                in_feat as u32,
+                out_feat as u32,
+            )
+            .expect("GPU LINEAR 1")
+            .to_host()
+            .expect("Download 1");
+        let diff_1: f32 = cpu_out_1
+            .iter()
+            .zip(gpu_out_1.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
         eprintln!("[With-bias call 1] max_diff = {:.6}", diff_1);
 
         let input5_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input 5");
-        let gpu_out_2 = input5_gpu.linear(ctx, &w2_gpu, Some(&b2_gpu),
-            batch as u32, in_feat as u32, out_feat as u32)
-            .expect("GPU LINEAR 2").to_host().expect("Download 2");
-        let diff_2: f32 = cpu_out_2.iter().zip(gpu_out_2.iter())
-            .map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
+        let gpu_out_2 = input5_gpu
+            .linear(
+                ctx,
+                &w2_gpu,
+                Some(&b2_gpu),
+                batch as u32,
+                in_feat as u32,
+                out_feat as u32,
+            )
+            .expect("GPU LINEAR 2")
+            .to_host()
+            .expect("Download 2");
+        let diff_2: f32 = cpu_out_2
+            .iter()
+            .zip(gpu_out_2.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
         eprintln!("[With-bias call 2] max_diff = {:.6}", diff_2);
 
         let input6_gpu = GpuResidentTensor::from_host(ctx, &input).expect("Upload input 6");
-        let gpu_out_3 = input6_gpu.linear(ctx, &w3_gpu, Some(&b3_gpu),
-            batch as u32, in_feat as u32, out_feat as u32)
-            .expect("GPU LINEAR 3").to_host().expect("Download 3");
-        let diff_3: f32 = cpu_out_3.iter().zip(gpu_out_3.iter())
-            .map(|(c, g)| (c - g).abs()).fold(0.0f32, f32::max);
-        eprintln!("[With-bias call 3] max_diff = {:.6}",diff_3);
+        let gpu_out_3 = input6_gpu
+            .linear(
+                ctx,
+                &w3_gpu,
+                Some(&b3_gpu),
+                batch as u32,
+                in_feat as u32,
+                out_feat as u32,
+            )
+            .expect("GPU LINEAR 3")
+            .to_host()
+            .expect("Download 3");
+        let diff_3: f32 = cpu_out_3
+            .iter()
+            .zip(gpu_out_3.iter())
+            .map(|(c, g)| (c - g).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!("[With-bias call 3] max_diff = {:.6}", diff_3);
 
         eprintln!("\n============================================================");
-        eprintln!("With cache-clear: {:.6}, {:.6}, {:.6}", diff_clear_1, diff_clear_2, diff_clear_3);
-        eprintln!("With-bias (no cache-clear): {:.6}, {:.6}, {:.6}", diff_1, diff_2, diff_3);
+        eprintln!(
+            "With cache-clear: {:.6}, {:.6}, {:.6}",
+            diff_clear_1, diff_clear_2, diff_clear_3
+        );
+        eprintln!(
+            "With-bias (no cache-clear): {:.6}, {:.6}, {:.6}",
+            diff_1, diff_2, diff_3
+        );
         eprintln!("============================================================\n");
 
         // Cache-cleared calls should all work
-        assert!(diff_clear_1 < 0.5, "Cache-clear call 1 diff too high: {}", diff_clear_1);
-        assert!(diff_clear_2 < 0.5, "Cache-clear call 2 diff too high: {}", diff_clear_2);
-        assert!(diff_clear_3 < 0.5, "Cache-clear call 3 diff too high: {}", diff_clear_3);
+        assert!(
+            diff_clear_1 < 0.5,
+            "Cache-clear call 1 diff too high: {}",
+            diff_clear_1
+        );
+        assert!(
+            diff_clear_2 < 0.5,
+            "Cache-clear call 2 diff too high: {}",
+            diff_clear_2
+        );
+        assert!(
+            diff_clear_3 < 0.5,
+            "Cache-clear call 3 diff too high: {}",
+            diff_clear_3
+        );
 
         // WAPR-PERF-027 FIX: With-bias calls should also work now (no cache clearing needed)
         assert!(diff_1 < 0.5, "With-bias call 1 diff too high: {}", diff_1);
