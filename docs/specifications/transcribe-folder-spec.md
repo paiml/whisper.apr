@@ -1530,6 +1530,50 @@ Added `forward_decoder_token_gpu_stream()` for all-GPU token processing:
 **Key Insight**: CUDA Graph eliminates ~99.2% of decoder overhead.
 With graph replay, the entire decoder phase becomes negligible (1.8ms vs 1984ms Point 157 target).
 
+#### O.2.4 Point 157 Full System Verification (2026-01-22)
+
+Verified Point 157 passing in release mode:
+```
+[Timing]
+  Weight upload: 80.503423ms
+  Encoder:       852.503568ms
+  Decoder:       404.015936ms
+  TOTAL:         1.256534437s
+
+[Point 157 Falsification]
+  ✓ PASSED: 1256ms ≤ 1984ms target
+```
+
+**Note**: The 404ms decoder time is NOT using CUDA graphs (still using old path).
+With graph integration, potential improvement to ~854ms total.
+
+#### O.2.5 Cross-Attention GPU Optimization (Future WAPR-PERF-018)
+
+**Problem**: Cross-attention currently on CPU, blocking full CUDA graph capture.
+
+**Five Whys Analysis**:
+
+| Level | Question | Answer |
+|-------|----------|--------|
+| Why 1 | Why is cross-attention on CPU? | `forward_cross_dispatch` uses CPU FlashAttention |
+| Why 2 | Why use CPU FlashAttention? | Encoder K/V not GPU-resident |
+| Why 3 | Why aren't encoder K/V GPU-resident? | No GPU upload path for encoder output |
+| Why 4 | Why no GPU encoder output? | `encode_gpu_total_offload` returns Vec<f32> (D2H) |
+| Why 5 | **Root Cause** | **Encoder output needs to stay on GPU as GpuResidentTensor** |
+
+**Solution** (not yet implemented):
+1. Modify `encode_gpu_total_offload` to return `GpuResidentTensor` (no D2H)
+2. Add GPU cross-attention K/V projection
+3. Implement GPU cross-attention with stream support
+4. Integrate into CUDA graph capture
+
+**Expected Benefit**:
+- Current: 1256ms (852ms encoder + 404ms decoder)
+- With GPU cross-attention + graph: ~854ms (852ms encoder + 2ms decoder)
+- Improvement: ~32% (400ms saved)
+
+**Status**: Not critical - Point 157 already passing. Future optimization.
+
 #### O.3 CPU Encoder Optimization (WAPR-PERF-015)
 
 **Problem**: Encoder taking 7.3s for 1.5s audio (target: ~200ms)
