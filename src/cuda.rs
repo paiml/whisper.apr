@@ -48,6 +48,7 @@ use realizar::inference_trace::{InferenceTracer, ModelInfo, TraceConfig, TraceSt
 #[cfg(feature = "cuda")]
 use trueno_gpu::memory::resident::{
     batched_multihead_attention, forward_encoder_block_gpu, incremental_attention_gpu,
+    incremental_attention_gpu_with_stream, // WAPR-PERF-014: shared stream variant
     kernel_cache_hits, kernel_cache_misses, kv_cache_scatter_gpu, reset_transfer_counters,
     total_d2h_transfers, total_h2d_transfers, GpuConvFrontendWeights, GpuDecoderBlockWeights,
     GpuDecoderConfig, GpuEncoderBlockWeights, GpuEncoderConfig, GpuKvCache, GpuResidentTensor,
@@ -949,6 +950,18 @@ impl WhisperCuda {
     #[cfg(feature = "cuda")]
     pub fn reset_gpu_decoder_pos(&mut self) {
         self.gpu_decoder_pos = 0;
+    }
+
+    /// WAPR-PERF-014: Reset GPU decoder KV caches (forces re-initialization)
+    ///
+    /// Clears all head-first KV caches to force fresh allocation on next init.
+    /// Call this before switching between GPU path and Executor path in benchmarks.
+    #[cfg(feature = "cuda")]
+    pub fn reset_gpu_decoder_kv_cache(&mut self) {
+        self.gpu_self_k_head_first = None;
+        self.gpu_self_v_head_first = None;
+        self.gpu_cross_k_head_first = None;
+        self.gpu_cross_v_head_first = None;
     }
 
     /// WAPR-PERF-013: GPU decoder block forward pass
@@ -2934,20 +2947,25 @@ impl WhisperCuda {
             pos as u32, n_heads as u32, head_dim as u32, max_seq_len as u32, &stream
         ).map_err(|e| WhisperError::Inference(format!("V scatter: {e}")))?;
 
-        // Incremental self-attention
+        // Incremental self-attention (WAPR-PERF-014: use shared stream)
         let seq_len = (pos + 1) as u32;
-        let attn_out = incremental_attention_gpu(
+        let attn_out = incremental_attention_gpu_with_stream(
             ctx, &q_gpu, &self_k_caches[layer_idx], &self_v_caches[layer_idx],
-            n_heads as u32, head_dim as u32, seq_len, max_seq_len as u32
+            n_heads as u32, head_dim as u32, seq_len, max_seq_len as u32,
+            &stream  // Reuse stream from KV scatter (no new stream creation!)
         ).map_err(|e| WhisperError::Inference(format!("Self attention: {e}")))?;
+
+        // Sync before reading back (all kernels launched on shared stream)
+        stream.synchronize()
+            .map_err(|e| WhisperError::Inference(format!("Stream sync: {e}")))?;
 
         // Output projection via executor (need to drop ctx borrow first)
         let mut attn_out = attn_out;  // Move to local
         let attn_out_host = attn_out.to_host()
             .map_err(|e| WhisperError::Inference(format!("Attn D2H: {e}")))?;
 
-        // Drop ctx borrow by scope - now we can call executor methods again
-        drop(stream);  // Ensures ctx-dependent resources are dropped
+        // Drop stream after sync
+        drop(stream);
 
         let mut attn_proj = vec![0.0f32; d_model];
         self.executor.gemv_cached(
@@ -3848,9 +3866,19 @@ mod tests {
         cuda_model.upload_decoder_weights_to_gpu().expect("Upload GPU weights");
         cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache");
 
-        // Warmup
+        // Warmup (JIT compilation)
         for &token in &initial_tokens {
             let _ = cuda_model.forward_one_gpu_total_offload(token, &encoder_output).expect("Warmup failed");
+        }
+
+        // WAPR-PERF-014: Reset state after warmup for clean benchmark
+        cuda_model.reset_gpu_decoder_pos();
+        cuda_model.reset_gpu_decoder_kv_cache();
+        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init KV cache");
+
+        // Process initial tokens fresh for benchmark
+        for &token in &initial_tokens {
+            let _ = cuda_model.forward_one_gpu_total_offload(token, &encoder_output).expect("Init tokens failed");
         }
 
         // Benchmark GPU path
@@ -3872,12 +3900,23 @@ mod tests {
 
         // === Executor Path Benchmark ===
         cuda_model.reset_gpu_decoder_pos();
+        cuda_model.reset_gpu_decoder_kv_cache(); // WAPR-PERF-014: Clear stale KV cache from GPU path
         cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache");
         cuda_model.upload_decoder_weights_to_executor().expect("Upload executor weights");
 
-        // Warmup
+        // Warmup (JIT compilation)
         for &token in &initial_tokens {
             let _ = cuda_model.forward_one_executor(token, &encoder_output).expect("Warmup failed");
+        }
+
+        // WAPR-PERF-014: Reset state after warmup for clean benchmark
+        cuda_model.reset_gpu_decoder_pos();
+        cuda_model.reset_gpu_decoder_kv_cache();
+        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init KV cache");
+
+        // Process initial tokens fresh for benchmark
+        for &token in &initial_tokens {
+            let _ = cuda_model.forward_one_executor(token, &encoder_output).expect("Init tokens failed");
         }
 
         // Benchmark Executor path
