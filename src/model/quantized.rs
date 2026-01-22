@@ -5544,6 +5544,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "Long-running performance benchmark (~90s) - run explicitly with --ignored"]
         fn test_fully_quantized_decoder_token_generation_time() {
             // Test: Benchmark token generation time
             //
