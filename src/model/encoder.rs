@@ -125,9 +125,8 @@ impl Conv1d {
         for out_ch in 0..self.out_channels {
             for k in 0..self.kernel_size {
                 for in_ch in 0..self.in_channels {
-                    let old_idx = out_ch * self.in_channels * self.kernel_size
-                        + in_ch * self.kernel_size
-                        + k;
+                    let old_idx =
+                        out_ch * self.in_channels * self.kernel_size + in_ch * self.kernel_size + k;
                     let new_idx = out_ch * patch_size + k * self.in_channels + in_ch;
                     weight_reshaped[new_idx] = self.weight[old_idx];
                 }
@@ -139,7 +138,13 @@ impl Conv1d {
 
         // SIMD matmul: patches (out_seq_len × patch_size) @ weight_t (patch_size × out_channels)
         // Result: (out_seq_len × out_channels)
-        let mut output = crate::simd::matmul(&patches, &weight_t, out_seq_len, patch_size, self.out_channels);
+        let mut output = crate::simd::matmul(
+            &patches,
+            &weight_t,
+            out_seq_len,
+            patch_size,
+            self.out_channels,
+        );
 
         // Add bias using SIMD broadcast add
         crate::simd::broadcast_add_inplace(&mut output, &self.bias, out_seq_len, self.out_channels);
@@ -442,9 +447,8 @@ impl EncoderBlock {
         fused_ln.linear_bias_mut().copy_from_slice(&zeros);
 
         // Compute fused LN for attention input
-        let ln_tensor =
-            realizar::tensor::Tensor::from_vec(vec![seq_len, d_model], x.to_vec())
-                .map_err(|e| WhisperError::Model(format!("Tensor error: {e}")))?;
+        let ln_tensor = realizar::tensor::Tensor::from_vec(vec![seq_len, d_model], x.to_vec())
+            .map_err(|e| WhisperError::Model(format!("Tensor error: {e}")))?;
 
         let normed_tensor = fused_ln
             .forward(&ln_tensor)

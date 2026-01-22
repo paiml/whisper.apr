@@ -3064,7 +3064,10 @@ impl<'a> SpeculativeDecoderWrapper<'a> {
 #[cfg(feature = "realizar-inference")]
 impl crate::realizar_inference::SpeculativeModel for SpeculativeDecoderWrapper<'_> {
     /// Generate logits for the next token given a sequence
-    fn forward(&self, tokens: &[u32]) -> Result<Vec<f32>, crate::realizar_inference::SpeculativeError> {
+    fn forward(
+        &self,
+        tokens: &[u32],
+    ) -> Result<Vec<f32>, crate::realizar_inference::SpeculativeError> {
         let mut cache = self.cache.borrow_mut();
 
         // Clear cache if this is a fresh sequence
@@ -3117,16 +3120,18 @@ impl crate::realizar_inference::SpeculativeModel for SpeculativeDecoderWrapper<'
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .ok_or_else(|| {
-                crate::realizar_inference::SpeculativeError::TargetModelError(
-                    "empty logits".into(),
-                )
+                crate::realizar_inference::SpeculativeError::TargetModelError("empty logits".into())
             })?;
 
         // Convert logit to log probability using log-softmax
         // log_prob = logit - log_sum_exp(logits)
         let max_logit = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let log_sum_exp =
-            max_logit + logits.iter().map(|&l| (l - max_logit).exp()).sum::<f32>().ln();
+        let log_sum_exp = max_logit
+            + logits
+                .iter()
+                .map(|&l| (l - max_logit).exp())
+                .sum::<f32>()
+                .ln();
         let log_prob = logit - log_sum_exp;
 
         Ok(crate::realizar_inference::TokenProb {
@@ -3210,9 +3215,9 @@ impl Decoder {
             // Phase 1: Draft model generates K speculative tokens
             let mut draft_tokens = Vec::with_capacity(config.lookahead);
             let mut draft_probs = Vec::with_capacity(config.lookahead);
-            let mut current_token = *tokens.last().ok_or_else(|| {
-                WhisperError::Model("empty token sequence".into())
-            })?;
+            let mut current_token = *tokens
+                .last()
+                .ok_or_else(|| WhisperError::Model("empty token sequence".into()))?;
 
             for _ in 0..config.lookahead {
                 let draft_logits =
@@ -3241,9 +3246,9 @@ impl Decoder {
             let mut accepted_count = 0;
             for (i, &draft_token) in draft_tokens.iter().enumerate() {
                 let prev_token = if i == 0 {
-                    *tokens.last().ok_or_else(|| {
-                        WhisperError::Model("empty token sequence".into())
-                    })?
+                    *tokens
+                        .last()
+                        .ok_or_else(|| WhisperError::Model("empty token sequence".into()))?
                 } else {
                     draft_tokens[i - 1]
                 };

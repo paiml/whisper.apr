@@ -485,9 +485,9 @@ impl Lfm2Config {
             hidden_size: 384,
             num_layers: 4,
             num_q_heads: 6,
-            num_kv_heads: 6, // Standard MHA
+            num_kv_heads: 6,         // Standard MHA
             intermediate_size: 1536, // 4x hidden
-            vocab_size: 51865,        // Whisper vocab
+            vocab_size: 51865,       // Whisper vocab
             rope_theta: 10_000.0,
             conv_dimension: 0,
             max_seq_len: 1500, // Audio frames
@@ -1924,7 +1924,10 @@ mod tests {
 
         // All layers should be attention without GQA
         for layer_type in &config.layer_types {
-            assert!(matches!(layer_type, LayerType::Attention { use_gqa: false }));
+            assert!(matches!(
+                layer_type,
+                LayerType::Attention { use_gqa: false }
+            ));
         }
     }
 
@@ -2000,8 +2003,14 @@ mod tests {
         assert_eq!(config.max_seq_len, 128000);
 
         // LFM2 uses hybrid conv/attention pattern
-        assert!(config.layer_types.iter().any(|t| matches!(t, LayerType::Convolution { .. })));
-        assert!(config.layer_types.iter().any(|t| matches!(t, LayerType::Attention { .. })));
+        assert!(config
+            .layer_types
+            .iter()
+            .any(|t| matches!(t, LayerType::Convolution { .. })));
+        assert!(config
+            .layer_types
+            .iter()
+            .any(|t| matches!(t, LayerType::Attention { .. })));
     }
 
     #[test]

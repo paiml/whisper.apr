@@ -68,10 +68,7 @@ impl std::fmt::Display for GenerationStats {
         write!(
             f,
             "{} tokens in {:.1}ms ({:.1} tok/s, {:.1}ms/tok)",
-            self.tokens_generated,
-            self.total_ms,
-            self.tokens_per_sec,
-            self.ms_per_token
+            self.tokens_generated, self.total_ms, self.tokens_per_sec, self.ms_per_token
         )
     }
 }
@@ -1401,7 +1398,10 @@ mod tests {
         let estimate = WasmMemoryEstimate::calculate(&model_config, &wasm_config);
 
         // Should have warning about large context
-        assert!(estimate.warnings.iter().any(|w| w.contains("16384") || w.contains("context")));
+        assert!(estimate
+            .warnings
+            .iter()
+            .any(|w| w.contains("16384") || w.contains("context")));
     }
 
     #[test]
@@ -1440,10 +1440,8 @@ mod tests {
         let estimate = WasmMemoryEstimate::calculate(&model_config, &wasm_config);
 
         // Low memory config should use less KV cache
-        let default_estimate = WasmMemoryEstimate::calculate(
-            &model_config,
-            &Lfm2WasmConfig::default(),
-        );
+        let default_estimate =
+            WasmMemoryEstimate::calculate(&model_config, &Lfm2WasmConfig::default());
 
         assert!(estimate.kv_cache_bytes < default_estimate.kv_cache_bytes);
         assert!(estimate.total_bytes < default_estimate.total_bytes);
@@ -1477,7 +1475,9 @@ mod tests {
         assert!(!tokens.is_empty());
 
         // Forward pass
-        let logits = model.forward(&tokens, None).expect("forward should succeed");
+        let logits = model
+            .forward(&tokens, None)
+            .expect("forward should succeed");
         assert_eq!(logits.len(), tokens.len() * 512);
 
         // Verify logits are finite
@@ -1525,7 +1525,9 @@ mod tests {
         let input_ids = vec![1u32, 2, 3, 4];
 
         // Without position_ids (default)
-        let logits1 = model.forward(&input_ids, None).expect("forward should succeed");
+        let logits1 = model
+            .forward(&input_ids, None)
+            .expect("forward should succeed");
 
         // With explicit position_ids
         let position_ids = vec![0usize, 1, 2, 3];
@@ -1572,7 +1574,9 @@ mod tests {
 
         // Forward pass
         let input_ids = vec![10u32, 20, 30];
-        let logits = model.forward(&input_ids, None).expect("forward should succeed");
+        let logits = model
+            .forward(&input_ids, None)
+            .expect("forward should succeed");
         assert_eq!(logits.len(), 3 * 100);
     }
 
@@ -1599,7 +1603,9 @@ mod tests {
         // Test with longer sequence
         let seq_len = 64;
         let input_ids: Vec<u32> = (0..seq_len as u32).map(|i| i % 99 + 1).collect();
-        let logits = model.forward(&input_ids, None).expect("forward should succeed");
+        let logits = model
+            .forward(&input_ids, None)
+            .expect("forward should succeed");
 
         assert_eq!(logits.len(), seq_len * 100);
         assert!(logits.iter().all(|&x| x.is_finite()));
@@ -1692,7 +1698,9 @@ mod tests {
 
         // Empty input should return empty output
         let input_ids: Vec<u32> = vec![];
-        let logits = model.forward(&input_ids, None).expect("forward should succeed");
+        let logits = model
+            .forward(&input_ids, None)
+            .expect("forward should succeed");
         assert!(logits.is_empty());
     }
 
@@ -1718,7 +1726,9 @@ mod tests {
 
         // Single token
         let input_ids = vec![10u32];
-        let logits = model.forward(&input_ids, None).expect("forward should succeed");
+        let logits = model
+            .forward(&input_ids, None)
+            .expect("forward should succeed");
         assert_eq!(logits.len(), 50);
     }
 

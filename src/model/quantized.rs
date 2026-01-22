@@ -3051,10 +3051,7 @@ impl QuantizedTensorQ8_0 {
             let block_data = &data[start..end];
 
             // Find max absolute value for scale
-            let max_abs = block_data
-                .iter()
-                .map(|x| x.abs())
-                .fold(0.0_f32, f32::max);
+            let max_abs = block_data.iter().map(|x| x.abs()).fold(0.0_f32, f32::max);
 
             let scale = max_abs / 127.0;
 
@@ -3143,7 +3140,8 @@ impl QuantizedTensorQ8_0 {
             // Dequantize values
             let values_start = block_start + 2;
             let values_end = (block_idx + 1) * Self::VALUES_PER_BLOCK;
-            let values_to_read = (values_end.min(self.n_values) - block_idx * Self::VALUES_PER_BLOCK)
+            let values_to_read = (values_end.min(self.n_values)
+                - block_idx * Self::VALUES_PER_BLOCK)
                 .min(Self::VALUES_PER_BLOCK);
 
             for i in 0..values_to_read {
@@ -5748,10 +5746,7 @@ mod tests {
                 .map(|(a, b)| (a - b).abs())
                 .fold(0.0, f32::max);
 
-            assert!(
-                max_error < 0.01,
-                "Q8_0 max error too large: {max_error}"
-            );
+            assert!(max_error < 0.01, "Q8_0 max error too large: {max_error}");
         }
 
         #[test]
@@ -5860,7 +5855,8 @@ mod tests {
                 .map(|i| ((i % 17) as f32 - 8.0) / 16.0)
                 .collect();
 
-            let q8_linear = QuantizedLinearQ8_0::from_f32(&weights, None, in_features, out_features);
+            let q8_linear =
+                QuantizedLinearQ8_0::from_f32(&weights, None, in_features, out_features);
 
             let input: Vec<f32> = (0..in_features).map(|i| (i as f32) / 100.0).collect();
 

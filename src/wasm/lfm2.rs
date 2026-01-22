@@ -32,10 +32,10 @@
 use wasm_bindgen::prelude::*;
 
 use crate::format::apr2::Lfm2Config;
-use js_sys::Function;
 use crate::model::lfm2::{
     GenerationStats, Lfm2, Lfm2WasmConfig, WasmMemoryEstimate, WasmQuantization,
 };
+use js_sys::Function;
 
 /// LFM2 model wrapper for WASM
 ///
@@ -184,7 +184,12 @@ impl Lfm2Wasm {
         };
 
         let (tokens, stats) = model
-            .generate_with_stats(prompt_ids, max_tokens as usize, temperature, Some(js_callback))
+            .generate_with_stats(
+                prompt_ids,
+                max_tokens as usize,
+                temperature,
+                Some(js_callback),
+            )
             .map_err(|e| JsValue::from_str(&format!("Generation failed: {e}")))?;
 
         Ok(GenerationResultWasm { tokens, stats })
@@ -392,7 +397,14 @@ impl MemoryEstimateWasm {
     /// Get warnings as JSON array
     #[wasm_bindgen(js_name = "warningsJson")]
     pub fn warnings_json(&self) -> String {
-        format!("[{}]", self.warnings.iter().map(|w| format!(r#""{}""#, w.replace('"', "\\\""))).collect::<Vec<_>>().join(","))
+        format!(
+            "[{}]",
+            self.warnings
+                .iter()
+                .map(|w| format!(r#""{}""#, w.replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
     }
 }
 
@@ -455,7 +467,14 @@ impl ViabilityCheckWasm {
     /// Get warnings as JSON array
     #[wasm_bindgen(js_name = "warningsJson")]
     pub fn warnings_json(&self) -> String {
-        format!("[{}]", self.warnings.iter().map(|w| format!(r#""{}""#, w.replace('"', "\\\""))).collect::<Vec<_>>().join(","))
+        format!(
+            "[{}]",
+            self.warnings
+                .iter()
+                .map(|w| format!(r#""{}""#, w.replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
     }
 
     /// Get summary string
