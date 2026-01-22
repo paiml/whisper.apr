@@ -1389,16 +1389,26 @@ Status: BLOCKED pending realizar stability
 | FFN | **1156ms** | **97ms** | ~30ms ✓ |
 | Total Block | 1.71s | 660ms | ~100ms |
 
-**Results After FFN Fix**:
+**Results After All WAPR-PERF-015 Fixes**:
+
+| Fix | Before | After | Speedup |
+|-----|--------|-------|---------|
+| FFN SIMD | 1156ms | 97ms | 12x |
+| Conv1d im2col+matmul | 585ms | 73ms | 8x |
+| FlashAttention dispatch | 656ms | 469ms | 1.4x |
+| **Full Encoder** | **7.3s** | **2.2s** | **3.3x** |
+
+**Final Full-System Benchmark** (1.5s audio, release mode):
 ```
-Encoder: 7.3s → 3.3s (2.2x speedup)
-Per block: 1.71s → 660ms
-FFN: 1156ms → 97ms (12x speedup)
+Encoder (CPU): 2.34s
+Decoder (GPU): 500ms
+TOTAL: 2.84s vs 1.98s target (1.4x over)
 ```
 
-**Remaining Bottlenecks**:
-1. **Conv1d**: 585ms (should be ~10ms with SIMD)
-2. **FlashAttention-2 overhead**: 656ms per block (per-head RealizarTensor allocation)
+**Remaining Bottleneck**:
+- Self-attention per-head overhead: 469ms per block = ~1.9s for 4 blocks
+- `extract_head()` creates 18 allocations per block (6 heads × 3 Q/K/V)
+- Could be reduced with fused attention or batch-head operations
 
 ---
 
