@@ -507,18 +507,30 @@ impl WhisperApr {
         options: TranscribeOptions,
     ) -> WhisperResult<TranscriptionResult> {
         #[cfg(feature = "std")]
-        let start_total = if options.profile { Some(std::time::Instant::now()) } else { None };
+        let start_total = if options.profile {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
 
         // 1. Compute mel spectrogram
         #[cfg(feature = "std")]
-        let start_mel = if options.profile { Some(std::time::Instant::now()) } else { None };
+        let start_mel = if options.profile {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         let mel = self.compute_mel(audio)?;
         #[cfg(feature = "std")]
         let mel_ms = start_mel.map(|s| s.elapsed().as_secs_f64() * 1000.0);
 
         // 2. Encode audio features
         #[cfg(feature = "std")]
-        let start_enc = if options.profile { Some(std::time::Instant::now()) } else { None };
+        let start_enc = if options.profile {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         let audio_features = self.encode(&mel)?;
         #[cfg(feature = "std")]
         let enc_ms = start_enc.map(|s| s.elapsed().as_secs_f64() * 1000.0);
@@ -531,7 +543,11 @@ impl WhisperApr {
 
         // 5. Decode tokens
         #[cfg(feature = "std")]
-        let start_dec = if options.profile { Some(std::time::Instant::now()) } else { None };
+        let start_dec = if options.profile {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         let tokens = self.decode(&audio_features, &initial_tokens, &options)?;
         #[cfg(feature = "std")]
         let dec_ms = start_dec.map(|s| s.elapsed().as_secs_f64() * 1000.0);
@@ -550,12 +566,20 @@ impl WhisperApr {
         #[cfg(feature = "std")]
         let profiling = if options.profile {
             let mut breakdown = std::collections::HashMap::new();
-            if let Some(ms) = mel_ms { breakdown.insert("audio_ms".to_string(), ms); }
-            if let Some(ms) = enc_ms { breakdown.insert("encoder_ms".to_string(), ms); }
-            if let Some(ms) = dec_ms { breakdown.insert("decoder_ms".to_string(), ms); }
-            
+            if let Some(ms) = mel_ms {
+                breakdown.insert("audio_ms".to_string(), ms);
+            }
+            if let Some(ms) = enc_ms {
+                breakdown.insert("encoder_ms".to_string(), ms);
+            }
+            if let Some(ms) = dec_ms {
+                breakdown.insert("decoder_ms".to_string(), ms);
+            }
+
             Some(ProfilingStats {
-                total_ms: start_total.map(|s| s.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0),
+                total_ms: start_total
+                    .map(|s| s.elapsed().as_secs_f64() * 1000.0)
+                    .unwrap_or(0.0),
                 breakdown,
             })
         } else {
