@@ -1342,41 +1342,42 @@ With 4 decoder layers × ~10 operations per layer = ~40 stream creations per tok
 | 2. Upload weights to executor | ✅ COMPLETE | 112MB in 23ms via `upload_decoder_weights_to_executor()` |
 | 3. Implement executor forward | ✅ COMPLETE | `forward_decoder_block_executor()` uses `gemv_cached()` |
 | 4. Verify parity | ✅ COMPLETE | Parity test: max_diff = 0.000000 (exact match) |
-| 5. CUDA Graph capture | ⏳ PENDING | Ready to implement |
+| 5. Add shared stream to KV ops | ✅ COMPLETE | `incremental_attention_gpu_with_stream()` added |
+| 6. Fix benchmark KV reset | ✅ COMPLETE | `reset_gpu_decoder_kv_cache()` added |
+| 7. CUDA Graph capture | ⏳ PENDING | Ready to implement |
 
-**Benchmark Results** (release mode, 1.5s audio, 2026-01-22):
+**Single Block Benchmark** (release mode, 2026-01-22):
 ```
-Encoder (CPU): 1.0s (WAPR-PERF-015 - FFN SIMD + Conv1d im2col + parallel attention)
-Decoder (GPU): 500ms
-TOTAL: 1.4s vs 1.98s target (✅ PASSED Point 157)
-Parity: max_diff=0.000000, mean_diff=0.000000
-
-Executor vs GPU forward pass timing (single block):
-- GPU (GpuResidentTensor): 12.7ms
-- Executor (gemv_cached): 14.8ms (cold start)
+Executor vs GPU forward pass timing (single decoder block):
+- GPU (GpuResidentTensor): 12.79ms (creates new stream per op)
+- Executor (gemv_cached):   0.95ms (persistent stream)
+- Speedup:                  13.5x 🚀
+- Parity:                   max_diff=0.000000 (exact match)
 ```
 
-**Implementation Details** (commit 4832fde):
+**Full Decode Benchmark** (release mode, 10 tokens, 2026-01-22):
+```
+GPU path:      137-140ms for 10 tokens (~14ms/token)
+Executor path: 133-140ms for 10 tokens (~14ms/token)
+Speedup:       ~1.0x (no improvement for full decode)
+```
+
+**Root Cause Analysis**: Single block 13.5x speedup NOT reflected in full decode because:
+1. `project_to_vocab_gpu()` uses `executor.gemm()` which allocates per-call
+2. Full decode: 4 blocks × 0.95ms = 3.8ms, but vocab projection dominates
+3. Vocab projection: GEMM 51865 × 384 = 19.9M elements per token
+
+**Implementation Details** (commits 49e9b4a):
 - `forward_decoder_block_executor()`: Uses `executor.gemv_cached()` for Q/K/V/O projections
 - Pre-copies biases to avoid borrow conflicts
 - Keeps LayerNorm on CPU (fast enough, avoids gamma/beta upload overhead)
-- Uses existing KV cache scatter/attention (GpuResidentTensor still needed here)
+- `incremental_attention_gpu_with_stream()`: Accepts external stream parameter
+- `reset_gpu_decoder_kv_cache()`: Clears head-first KV caches for clean benchmark
 
-**Benchmark Results** (commit 6516411, 10 tokens, release mode):
-```
-GPU path:      75ms/token (creates new streams per operation)
-Executor path: 78ms/token (persistent stream for GEMV only)
-Speedup:       0.96x (4% slower)
-```
-
-**Root Cause Analysis**: Executor path is slightly slower because:
-1. KV cache scatter still creates new stream per call (dominant cost)
-2. Incremental attention still creates new stream per call
-3. GEMV persistent stream benefit (4 ops/layer) is offset by transfer overhead
-
-**Path Forward**: Two options to realize speedup:
-1. **Option A**: Modify trueno_gpu to expose stream parameter for KV cache ops
-2. **Option B**: CUDA Graph capture to eliminate ALL stream creation (~280 launches → 1 replay)
+**Path Forward**:
+1. **DONE**: Shared stream for KV ops (13.5x single block improvement verified)
+2. **NEXT**: Cache vocab projection weights in executor for persistent buffer reuse
+3. **FUTURE**: CUDA Graph capture for sub-10ms decode latency
 
 **CUDA Graph Investigation** (2026-01-22):
 
