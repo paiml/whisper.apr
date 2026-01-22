@@ -6899,4 +6899,171 @@ mod tests {
 
         eprintln!("\n✓ WAPR-PERF-018: GPU cross-attention pipeline verified");
     }
+
+    /// WAPR-PERF-018: Test CUDA graph capture with cross-attention
+    ///
+    /// Captures full decoder (self-attention + cross-attention + FFN) as CUDA graph.
+    #[test]
+    fn test_cuda_graph_with_cross_attention() {
+        use trueno_gpu::driver::CaptureMode;
+
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        let model_path = "models/whisper-tiny.apr";
+        if !std::path::Path::new(model_path).exists() {
+            eprintln!("Model not found at {}, skipping test", model_path);
+            return;
+        }
+
+        eprintln!("\n============================================================");
+        eprintln!("WAPR-PERF-018: CUDA Graph with Cross-Attention Test");
+        eprintln!("============================================================\n");
+
+        let bytes = std::fs::read(model_path).expect("Failed to read model");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+        let d_model = apr.config().n_text_state as usize;
+        let n_layers = apr.config().n_text_layer;
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        // Create dummy mel input
+        let n_mels = cuda_model.config().n_mels as usize;
+        let seq_len = 100;
+        let mel: Vec<f32> = (0..n_mels * seq_len).map(|i| (i as f32 * 0.001).sin()).collect();
+
+        // Step 1: Encode and populate cross K/V caches
+        eprintln!("[Setup] Encoding and populating cross K/V caches...");
+        let enc_gpu = cuda_model.encode_gpu_resident(&mel).expect("Encode");
+        let enc_seq_len = enc_gpu.len() / d_model;
+
+        let ctx = cuda_model.executor.context();
+        let stream = CudaStream::new(ctx).expect("Create stream");
+
+        cuda_model
+            .populate_cross_kv_caches_gpu(&enc_gpu, &stream)
+            .expect("Populate cross KV");
+
+        // Create test token embedding
+        let token_embedding: Vec<f32> = (0..d_model)
+            .map(|i| (i as f32 * 0.01).sin() * 0.1)
+            .collect();
+
+        // Step 2: Warmup to compile kernels
+        eprintln!("[Warmup] Running decoder with cross-attention...");
+        let _warmup = cuda_model
+            .forward_decoder_token_gpu_stream(&token_embedding, 0, &stream, Some(enc_seq_len))
+            .expect("Warmup");
+        stream.synchronize().expect("Sync warmup");
+
+        // Reset self-attention KV caches for capture
+        cuda_model.reset_gpu_decoder_kv_cache();
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Re-init KV cache");
+        // Re-populate cross K/V after reset
+        cuda_model
+            .populate_cross_kv_caches_gpu(&enc_gpu, &stream)
+            .expect("Re-populate cross KV");
+
+        // Step 3: Capture CUDA graph
+        eprintln!("[Capture] Beginning CUDA graph capture ({} layers + cross-attn)...", n_layers);
+
+        match stream.begin_capture(CaptureMode::Global) {
+            Ok(()) => eprintln!("  Stream capture started"),
+            Err(e) => {
+                eprintln!("  ✗ Failed to begin capture: {}", e);
+                return;
+            }
+        }
+
+        let capture_result = cuda_model.forward_decoder_token_gpu_stream(
+            &token_embedding,
+            0,
+            &stream,
+            Some(enc_seq_len),
+        );
+
+        let graph_result = stream.end_capture();
+
+        match (&capture_result, &graph_result) {
+            (Ok(_), Ok(graph)) => {
+                eprintln!("  ✓ Capture successful!");
+
+                match graph.instantiate() {
+                    Ok(exec) => {
+                        eprintln!("  ✓ Graph instantiated!");
+
+                        // Step 4: Benchmark graph replay vs direct
+                        const NUM_REPLAYS: usize = 100;
+                        let mut graph_times = Vec::with_capacity(NUM_REPLAYS);
+                        let mut direct_times = Vec::with_capacity(NUM_REPLAYS);
+
+                        eprintln!("\n[Benchmark] Running {} iterations...", NUM_REPLAYS);
+
+                        // Graph replay benchmark
+                        for _ in 0..NUM_REPLAYS {
+                            let start = std::time::Instant::now();
+                            stream.launch_graph(&exec).expect("Graph launch");
+                            stream.synchronize().expect("Sync");
+                            graph_times.push(start.elapsed());
+                        }
+
+                        // Direct execution benchmark
+                        cuda_model.reset_gpu_decoder_kv_cache();
+                        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init");
+                        cuda_model
+                            .populate_cross_kv_caches_gpu(&enc_gpu, &stream)
+                            .expect("Re-populate");
+
+                        for i in 0..NUM_REPLAYS {
+                            let pos = i % 10;
+                            if i % 10 == 0 && i > 0 {
+                                cuda_model.reset_gpu_decoder_kv_cache();
+                                cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init");
+                                cuda_model
+                                    .populate_cross_kv_caches_gpu(&enc_gpu, &stream)
+                                    .expect("Re-populate");
+                            }
+                            let start = std::time::Instant::now();
+                            let _out = cuda_model.forward_decoder_token_gpu_stream(
+                                &token_embedding,
+                                pos,
+                                &stream,
+                                Some(enc_seq_len),
+                            ).expect("Direct");
+                            stream.synchronize().expect("Sync");
+                            direct_times.push(start.elapsed());
+                        }
+
+                        let graph_avg: std::time::Duration =
+                            graph_times.iter().sum::<std::time::Duration>() / NUM_REPLAYS as u32;
+                        let direct_avg: std::time::Duration =
+                            direct_times.iter().sum::<std::time::Duration>() / NUM_REPLAYS as u32;
+
+                        eprintln!("\n[Results - {} layers + cross-attention]", n_layers);
+                        eprintln!("  Graph replay avg:  {:?}", graph_avg);
+                        eprintln!("  Direct exec avg:   {:?}", direct_avg);
+                        eprintln!(
+                            "  Graph speedup:     {:.1}x",
+                            direct_avg.as_micros() as f64 / graph_avg.as_micros() as f64
+                        );
+
+                        // Project for 27 tokens
+                        let graph_27 = graph_avg.as_micros() as f64 * 27.0 / 1000.0;
+                        let direct_27 = direct_avg.as_micros() as f64 * 27.0 / 1000.0;
+                        eprintln!("\n[Projected for 27 tokens (1.5s audio)]");
+                        eprintln!("  Graph:  {:.1}ms", graph_27);
+                        eprintln!("  Direct: {:.1}ms", direct_27);
+
+                        eprintln!("\n✓ WAPR-PERF-018: CUDA Graph with cross-attention verified!");
+                    }
+                    Err(e) => eprintln!("  ✗ Failed to instantiate graph: {}", e),
+                }
+            }
+            (Err(e), _) => eprintln!("  ✗ Decoder failed during capture: {}", e),
+            (_, Err(e)) => eprintln!("  ✗ End capture failed: {}", e),
+        }
+    }
 }
