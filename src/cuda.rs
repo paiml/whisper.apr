@@ -3185,10 +3185,10 @@ impl WhisperCuda {
         let k = d_model as u32;
         let n = n_vocab as u32;
 
-        if self.executor.has_weights("dec.output_proj") {
+        if self.executor.has_weights("whisper_output_proj") {
             // Fast path: use cached weights (persistent GPU buffer, no allocation)
             self.executor
-                .gemv_cached("dec.output_proj", hidden, &mut output, k, n)
+                .gemv_cached("whisper_output_proj", hidden, &mut output, k, n)
                 .map_err(|e| WhisperError::Inference(format!("GPU gemv_cached failed: {e}")))?;
         } else {
             // Fallback: allocate per-call (GPU path before executor weights uploaded)
@@ -7250,5 +7250,349 @@ mod tests {
             (Err(e), _) => eprintln!("  ✗ Decoder failed during capture: {}", e),
             (_, Err(e)) => eprintln!("  ✗ End capture failed: {}", e),
         }
+    }
+
+    /// WAPR-PERF-022: Test GPU conv1d vs CPU conv1d correctness
+    ///
+    /// Compares GPU convolution output with CPU reference to identify
+    /// where they diverge (root cause of GPU encoder producing wrong transcription).
+    #[test]
+    #[cfg(feature = "cuda")]
+    fn test_gpu_conv1d_vs_cpu() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        let model_path = "models/whisper-tiny.apr";
+        if !std::path::Path::new(model_path).exists() {
+            eprintln!("Model not found at {model_path}, skipping test");
+            return;
+        }
+
+        eprintln!("\n============================================================");
+        eprintln!("WAPR-PERF-022: GPU Conv1d vs CPU Conv1d Correctness Test");
+        eprintln!("============================================================\n");
+
+        // Load model
+        let bytes = std::fs::read(model_path).expect("Failed to read model");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        let n_mels = cuda_model.config.n_mels as usize;
+        let d_model = cuda_model.config.n_audio_state as usize;
+
+        eprintln!("[Config] n_mels={}, d_model={}", n_mels, d_model);
+        eprintln!("[Conv1] in={}, out={}, k=3, s=1, p=1", n_mels, d_model);
+        eprintln!("[Conv2] in={}, out={}, k=3, s=2, p=1", d_model, d_model);
+
+        // Create test input (small sequence for debugging)
+        let test_seq_len = 100;
+        let mel: Vec<f32> = (0..test_seq_len * n_mels)
+            .map(|i| ((i as f32) * 0.01).sin() * 0.1)
+            .collect();
+
+        eprintln!("\n[Input] mel shape: {} x {}", test_seq_len, n_mels);
+        eprintln!("        mean={:.6}, std={:.6}",
+            mel.iter().sum::<f32>() / mel.len() as f32,
+            (mel.iter().map(|x| x.powi(2)).sum::<f32>() / mel.len() as f32).sqrt());
+
+        // === CPU Conv1d (do all CPU work first to avoid borrow issues) ===
+        let (cpu_conv1_gelu, cpu_conv2_gelu, cpu_frontend, cpu_seq_after_conv1) = {
+            let conv_frontend = cuda_model.encoder.conv_frontend();
+
+            eprintln!("\n[Step 1] CPU Conv1...");
+            let cpu_conv1 = conv_frontend.conv1.forward(&mel).expect("CPU conv1");
+            let cpu_seq_after_conv1 = cpu_conv1.len() / d_model;
+            eprintln!("  Output shape: {} x {}", cpu_seq_after_conv1, d_model);
+            eprintln!("  mean={:.6}, std={:.6}",
+                cpu_conv1.iter().sum::<f32>() / cpu_conv1.len() as f32,
+                (cpu_conv1.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_conv1.len() as f32).sqrt());
+
+            // Apply GELU (CPU conv doesn't include activation)
+            let cpu_conv1_gelu: Vec<f32> = cpu_conv1.iter().map(|x| {
+                let x = *x;
+                x * 0.5 * (1.0 + (x * 0.7978845608028654 * (1.0 + 0.044715 * x * x)).tanh())
+            }).collect();
+            eprintln!("  After GELU: mean={:.6}",
+                cpu_conv1_gelu.iter().sum::<f32>() / cpu_conv1_gelu.len() as f32);
+
+            eprintln!("\n[Step 2] CPU Conv2...");
+            let cpu_conv2 = conv_frontend.conv2.forward(&cpu_conv1_gelu).expect("CPU conv2");
+            let cpu_seq_after_conv2 = cpu_conv2.len() / d_model;
+            eprintln!("  Output shape: {} x {}", cpu_seq_after_conv2, d_model);
+            eprintln!("  mean={:.6}, std={:.6}",
+                cpu_conv2.iter().sum::<f32>() / cpu_conv2.len() as f32,
+                (cpu_conv2.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_conv2.len() as f32).sqrt());
+
+            let cpu_conv2_gelu: Vec<f32> = cpu_conv2.iter().map(|x| {
+                let x = *x;
+                x * 0.5 * (1.0 + (x * 0.7978845608028654 * (1.0 + 0.044715 * x * x)).tanh())
+            }).collect();
+            eprintln!("  After GELU: mean={:.6}",
+                cpu_conv2_gelu.iter().sum::<f32>() / cpu_conv2_gelu.len() as f32);
+
+            eprintln!("\n[Step 3] Full CPU Frontend...");
+            let cpu_frontend = conv_frontend.forward(&mel).expect("CPU frontend");
+            eprintln!("  Output shape: {} x {}", cpu_frontend.len() / d_model, d_model);
+            eprintln!("  mean={:.6}, std={:.6}",
+                cpu_frontend.iter().sum::<f32>() / cpu_frontend.len() as f32,
+                (cpu_frontend.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_frontend.len() as f32).sqrt());
+
+            (cpu_conv1_gelu, cpu_conv2_gelu, cpu_frontend, cpu_seq_after_conv1)
+        };
+
+        // === GPU Conv1d ===
+        eprintln!("\n[Step 4] GPU Conv1...");
+        cuda_model.upload_conv_weights_to_gpu().expect("Upload conv weights");
+
+        let ctx = cuda_model.executor.context();
+        let conv_weights = cuda_model.gpu_conv_weights.as_ref().expect("Conv weights");
+
+        let mel_gpu = GpuResidentTensor::from_host(ctx, &mel)
+            .expect("mel upload");
+
+        let mut gpu_conv1 = mel_gpu
+            .conv1d(
+                ctx,
+                &conv_weights.conv1_weight,
+                Some(&conv_weights.conv1_bias),
+                n_mels as u32,
+                d_model as u32,
+                3, 1, 1,
+                test_seq_len as u32,
+            )
+            .expect("GPU conv1");
+
+        let gpu_conv1_host = gpu_conv1.to_host().expect("Download");
+        let gpu_seq_after_conv1 = gpu_conv1_host.len() / d_model;
+        eprintln!("  Output shape: {} x {}", gpu_seq_after_conv1, d_model);
+        eprintln!("  mean={:.6}, std={:.6}",
+            gpu_conv1_host.iter().sum::<f32>() / gpu_conv1_host.len() as f32,
+            (gpu_conv1_host.iter().map(|x| x.powi(2)).sum::<f32>() / gpu_conv1_host.len() as f32).sqrt());
+
+        // === Compare ===
+        eprintln!("\n[Step 3] Comparing CPU vs GPU Conv1 output...");
+
+        // Note: GPU conv1d includes GELU, CPU doesn't
+        // Compare GPU output with CPU GELU output
+        if cpu_conv1_gelu.len() == gpu_conv1_host.len() {
+            let max_diff: f32 = cpu_conv1_gelu.iter()
+                .zip(gpu_conv1_host.iter())
+                .map(|(c, g)| (c - g).abs())
+                .fold(0.0f32, f32::max);
+
+            let avg_diff: f32 = cpu_conv1_gelu.iter()
+                .zip(gpu_conv1_host.iter())
+                .map(|(c, g)| (c - g).abs())
+                .sum::<f32>() / cpu_conv1_gelu.len() as f32;
+
+            eprintln!("  Max difference: {:.6}", max_diff);
+            eprintln!("  Avg difference: {:.6}", avg_diff);
+
+            // Show first few elements
+            eprintln!("\n  First 10 elements comparison:");
+            for i in 0..10.min(cpu_conv1_gelu.len()) {
+                eprintln!("    [{}] CPU: {:.6}, GPU: {:.6}, diff: {:.6}",
+                    i, cpu_conv1_gelu[i], gpu_conv1_host[i],
+                    (cpu_conv1_gelu[i] - gpu_conv1_host[i]).abs());
+            }
+
+            if max_diff < 0.05 {
+                eprintln!("\n✓ Conv1 output matches (max_diff < 0.05)");
+            } else {
+                eprintln!("\n✗ Conv1 output MISMATCH (max_diff = {:.6})", max_diff);
+            }
+        } else {
+            eprintln!("  ✗ Shape mismatch: CPU={}, GPU={}",
+                cpu_conv1_gelu.len(), gpu_conv1_host.len());
+        }
+
+        // === GPU Conv2 ===
+        eprintln!("\n[Step 6] GPU Conv2...");
+        let mut gpu_conv2 = gpu_conv1
+            .conv1d(
+                ctx,
+                &conv_weights.conv2_weight,
+                Some(&conv_weights.conv2_bias),
+                d_model as u32,
+                d_model as u32,
+                3, 2, 1, // stride=2 for conv2
+                gpu_seq_after_conv1 as u32,
+            )
+            .expect("GPU conv2");
+
+        let gpu_conv2_host = gpu_conv2.to_host().expect("Download");
+        let gpu_seq_after_conv2 = gpu_conv2_host.len() / d_model;
+        eprintln!("  Output shape: {} x {}", gpu_seq_after_conv2, d_model);
+        eprintln!("  mean={:.6}, std={:.6}",
+            gpu_conv2_host.iter().sum::<f32>() / gpu_conv2_host.len() as f32,
+            (gpu_conv2_host.iter().map(|x| x.powi(2)).sum::<f32>() / gpu_conv2_host.len() as f32).sqrt());
+
+        // === Compare Conv2 ===
+        eprintln!("\n[Step 6] Comparing CPU vs GPU Conv2 output...");
+        if cpu_conv2_gelu.len() == gpu_conv2_host.len() {
+            let max_diff: f32 = cpu_conv2_gelu.iter()
+                .zip(gpu_conv2_host.iter())
+                .map(|(c, g)| (c - g).abs())
+                .fold(0.0f32, f32::max);
+
+            let avg_diff: f32 = cpu_conv2_gelu.iter()
+                .zip(gpu_conv2_host.iter())
+                .map(|(c, g)| (c - g).abs())
+                .sum::<f32>() / cpu_conv2_gelu.len() as f32;
+
+            eprintln!("  Max difference: {:.6}", max_diff);
+            eprintln!("  Avg difference: {:.6}", avg_diff);
+
+            // Show first few elements
+            eprintln!("\n  First 10 elements comparison:");
+            for i in 0..10.min(cpu_conv2_gelu.len()) {
+                eprintln!("    [{}] CPU: {:.6}, GPU: {:.6}, diff: {:.6}",
+                    i, cpu_conv2_gelu[i], gpu_conv2_host[i],
+                    (cpu_conv2_gelu[i] - gpu_conv2_host[i]).abs());
+            }
+
+            if max_diff < 0.05 {
+                eprintln!("\n✓ Conv2 output matches (max_diff < 0.05)");
+            } else {
+                eprintln!("\n✗ Conv2 output MISMATCH (max_diff = {:.6})", max_diff);
+            }
+        } else {
+            eprintln!("  ✗ Shape mismatch: CPU={}, GPU={}",
+                cpu_conv2_gelu.len(), gpu_conv2_host.len());
+        }
+
+        // === Compare Full Frontend ===
+        eprintln!("\n[Step 8] Comparing Full Frontend CPU vs GPU Conv2+GELU...");
+        eprintln!("  CPU frontend shape: {} x {}", cpu_frontend.len() / d_model, d_model);
+        eprintln!("  GPU conv2 shape: {} x {}", gpu_conv2_host.len() / d_model, d_model);
+
+        // Full frontend is conv1->GELU->conv2->GELU, so compare with gpu_conv2
+        if cpu_frontend.len() == gpu_conv2_host.len() {
+            let max_diff: f32 = cpu_frontend.iter()
+                .zip(gpu_conv2_host.iter())
+                .map(|(c, g)| (c - g).abs())
+                .fold(0.0f32, f32::max);
+
+            let avg_diff: f32 = cpu_frontend.iter()
+                .zip(gpu_conv2_host.iter())
+                .map(|(c, g)| (c - g).abs())
+                .sum::<f32>() / cpu_frontend.len() as f32;
+
+            eprintln!("  Max difference (full frontend): {:.6}", max_diff);
+            eprintln!("  Avg difference (full frontend): {:.6}", avg_diff);
+
+            if max_diff < 0.1 {
+                eprintln!("\n✓ Full frontend matches GPU conv2 (max_diff < 0.1)");
+            } else {
+                eprintln!("\n✗ Full frontend MISMATCH (max_diff = {:.6})", max_diff);
+            }
+        } else {
+            eprintln!("  ✗ Shape mismatch: CPU frontend={}, GPU conv2={}",
+                cpu_frontend.len(), gpu_conv2_host.len());
+        }
+
+        eprintln!("\n============================================================");
+    }
+
+    /// WAPR-PERF-022: Compare encode_gpu vs encode_gpu_total_offload
+    ///
+    /// Tests whether the GPU encoder with GPU conv produces the same output
+    /// as the GPU encoder with CPU conv.
+    #[test]
+    #[cfg(feature = "cuda")]
+    fn test_encode_gpu_vs_total_offload() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        let model_path = "models/whisper-tiny.apr";
+        if !std::path::Path::new(model_path).exists() {
+            eprintln!("Model not found at {model_path}, skipping test");
+            return;
+        }
+
+        // Load test audio
+        let audio_path = "demos/test-audio/test-speech-1.5s.wav";
+        if !std::path::Path::new(audio_path).exists() {
+            eprintln!("Test audio not found at {audio_path}, skipping test");
+            return;
+        }
+
+        eprintln!("\n============================================================");
+        eprintln!("WAPR-PERF-022: encode_gpu vs encode_gpu_total_offload");
+        eprintln!("============================================================\n");
+
+        // Load model
+        let bytes = std::fs::read(model_path).expect("Failed to read model");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+
+        // Load audio and compute mel BEFORE converting to CUDA
+        let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio file");
+        let wav_data =
+            crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+        let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
+
+        // Now convert to CUDA
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        let d_model = cuda_model.config.n_audio_state as usize;
+        eprintln!("[Config] d_model={}, n_layers={}", d_model, cuda_model.config.n_audio_layer);
+        eprintln!("[Input] mel length: {} ({} frames)", mel.len(), mel.len() / 80);
+
+        // Run encode_gpu (CPU conv + GPU attention) - known working
+        eprintln!("\n[Step 1] Running encode_gpu (CPU conv + GPU attention)...");
+        let encoder_output_cpu_conv = cuda_model.encode_gpu(&mel).expect("encode_gpu failed");
+        let seq_len = encoder_output_cpu_conv.len() / d_model;
+        eprintln!("  Output shape: {} x {}", seq_len, d_model);
+        eprintln!("  mean={:.6}, std={:.6}",
+            encoder_output_cpu_conv.iter().sum::<f32>() / encoder_output_cpu_conv.len() as f32,
+            (encoder_output_cpu_conv.iter().map(|x| x.powi(2)).sum::<f32>() / encoder_output_cpu_conv.len() as f32).sqrt());
+
+        // Run encode_gpu_total_offload (GPU conv + GPU attention) - known broken
+        eprintln!("\n[Step 2] Running encode_gpu_total_offload (GPU conv + GPU attention)...");
+        let encoder_output_gpu_conv = cuda_model.encode_gpu_total_offload(&mel).expect("encode_gpu_total_offload failed");
+        eprintln!("  Output shape: {} x {}", encoder_output_gpu_conv.len() / d_model, d_model);
+        eprintln!("  mean={:.6}, std={:.6}",
+            encoder_output_gpu_conv.iter().sum::<f32>() / encoder_output_gpu_conv.len() as f32,
+            (encoder_output_gpu_conv.iter().map(|x| x.powi(2)).sum::<f32>() / encoder_output_gpu_conv.len() as f32).sqrt());
+
+        // Compare
+        eprintln!("\n[Step 3] Comparing encoder outputs...");
+        if encoder_output_cpu_conv.len() == encoder_output_gpu_conv.len() {
+            let max_diff: f32 = encoder_output_cpu_conv.iter()
+                .zip(encoder_output_gpu_conv.iter())
+                .map(|(c, g)| (c - g).abs())
+                .fold(0.0f32, f32::max);
+
+            let avg_diff: f32 = encoder_output_cpu_conv.iter()
+                .zip(encoder_output_gpu_conv.iter())
+                .map(|(c, g)| (c - g).abs())
+                .sum::<f32>() / encoder_output_cpu_conv.len() as f32;
+
+            eprintln!("  Max difference: {:.6}", max_diff);
+            eprintln!("  Avg difference: {:.6}", avg_diff);
+
+            // Show first few elements
+            eprintln!("\n  First 10 elements comparison:");
+            for i in 0..10.min(encoder_output_cpu_conv.len()) {
+                eprintln!("    [{}] CPU_conv: {:.6}, GPU_conv: {:.6}, diff: {:.6}",
+                    i, encoder_output_cpu_conv[i], encoder_output_gpu_conv[i],
+                    (encoder_output_cpu_conv[i] - encoder_output_gpu_conv[i]).abs());
+            }
+
+            if max_diff < 0.1 {
+                eprintln!("\n✓ Encoder outputs match (max_diff < 0.1)");
+            } else {
+                eprintln!("\n✗ Encoder output MISMATCH (max_diff = {:.6})", max_diff);
+            }
+        } else {
+            eprintln!("  ✗ Shape mismatch: CPU_conv={}, GPU_conv={}",
+                encoder_output_cpu_conv.len(), encoder_output_gpu_conv.len());
+        }
+
+        eprintln!("\n============================================================");
     }
 }
