@@ -1916,18 +1916,42 @@ impl WhisperCuda {
         self.upload_decoder_weights_to_gpu()?;
         self.init_gpu_decoder_kv_cache_head_first()?;
 
+        // Step 2: Run encoder to compile kernels - match actual transcribe_gpu path
+        // WAPR-PERF-020: Check which encoder path will be used in transcribe_gpu
+        let use_gpu_encoder = std::env::var("WHISPER_GPU_ENCODER").is_ok();
+        let use_gpu_decoder = std::env::var("WHISPER_GPU_DECODER_OFFLOAD").is_ok();
+
+        let n_mels = self.config.n_mels as usize;
+        let d_model = self.config.n_text_state as usize;
+
+        let enc_output = if use_gpu_encoder {
+            // GPU encoder path - compile attention kernels with full-size input
+            let n_frames = 3000; // Whisper expects exactly 3000 frames for 30s audio
+            let dummy_mel: Vec<f32> = vec![0.0; n_mels * n_frames];
+            self.encode_gpu(&dummy_mel)?
+        } else {
+            // CPU encoder path - no GPU kernels to compile for encoder
+            // Use a small mel to avoid wasting time on CPU encoder
+            let small_mel: Vec<f32> = vec![0.0; n_mels * 100]; // 100 frames
+            self.encoder.forward_mel(&small_mel)?
+        };
+        let enc_seq_len = enc_output.len() / d_model;
+
+        // Only warm up decoder kernels if GPU decoder will be used
+        if !use_gpu_decoder {
+            return Ok(start.elapsed().as_millis() as u64);
+        }
+
+        // Step 3: Get context and stream for GPU operations
         let ctx = self.executor.context();
         let stream = CudaStream::new(ctx)
             .map_err(|e| WhisperError::Inference(format!("warmup stream: {e}")))?;
 
-        // Step 2: Run encoder with dummy mel to compile encoder kernels
-        let n_mels = self.config.n_mels as usize;
-        let d_model = self.config.n_text_state as usize;
-        let dummy_mel: Vec<f32> = vec![0.0; n_mels * 100]; // 100 frames
-        let enc_gpu = self.encode_gpu_resident(&dummy_mel)?;
-        let enc_seq_len = enc_gpu.len() / d_model;
+        // Step 4: Upload encoder output to GPU for cross-attention warmup
+        let enc_gpu = GpuResidentTensor::from_host(ctx, &enc_output)
+            .map_err(|e| WhisperError::Inference(format!("warmup enc upload: {e}")))?;
 
-        // Step 3: Populate cross K/V to compile permute kernels
+        // Step 5: Populate cross K/V to compile permute kernels
         self.populate_cross_kv_caches_gpu(&enc_gpu, &stream)?;
 
         // Step 4: Run decoder to compile decoder kernels
