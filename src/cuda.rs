@@ -1772,6 +1772,103 @@ impl WhisperCuda {
         Ok(result)
     }
 
+    /// WAPR-PERF-018: GPU-resident encoder output for graph-captured cross-attention
+    ///
+    /// Same as `encode_gpu_total_offload` but returns GpuResidentTensor instead of Vec<f32>.
+    /// Enables decoder cross-attention to stay on GPU without D2H→H2D transfer.
+    ///
+    /// # Returns
+    ///
+    /// - `GpuResidentTensor<f32>` - Encoder output on GPU [seq_len, d_model]
+    #[cfg(feature = "cuda")]
+    pub fn encode_gpu_resident(&mut self, mel: &[f32]) -> WhisperResult<GpuResidentTensor<f32>> {
+        // Ensure weights are uploaded
+        if self.gpu_encoder_weights.is_none() {
+            self.upload_encoder_weights_to_gpu()?;
+        }
+        if self.gpu_conv_weights.is_none() {
+            self.upload_conv_weights_to_gpu()?;
+        }
+
+        let ctx = self.executor.context();
+        let d_model = self.config.n_audio_state as usize;
+        let n_layers = self.config.n_audio_layer as usize;
+        let n_mels = self.config.n_mels as usize;
+
+        // Step 1: Convolutional frontend on GPU
+        let seq_len_in = mel.len() / n_mels;
+        let mel_gpu = GpuResidentTensor::from_host(ctx, mel)
+            .map_err(|e| WhisperError::Inference(format!("mel upload: {e}")))?;
+
+        let conv_weights = self
+            .gpu_conv_weights
+            .as_ref()
+            .ok_or_else(|| WhisperError::Inference("Conv weights not uploaded".into()))?;
+
+        // Conv1: 80 → d_model, kernel=3, stride=1, padding=1 + GELU
+        let conv1_out = mel_gpu
+            .conv1d(
+                ctx,
+                &conv_weights.conv1_weight,
+                Some(&conv_weights.conv1_bias),
+                n_mels as u32,
+                d_model as u32,
+                3, 1, 1,
+                seq_len_in as u32,
+            )
+            .map_err(|e| WhisperError::Inference(format!("conv1: {e}")))?;
+
+        // Conv2: d_model → d_model, kernel=3, stride=2, padding=1 + GELU
+        let conv2_out = conv1_out
+            .conv1d(
+                ctx,
+                &conv_weights.conv2_weight,
+                Some(&conv_weights.conv2_bias),
+                d_model as u32,
+                d_model as u32,
+                3, 2, 1,
+                seq_len_in as u32,
+            )
+            .map_err(|e| WhisperError::Inference(format!("conv2: {e}")))?;
+
+        // After conv2: seq_len halved (stride=2)
+        let seq_len = (seq_len_in + 2 - 3) / 2 + 1;
+        let pos_emb = self.encoder.positional_embedding();
+        let pos_slice = &pos_emb[..seq_len * d_model];
+        let pos_gpu = GpuResidentTensor::from_host(ctx, pos_slice)
+            .map_err(|e| WhisperError::Inference(format!("pos_emb upload: {e}")))?;
+
+        let mut x_gpu = conv2_out
+            .add(ctx, &pos_gpu)
+            .map_err(|e| WhisperError::Inference(format!("pos_emb add: {e}")))?;
+
+        // Step 3: Process encoder blocks on GPU
+        let weights = self
+            .gpu_encoder_weights
+            .as_ref()
+            .ok_or_else(|| WhisperError::Inference("GPU weights not uploaded".into()))?;
+        let config = self
+            .gpu_encoder_config
+            .as_ref()
+            .ok_or_else(|| WhisperError::Inference("GPU config not set".into()))?;
+
+        for layer_idx in 0..n_layers {
+            x_gpu = forward_encoder_block_gpu(ctx, &x_gpu, &weights[layer_idx], config)
+                .map_err(|e| WhisperError::Inference(format!("encoder block {layer_idx}: {e}")))?;
+        }
+
+        // Step 4: Final layer norm (D2H → CPU LN → H2D)
+        // TODO: Add GPU layer norm weights to eliminate this transfer
+        let output_host = x_gpu
+            .to_host()
+            .map_err(|e| WhisperError::Inference(format!("encoder D2H: {e}")))?;
+        let ln_result = self.encoder.ln_post().forward(&output_host)?;
+        let result_gpu = GpuResidentTensor::from_host(ctx, &ln_result)
+            .map_err(|e| WhisperError::Inference(format!("encoder H2D: {e}")))?;
+
+        Ok(result_gpu)
+    }
+
     /// Forward pass through a single encoder block with GPU attention.
     ///
     /// Architecture: Pre-norm with residual connections
@@ -6433,5 +6530,55 @@ mod tests {
         );
 
         eprintln!("\n✓ WAPR-PERF-017: Full token pass benchmark complete");
+    }
+
+    /// WAPR-PERF-018: Test GPU-resident encoder output
+    ///
+    /// Verifies encoder output stays on GPU for cross-attention.
+    #[test]
+    fn test_encode_gpu_resident() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        let model_path = "models/whisper-tiny.apr";
+        if !std::path::Path::new(model_path).exists() {
+            eprintln!("Model not found at {}, skipping test", model_path);
+            return;
+        }
+
+        eprintln!("\n============================================================");
+        eprintln!("WAPR-PERF-018: GPU-Resident Encoder Output Test");
+        eprintln!("============================================================\n");
+
+        let bytes = std::fs::read(model_path).expect("Failed to read model");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+        let d_model = apr.config().n_audio_state as usize;
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        // Create dummy mel input
+        let n_mels = cuda_model.config().n_mels as usize;
+        let seq_len = 100;
+        let mel: Vec<f32> = (0..n_mels * seq_len).map(|i| (i as f32 * 0.001).sin()).collect();
+
+        eprintln!("[Input] {} mels × {} frames", n_mels, seq_len);
+
+        // Run GPU-resident encoder
+        let start = std::time::Instant::now();
+        let enc_gpu = cuda_model.encode_gpu_resident(&mel).expect("Encode GPU resident");
+        let elapsed = start.elapsed();
+
+        let enc_len = enc_gpu.len();
+        let expected_seq_len = (seq_len + 2 - 3) / 2 + 1; // After stride-2 conv
+
+        eprintln!("[Output] GPU tensor: {} elements ({} × {})", enc_len, expected_seq_len, d_model);
+        eprintln!("[Time] {:?}", elapsed);
+        eprintln!("[Result] Encoder output stays on GPU ✓");
+
+        // Verify size
+        assert_eq!(enc_len, expected_seq_len * d_model, "Unexpected encoder output size");
+
+        eprintln!("\n✓ WAPR-PERF-018: GPU-resident encoder output verified");
     }
 }
