@@ -1154,7 +1154,37 @@ To match whisper.cpp, whisper.apr needs:
 **Current Status:** Softmax correctness FIXED, but 2x target NOT MET.
 GPU-resident attention is a building block, but full GPU encoder required.
 
-### 10.9 Citations
+### 10.9 Performance Profile (2026-01-22)
+
+**encode_gpu_total_offload profiling breakdown (tiny model, 1.5s audio):**
+
+| Component | Time (ms) | Notes |
+|-----------|-----------|-------|
+| Conv1+Conv2 (GPU) | 47.3 | GPU convolutional frontend |
+| Pos Embedding | 9.3 | CPU add positional embedding |
+| Upload | 0.3 | Re-upload to GPU |
+| Transformer Layers | 138.9 | 4 layers @ ~35ms each |
+| Download | 0.2 | Final download |
+| LnPost | 28.7 | CPU final layer norm |
+| **Total** | **224.7** | vs whisper.cpp 114ms |
+
+**Comparison:**
+- whisper.cpp encoder: 114.73ms
+- whisper.apr GPU encoder: 224.7ms (1.96x slower)
+- Parity achieved but NOT 2x faster target
+
+**Issues Found:**
+1. Numerical divergence (max_diff = 9.17) between CPU and GPU encoder outputs
+2. Intermediate CPU operations (pos embedding, ln_post) add overhead
+3. Transformer layer time (35ms/layer) could be reduced with kernel fusion
+
+**Next Steps:**
+1. Fix numerical divergence in GPU encoder
+2. Move positional embedding add to GPU
+3. Move ln_post to GPU
+4. Profile and optimize individual transformer layer kernels
+
+### 10.10 Citations
 
 - [Dao2022] FlashAttention: Fast and Memory-Efficient Exact Attention
 - [Kwon2023] PagedAttention for LLM Serving with vLLM
