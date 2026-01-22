@@ -198,6 +198,8 @@ pub struct TranscribeOptions {
     pub strategy: DecodingStrategy,
     /// Whether to include word-level timestamps
     pub word_timestamps: bool,
+    /// Enable detailed performance profiling (WAPR-PERF-004)
+    pub profile: bool,
 }
 
 /// A timestamped segment of transcription
@@ -214,6 +216,16 @@ pub struct Segment {
     pub tokens: Vec<u32>,
 }
 
+/// Performance profiling statistics (WAPR-PERF-004)
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "cli", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProfilingStats {
+    /// Total inference time in milliseconds
+    pub total_ms: f64,
+    /// Timing breakdown by component (Audio, Encoder, Decoder)
+    pub breakdown: std::collections::HashMap<String, f64>,
+}
+
 /// Result of transcription
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "cli", derive(serde::Serialize, serde::Deserialize))]
@@ -224,6 +236,9 @@ pub struct TranscriptionResult {
     pub language: String,
     /// Timestamped segments
     pub segments: Vec<Segment>,
+    /// Performance profiling data (if enabled)
+    #[cfg_attr(feature = "cli", serde(skip_serializing_if = "Option::is_none"))]
+    pub profiling: Option<ProfilingStats>,
 }
 
 /// Result of batch transcription (WAPR-083)
@@ -491,11 +506,22 @@ impl WhisperApr {
         audio: &[f32],
         options: TranscribeOptions,
     ) -> WhisperResult<TranscriptionResult> {
+        #[cfg(feature = "std")]
+        let start_total = if options.profile { Some(std::time::Instant::now()) } else { None };
+
         // 1. Compute mel spectrogram
+        #[cfg(feature = "std")]
+        let start_mel = if options.profile { Some(std::time::Instant::now()) } else { None };
         let mel = self.compute_mel(audio)?;
+        #[cfg(feature = "std")]
+        let mel_ms = start_mel.map(|s| s.elapsed().as_secs_f64() * 1000.0);
 
         // 2. Encode audio features
+        #[cfg(feature = "std")]
+        let start_enc = if options.profile { Some(std::time::Instant::now()) } else { None };
         let audio_features = self.encode(&mel)?;
+        #[cfg(feature = "std")]
+        let enc_ms = start_enc.map(|s| s.elapsed().as_secs_f64() * 1000.0);
 
         // 3. Determine language
         let language = options.language.clone().unwrap_or_else(|| "en".to_string());
@@ -504,7 +530,11 @@ impl WhisperApr {
         let initial_tokens = self.get_initial_tokens(&language, options.task);
 
         // 5. Decode tokens
+        #[cfg(feature = "std")]
+        let start_dec = if options.profile { Some(std::time::Instant::now()) } else { None };
         let tokens = self.decode(&audio_features, &initial_tokens, &options)?;
+        #[cfg(feature = "std")]
+        let dec_ms = start_dec.map(|s| s.elapsed().as_secs_f64() * 1000.0);
 
         // 6. Extract segments with timestamps
         let segments = if timestamps::has_timestamps(&tokens) {
@@ -516,11 +546,30 @@ impl WhisperApr {
         // 7. Convert full token sequence to text
         let text = self.tokenizer.decode(&tokens)?;
 
-        // 8. Build result
+        // 8. Build result with optional profiling
+        #[cfg(feature = "std")]
+        let profiling = if options.profile {
+            let mut breakdown = std::collections::HashMap::new();
+            if let Some(ms) = mel_ms { breakdown.insert("audio_ms".to_string(), ms); }
+            if let Some(ms) = enc_ms { breakdown.insert("encoder_ms".to_string(), ms); }
+            if let Some(ms) = dec_ms { breakdown.insert("decoder_ms".to_string(), ms); }
+            
+            Some(ProfilingStats {
+                total_ms: start_total.map(|s| s.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0),
+                breakdown,
+            })
+        } else {
+            None
+        };
+
+        #[cfg(not(feature = "std"))]
+        let profiling = None;
+
         Ok(TranscriptionResult {
             text,
             language,
             segments,
+            profiling,
         })
     }
 
@@ -577,6 +626,7 @@ impl WhisperApr {
                 task: options.task,
                 strategy: options.strategy,
                 word_timestamps: options.word_timestamps,
+                profile: options.profile,
             };
 
             let chunk_result = self.transcribe_single_chunk(chunk, chunk_options)?;
@@ -629,6 +679,7 @@ impl WhisperApr {
             text: all_text,
             language,
             segments: merged_segments,
+            profiling: None,
         })
     }
 
@@ -1417,6 +1468,7 @@ impl WhisperApr {
                 text,
                 language: language.clone(),
                 segments,
+                profiling: None,
             });
         }
 
@@ -1493,6 +1545,7 @@ impl WhisperApr {
                 text,
                 language: language.clone(),
                 segments,
+                profiling: None,
             });
         }
 
@@ -2328,6 +2381,7 @@ mod tests {
             task: Task::Transcribe,
             strategy: DecodingStrategy::Greedy,
             word_timestamps: false,
+            profile: false,
         };
 
         assert_eq!(options.language, Some("es".to_string()));
@@ -2344,6 +2398,7 @@ mod tests {
                 patience: 1.0,
             },
             word_timestamps: false,
+            profile: false,
         };
 
         assert!(matches!(
@@ -2373,6 +2428,7 @@ mod tests {
             text: "Test transcription".to_string(),
             language: "en".to_string(),
             segments: vec![],
+            profiling: None,
         };
 
         assert_eq!(result.text, "Test transcription");
@@ -2489,6 +2545,7 @@ mod tests {
                 patience: 1.0,
             },
             word_timestamps: false,
+            profile: false,
         };
         assert!(matches!(
             opts_beam.strategy,
@@ -2505,6 +2562,7 @@ mod tests {
                 top_p: Some(0.9),
             },
             word_timestamps: true,
+            profile: false,
         };
         assert!(matches!(
             opts_sampling.strategy,
@@ -3039,6 +3097,7 @@ mod tests {
             task: Task::Translate,
             strategy: DecodingStrategy::Greedy,
             word_timestamps: true,
+            profile: false,
         };
 
         let cloned = options.clone();
@@ -3092,6 +3151,7 @@ mod tests {
                 text: "hello".to_string(),
                 tokens: vec![1],
             }],
+            profiling: None,
         };
 
         let cloned = result.clone();
@@ -3105,6 +3165,7 @@ mod tests {
             text: "test".to_string(),
             language: "en".to_string(),
             segments: vec![],
+            profiling: None,
         };
 
         let debug_str = format!("{result:?}");
@@ -3142,6 +3203,7 @@ mod tests {
                 top_p: None,
             },
             word_timestamps: false,
+            profile: false,
         };
 
         assert!(matches!(
@@ -3157,6 +3219,7 @@ mod tests {
             task: Task::Transcribe,
             strategy: DecodingStrategy::default(),
             word_timestamps: true,
+            profile: false,
         };
 
         assert!(options.word_timestamps);
@@ -3279,11 +3342,13 @@ mod tests {
                     text: "Hello".to_string(),
                     language: "en".to_string(),
                     segments: vec![],
+                    profiling: None,
                 },
                 TranscriptionResult {
                     text: "World".to_string(),
                     language: "en".to_string(),
                     segments: vec![],
+                    profiling: None,
                 },
             ],
             total_duration_secs: 1.5,
@@ -3312,11 +3377,13 @@ mod tests {
                     text: "First".to_string(),
                     language: "en".to_string(),
                     segments: vec![],
+                    profiling: None,
                 },
                 TranscriptionResult {
                     text: "Second".to_string(),
                     language: "es".to_string(),
                     segments: vec![],
+                    profiling: None,
                 },
             ],
             total_duration_secs: 2.0,
@@ -3336,16 +3403,19 @@ mod tests {
                     text: "One".to_string(),
                     language: "en".to_string(),
                     segments: vec![],
+                    profiling: None,
                 },
                 TranscriptionResult {
                     text: "Two".to_string(),
                     language: "en".to_string(),
                     segments: vec![],
+                    profiling: None,
                 },
                 TranscriptionResult {
                     text: "Three".to_string(),
                     language: "en".to_string(),
                     segments: vec![],
+                    profiling: None,
                 },
             ],
             total_duration_secs: 3.0,
@@ -3363,11 +3433,13 @@ mod tests {
                     text: "A".to_string(),
                     language: "en".to_string(),
                     segments: vec![],
+                    profiling: None,
                 },
                 TranscriptionResult {
                     text: "B".to_string(),
                     language: "en".to_string(),
                     segments: vec![],
+                    profiling: None,
                 },
             ],
             total_duration_secs: 1.0,
@@ -3777,6 +3849,7 @@ mod tests {
                 patience: 1.5,
             },
             word_timestamps: true,
+            profile: false,
         };
 
         assert_eq!(options.language, Some("fr".to_string()));
@@ -3875,6 +3948,7 @@ mod tests {
             text: String::new(),
             language: "en".to_string(),
             segments: vec![],
+            profiling: None,
         };
 
         assert!(result.text.is_empty());
@@ -3888,11 +3962,13 @@ mod tests {
                 text: "First".to_string(),
                 language: "en".to_string(),
                 segments: vec![],
+                profiling: None,
             },
             TranscriptionResult {
                 text: "Second".to_string(),
                 language: "en".to_string(),
                 segments: vec![],
+                profiling: None,
             },
         ];
 
@@ -4163,6 +4239,7 @@ mod tests {
             text: "Hello world".to_string(),
             language: "en".to_string(),
             segments: vec![],
+            profiling: None,
         };
 
         let result = TranscribeSummaryResult {
@@ -4182,6 +4259,7 @@ mod tests {
             text: "Hello world".to_string(),
             language: "en".to_string(),
             segments: vec![],
+            profiling: None,
         };
 
         let result = TranscribeSummaryResult {

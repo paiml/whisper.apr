@@ -91,6 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         task: whisper_apr::Task::Transcribe,
         strategy: whisper_apr::DecodingStrategy::Greedy,
         word_timestamps: false,
+        profile: false,
     };
 
     let t0 = Instant::now();

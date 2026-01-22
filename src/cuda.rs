@@ -2999,6 +2999,7 @@ impl WhisperCuda {
             text,
             language,
             segments: Vec::new(), // No segments for now
+            profiling: None,
         })
     }
 
@@ -3639,6 +3640,7 @@ impl WhisperCuda {
             text,
             language,
             segments: Vec::new(),
+            profiling: None,
         })
     }
 

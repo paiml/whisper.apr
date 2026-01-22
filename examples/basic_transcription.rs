@@ -34,6 +34,7 @@ fn main() {
         task: Task::Transcribe,
         strategy: DecodingStrategy::Greedy,
         word_timestamps: false,
+        profile: false,
     };
 
     println!("Transcription options:");

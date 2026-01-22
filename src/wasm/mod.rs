@@ -799,6 +799,7 @@ mod tests {
             text: "Hello world".to_string(),
             language: "en".to_string(),
             segments: vec![],
+            profiling: None,
         };
 
         let wasm: TranscriptionResultWasm = native.into();
@@ -913,6 +914,7 @@ mod tests {
                     tokens: vec![4, 5, 6],
                 },
             ],
+            profiling: None,
         };
 
         let wasm: TranscriptionResultWasm = native.into();
@@ -954,6 +956,7 @@ mod tests {
                     tokens: vec![2],
                 },
             ],
+            profiling: None,
         };
 
         let wasm: TranscriptionResultWasm = native.into();
@@ -978,6 +981,7 @@ mod tests {
             text: "".to_string(),
             language: "en".to_string(),
             segments: vec![],
+            profiling: None,
         };
 
         let wasm: TranscriptionResultWasm = native.into();

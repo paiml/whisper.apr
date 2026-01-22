@@ -294,6 +294,7 @@ impl StreamingTranscriber {
             text: self.accumulated_text.clone(),
             language: "en".into(),
             segments: vec![],
+            profiling: None,
         })
     }
 

@@ -72,6 +72,7 @@ pub fn run_inference(
         text: String::new(),
         language: "en".into(),
         segments: vec![],
+        profiling: None,
     })
 }
 

@@ -4,10 +4,10 @@
 
 | Field | Value |
 |-------|-------|
-| Status | **RESOLVED: whisper.apr CPU 2.2x faster than whisper.cpp** (1699ms vs 3735ms) |
+| Status | **CORROBORATED**: GPU Total Offload achieves **RTF 0.92x** (1375ms for 1.5s audio) |
 | Author | Claude Code |
 | Created | 2026-01-20 |
-| Updated | 2026-01-22 |
+| Updated | 2026-01-22 (GPU Encoder Falsification Complete) |
 | PMAT Roadmap ID | `WAPR-PERF-004` |
 | Toyota Way Phase | Jidoka (自働化) - Stop and Fix |
 | **FIX Strategy** | Wire realizar InferenceTracer + trueno BrickProfiler |
@@ -51,6 +51,38 @@ This specification defines the systematic approach to achieve **2x performance i
 - ✅ **CPU target ACHIEVED**: whisper.apr is **2.2x faster** than whisper.cpp CPU
 - ❌ **GPU target NOT MET**: whisper.apr is **9.6x slower** than whisper.cpp GPU
 - **Root cause**: GPU encoder/decoder paths have bugs (see Known Issues below)
+
+---
+
+## 🆕 Latest Benchmark (2026-01-22 - GPU Total Offload)
+
+**Short Audio (1.5s, test-speech-1.5s.wav):**
+| Mode | Encoder | Total | RTF | Status |
+|------|---------|-------|-----|--------|
+| CPU Only | ~850ms | 1708ms | 1.14x | baseline |
+| **GPU Total Offload** | **40ms** | **1375ms** | **0.92x** | ✅ **FASTER THAN REAL-TIME** |
+
+**WAPR-PERF-016 (GPU Encoder) - FALSIFIED:**
+- Previous: GPU Encoder (3.0s) was 3.4x slower than CPU (0.9s)
+- After: GPU Encoder **40ms** with `WHISPER_GPU_TOTAL_OFFLOAD=1`
+- **21x improvement** via batched WMMA kernels in trueno-gpu
+
+**Benchmark Command:**
+```bash
+WHISPER_GPU_TOTAL_OFFLOAD=1 WHISPER_PROFILE_LAYERS=1 cargo run --release \
+  --features "cli,cuda,realizar-gpu" --bin whisper-apr-cli -- \
+  transcribe --file demos/test-audio/test-speech-1.5s.wav --gpu -v
+```
+
+**Profile Breakdown (GPU Total Offload):**
+- Conv (GPU): 3ms
+- Encoder Layers (4x): 35.6ms total (8.9ms avg, 1.1x variance)
+- Download: 0ms
+- LnPost: 1ms
+- **Encoder Total: 40ms** (target was 50ms)
+
+**New Bottleneck: Decoder (1117ms, 81% of total)**
+- Next: WAPR-PERF-024 - Decoder Graph Optimization
 
 ---
 
