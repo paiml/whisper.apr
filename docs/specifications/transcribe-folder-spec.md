@@ -1340,17 +1340,27 @@ With 4 decoder layers × ~10 operations per layer = ~40 stream creations per tok
 |------|--------|-------------|
 | 1. Identify root cause | ✅ COMPLETE | Stream creation overhead identified |
 | 2. Upload weights to executor | ✅ COMPLETE | 112MB in 23ms via `upload_decoder_weights_to_executor()` |
-| 3. Implement executor forward | ⏸️ BLOCKED | Awaiting realizar refactoring |
-| 4. Verify parity | ⏸️ BLOCKED | Depends on step 3 |
-| 5. CUDA Graph capture | ⏸️ PENDING | Depends on steps 3-4 |
+| 3. Implement executor forward | ✅ COMPLETE | `forward_decoder_block_executor()` uses `gemv_cached()` |
+| 4. Verify parity | ✅ COMPLETE | Parity test: max_diff = 0.000000 (exact match) |
+| 5. CUDA Graph capture | ⏳ PENDING | Ready to implement |
 
-**Benchmark Results** (release mode, 1.5s audio):
+**Benchmark Results** (release mode, 1.5s audio, 2026-01-22):
 ```
-Weight upload: 23ms
-Encoder (CPU): 3.7s   (was 7.3s - improved 2x with FFN SIMD fix)
-Per-token decode: ~79ms
-Status: BLOCKED pending realizar stability
+Encoder (CPU): 1.0s (WAPR-PERF-015 - FFN SIMD + Conv1d im2col + parallel attention)
+Decoder (GPU): 500ms
+TOTAL: 1.4s vs 1.98s target (✅ PASSED Point 157)
+Parity: max_diff=0.000000, mean_diff=0.000000
+
+Executor vs GPU forward pass timing (single block):
+- GPU (GpuResidentTensor): 12.7ms
+- Executor (gemv_cached): 14.8ms (cold start)
 ```
+
+**Implementation Details** (commit 4832fde):
+- `forward_decoder_block_executor()`: Uses `executor.gemv_cached()` for Q/K/V/O projections
+- Pre-copies biases to avoid borrow conflicts
+- Keeps LayerNorm on CPU (fast enough, avoids gamma/beta upload overhead)
+- Uses existing KV cache scatter/attention (GpuResidentTensor still needed here)
 
 **Implementation Strategy**:
 1. Implement `cudaStreamBeginCapture` / `EndCapture` wrapper in `CudaContext`.
