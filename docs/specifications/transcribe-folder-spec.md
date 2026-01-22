@@ -1664,6 +1664,32 @@ Improvements:
 
 **Status**: ✅ DOCUMENTED - Kernel caching provides 30x speedup after warmup.
 
+#### O.2.8 Warmup Method for Predictable Latency (WAPR-PERF-020 - IMPLEMENTED)
+
+**Problem**: First transcription takes ~200ms due to JIT compilation, unpredictable latency.
+
+**Solution**: Add `warmup()` method to pre-compile all kernels during model initialization.
+
+```rust
+let mut cuda_model = apr.into_cuda(0)?;
+cuda_model.warmup()?;  // 326ms - compile all kernels
+// All subsequent transcriptions now fast:
+let result = cuda_model.transcribe_gpu(&audio, opts)?;  // ~14ms
+```
+
+**Results** (2026-01-22):
+```
+Warmup: 326ms (compiles encoder + decoder kernels)
+Post-warmup pipeline:
+  Encoder:     3.5ms
+  Cross K/V:   7.6ms
+  Decoder:     3.3ms
+  Total:       14.4ms
+  Speedup:     23.3x vs cold start
+```
+
+**Status**: ✅ IMPLEMENTED - Users now have explicit control over kernel compilation timing.
+
 #### O.3 CPU Encoder Optimization (WAPR-PERF-015)
 
 **Problem**: Encoder taking 7.3s for 1.5s audio (target: ~200ms)
