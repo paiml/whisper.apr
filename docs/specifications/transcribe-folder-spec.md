@@ -1396,19 +1396,22 @@ Status: BLOCKED pending realizar stability
 | FFN SIMD | 1156ms | 97ms | 12x |
 | Conv1d im2col+matmul | 585ms | 73ms | 8x |
 | FlashAttention dispatch | 656ms | 469ms | 1.4x |
-| **Full Encoder** | **7.3s** | **2.2s** | **3.3x** |
+| Parallel attention (rayon) | 469ms | 127ms | 3.7x |
+| **Full Encoder** | **7.3s** | **1.0s** | **7.3x** |
 
 **Final Full-System Benchmark** (1.5s audio, release mode):
 ```
-Encoder (CPU): 2.34s
+Encoder (CPU): 1.0s (with parallel feature)
 Decoder (GPU): 500ms
-TOTAL: 2.84s vs 1.98s target (1.4x over)
+TOTAL: 1.77s vs 1.98s target
 ```
 
-**Remaining Bottleneck**:
-- Self-attention per-head overhead: 469ms per block = ~1.9s for 4 blocks
-- `extract_head()` creates 18 allocations per block (6 heads × 3 Q/K/V)
-- Could be reduced with fused attention or batch-head operations
+**Point 157 Falsification**: ✅ **PASSED** (1769ms ≤ 1984ms target)
+
+**Notes**:
+- `parallel` feature now enabled by default for native builds
+- Uses rayon for multi-threaded attention head computation
+- WASM users should use `wasm` feature which excludes parallel
 
 ---
 
