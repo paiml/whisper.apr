@@ -3973,4 +3973,188 @@ mod tests {
 
         eprintln!("✓ Executor weight upload test passed");
     }
+
+    /// WAPR-PERF-015: Diagnose CPU encoder performance
+    ///
+    /// Profiles individual components of the encoder forward pass to identify
+    /// the source of the 7.29s encoder time (should be ~200ms).
+    #[test]
+    fn test_encoder_performance_diagnostic() {
+        use crate::simd;
+
+        // Check SIMD backend
+        eprintln!("\n============================================================");
+        eprintln!("WAPR-PERF-015: Encoder Performance Diagnostic");
+        eprintln!("============================================================\n");
+
+        eprintln!("[SIMD Backend]");
+        eprintln!("  Backend: {}", simd::backend_name());
+        eprintln!("  SIMD available: {}", simd::simd_available());
+
+        // Load model
+        let model_path = std::env::var("WHISPER_MODEL_PATH")
+            .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/models/whisper-tiny.apr").to_string());
+
+        if !std::path::Path::new(&model_path).exists() {
+            eprintln!("Model not found at {}, skipping test", model_path);
+            return;
+        }
+
+        // Load audio
+        let audio_path = std::env::var("WHISPER_TEST_AUDIO")
+            .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/demos/test-audio/test-speech-1.5s.wav").to_string());
+
+        if !std::path::Path::new(&audio_path).exists() {
+            eprintln!("Test audio not found at {}, skipping test", audio_path);
+            return;
+        }
+
+        let bytes = std::fs::read(&model_path).expect("Failed to read model file");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+
+        // Load and preprocess audio
+        let audio_bytes = std::fs::read(&audio_path).expect("Failed to read audio file");
+        let wav_data = crate::audio::wav::parse_wav(&audio_bytes).expect("Failed to parse WAV");
+
+        // Compute mel spectrogram
+        let mel_start = std::time::Instant::now();
+        let mel = apr.compute_mel(&wav_data.samples).expect("Mel computation failed");
+        let mel_time = mel_start.elapsed();
+        let mel_frames = mel.len() / 80;
+        eprintln!("\n[Mel Spectrogram]");
+        eprintln!("  Frames: {}", mel_frames);
+        eprintln!("  Time: {:?}", mel_time);
+
+        // Time convolution frontend
+        let conv_start = std::time::Instant::now();
+        let conv_output = apr.encoder.conv_frontend().forward(&mel).expect("Conv failed");
+        let conv_time = conv_start.elapsed();
+        let conv_frames = conv_output.len() / apr.encoder.d_model();
+        eprintln!("\n[Convolutional Frontend]");
+        eprintln!("  Input frames: {}", mel_frames);
+        eprintln!("  Output frames: {}", conv_frames);
+        eprintln!("  Time: {:?}", conv_time);
+
+        // Time positional embedding addition (should be trivial)
+        let pe_start = std::time::Instant::now();
+        let mut x = conv_output.clone();
+        let pe = apr.encoder.positional_embedding();
+        for pos in 0..conv_frames {
+            for d in 0..apr.encoder.d_model() {
+                x[pos * apr.encoder.d_model() + d] += pe[pos * apr.encoder.d_model() + d];
+            }
+        }
+        let pe_time = pe_start.elapsed();
+        eprintln!("\n[Positional Embedding]");
+        eprintln!("  Time: {:?}", pe_time);
+
+        // Time single encoder block
+        let block_start = std::time::Instant::now();
+        let block_output = apr.encoder.blocks()[0].forward(&x).expect("Block 0 failed");
+        let block_time = block_start.elapsed();
+        eprintln!("\n[Single Encoder Block (Layer 0)]");
+        eprintln!("  Time: {:?}", block_time);
+        eprintln!("  Projected: {:?} for {} layers", block_time * apr.encoder.n_layers() as u32, apr.encoder.n_layers());
+
+        // Time full encoder
+        let encoder_start = std::time::Instant::now();
+        let _encoder_output = apr.encoder.forward_mel(&mel).expect("Encoder failed");
+        let encoder_time = encoder_start.elapsed();
+        eprintln!("\n[Full Encoder (forward_mel)]");
+        eprintln!("  Time: {:?}", encoder_time);
+
+        // Breakdown analysis
+        let total_expected = conv_time + pe_time + block_time * apr.encoder.n_layers() as u32;
+        eprintln!("\n[Analysis]");
+        eprintln!("  Expected (conv + pe + {} blocks): {:?}", apr.encoder.n_layers(), total_expected);
+        eprintln!("  Actual: {:?}", encoder_time);
+        eprintln!("  Overhead: {:?}", encoder_time.saturating_sub(total_expected));
+
+        // SIMD matmul benchmark (raw performance check)
+        eprintln!("\n[Raw MatMul Benchmark]");
+        let a = vec![1.0_f32; 1500 * 384];
+        let b = vec![1.0_f32; 384 * 384];
+
+        let matmul_start = std::time::Instant::now();
+        for _ in 0..10 {
+            let _ = simd::matmul(&a, &b, 1500, 384, 384);
+        }
+        let matmul_time = matmul_start.elapsed() / 10;
+        eprintln!("  1500x384 @ 384x384 matmul: {:?}", matmul_time);
+        eprintln!("  Est. encoder matmuls (4 layers × 6): {:?}", matmul_time * 24);
+
+        // Check weights finalized status
+        eprintln!("\n[Weight Finalization]");
+        eprintln!("  Block 0 self_attn finalized: {}", apr.encoder.blocks()[0].self_attn.is_finalized());
+        eprintln!("  Block 0 FFN finalized: {}", apr.encoder.blocks()[0].ffn.is_finalized());
+
+        // Detailed encoder block breakdown
+        eprintln!("\n[Encoder Block Breakdown (Layer 0)]");
+
+        // Use the block output from above test (x has positional embedding added)
+        let block = &apr.encoder.blocks()[0];
+        let d_model = apr.encoder.d_model();
+
+        // Layer Norm 1
+        let ln1_start = std::time::Instant::now();
+        let normed = block.ln1.forward(&x).expect("LN1 failed");
+        let ln1_time = ln1_start.elapsed();
+        eprintln!("  LayerNorm 1: {:?}", ln1_time);
+
+        // Self-attention
+        let attn_start = std::time::Instant::now();
+        let attn_out = block.self_attn.forward(&normed, None).expect("Attn failed");
+        let attn_time = attn_start.elapsed();
+        eprintln!("  Self-Attention: {:?}", attn_time);
+
+        // Residual 1
+        let res1_start = std::time::Instant::now();
+        let mut residual: Vec<f32> = x.iter().zip(attn_out.iter()).map(|(a, b)| a + b).collect();
+        let res1_time = res1_start.elapsed();
+        eprintln!("  Residual 1: {:?}", res1_time);
+
+        // Layer Norm 2
+        let ln2_start = std::time::Instant::now();
+        let normed2 = block.ln2.forward(&residual).expect("LN2 failed");
+        let ln2_time = ln2_start.elapsed();
+        eprintln!("  LayerNorm 2: {:?}", ln2_time);
+
+        // FFN
+        let ffn_start = std::time::Instant::now();
+        let ffn_out = block.ffn.forward(&normed2).expect("FFN failed");
+        let ffn_time = ffn_start.elapsed();
+        eprintln!("  FFN: {:?}", ffn_time);
+
+        // Residual 2
+        let res2_start = std::time::Instant::now();
+        for (r, f) in residual.iter_mut().zip(ffn_out.iter()) {
+            *r += f;
+        }
+        let res2_time = res2_start.elapsed();
+        eprintln!("  Residual 2: {:?}", res2_time);
+
+        let block_total = ln1_time + attn_time + res1_time + ln2_time + ffn_time + res2_time;
+        eprintln!("  --");
+        eprintln!("  Block total: {:?}", block_total);
+
+        // Further breakdown of attention
+        eprintln!("\n[Self-Attention Detailed Breakdown]");
+        let seq_len = conv_frames;
+
+        // Q, K, V projections
+        let qkv_start = std::time::Instant::now();
+        let _q = block.self_attn.w_q().forward_simd(&normed, seq_len).expect("Q");
+        let _k = block.self_attn.w_k().forward_simd(&normed, seq_len).expect("K");
+        let _v = block.self_attn.w_v().forward_simd(&normed, seq_len).expect("V");
+        let qkv_time = qkv_start.elapsed();
+        eprintln!("  QKV projections: {:?}", qkv_time);
+
+        // Just the attention computation (from forward_cross_dispatch)
+        // This calls forward_cross_optimal -> forward_cross_flash_v2 for long sequences
+        eprintln!("  Note: Attention uses {} heads, d_head={}", block.self_attn.n_heads(), d_model / block.self_attn.n_heads());
+        eprintln!("  Note: seq_len={} > 128, uses FlashAttention-2", seq_len);
+        eprintln!("  Attention overhead (total - QKV): {:?}", attn_time.saturating_sub(qkv_time));
+
+        eprintln!("\n============================================================\n");
+    }
 }

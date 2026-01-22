@@ -289,19 +289,21 @@ impl FeedForward {
     /// Forward pass with GELU activation
     ///
     /// FFN(x) = fc2(GELU(fc1(x)))
+    ///
+    /// Uses SIMD-accelerated matmul when weights are finalized.
     pub fn forward(&self, input: &[f32]) -> WhisperResult<Vec<f32>> {
         let seq_len = input.len() / self.d_model;
 
-        // First linear + GELU
-        let mut hidden = self.fc1.forward(input, seq_len)?;
+        // First linear + GELU (SIMD-accelerated)
+        let mut hidden = self.fc1.forward_simd(input, seq_len)?;
 
         // Apply GELU activation
         for x in &mut hidden {
             *x = gelu(*x);
         }
 
-        // Second linear
-        self.fc2.forward(&hidden, seq_len)
+        // Second linear (SIMD-accelerated)
+        self.fc2.forward_simd(&hidden, seq_len)
     }
 
     /// Finalize weights for optimized SIMD matmul
