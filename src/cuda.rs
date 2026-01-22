@@ -1228,6 +1228,7 @@ impl WhisperCuda {
     /// * `x_gpu` - Input tensor on GPU [1, d_model]
     /// * `pos` - Current position in sequence
     /// * `stream` - Caller-provided CUDA stream for graph capture
+    /// * `enc_seq_len` - If Some, enables cross-attention using cached encoder K/V
     ///
     /// # Returns
     ///
@@ -1239,6 +1240,7 @@ impl WhisperCuda {
         x_gpu: &GpuResidentTensor<f32>,
         pos: usize,
         stream: &trueno_gpu::driver::CudaStream,
+        enc_seq_len: Option<usize>,
     ) -> WhisperResult<GpuResidentTensor<f32>> {
         let ctx = self.executor.context();
         let d_model = self.config.n_text_state as usize;
@@ -1367,10 +1369,82 @@ impl WhisperCuda {
             .add_with_stream(ctx, &attn_proj, stream)
             .map_err(|e| WhisperError::Inference(format!("Residual 1: {e}")))?;
 
+        // === Cross-Attention (GPU, if encoder output provided) ===
+        let residual2 = if let Some(enc_len) = enc_seq_len {
+            // Get cross-attention K/V caches
+            let cross_k_caches = self
+                .gpu_cross_k_head_first
+                .as_ref()
+                .ok_or_else(|| WhisperError::Inference("Cross K cache not initialized".into()))?;
+            let cross_v_caches = self
+                .gpu_cross_v_head_first
+                .as_ref()
+                .ok_or_else(|| WhisperError::Inference("Cross V cache not initialized".into()))?;
+
+            // LN2 on residual1
+            let normed2 = residual1
+                .layer_norm_with_stream(
+                    ctx,
+                    &layer_weights.ln2_gamma,
+                    &layer_weights.ln2_beta,
+                    d_model as u32,
+                    1,
+                    stream,
+                )
+                .map_err(|e| WhisperError::Inference(format!("LN2: {e}")))?;
+
+            // Cross-attention Q from decoder hidden state
+            let q_cross = normed2
+                .linear(
+                    ctx,
+                    &layer_weights.cross_w_q,
+                    Some(&layer_weights.cross_b_q),
+                    1,
+                    d_model as u32,
+                    d_model as u32,
+                )
+                .map_err(|e| WhisperError::Inference(format!("Cross Q: {e}")))?;
+
+            // Cross-attention using cached encoder K/V
+            // Note: We use incremental_attention_gpu but with full enc_len as seq_len
+            let cross_attn_out = incremental_attention_gpu_with_stream(
+                ctx,
+                &q_cross,
+                &cross_k_caches[layer_idx],
+                &cross_v_caches[layer_idx],
+                n_heads as u32,
+                head_dim as u32,
+                enc_len as u32,
+                enc_len as u32, // max_seq_len = enc_len for cross-attention
+                stream,
+            )
+            .map_err(|e| WhisperError::Inference(format!("Cross attention: {e}")))?;
+
+            // Output projection
+            let cross_proj = cross_attn_out
+                .linear(
+                    ctx,
+                    &layer_weights.cross_w_o,
+                    Some(&layer_weights.cross_b_o),
+                    1,
+                    d_model as u32,
+                    d_model as u32,
+                )
+                .map_err(|e| WhisperError::Inference(format!("Cross O: {e}")))?;
+
+            // Cross-attention residual
+            residual1
+                .add_with_stream(ctx, &cross_proj, stream)
+                .map_err(|e| WhisperError::Inference(format!("Cross residual: {e}")))?
+        } else {
+            // No cross-attention (self-attention only path for testing)
+            residual1
+        };
+
         // === FFN (all GPU, using external stream) ===
 
         // LN3 on GPU
-        let normed3 = residual1
+        let normed3 = residual2
             .layer_norm_with_stream(
                 ctx,
                 &layer_weights.ln3_gamma,
@@ -1409,12 +1483,9 @@ impl WhisperCuda {
             .map_err(|e| WhisperError::Inference(format!("FFN down: {e}")))?;
 
         // Final residual connection
-        let output = residual1
+        let output = residual2
             .add_with_stream(ctx, &ffn_down, stream)
-            .map_err(|e| WhisperError::Inference(format!("Residual 2: {e}")))?;
-
-        // Note: Cross-attention skipped in this version for simplicity
-        // (Whisper decoder self-attention-only path for testing)
+            .map_err(|e| WhisperError::Inference(format!("FFN residual: {e}")))?;
 
         Ok(output)
     }
@@ -1472,6 +1543,7 @@ impl WhisperCuda {
     /// - `token_embedding`: Embedded token vector [d_model]
     /// - `pos`: Current position in sequence
     /// - `stream`: External CUDA stream for graph capture
+    /// - `enc_seq_len`: If Some, enables cross-attention using cached encoder K/V
     ///
     /// # Returns
     ///
@@ -1482,6 +1554,7 @@ impl WhisperCuda {
         token_embedding: &[f32],
         pos: usize,
         stream: &trueno_gpu::driver::CudaStream,
+        enc_seq_len: Option<usize>,
     ) -> WhisperResult<GpuResidentTensor<f32>> {
         let n_layers = self.config.n_text_layer as usize;
 
@@ -1502,8 +1575,13 @@ impl WhisperCuda {
 
         // Process through all layers using stream-based path
         for layer_idx in 0..n_layers {
-            hidden_gpu =
-                self.forward_decoder_block_gpu_stream(layer_idx, &hidden_gpu, pos, stream)?;
+            hidden_gpu = self.forward_decoder_block_gpu_stream(
+                layer_idx,
+                &hidden_gpu,
+                pos,
+                stream,
+                enc_seq_len,
+            )?;
         }
 
         Ok(hidden_gpu)
@@ -1867,6 +1945,135 @@ impl WhisperCuda {
             .map_err(|e| WhisperError::Inference(format!("encoder H2D: {e}")))?;
 
         Ok(result_gpu)
+    }
+
+    /// WAPR-PERF-018: Populate cross-attention K/V caches from encoder output
+    ///
+    /// Projects encoder output through cross-attention K/V weights and stores in
+    /// head-first format for GPU cross-attention. Called once per sequence.
+    ///
+    /// # Arguments
+    ///
+    /// * `encoder_output_gpu` - GPU-resident encoder output [enc_len, d_model]
+    /// * `stream` - CUDA stream for GPU operations
+    ///
+    /// # Layout
+    ///
+    /// Input: [enc_len, d_model] where d_model = n_heads * head_dim
+    /// Cache: [n_heads, enc_len, head_dim] (head-first for incremental_attention_gpu)
+    #[cfg(feature = "cuda")]
+    pub fn populate_cross_kv_caches_gpu(
+        &mut self,
+        encoder_output_gpu: &GpuResidentTensor<f32>,
+        stream: &trueno_gpu::driver::CudaStream,
+    ) -> WhisperResult<()> {
+        // Ensure decoder weights are uploaded
+        if self.gpu_decoder_weights.is_none() {
+            self.upload_decoder_weights_to_gpu()?;
+        }
+        // Ensure KV caches are initialized
+        if self.gpu_cross_k_head_first.is_none() {
+            self.init_gpu_decoder_kv_cache_head_first()?;
+        }
+
+        let ctx = self.executor.context();
+        let d_model = self.config.n_text_state as usize;
+        let n_heads = self.config.n_text_head as usize;
+        let n_layers = self.config.n_text_layer as usize;
+        let head_dim = d_model / n_heads;
+
+        // Encoder sequence length from tensor size
+        let enc_len = encoder_output_gpu.len() / d_model;
+
+        // Get weights and caches
+        let weights = self
+            .gpu_decoder_weights
+            .as_ref()
+            .ok_or_else(|| WhisperError::Inference("Decoder weights not uploaded".into()))?;
+        let cross_k_caches = self
+            .gpu_cross_k_head_first
+            .as_mut()
+            .ok_or_else(|| WhisperError::Inference("Cross K cache not initialized".into()))?;
+        let cross_v_caches = self
+            .gpu_cross_v_head_first
+            .as_mut()
+            .ok_or_else(|| WhisperError::Inference("Cross V cache not initialized".into()))?;
+
+        // For each layer, project encoder output and reshape to head-first
+        for layer_idx in 0..n_layers {
+            let layer_weights = &weights[layer_idx];
+
+            // Project K: [enc_len, d_model] @ W_k^T -> [enc_len, d_model]
+            let mut k_proj = encoder_output_gpu
+                .linear(
+                    ctx,
+                    &layer_weights.cross_w_k,
+                    Some(&layer_weights.cross_b_k),
+                    enc_len as u32,
+                    d_model as u32,
+                    d_model as u32,
+                )
+                .map_err(|e| WhisperError::Inference(format!("cross K proj L{layer_idx}: {e}")))?;
+
+            // Project V: [enc_len, d_model] @ W_v^T -> [enc_len, d_model]
+            let mut v_proj = encoder_output_gpu
+                .linear(
+                    ctx,
+                    &layer_weights.cross_w_v,
+                    Some(&layer_weights.cross_b_v),
+                    enc_len as u32,
+                    d_model as u32,
+                    d_model as u32,
+                )
+                .map_err(|e| WhisperError::Inference(format!("cross V proj L{layer_idx}: {e}")))?;
+
+            // Reshape from [enc_len, d_model] to [n_heads, enc_len, head_dim]
+            // This requires downloading, reshaping on CPU, and re-uploading
+            // TODO: Add GPU kernel for in-place transpose to eliminate this transfer
+            let k_host = k_proj
+                .to_host()
+                .map_err(|e| WhisperError::Inference(format!("cross K D2H L{layer_idx}: {e}")))?;
+            let v_host = v_proj
+                .to_host()
+                .map_err(|e| WhisperError::Inference(format!("cross V D2H L{layer_idx}: {e}")))?;
+
+            // Reshape: [enc_len, n_heads, head_dim] -> [n_heads, enc_len, head_dim]
+            let mut k_head_first = vec![0.0f32; n_heads * enc_len * head_dim];
+            let mut v_head_first = vec![0.0f32; n_heads * enc_len * head_dim];
+
+            for pos in 0..enc_len {
+                for h in 0..n_heads {
+                    for d in 0..head_dim {
+                        // Source: [pos, h, d] = pos * d_model + h * head_dim + d
+                        // Dest: [h, pos, d] = h * enc_len * head_dim + pos * head_dim + d
+                        let src_idx = pos * d_model + h * head_dim + d;
+                        let dst_idx = h * enc_len * head_dim + pos * head_dim + d;
+                        k_head_first[dst_idx] = k_host[src_idx];
+                        v_head_first[dst_idx] = v_host[src_idx];
+                    }
+                }
+            }
+
+            // Upload reshaped K/V to GPU caches
+            // Note: The caches are pre-allocated with size [n_heads, 1500, head_dim]
+            // We need to fill only the first enc_len positions
+            let cache_k = &mut cross_k_caches[layer_idx];
+            let cache_v = &mut cross_v_caches[layer_idx];
+
+            // For now, replace entire cache (enc_len should match 1500 for Whisper)
+            // TODO: Handle variable-length encoder output
+            *cache_k = GpuResidentTensor::from_host(ctx, &k_head_first)
+                .map_err(|e| WhisperError::Inference(format!("cross K H2D L{layer_idx}: {e}")))?;
+            *cache_v = GpuResidentTensor::from_host(ctx, &v_head_first)
+                .map_err(|e| WhisperError::Inference(format!("cross V H2D L{layer_idx}: {e}")))?;
+        }
+
+        // Sync stream to ensure all uploads complete
+        stream
+            .synchronize()
+            .map_err(|e| WhisperError::Inference(format!("stream sync: {e}")))?;
+
+        Ok(())
     }
 
     /// Forward pass through a single encoder block with GPU attention.
@@ -3701,6 +3908,8 @@ impl WhisperCuda {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "cuda")]
+    use trueno_gpu::driver::CudaStream;
 
     #[test]
     fn test_cuda_availability_check() {
@@ -6065,7 +6274,7 @@ mod tests {
         // Run new GPU-stream path
         let new_start = std::time::Instant::now();
         let mut new_output_gpu = cuda_model
-            .forward_decoder_block_gpu_stream(0, &x_gpu, 0, &stream)
+            .forward_decoder_block_gpu_stream(0, &x_gpu, 0, &stream, None) // No cross-attention
             .expect("Stream GPU block");
         stream.synchronize().expect("Sync stream");
         let new_time = new_start.elapsed();
@@ -6168,7 +6377,7 @@ mod tests {
             let pos = i % 10; // Vary position within KV cache window
             let start = std::time::Instant::now();
             let _output = cuda_model
-                .forward_decoder_block_gpu_stream(0, &x_gpu, pos, &stream)
+                .forward_decoder_block_gpu_stream(0, &x_gpu, pos, &stream, None)
                 .expect("Stream GPU block");
             stream.synchronize().expect("Sync");
             times.push(start.elapsed());
@@ -6272,7 +6481,7 @@ mod tests {
         // Warm up kernels first (outside capture)
         eprintln!("[Warmup] Running decoder block to compile kernels...");
         let _ = cuda_model
-            .forward_decoder_block_gpu_stream(0, &x_gpu, 0, &stream)
+            .forward_decoder_block_gpu_stream(0, &x_gpu, 0, &stream, None)
             .expect("Warmup");
         stream.synchronize().expect("Sync warmup");
 
@@ -6294,7 +6503,7 @@ mod tests {
         }
 
         // Run decoder block during capture
-        let capture_result = cuda_model.forward_decoder_block_gpu_stream(0, &x_gpu, 0, &stream);
+        let capture_result = cuda_model.forward_decoder_block_gpu_stream(0, &x_gpu, 0, &stream, None);
 
         // End capture
         let graph_result = stream.end_capture();
@@ -6344,7 +6553,7 @@ mod tests {
                             }
                             let start = std::time::Instant::now();
                             let _ = cuda_model
-                                .forward_decoder_block_gpu_stream(0, &x_gpu, pos, &stream)
+                                .forward_decoder_block_gpu_stream(0, &x_gpu, pos, &stream, None)
                                 .expect("Direct");
                             stream.synchronize().expect("Sync");
                             direct_times.push(start.elapsed());
@@ -6430,7 +6639,7 @@ mod tests {
         // Warmup to compile kernels
         eprintln!("[Warmup] Running full token pass to compile kernels...");
         let _warmup = cuda_model
-            .forward_decoder_token_gpu_stream(&token_embedding, 0, &stream)
+            .forward_decoder_token_gpu_stream(&token_embedding, 0, &stream, None)
             .expect("Warmup");
         stream.synchronize().expect("Sync warmup");
 
@@ -6444,7 +6653,7 @@ mod tests {
         eprintln!("[Capture] Beginning CUDA graph capture for {} layers...", n_layers);
         stream.begin_capture(CaptureMode::Global).expect("Begin capture");
 
-        let capture_result = cuda_model.forward_decoder_token_gpu_stream(&token_embedding, 0, &stream);
+        let capture_result = cuda_model.forward_decoder_token_gpu_stream(&token_embedding, 0, &stream, None);
 
         let graph = stream.end_capture().expect("End capture");
 
@@ -6485,7 +6694,7 @@ mod tests {
             }
             let start = std::time::Instant::now();
             let _out = cuda_model
-                .forward_decoder_token_gpu_stream(&token_embedding, pos, &stream)
+                .forward_decoder_token_gpu_stream(&token_embedding, pos, &stream, None)
                 .expect("Direct");
             stream.synchronize().expect("Sync");
             direct_times.push(start.elapsed());
@@ -6580,5 +6789,114 @@ mod tests {
         assert_eq!(enc_len, expected_seq_len * d_model, "Unexpected encoder output size");
 
         eprintln!("\n✓ WAPR-PERF-018: GPU-resident encoder output verified");
+    }
+
+    /// WAPR-PERF-018: Test full pipeline with GPU cross-attention
+    ///
+    /// Tests the complete encoder -> cross-attention K/V population -> decoder flow.
+    #[test]
+    fn test_gpu_cross_attention_pipeline() {
+        if !CudaExecutor::is_available() {
+            eprintln!("CUDA not available, skipping test");
+            return;
+        }
+
+        let model_path = "models/whisper-tiny.apr";
+        if !std::path::Path::new(model_path).exists() {
+            eprintln!("Model not found at {}, skipping test", model_path);
+            return;
+        }
+
+        eprintln!("\n============================================================");
+        eprintln!("WAPR-PERF-018: GPU Cross-Attention Pipeline Test");
+        eprintln!("============================================================\n");
+
+        let bytes = std::fs::read(model_path).expect("Failed to read model");
+        let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
+        let d_model = apr.config().n_text_state as usize;
+        let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
+
+        // Create dummy mel input
+        let n_mels = cuda_model.config().n_mels as usize;
+        let seq_len = 100;
+        let mel: Vec<f32> = (0..n_mels * seq_len).map(|i| (i as f32 * 0.001).sin()).collect();
+
+        eprintln!("[Step 1] GPU-resident encoder...");
+        let enc_start = std::time::Instant::now();
+        let enc_gpu = cuda_model.encode_gpu_resident(&mel).expect("Encode GPU resident");
+        let enc_time = enc_start.elapsed();
+        let enc_seq_len = enc_gpu.len() / d_model;
+        eprintln!("  Encoder: {:?} ({} × {})", enc_time, enc_seq_len, d_model);
+
+        // Create stream
+        let ctx = cuda_model.executor.context();
+        let stream = CudaStream::new(ctx).expect("Create stream");
+
+        eprintln!("[Step 2] Populate cross-attention K/V caches...");
+        let kv_start = std::time::Instant::now();
+        cuda_model
+            .populate_cross_kv_caches_gpu(&enc_gpu, &stream)
+            .expect("Populate cross KV");
+        let kv_time = kv_start.elapsed();
+        eprintln!("  Cross K/V population: {:?}", kv_time);
+
+        // Create test token embedding
+        let token_embedding: Vec<f32> = (0..d_model)
+            .map(|i| (i as f32 * 0.01).sin() * 0.1)
+            .collect();
+
+        eprintln!("[Step 3] Decoder with cross-attention...");
+
+        // Warmup
+        let _warmup = cuda_model
+            .forward_decoder_token_gpu_stream(&token_embedding, 0, &stream, Some(enc_seq_len))
+            .expect("Warmup");
+        stream.synchronize().expect("Sync warmup");
+        cuda_model.reset_gpu_decoder_kv_cache();
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Re-init");
+        // Re-populate cross K/V after reset
+        cuda_model
+            .populate_cross_kv_caches_gpu(&enc_gpu, &stream)
+            .expect("Re-populate cross KV");
+
+        // Benchmark single token with cross-attention
+        const NUM_TOKENS: usize = 10;
+        let mut times = Vec::with_capacity(NUM_TOKENS);
+
+        for i in 0..NUM_TOKENS {
+            let dec_start = std::time::Instant::now();
+            let mut output_gpu = cuda_model
+                .forward_decoder_token_gpu_stream(&token_embedding, i, &stream, Some(enc_seq_len))
+                .expect("Decoder with cross-attention");
+            stream.synchronize().expect("Sync");
+            times.push(dec_start.elapsed());
+
+            if i == 0 {
+                // Verify output size on first token
+                let output = output_gpu.to_host().expect("Download");
+                assert_eq!(
+                    output.len(),
+                    d_model,
+                    "Unexpected decoder output size"
+                );
+            }
+        }
+
+        let avg: std::time::Duration = times.iter().sum::<std::time::Duration>() / NUM_TOKENS as u32;
+
+        eprintln!("\n[Results]");
+        eprintln!("  Encoder:         {:?}", enc_time);
+        eprintln!("  Cross K/V pop:   {:?}", kv_time);
+        eprintln!("  Decoder avg:     {:?} ({} tokens)", avg, NUM_TOKENS);
+        eprintln!("  Total pipeline:  {:?}", enc_time + kv_time + avg * NUM_TOKENS as u32);
+
+        // For 1.5s audio (27 tokens), project decoder time
+        let tokens_27 = avg.as_micros() as f64 * 27.0 / 1000.0;
+        eprintln!("\n[Projected for 27 tokens (1.5s audio)]");
+        eprintln!("  Decoder: {:.1}ms", tokens_27);
+
+        eprintln!("\n✓ WAPR-PERF-018: GPU cross-attention pipeline verified");
     }
 }
