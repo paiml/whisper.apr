@@ -1086,9 +1086,13 @@ impl MultiHeadAttention {
     /// Forward pass with optimal dispatch including FlashAttention-2
     ///
     /// Dispatch logic:
-    /// - With `realizar-inference`: Uses FlashAttention-2 for long sequences
-    /// - Without: Uses custom FlashAttention implementation
-    /// - Short sequences: Standard attention (lower overhead)
+    /// - Long sequences (>128): Custom SIMD FlashAttention (lower overhead than realizar)
+    /// - Short sequences: Standard SIMD attention
+    ///
+    /// Note: We use our custom FlashAttention implementation for long sequences
+    /// because realizar's FlashAttention-2 has per-head tensor allocation overhead
+    /// that dominates for encoder-like workloads (1500 seq_len × 6 heads).
+    /// The custom implementation avoids this by working directly with slices.
     #[cfg(feature = "realizar-inference")]
     pub fn forward_cross_optimal(
         &self,
@@ -1099,9 +1103,10 @@ impl MultiHeadAttention {
         let seq_len = x.len() / self.d_model;
         let kv_len = context.len() / self.d_model;
 
-        // Use FlashAttention-2 for long sequences (better parallelism)
+        // Use custom SIMD FlashAttention for long sequences (lower overhead)
+        // realizar's FlashAttention-2 creates tensors per head which adds ~640ms overhead
         if seq_len > FLASH_ATTENTION_THRESHOLD || kv_len > FLASH_ATTENTION_THRESHOLD {
-            self.forward_cross_flash_v2(x, context, mask)
+            self.forward_cross_flash(x, context, mask, FLASH_ATTENTION_BLOCK_SIZE)
         } else if cfg!(feature = "simd") {
             self.forward_cross_simd(x, context, mask)
         } else {
