@@ -1591,7 +1591,23 @@ Projected 27-token decode (1.5s audio):
 - Decoder (27 tokens, graph): ~3.6ms
 - **Total: ~529ms** (previously 1256ms without graph)
 
-**Status**: ✅ IMPLEMENTED - Point 157 well exceeded. 2.4x improvement over previous.
+**GPU Permute Optimization** (2026-01-22):
+Added `interleaved_to_head_first()` to trueno-gpu to eliminate CPU reshape:
+
+```
+Cross K/V population:
+  Before (CPU reshape): 225ms
+  After (GPU permute):  78ms
+  Speedup: 2.9x
+
+Release mode results (100-frame mel):
+  Encoder:        176ms
+  Cross K/V pop:   78ms
+  Decoder:        3.9ms/token
+  Total:          293ms
+```
+
+**Status**: ✅ IMPLEMENTED - Point 157 well exceeded. 4.3x faster than target (293ms vs 1256ms).
 
 #### O.3 CPU Encoder Optimization (WAPR-PERF-015)
 
