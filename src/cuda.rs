@@ -3287,27 +3287,22 @@ impl WhisperCuda {
         self.tracer.start_step(TraceStep::TransformerBlock);
 
         // Run encoder - choose path based on environment variables (WAPR-PERF-004/005)
+        // - WHISPER_GPU_TOTAL_OFFLOAD=1 + WHISPER_GPU_DECODER_OFFLOAD=1: Optimized stream pipeline
         // - WHISPER_GPU_TOTAL_OFFLOAD=1: Full GPU encoder (2x target)
         // - WHISPER_GPU_ENCODER=1: Partial GPU (attention only)
         // - Default: CPU encoder with SIMD
+        // WAPR-PERF-021: Select encoder path
+        // - WHISPER_GPU_ENCODER=1: GPU attention-only encoder (correct output)
+        // - Default: CPU encoder with SIMD (fastest correct path)
+        // Note: WHISPER_GPU_TOTAL_OFFLOAD has buggy GPU convolutions, disabled
+        #[cfg(feature = "cuda")]
+        let use_gpu_encoder = std::env::var("WHISPER_GPU_ENCODER").is_ok();
+        #[cfg(feature = "cuda")]
+        let use_gpu_decoder = std::env::var("WHISPER_GPU_DECODER_OFFLOAD").is_ok();
+
         #[cfg(feature = "cuda")]
         let encoder_output = {
-            let use_total_offload = std::env::var("WHISPER_GPU_TOTAL_OFFLOAD").is_ok();
-            let use_gpu_encoder = std::env::var("WHISPER_GPU_ENCODER").is_ok();
-
-            if use_total_offload {
-                eprintln!("[WAPR-PERF-004] Using GPU Total Offload encoder...");
-                let start = std::time::Instant::now();
-                let result = self.encode_gpu_total_offload(&mel)?;
-                let elapsed = start.elapsed();
-                let hits = kernel_cache_hits();
-                let misses = kernel_cache_misses();
-                eprintln!(
-                    "[WAPR-PERF-004] Encoder completed in {:?} (cache: {} hits, {} compiles)",
-                    elapsed, hits, misses
-                );
-                result
-            } else if use_gpu_encoder {
+            if use_gpu_encoder {
                 eprintln!("[WAPR-PERF-005] Using GPU attention-only encoder...");
                 self.encode_gpu(&mel)?
             } else {
@@ -3317,6 +3312,8 @@ impl WhisperCuda {
         };
         #[cfg(not(feature = "cuda"))]
         let encoder_output = self.encoder.forward_mel(&mel)?;
+        #[cfg(not(feature = "cuda"))]
+        let use_gpu_decoder = false;
 
         // Trace encoder output (layer_idx=0 for encoder, iteration=0 for prefill)
         let d_model = self.config.n_text_state as usize;
@@ -3356,14 +3353,10 @@ impl WhisperCuda {
             .with_timestamp_suppression(!options.word_timestamps)
             .with_vocab_size(n_vocab);
 
-        // WAPR-PERF-013: Check if GPU decoder total offload is enabled
+        // Initialize GPU decoder if enabled
         #[cfg(feature = "cuda")]
-        let use_gpu_decoder = std::env::var("WHISPER_GPU_DECODER_OFFLOAD").is_ok();
-        #[cfg(not(feature = "cuda"))]
-        let use_gpu_decoder = false;
-
         if use_gpu_decoder {
-            eprintln!("[WAPR-PERF-013] Using GPU decoder total offload...");
+            eprintln!("[WAPR-PERF-013] Using GPU decoder...");
             // Reset GPU decoder position for new transcription
             self.reset_gpu_decoder_pos();
         }
@@ -3399,7 +3392,7 @@ impl WhisperCuda {
             // === TRACE: LM_HEAD (output projection) ===
             self.tracer.start_step(TraceStep::LmHead);
 
-            // WAPR-PERF-013: Use GPU decoder total offload path when enabled
+            // WAPR-PERF-013: Use GPU decoder when enabled
             #[cfg(feature = "cuda")]
             let mut logits = if use_gpu_decoder {
                 self.forward_one_gpu_total_offload(last_token, &encoder_output)?
