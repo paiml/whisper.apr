@@ -2116,6 +2116,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Hardware-dependent - may fail in debug mode or under system load"]
     fn test_simd_dot_product_speedup() {
         // Test: Measure dot product SIMD vs scalar speedup
         //
