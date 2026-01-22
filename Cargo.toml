@@ -58,7 +58,7 @@ thiserror = "2"
 # Updated per WAPR-PERF-002: 0.11.0 has enhanced WASM SIMD, fused_layernorm_linear
 trueno = "0.13.0"
 # GPU-resident tensor architecture (WAPR-PERF-004)
-trueno-gpu = { path = "../trueno/trueno-gpu", optional = true }
+trueno-gpu = { version = "0.4.10", optional = true }
 
 # Model format (aprender is the canonical .apr format library)
 # Note: safetensors-compare pulls hf-hub which doesn't support WASM
@@ -191,8 +191,3 @@ harness = false
 # NOTE (WAPR-PERF-004): GPU-Resident Tensor integration requires:
 # 1. trueno-gpu 0.4.10+ (with GpuResidentTensor, batched_multihead_attention)
 # 2. realizar 0.6.8+ (CudaExecutor with stable API)
-#
-# LOCAL TESTING - trueno-gpu uses local path, realizar uses local (WAPR-PERF-014)
-[patch.crates-io]
-trueno-gpu = { path = "../trueno/trueno-gpu" }
-realizar = { path = "../realizar" }  # WAPR-PERF-014: compute_stream() getter
