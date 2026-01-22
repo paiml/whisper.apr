@@ -94,8 +94,8 @@ pub mod realizar_inference {
 
     // Speculative decoding (Points 66-80)
     pub use realizar::speculative::{
-        SpeculativeConfig, SpeculativeError, SpeculativeModel, SpeculativeResult,
-        SpeculativeStats, TokenProb,
+        SpeculativeConfig, SpeculativeError, SpeculativeModel, SpeculativeResult, SpeculativeStats,
+        TokenProb,
     };
 
     // GPU backend detection (Points 26-50)
@@ -595,7 +595,11 @@ impl WhisperApr {
                 let overlap_ratio = overlap as f32 / chunk.len() as f32;
                 let words: Vec<&str> = chunk_result.text.split_whitespace().collect();
                 let skip_words = ((words.len() as f32) * overlap_ratio * 0.8) as usize;
-                words.into_iter().skip(skip_words).collect::<Vec<_>>().join(" ")
+                words
+                    .into_iter()
+                    .skip(skip_words)
+                    .collect::<Vec<_>>()
+                    .join(" ")
             };
 
             // Append to accumulated text
@@ -4220,8 +4224,7 @@ mod tests {
         // Empty audio (silence) should produce empty summary
         let audio = vec![0.0f32; 16000]; // 1 second of silence
         let transcribe_options = TranscribeOptions::default();
-        let summarize_options = SummarizeOptions::new(&lfm2, &tokenizer)
-            .with_max_tokens(8); // Very short for speed
+        let summarize_options = SummarizeOptions::new(&lfm2, &tokenizer).with_max_tokens(8); // Very short for speed
 
         let result = whisper
             .transcribe_and_summarize(&audio, transcribe_options, summarize_options)
@@ -4271,12 +4274,11 @@ mod tests {
             .collect();
 
         let transcribe_options = TranscribeOptions::default();
-        let summarize_options = SummarizeOptions::new(&lfm2, &tokenizer)
-            .with_max_tokens(8); // Keep it short for test speed
+        let summarize_options = SummarizeOptions::new(&lfm2, &tokenizer).with_max_tokens(8); // Keep it short for test speed
 
         // This exercises the full pipeline
-        let result = whisper
-            .transcribe_and_summarize(&audio, transcribe_options, summarize_options);
+        let result =
+            whisper.transcribe_and_summarize(&audio, transcribe_options, summarize_options);
 
         // The test validates that the pipeline doesn't crash
         // With synthetic weights, output quality is not meaningful
@@ -4474,8 +4476,8 @@ mod tests {
         let mut offset = 0;
         let mut chunk_count = 0;
         while offset < ten_minutes_samples {
-            let chunk_end =
-                (offset + WhisperApr::CHUNK_SAMPLES + WhisperApr::OVERLAP_SAMPLES).min(ten_minutes_samples);
+            let chunk_end = (offset + WhisperApr::CHUNK_SAMPLES + WhisperApr::OVERLAP_SAMPLES)
+                .min(ten_minutes_samples);
             let _chunk_len = chunk_end - offset;
             offset += WhisperApr::CHUNK_SAMPLES;
             chunk_count += 1;

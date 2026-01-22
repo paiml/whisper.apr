@@ -2069,23 +2069,15 @@ mod tests {
 
     #[test]
     fn test_parse_transcribe_folder_missing_input_dir() {
-        let args = Args::try_parse_from([
-            "whisper-apr",
-            "transcribe-folder",
-            "--output-dir",
-            "./out",
-        ]);
+        let args =
+            Args::try_parse_from(["whisper-apr", "transcribe-folder", "--output-dir", "./out"]);
         assert!(args.is_err(), "Should fail without --input-dir");
     }
 
     #[test]
     fn test_parse_transcribe_folder_missing_output_dir() {
-        let args = Args::try_parse_from([
-            "whisper-apr",
-            "transcribe-folder",
-            "--input-dir",
-            "./audio",
-        ]);
+        let args =
+            Args::try_parse_from(["whisper-apr", "transcribe-folder", "--input-dir", "./audio"]);
         assert!(args.is_err(), "Should fail without --output-dir");
     }
 }

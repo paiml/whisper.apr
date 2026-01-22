@@ -47,7 +47,6 @@ mod vocabulary;
 mod worker;
 
 pub use capabilities::{Capabilities, ExecutionMode};
-pub use lfm2::{GenerationResultWasm, Lfm2Wasm, MemoryEstimateWasm, ViabilityCheckWasm};
 pub use diarization::{
     get_diarization_recommendation, DiarizationConfigWasm, DiarizationResultWasm, DiarizerWasm,
     EmbeddingExtractorWasm, SpeakerEmbeddingWasm, SpeakerSegmentWasm, TurnDetectorWasm,
@@ -58,6 +57,7 @@ pub use gpu::{
     DetectionOptionsWasm, GpuBackendWasm, GpuCapabilitiesWasm, GpuDetectionWasm, GpuLimitsWasm,
     SelectionStrategyWasm, SelectorConfigWasm,
 };
+pub use lfm2::{GenerationResultWasm, Lfm2Wasm, MemoryEstimateWasm, ViabilityCheckWasm};
 #[cfg(feature = "parallel")]
 pub use threading::init_thread_pool;
 pub use threading::{

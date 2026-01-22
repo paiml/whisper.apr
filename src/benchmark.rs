@@ -3125,7 +3125,7 @@ mod tests {
         let result = Lfm2BenchmarkResult::new(
             Lfm2Component::SwiGlu,
             config,
-            1000.0,  // 1000 microseconds
+            1000.0, // 1000 microseconds
             1024,
             1_000_000,
         );
@@ -3140,13 +3140,7 @@ mod tests {
     fn test_lfm2_benchmark_result_to_json() {
         // Test: JSON serialization format
         let config = Lfm2BenchmarkConfig::small(16, 5);
-        let result = Lfm2BenchmarkResult::new(
-            Lfm2Component::Gqa,
-            config,
-            500.0,
-            2048,
-            500_000,
-        );
+        let result = Lfm2BenchmarkResult::new(Lfm2Component::Gqa, config, 500.0, 2048, 500_000);
 
         let json = result.to_json();
         assert!(json.contains(r#""component":"gqa""#));
@@ -3167,7 +3161,10 @@ mod tests {
         assert!(result.memory_bytes > 0, "Memory should be positive");
         assert!(result.flops > 0, "FLOPs should be positive");
 
-        println!("SwiGLU: {:.2}us, {:.0} tok/s", result.forward_us, result.tokens_per_sec);
+        println!(
+            "SwiGLU: {:.2}us, {:.0} tok/s",
+            result.forward_us, result.tokens_per_sec
+        );
     }
 
     #[test]
@@ -3181,7 +3178,10 @@ mod tests {
         assert!(result.forward_us > 0.0, "Forward time should be positive");
         assert!(result.tokens_per_sec > 0.0, "Tokens/sec should be positive");
 
-        println!("GQA: {:.2}us, {:.0} tok/s", result.forward_us, result.tokens_per_sec);
+        println!(
+            "GQA: {:.2}us, {:.0} tok/s",
+            result.forward_us, result.tokens_per_sec
+        );
     }
 
     #[test]
@@ -3194,7 +3194,10 @@ mod tests {
         assert_eq!(result.component, Lfm2Component::RoPE);
         assert!(result.forward_us > 0.0, "Forward time should be positive");
 
-        println!("RoPE: {:.2}us, {:.0} tok/s", result.forward_us, result.tokens_per_sec);
+        println!(
+            "RoPE: {:.2}us, {:.0} tok/s",
+            result.forward_us, result.tokens_per_sec
+        );
     }
 
     #[test]
@@ -3207,7 +3210,10 @@ mod tests {
         assert_eq!(result.component, Lfm2Component::Conv1d);
         assert!(result.forward_us > 0.0, "Forward time should be positive");
 
-        println!("Conv1d: {:.2}us, {:.0} tok/s", result.forward_us, result.tokens_per_sec);
+        println!(
+            "Conv1d: {:.2}us, {:.0} tok/s",
+            result.forward_us, result.tokens_per_sec
+        );
     }
 
     #[test]
@@ -3247,12 +3253,19 @@ mod tests {
         assert_eq!(results.len(), 5, "Should have 5 component results");
 
         for result in &results {
-            assert!(result.forward_us > 0.0, "{} should have positive time", result.component);
+            assert!(
+                result.forward_us > 0.0,
+                "{} should have positive time",
+                result.component
+            );
         }
 
         println!("\nLFM2 Component Benchmarks:");
         for r in &results {
-            println!("  {}: {:.2}us ({:.0} tok/s)", r.component, r.forward_us, r.tokens_per_sec);
+            println!(
+                "  {}: {:.2}us ({:.0} tok/s)",
+                r.component, r.forward_us, r.tokens_per_sec
+            );
         }
     }
 
@@ -3374,8 +3387,7 @@ mod tests {
         );
 
         // Window should be ~4x smaller (8192/2048 = 4)
-        let ratio =
-            full_estimate.kv_cache_bytes as f64 / window_estimate.kv_cache_bytes as f64;
+        let ratio = full_estimate.kv_cache_bytes as f64 / window_estimate.kv_cache_bytes as f64;
         assert!(
             ratio > 3.5,
             "Sliding window should reduce KV cache by ~4x: ratio = {}",
@@ -3395,7 +3407,11 @@ mod tests {
             (WasmQuantization::Fp16, false, "fp16 should NOT be viable"),
             (WasmQuantization::Int8, false, "int8 should NOT be viable"),
             (WasmQuantization::Int4Awq, true, "int4-awq SHOULD be viable"),
-            (WasmQuantization::Int4Gptq, true, "int4-gptq SHOULD be viable"),
+            (
+                WasmQuantization::Int4Gptq,
+                true,
+                "int4-gptq SHOULD be viable",
+            ),
         ];
 
         for (quant, expected_viable, msg) in &quantizations {
@@ -3674,8 +3690,7 @@ mod tests {
         use crate::model::lfm2::Lfm2;
 
         // Test memory tracking for different model sizes
-        let sizes: [(_, u32, u32); 3] =
-            [("tiny", 64, 2), ("small", 256, 4), ("medium", 512, 8)];
+        let sizes: [(_, u32, u32); 3] = [("tiny", 64, 2), ("small", 256, 4), ("medium", 512, 8)];
 
         println!("LFM2 Memory Benchmark:");
         for (name, hidden, layers) in sizes {

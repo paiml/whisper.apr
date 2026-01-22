@@ -14,8 +14,8 @@
 //! - "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints"
 //!   https://arxiv.org/abs/2305.13245
 
-use crate::error::{WhisperError, WhisperResult};
 use super::rope::RotaryEmbedding;
+use crate::error::{WhisperError, WhisperResult};
 
 /// Grouped Query Attention configuration
 #[derive(Debug, Clone)]

@@ -188,7 +188,8 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
     let use_gpu = if args.gpu {
         return Err(CliError::InvalidArgument(
             "GPU requested but whisper-apr was not compiled with 'realizar-gpu' feature. \
-             Rebuild with: cargo build --features realizar-gpu".to_string()
+             Rebuild with: cargo build --features realizar-gpu"
+                .to_string(),
         ));
     } else {
         false
@@ -318,7 +319,11 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
     // WAPR-PERF-004: Component profiling output (apr-cli style)
     if args.profile {
         let inference_ms = timings.decode_ms;
-        let tokens = result.segments.iter().map(|s| s.text.split_whitespace().count()).sum::<usize>();
+        let tokens = result
+            .segments
+            .iter()
+            .map(|s| s.text.split_whitespace().count())
+            .sum::<usize>();
         let tokens_per_sec = if inference_ms > 0.0 {
             (tokens as f64 / inference_ms) * 1000.0
         } else {
@@ -354,7 +359,11 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
         let budget_met = tokens_per_sec >= budget_target;
         eprintln!(
             "[PROFILE] Budget:         {} (target: {:.0} tok/s)",
-            if budget_met { "✓ MET" } else { "✗ EXCEEDED" },
+            if budget_met {
+                "✓ MET"
+            } else {
+                "✗ EXCEEDED"
+            },
             budget_target
         );
         eprintln!();
@@ -712,9 +721,7 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
     if global.verbose {
         eprintln!(
             "[INFO] Generated {} tokens in {:.1}ms ({:.1} tokens/s)",
-            gen_stats.tokens_generated,
-            gen_stats.total_ms,
-            gen_stats.tokens_per_sec
+            gen_stats.tokens_generated, gen_stats.total_ms, gen_stats.tokens_per_sec
         );
         if gen_stats.hit_eos {
             eprintln!("[INFO] Generation completed (hit EOS token)");
@@ -818,7 +825,9 @@ pub fn run_record(args: RecordArgs, _global: &Args) -> CliResult<CommandResult> 
 // ============================================================================
 
 /// Supported audio extensions for batch processing
-const AUDIO_EXTENSIONS: &[&str] = &["wav", "mp3", "flac", "ogg", "m4a", "webm", "aac", "mp4", "mkv"];
+const AUDIO_EXTENSIONS: &[&str] = &[
+    "wav", "mp3", "flac", "ogg", "m4a", "webm", "aac", "mp4", "mkv",
+];
 
 /// Discover audio files from inputs (files or directories).
 ///
@@ -875,7 +884,11 @@ fn discover_in_directory(
             files.push((path, Some(base.to_path_buf())));
         } else if path.is_dir() && recursive {
             // Handle symlink loops (spec §H point 109) - skip symlinks to directories
-            if path.symlink_metadata().map(|m| m.is_symlink()).unwrap_or(false) {
+            if path
+                .symlink_metadata()
+                .map(|m| m.is_symlink())
+                .unwrap_or(false)
+            {
                 continue;
             }
             discover_in_directory(base, &path, recursive, pattern, files);
@@ -963,10 +976,7 @@ fn compute_mirrored_output_path(
     output_dir: &Path,
     format_ext: &str,
 ) -> std::path::PathBuf {
-    let stem = input_path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy();
+    let stem = input_path.file_stem().unwrap_or_default().to_string_lossy();
 
     match base_dir {
         Some(base) => {
@@ -975,7 +985,9 @@ fn compute_mirrored_output_path(
                 .parent()
                 .and_then(|p| p.strip_prefix(base).ok())
                 .unwrap_or(Path::new(""));
-            output_dir.join(relative).join(format!("{stem}.{format_ext}"))
+            output_dir
+                .join(relative)
+                .join(format!("{stem}.{format_ext}"))
         }
         None => {
             // Flat mapping for direct file inputs
@@ -988,10 +1000,7 @@ fn compute_mirrored_output_path(
 ///
 /// Per spec §1.3 Conflict Resolution #2:
 /// Write to `${filename}.tmp` then rename to prevent partial writes on crash.
-fn atomic_write_transcription(
-    output_path: &Path,
-    content: &str,
-) -> Result<(), CliError> {
+fn atomic_write_transcription(output_path: &Path, content: &str) -> Result<(), CliError> {
     // Ensure parent directory exists (spec §H point 106)
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent)?;
@@ -1025,11 +1034,7 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
     let format_ext = args.format.to_string();
 
     // Discover all audio files (recursive if specified, sorted for determinism)
-    let files = discover_audio_files(
-        &args.inputs,
-        args.recursive,
-        args.pattern.as_deref(),
-    );
+    let files = discover_audio_files(&args.inputs, args.recursive, args.pattern.as_deref());
 
     if files.is_empty() {
         return Err(CliError::InvalidArgument(
@@ -1049,12 +1054,8 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
     // Process files (sequential for now, parallel support via --parallel flag future)
     for (input_path, base_dir) in &files {
         // Compute output path with structure mirroring
-        let output_path = compute_mirrored_output_path(
-            input_path,
-            base_dir.as_deref(),
-            &output_dir,
-            &format_ext,
-        );
+        let output_path =
+            compute_mirrored_output_path(input_path, base_dir.as_deref(), &output_dir, &format_ext);
 
         // Skip if exists and --skip-existing (resumable processing)
         if args.skip_existing && output_path.exists() {
@@ -1066,7 +1067,11 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
         }
 
         if global.verbose {
-            eprintln!("[PROC] {} → {}", input_path.display(), output_path.display());
+            eprintln!(
+                "[PROC] {} → {}",
+                input_path.display(),
+                output_path.display()
+            );
         }
 
         // Transcribe - construct minimal args
@@ -1177,7 +1182,10 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
 /// - §1.3: Structure mirroring, atomicity, determinism
 /// - §2.3: Brick profiling with Jidoka budget enforcement
 /// - §H: Falsification points 101-125
-pub fn run_transcribe_folder(args: TranscribeFolderArgs, global: &Args) -> CliResult<CommandResult> {
+pub fn run_transcribe_folder(
+    args: TranscribeFolderArgs,
+    global: &Args,
+) -> CliResult<CommandResult> {
     // Validate input directory exists
     if !args.input_dir.exists() {
         return Err(CliError::FileNotFound(args.input_dir.display().to_string()));
@@ -1240,12 +1248,8 @@ pub fn run_transcribe_folder(args: TranscribeFolderArgs, global: &Args) -> CliRe
     // Process each file
     for input_path in &files {
         // Compute mirrored output path (spec §1.3 Structure Mirroring)
-        let output_path = compute_folder_output_path(
-            input_path,
-            &args.input_dir,
-            &args.output_dir,
-            &format_ext,
-        );
+        let output_path =
+            compute_folder_output_path(input_path, &args.input_dir, &args.output_dir, &format_ext);
 
         // Skip if exists and --skip-existing (resumable per spec §1.3)
         if args.skip_existing && output_path.exists() {
@@ -1352,7 +1356,10 @@ pub fn run_transcribe_folder(args: TranscribeFolderArgs, global: &Args) -> CliRe
         if let Err(e) = fs::write(report_path, report) {
             eprintln!("[WARN] Failed to write report: {}", e);
         } else if global.verbose {
-            eprintln!("[INFO] Profile report written to: {}", report_path.display());
+            eprintln!(
+                "[INFO] Profile report written to: {}",
+                report_path.display()
+            );
         }
     }
 
@@ -1421,7 +1428,11 @@ fn transcribe_single_file(
 
     // Transcribe
     let result = whisper.transcribe(&samples, options)?;
-    let tokens_generated = result.segments.iter().map(|s| s.text.split_whitespace().count()).sum();
+    let tokens_generated = result
+        .segments
+        .iter()
+        .map(|s| s.text.split_whitespace().count())
+        .sum();
 
     if global.verbose {
         eprintln!(
@@ -1440,10 +1451,7 @@ fn transcribe_single_file(
 }
 
 /// Discover audio files in a folder (sorted for determinism)
-fn discover_folder_audio_files(
-    input_dir: &Path,
-    recursive: bool,
-) -> Vec<std::path::PathBuf> {
+fn discover_folder_audio_files(input_dir: &Path, recursive: bool) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
     discover_folder_recursive(input_dir, recursive, &mut files);
     // Sort for deterministic processing (spec §1.3 #3)
@@ -1452,11 +1460,7 @@ fn discover_folder_audio_files(
 }
 
 /// Recursively discover audio files
-fn discover_folder_recursive(
-    dir: &Path,
-    recursive: bool,
-    files: &mut Vec<std::path::PathBuf>,
-) {
+fn discover_folder_recursive(dir: &Path, recursive: bool, files: &mut Vec<std::path::PathBuf>) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -1500,10 +1504,7 @@ fn compute_folder_output_path(
     output_dir: &Path,
     format_ext: &str,
 ) -> std::path::PathBuf {
-    let stem = input_path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy();
+    let stem = input_path.file_stem().unwrap_or_default().to_string_lossy();
 
     // Structure mirroring: preserve relative path from input_dir
     let relative = input_path
@@ -1511,7 +1512,9 @@ fn compute_folder_output_path(
         .and_then(|p| p.strip_prefix(input_dir).ok())
         .unwrap_or(Path::new(""));
 
-    output_dir.join(relative).join(format!("{stem}.{format_ext}"))
+    output_dir
+        .join(relative)
+        .join(format!("{stem}.{format_ext}"))
 }
 
 /// Format output for folder transcription
@@ -1521,7 +1524,11 @@ fn format_folder_output(result: &FolderTranscribeResult, format: OutputFormatArg
         OutputFormatArg::Json | OutputFormatArg::JsonFull => {
             format!(
                 r#"{{"text":"{}","segments":[]}}"#,
-                result.text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
+                result
+                    .text
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\n', "\\n")
             )
         }
         OutputFormatArg::Vtt => format!("WEBVTT\n\n{}", result.text),
@@ -1548,7 +1555,11 @@ fn format_folder_output_with_profile(
         OutputFormatArg::Json | OutputFormatArg::JsonFull => {
             format!(
                 r#"{{"text":"{}","segments":[],"profiling":{{"total_ms":{:.1},"tokens_per_sec":{:.0},"budget_met":{}}}}}"#,
-                result.text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n"),
+                result
+                    .text
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\n', "\\n"),
                 total_ms,
                 tokens_per_sec,
                 budget_met
@@ -1560,7 +1571,10 @@ fn format_folder_output_with_profile(
 }
 
 /// Generate aggregate profile report (JSON)
-fn generate_folder_profile_report(entries: &[FolderProfileEntry], total_elapsed_secs: f64) -> String {
+fn generate_folder_profile_report(
+    entries: &[FolderProfileEntry],
+    total_elapsed_secs: f64,
+) -> String {
     let file_count = entries.len();
     let total_audio_secs: f64 = entries.iter().map(|e| e.audio_duration_secs).sum();
     let total_tokens: usize = entries.iter().map(|e| e.tokens_generated).sum();
@@ -1716,7 +1730,10 @@ fn format_batch_output(result: &BatchTranscribeResult, format: OutputFormatArg) 
             format!("1\n00:00:00,000 --> 00:00:30,000\n{}\n", result.text)
         }
         OutputFormatArg::Csv => {
-            format!("start,end,text\n0,30000,\"{}\"\n", result.text.replace('"', "\"\""))
+            format!(
+                "start,end,text\n0,30000,\"{}\"\n",
+                result.text.replace('"', "\"\"")
+            )
         }
         OutputFormatArg::Lrc => {
             format!("[00:00.00]{}", result.text)
@@ -3348,8 +3365,9 @@ pub fn run_convert(args: ConvertArgs, global: &Args) -> CliResult<CommandResult>
         if !global.quiet {
             println!("Loading sharded safetensors from directory...");
         }
-        let loader = ShardedSafeTensorsLoader::load(&args.input)
-            .map_err(|e| CliError::FileNotFound(format!("Failed to load sharded safetensors: {e}")))?;
+        let loader = ShardedSafeTensorsLoader::load(&args.input).map_err(|e| {
+            CliError::FileNotFound(format!("Failed to load sharded safetensors: {e}"))
+        })?;
 
         let n_tensors = loader.tensor_names().len();
         let n_params = loader.total_params().unwrap_or(0);
@@ -4871,7 +4889,10 @@ mod tests {
         // Pattern filter
         assert!(matches_audio_pattern(Path::new("song.wav"), Some("*.wav")));
         assert!(!matches_audio_pattern(Path::new("song.mp3"), Some("*.wav")));
-        assert!(matches_audio_pattern(Path::new("recording_01.mp3"), Some("recording_*")));
+        assert!(matches_audio_pattern(
+            Path::new("recording_01.mp3"),
+            Some("recording_*")
+        ));
     }
 
     #[test]
@@ -4986,7 +5007,11 @@ mod tests {
         // Non-recursive
         let inputs = vec![dir.to_path_buf()];
         let files_nonrec = discover_audio_files(&inputs, false, None);
-        assert_eq!(files_nonrec.len(), 1, "Non-recursive should find only root file");
+        assert_eq!(
+            files_nonrec.len(),
+            1,
+            "Non-recursive should find only root file"
+        );
 
         // Recursive
         let files_rec = discover_audio_files(&inputs, true, None);
@@ -5021,7 +5046,10 @@ mod tests {
         let result = atomic_write_transcription(&output_path, "final content");
         assert!(result.is_ok());
         assert!(output_path.exists(), "Final file should exist");
-        assert!(!temp_path.exists(), "Temp file should not exist after rename");
+        assert!(
+            !temp_path.exists(),
+            "Temp file should not exist after rename"
+        );
     }
 
     #[test]

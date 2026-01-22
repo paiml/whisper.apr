@@ -48,12 +48,23 @@ use realizar::inference_trace::{InferenceTracer, ModelInfo, TraceConfig, TraceSt
 #[cfg(feature = "cuda")]
 #[allow(unused_imports)] // total_d2h_transfers, total_h2d_transfers used only in tests
 use trueno_gpu::memory::resident::{
-    batched_multihead_attention, forward_encoder_block_gpu, incremental_attention_gpu,
+    batched_multihead_attention,
+    forward_encoder_block_gpu,
+    incremental_attention_gpu,
     incremental_attention_gpu_with_stream, // WAPR-PERF-014: shared stream variant
-    kernel_cache_hits, kernel_cache_misses, kv_cache_scatter_gpu, reset_transfer_counters,
-    total_d2h_transfers, total_h2d_transfers,
-    GpuConvFrontendWeights, GpuDecoderBlockWeights,
-    GpuDecoderConfig, GpuEncoderBlockWeights, GpuEncoderConfig, GpuKvCache, GpuResidentTensor,
+    kernel_cache_hits,
+    kernel_cache_misses,
+    kv_cache_scatter_gpu,
+    reset_transfer_counters,
+    total_d2h_transfers,
+    total_h2d_transfers,
+    GpuConvFrontendWeights,
+    GpuDecoderBlockWeights,
+    GpuDecoderConfig,
+    GpuEncoderBlockWeights,
+    GpuEncoderConfig,
+    GpuKvCache,
+    GpuResidentTensor,
     TransferStats,
 };
 
@@ -187,7 +198,14 @@ impl WhisperCuda {
         device_ordinal: i32,
     ) -> WhisperResult<Self> {
         let mel_filters = MelFilterbank::new(config.n_mels as usize, N_FFT, SAMPLE_RATE);
-        Self::new_with_components(encoder, decoder, config, tokenizer, mel_filters, device_ordinal)
+        Self::new_with_components(
+            encoder,
+            decoder,
+            config,
+            tokenizer,
+            mel_filters,
+            device_ordinal,
+        )
     }
 
     /// Create a new CUDA-accelerated Whisper model with all components.
@@ -221,9 +239,8 @@ impl WhisperCuda {
             ));
         }
 
-        let executor = CudaExecutor::new(device_ordinal).map_err(|e| {
-            WhisperError::Inference(format!("CUDA initialization failed: {e}"))
-        })?;
+        let executor = CudaExecutor::new(device_ordinal)
+            .map_err(|e| WhisperError::Inference(format!("CUDA initialization failed: {e}")))?;
 
         let device_name = executor
             .device_name()
@@ -391,8 +408,12 @@ impl WhisperCuda {
         // Upload the most expensive weight: token embedding for output projection
         // This is [n_vocab × d_model] = [51865 × 384] ≈ 80MB for tiny model
         let token_emb = self.decoder.token_embedding();
-        let bytes = self.executor.load_weights("whisper_output_proj", token_emb)
-            .map_err(|e| WhisperError::Inference(format!("Failed to upload output projection: {e}")))?;
+        let bytes = self
+            .executor
+            .load_weights("whisper_output_proj", token_emb)
+            .map_err(|e| {
+                WhisperError::Inference(format!("Failed to upload output projection: {e}"))
+            })?;
         total_bytes += bytes;
 
         // Upload all decoder block weights for full GPU acceleration
@@ -400,54 +421,74 @@ impl WhisperCuda {
         for (block_idx, block) in self.decoder.blocks().iter().enumerate() {
             // Self-attention weights
             let name = format!("dec_b{block_idx}_self_q");
-            let bytes = self.executor.load_weights(&name, &block.self_attn.w_q().weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.self_attn.w_q().weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("dec_b{block_idx}_self_k");
-            let bytes = self.executor.load_weights(&name, &block.self_attn.w_k().weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.self_attn.w_k().weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("dec_b{block_idx}_self_v");
-            let bytes = self.executor.load_weights(&name, &block.self_attn.w_v().weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.self_attn.w_v().weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("dec_b{block_idx}_self_o");
-            let bytes = self.executor.load_weights(&name, &block.self_attn.w_o().weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.self_attn.w_o().weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             // Cross-attention weights
             let name = format!("dec_b{block_idx}_cross_q");
-            let bytes = self.executor.load_weights(&name, &block.cross_attn.w_q().weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.cross_attn.w_q().weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("dec_b{block_idx}_cross_k");
-            let bytes = self.executor.load_weights(&name, &block.cross_attn.w_k().weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.cross_attn.w_k().weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("dec_b{block_idx}_cross_v");
-            let bytes = self.executor.load_weights(&name, &block.cross_attn.w_v().weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.cross_attn.w_v().weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("dec_b{block_idx}_cross_o");
-            let bytes = self.executor.load_weights(&name, &block.cross_attn.w_o().weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.cross_attn.w_o().weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             // FFN weights
             let name = format!("dec_b{block_idx}_ffn_fc1");
-            let bytes = self.executor.load_weights(&name, &block.ffn.fc1.weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.ffn.fc1.weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("dec_b{block_idx}_ffn_fc2");
-            let bytes = self.executor.load_weights(&name, &block.ffn.fc2.weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.ffn.fc2.weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
         }
@@ -471,33 +512,45 @@ impl WhisperCuda {
         for (block_idx, block) in self.encoder.blocks().iter().enumerate() {
             // Self-attention weights
             let name = format!("enc_b{block_idx}_self_q");
-            let bytes = self.executor.load_weights(&name, &block.self_attn.w_q().weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.self_attn.w_q().weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("enc_b{block_idx}_self_k");
-            let bytes = self.executor.load_weights(&name, &block.self_attn.w_k().weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.self_attn.w_k().weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("enc_b{block_idx}_self_v");
-            let bytes = self.executor.load_weights(&name, &block.self_attn.w_v().weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.self_attn.w_v().weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("enc_b{block_idx}_self_o");
-            let bytes = self.executor.load_weights(&name, &block.self_attn.w_o().weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.self_attn.w_o().weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             // FFN weights
             let name = format!("enc_b{block_idx}_ffn_fc1");
-            let bytes = self.executor.load_weights(&name, &block.ffn.fc1.weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.ffn.fc1.weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("enc_b{block_idx}_ffn_fc2");
-            let bytes = self.executor.load_weights(&name, &block.ffn.fc2.weight)
+            let bytes = self
+                .executor
+                .load_weights(&name, &block.ffn.fc2.weight)
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
         }
@@ -808,10 +861,13 @@ impl WhisperCuda {
 
             // FFN down: [d_model, d_ff] -> transposed to [d_ff, d_model]
             let ffn_down_t = transpose_weights(&block.ffn.fc2.weight, d_model, d_ff);
-            let ffn_down_w = GpuResidentTensor::from_host(ctx, &ffn_down_t)
-                .map_err(|e| WhisperError::Inference(format!("dec ffn_down_w L{layer_idx}: {e}")))?;
-            let ffn_down_b = GpuResidentTensor::from_host(ctx, &block.ffn.fc2.bias)
-                .map_err(|e| WhisperError::Inference(format!("dec ffn_down_b L{layer_idx}: {e}")))?;
+            let ffn_down_w = GpuResidentTensor::from_host(ctx, &ffn_down_t).map_err(|e| {
+                WhisperError::Inference(format!("dec ffn_down_w L{layer_idx}: {e}"))
+            })?;
+            let ffn_down_b =
+                GpuResidentTensor::from_host(ctx, &block.ffn.fc2.bias).map_err(|e| {
+                    WhisperError::Inference(format!("dec ffn_down_b L{layer_idx}: {e}"))
+                })?;
 
             gpu_weights.push(GpuDecoderBlockWeights {
                 ln1_gamma,
@@ -1010,14 +1066,20 @@ impl WhisperCuda {
         let max_seq_len = self.config.n_text_ctx as usize;
 
         // Get GPU weights for this layer
-        let weights = self.gpu_decoder_weights.as_ref()
+        let weights = self
+            .gpu_decoder_weights
+            .as_ref()
             .ok_or_else(|| WhisperError::Inference("Decoder weights not uploaded".into()))?;
         let layer_weights = &weights[layer_idx];
 
         // Get head-first KV caches
-        let self_k_caches = self.gpu_self_k_head_first.as_mut()
+        let self_k_caches = self
+            .gpu_self_k_head_first
+            .as_mut()
             .ok_or_else(|| WhisperError::Inference("Self K cache not initialized".into()))?;
-        let self_v_caches = self.gpu_self_v_head_first.as_mut()
+        let self_v_caches = self
+            .gpu_self_v_head_first
+            .as_mut()
             .ok_or_else(|| WhisperError::Inference("Self V cache not initialized".into()))?;
 
         let block = &self.decoder.blocks()[layer_idx];
@@ -1032,52 +1094,108 @@ impl WhisperCuda {
             .map_err(|e| WhisperError::Inference(format!("x upload: {e}")))?;
 
         // Q/K/V projections on GPU: [1, d_model] @ [d_model, d_model] = [1, d_model]
-        let q = x_gpu.linear(ctx, &layer_weights.self_w_q, Some(&layer_weights.self_b_q), 1, d_model as u32, d_model as u32)
+        let q = x_gpu
+            .linear(
+                ctx,
+                &layer_weights.self_w_q,
+                Some(&layer_weights.self_b_q),
+                1,
+                d_model as u32,
+                d_model as u32,
+            )
             .map_err(|e| WhisperError::Inference(format!("Q projection: {e}")))?;
-        let k = x_gpu.linear(ctx, &layer_weights.self_w_k, Some(&layer_weights.self_b_k), 1, d_model as u32, d_model as u32)
+        let k = x_gpu
+            .linear(
+                ctx,
+                &layer_weights.self_w_k,
+                Some(&layer_weights.self_b_k),
+                1,
+                d_model as u32,
+                d_model as u32,
+            )
             .map_err(|e| WhisperError::Inference(format!("K projection: {e}")))?;
-        let v = x_gpu.linear(ctx, &layer_weights.self_w_v, Some(&layer_weights.self_b_v), 1, d_model as u32, d_model as u32)
+        let v = x_gpu
+            .linear(
+                ctx,
+                &layer_weights.self_w_v,
+                Some(&layer_weights.self_b_v),
+                1,
+                d_model as u32,
+                d_model as u32,
+            )
             .map_err(|e| WhisperError::Inference(format!("V projection: {e}")))?;
 
         // Scatter K/V to head-first caches
-        let stream = CudaStream::new(ctx)
-            .map_err(|e| WhisperError::Inference(format!("Stream: {e}")))?;
+        let stream =
+            CudaStream::new(ctx).map_err(|e| WhisperError::Inference(format!("Stream: {e}")))?;
 
         kv_cache_scatter_gpu(
-            ctx, &k, &mut self_k_caches[layer_idx],
-            pos as u32, n_heads as u32, head_dim as u32, max_seq_len as u32, &stream
-        ).map_err(|e| WhisperError::Inference(format!("K scatter: {e}")))?;
+            ctx,
+            &k,
+            &mut self_k_caches[layer_idx],
+            pos as u32,
+            n_heads as u32,
+            head_dim as u32,
+            max_seq_len as u32,
+            &stream,
+        )
+        .map_err(|e| WhisperError::Inference(format!("K scatter: {e}")))?;
 
         kv_cache_scatter_gpu(
-            ctx, &v, &mut self_v_caches[layer_idx],
-            pos as u32, n_heads as u32, head_dim as u32, max_seq_len as u32, &stream
-        ).map_err(|e| WhisperError::Inference(format!("V scatter: {e}")))?;
+            ctx,
+            &v,
+            &mut self_v_caches[layer_idx],
+            pos as u32,
+            n_heads as u32,
+            head_dim as u32,
+            max_seq_len as u32,
+            &stream,
+        )
+        .map_err(|e| WhisperError::Inference(format!("V scatter: {e}")))?;
 
         // Incremental self-attention: Q @ cached_K^T → softmax → @ cached_V
         let seq_len = (pos + 1) as u32; // Include current position
         let attn_out = incremental_attention_gpu(
-            ctx, &q, &self_k_caches[layer_idx], &self_v_caches[layer_idx],
-            n_heads as u32, head_dim as u32, seq_len, max_seq_len as u32
-        ).map_err(|e| WhisperError::Inference(format!("Self attention: {e}")))?;
+            ctx,
+            &q,
+            &self_k_caches[layer_idx],
+            &self_v_caches[layer_idx],
+            n_heads as u32,
+            head_dim as u32,
+            seq_len,
+            max_seq_len as u32,
+        )
+        .map_err(|e| WhisperError::Inference(format!("Self attention: {e}")))?;
 
         // Output projection
-        let mut attn_proj = attn_out.linear(ctx, &layer_weights.self_w_o, Some(&layer_weights.self_b_o), 1, d_model as u32, d_model as u32)
+        let mut attn_proj = attn_out
+            .linear(
+                ctx,
+                &layer_weights.self_w_o,
+                Some(&layer_weights.self_b_o),
+                1,
+                d_model as u32,
+                d_model as u32,
+            )
             .map_err(|e| WhisperError::Inference(format!("O projection: {e}")))?;
 
         // Download and add residual (sync point)
-        let attn_proj_host = attn_proj.to_host()
+        let attn_proj_host = attn_proj
+            .to_host()
             .map_err(|e| WhisperError::Inference(format!("Attn D2H: {e}")))?;
 
         // Residual connection
-        let mut residual: Vec<f32> = x.iter().zip(attn_proj_host.iter()).map(|(a, b)| a + b).collect();
+        let mut residual: Vec<f32> = x
+            .iter()
+            .zip(attn_proj_host.iter())
+            .map(|(a, b)| a + b)
+            .collect();
 
         // === Cross-Attention ===
         if let Some(enc_out) = encoder_output {
             let normed2 = block.ln2.forward(&residual)?;
             let cross_out = block.cross_attn.forward_cross_dispatch(
-                &normed2,
-                enc_out,
-                None // TODO: Use cached cross-attention K/V
+                &normed2, enc_out, None, // TODO: Use cached cross-attention K/V
             )?;
             for (r, c) in residual.iter_mut().zip(cross_out.iter()) {
                 *r += c;
@@ -1129,87 +1247,170 @@ impl WhisperCuda {
         let max_seq_len = self.config.n_text_ctx as usize;
 
         // Get GPU weights for this layer
-        let weights = self.gpu_decoder_weights.as_ref()
+        let weights = self
+            .gpu_decoder_weights
+            .as_ref()
             .ok_or_else(|| WhisperError::Inference("Decoder weights not uploaded".into()))?;
         let layer_weights = &weights[layer_idx];
 
         // Get head-first KV caches
-        let self_k_caches = self.gpu_self_k_head_first.as_mut()
+        let self_k_caches = self
+            .gpu_self_k_head_first
+            .as_mut()
             .ok_or_else(|| WhisperError::Inference("Self K cache not initialized".into()))?;
-        let self_v_caches = self.gpu_self_v_head_first.as_mut()
+        let self_v_caches = self
+            .gpu_self_v_head_first
+            .as_mut()
             .ok_or_else(|| WhisperError::Inference("Self V cache not initialized".into()))?;
 
         // === Self-Attention (all GPU, using external stream) ===
 
         // LN1 on GPU using stream
-        let normed = x_gpu.layer_norm_with_stream(
-            ctx,
-            &layer_weights.ln1_gamma,
-            &layer_weights.ln1_beta,
-            d_model as u32,
-            1, // batch_size = 1 for single token
-            stream,
-        ).map_err(|e| WhisperError::Inference(format!("LN1: {e}")))?;
+        let normed = x_gpu
+            .layer_norm_with_stream(
+                ctx,
+                &layer_weights.ln1_gamma,
+                &layer_weights.ln1_beta,
+                d_model as u32,
+                1, // batch_size = 1 for single token
+                stream,
+            )
+            .map_err(|e| WhisperError::Inference(format!("LN1: {e}")))?;
 
         // Q/K/V projections (use matmul_with_stream internally via linear)
         // Note: linear() creates its own stream, but we can still capture the sequence
-        let q = normed.linear(ctx, &layer_weights.self_w_q, Some(&layer_weights.self_b_q), 1, d_model as u32, d_model as u32)
+        let q = normed
+            .linear(
+                ctx,
+                &layer_weights.self_w_q,
+                Some(&layer_weights.self_b_q),
+                1,
+                d_model as u32,
+                d_model as u32,
+            )
             .map_err(|e| WhisperError::Inference(format!("Q projection: {e}")))?;
-        let k = normed.linear(ctx, &layer_weights.self_w_k, Some(&layer_weights.self_b_k), 1, d_model as u32, d_model as u32)
+        let k = normed
+            .linear(
+                ctx,
+                &layer_weights.self_w_k,
+                Some(&layer_weights.self_b_k),
+                1,
+                d_model as u32,
+                d_model as u32,
+            )
             .map_err(|e| WhisperError::Inference(format!("K projection: {e}")))?;
-        let v = normed.linear(ctx, &layer_weights.self_w_v, Some(&layer_weights.self_b_v), 1, d_model as u32, d_model as u32)
+        let v = normed
+            .linear(
+                ctx,
+                &layer_weights.self_w_v,
+                Some(&layer_weights.self_b_v),
+                1,
+                d_model as u32,
+                d_model as u32,
+            )
             .map_err(|e| WhisperError::Inference(format!("V projection: {e}")))?;
 
         // KV cache scatter (uses provided stream)
         kv_cache_scatter_gpu(
-            ctx, &k, &mut self_k_caches[layer_idx],
-            pos as u32, n_heads as u32, head_dim as u32, max_seq_len as u32, stream
-        ).map_err(|e| WhisperError::Inference(format!("K scatter: {e}")))?;
+            ctx,
+            &k,
+            &mut self_k_caches[layer_idx],
+            pos as u32,
+            n_heads as u32,
+            head_dim as u32,
+            max_seq_len as u32,
+            stream,
+        )
+        .map_err(|e| WhisperError::Inference(format!("K scatter: {e}")))?;
 
         kv_cache_scatter_gpu(
-            ctx, &v, &mut self_v_caches[layer_idx],
-            pos as u32, n_heads as u32, head_dim as u32, max_seq_len as u32, stream
-        ).map_err(|e| WhisperError::Inference(format!("V scatter: {e}")))?;
+            ctx,
+            &v,
+            &mut self_v_caches[layer_idx],
+            pos as u32,
+            n_heads as u32,
+            head_dim as u32,
+            max_seq_len as u32,
+            stream,
+        )
+        .map_err(|e| WhisperError::Inference(format!("V scatter: {e}")))?;
 
         // Incremental attention using stream
         let seq_len = (pos + 1) as u32;
         let attn_out = incremental_attention_gpu_with_stream(
-            ctx, &q, &self_k_caches[layer_idx], &self_v_caches[layer_idx],
-            n_heads as u32, head_dim as u32, seq_len, max_seq_len as u32, stream
-        ).map_err(|e| WhisperError::Inference(format!("Self attention: {e}")))?;
+            ctx,
+            &q,
+            &self_k_caches[layer_idx],
+            &self_v_caches[layer_idx],
+            n_heads as u32,
+            head_dim as u32,
+            seq_len,
+            max_seq_len as u32,
+            stream,
+        )
+        .map_err(|e| WhisperError::Inference(format!("Self attention: {e}")))?;
 
         // Output projection
-        let attn_proj = attn_out.linear(ctx, &layer_weights.self_w_o, Some(&layer_weights.self_b_o), 1, d_model as u32, d_model as u32)
+        let attn_proj = attn_out
+            .linear(
+                ctx,
+                &layer_weights.self_w_o,
+                Some(&layer_weights.self_b_o),
+                1,
+                d_model as u32,
+                d_model as u32,
+            )
             .map_err(|e| WhisperError::Inference(format!("O projection: {e}")))?;
 
         // Residual connection (GPU)
-        let residual1 = x_gpu.add_with_stream(ctx, &attn_proj, stream)
+        let residual1 = x_gpu
+            .add_with_stream(ctx, &attn_proj, stream)
             .map_err(|e| WhisperError::Inference(format!("Residual 1: {e}")))?;
 
         // === FFN (all GPU, using external stream) ===
 
         // LN3 on GPU
-        let normed3 = residual1.layer_norm_with_stream(
-            ctx,
-            &layer_weights.ln3_gamma,
-            &layer_weights.ln3_beta,
-            d_model as u32,
-            1,
-            stream,
-        ).map_err(|e| WhisperError::Inference(format!("LN3: {e}")))?;
+        let normed3 = residual1
+            .layer_norm_with_stream(
+                ctx,
+                &layer_weights.ln3_gamma,
+                &layer_weights.ln3_beta,
+                d_model as u32,
+                1,
+                stream,
+            )
+            .map_err(|e| WhisperError::Inference(format!("LN3: {e}")))?;
 
         // FFN up projection + GELU
-        let ffn_up = normed3.linear(ctx, &layer_weights.ffn_up_w, Some(&layer_weights.ffn_up_b), 1, d_model as u32, (d_model * 4) as u32)
+        let ffn_up = normed3
+            .linear(
+                ctx,
+                &layer_weights.ffn_up_w,
+                Some(&layer_weights.ffn_up_b),
+                1,
+                d_model as u32,
+                (d_model * 4) as u32,
+            )
             .map_err(|e| WhisperError::Inference(format!("FFN up: {e}")))?;
-        let ffn_gelu = ffn_up.gelu_with_stream(ctx, stream)
+        let ffn_gelu = ffn_up
+            .gelu_with_stream(ctx, stream)
             .map_err(|e| WhisperError::Inference(format!("GELU: {e}")))?;
 
         // FFN down projection
-        let ffn_down = ffn_gelu.linear(ctx, &layer_weights.ffn_down_w, Some(&layer_weights.ffn_down_b), 1, (d_model * 4) as u32, d_model as u32)
+        let ffn_down = ffn_gelu
+            .linear(
+                ctx,
+                &layer_weights.ffn_down_w,
+                Some(&layer_weights.ffn_down_b),
+                1,
+                (d_model * 4) as u32,
+                d_model as u32,
+            )
             .map_err(|e| WhisperError::Inference(format!("FFN down: {e}")))?;
 
         // Final residual connection
-        let output = residual1.add_with_stream(ctx, &ffn_down, stream)
+        let output = residual1
+            .add_with_stream(ctx, &ffn_down, stream)
             .map_err(|e| WhisperError::Inference(format!("Residual 2: {e}")))?;
 
         // Note: Cross-attention skipped in this version for simplicity
@@ -1254,12 +1455,8 @@ impl WhisperCuda {
         // Process through all layers
         let mut hidden = token_embedding.to_vec();
         for layer_idx in 0..n_layers {
-            hidden = self.forward_decoder_block_gpu(
-                layer_idx,
-                &hidden,
-                pos,
-                Some(encoder_output),
-            )?;
+            hidden =
+                self.forward_decoder_block_gpu(layer_idx, &hidden, pos, Some(encoder_output))?;
         }
 
         Ok(hidden)
@@ -1305,37 +1502,43 @@ impl WhisperCuda {
         let mel_gpu = GpuResidentTensor::from_host(ctx, mel)
             .map_err(|e| WhisperError::Inference(format!("mel upload: {e}")))?;
 
-        let conv_weights = self.gpu_conv_weights.as_ref()
+        let conv_weights = self
+            .gpu_conv_weights
+            .as_ref()
             .ok_or_else(|| WhisperError::Inference("GPU conv weights not uploaded".into()))?;
 
         // Conv1: 80 → 384, kernel=3, stride=1, padding=1 + GELU
-        let conv1_out = mel_gpu.conv1d(
-            ctx,
-            &conv_weights.conv1_weight,
-            Some(&conv_weights.conv1_bias),
-            n_mels as u32,        // in_channels
-            d_model as u32,       // out_channels
-            3,                    // kernel_size
-            1,                    // stride
-            1,                    // padding
-            seq_len_in as u32,    // seq_len
-        ).map_err(|e| WhisperError::Inference(format!("conv1 GPU: {e}")))?;
+        let conv1_out = mel_gpu
+            .conv1d(
+                ctx,
+                &conv_weights.conv1_weight,
+                Some(&conv_weights.conv1_bias),
+                n_mels as u32,     // in_channels
+                d_model as u32,    // out_channels
+                3,                 // kernel_size
+                1,                 // stride
+                1,                 // padding
+                seq_len_in as u32, // seq_len
+            )
+            .map_err(|e| WhisperError::Inference(format!("conv1 GPU: {e}")))?;
 
         // After conv1: seq_len stays same (stride=1), channels = d_model
         let seq_len_after_conv1 = seq_len_in;
 
         // Conv2: 384 → 384, kernel=3, stride=2, padding=1 + GELU
-        let mut conv2_out = conv1_out.conv1d(
-            ctx,
-            &conv_weights.conv2_weight,
-            Some(&conv_weights.conv2_bias),
-            d_model as u32,       // in_channels
-            d_model as u32,       // out_channels
-            3,                    // kernel_size
-            2,                    // stride
-            1,                    // padding
-            seq_len_after_conv1 as u32,
-        ).map_err(|e| WhisperError::Inference(format!("conv2 GPU: {e}")))?;
+        let mut conv2_out = conv1_out
+            .conv1d(
+                ctx,
+                &conv_weights.conv2_weight,
+                Some(&conv_weights.conv2_bias),
+                d_model as u32, // in_channels
+                d_model as u32, // out_channels
+                3,              // kernel_size
+                2,              // stride
+                1,              // padding
+                seq_len_after_conv1 as u32,
+            )
+            .map_err(|e| WhisperError::Inference(format!("conv2 GPU: {e}")))?;
 
         let conv_time = conv_start.elapsed();
 
@@ -1344,7 +1547,8 @@ impl WhisperCuda {
 
         // Download conv output to add positional embedding (CPU - small overhead)
         let pos_start = std::time::Instant::now();
-        let mut x = conv2_out.to_host()
+        let mut x = conv2_out
+            .to_host()
             .map_err(|e| WhisperError::Inference(format!("conv output download: {e}")))?;
 
         // Add positional embedding
@@ -1363,14 +1567,22 @@ impl WhisperCuda {
         let upload_time = upload_start.elapsed();
 
         if profile_detail {
-            eprintln!("[PROFILE-BREAKDOWN] Conv(GPU): {:.1}ms, PosEmb: {:.1}ms, Upload: {:.1}ms",
-                conv_time.as_millis(), pos_time.as_millis(), upload_time.as_millis());
+            eprintln!(
+                "[PROFILE-BREAKDOWN] Conv(GPU): {:.1}ms, PosEmb: {:.1}ms, Upload: {:.1}ms",
+                conv_time.as_millis(),
+                pos_time.as_millis(),
+                upload_time.as_millis()
+            );
         }
 
         // Step 4: Process all encoder blocks on GPU (0 transfers)
-        let weights = self.gpu_encoder_weights.as_ref()
+        let weights = self
+            .gpu_encoder_weights
+            .as_ref()
             .ok_or_else(|| WhisperError::Inference("GPU weights not uploaded".into()))?;
-        let config = self.gpu_encoder_config.as_ref()
+        let config = self
+            .gpu_encoder_config
+            .as_ref()
             .ok_or_else(|| WhisperError::Inference("GPU config not set".into()))?;
 
         // DEBUG: Compare GPU vs CPU for first layer only
@@ -1394,29 +1606,35 @@ impl WhisperCuda {
 
             // Step 1: LayerNorm
             let ln1_out = block0.ln1.forward(&x)?;
-            eprintln!("[DEBUG-CPU] Layer 0 LN1: mean={:.6}, std={:.6}",
+            eprintln!(
+                "[DEBUG-CPU] Layer 0 LN1: mean={:.6}, std={:.6}",
                 ln1_out.iter().sum::<f32>() / ln1_out.len() as f32,
-                (ln1_out.iter().map(|v| v.powi(2)).sum::<f32>() / ln1_out.len() as f32).sqrt());
+                (ln1_out.iter().map(|v| v.powi(2)).sum::<f32>() / ln1_out.len() as f32).sqrt()
+            );
 
             // Step 2: Q/K/V projections
             let q = block0.self_attn.w_q().forward(&ln1_out, seq_len)?;
             let k = block0.self_attn.w_k().forward(&ln1_out, seq_len)?;
             let v = block0.self_attn.w_v().forward(&ln1_out, seq_len)?;
-            eprintln!("[DEBUG-CPU] Q: mean={:.6}, K: mean={:.6}, V: mean={:.6}",
+            eprintln!(
+                "[DEBUG-CPU] Q: mean={:.6}, K: mean={:.6}, V: mean={:.6}",
                 q.iter().sum::<f32>() / q.len() as f32,
                 k.iter().sum::<f32>() / k.len() as f32,
-                v.iter().sum::<f32>() / v.len() as f32);
+                v.iter().sum::<f32>() / v.len() as f32
+            );
         }
 
         // WAPR-PERF-011: Timing instrumentation for verification matrix
         let profile_layers = std::env::var("WHISPER_PROFILE_LAYERS").is_ok();
         let mut layer_times: Vec<u128> = Vec::new();
 
-        #[allow(clippy::needless_range_loop)] // layer_idx used for debug, error messages, and indexing
+        #[allow(clippy::needless_range_loop)]
+        // layer_idx used for debug, error messages, and indexing
         for layer_idx in 0..n_layers {
             if debug_layer0_only && layer_idx == 1 {
                 // Get intermediate GPU output after layer 0 only
-                let gpu_layer0_out = x_gpu.to_host()
+                let gpu_layer0_out = x_gpu
+                    .to_host()
                     .map_err(|e| WhisperError::Inference(format!("debug download: {e}")))?;
                 eprintln!("[DEBUG-GPU] After layer 0 only: len={}, mean={:.6}, std={:.6}, min={:.6}, max={:.6}",
                     gpu_layer0_out.len(),
@@ -1445,12 +1663,16 @@ impl WhisperCuda {
 
         // Step 5: Download output (1 D2H transfer)
         let download_start = std::time::Instant::now();
-        let output = x_gpu.to_host()
+        let output = x_gpu
+            .to_host()
             .map_err(|e| WhisperError::Inference(format!("output download: {e}")))?;
         let download_time = download_start.elapsed();
 
         if profile_detail {
-            eprintln!("[PROFILE-BREAKDOWN] Download: {:.1}ms", download_time.as_millis());
+            eprintln!(
+                "[PROFILE-BREAKDOWN] Download: {:.1}ms",
+                download_time.as_millis()
+            );
         }
 
         // Log transfer stats for debugging
@@ -1477,16 +1699,27 @@ impl WhisperCuda {
         if profile_detail {
             let total_time = total_start.elapsed();
             let layer_sum: u128 = layer_times.iter().sum();
-            let accounted = conv_time.as_micros() + pos_time.as_micros() + upload_time.as_micros()
-                + layer_sum + download_time.as_micros() + ln_post_time.as_micros();
+            let accounted = conv_time.as_micros()
+                + pos_time.as_micros()
+                + upload_time.as_micros()
+                + layer_sum
+                + download_time.as_micros()
+                + ln_post_time.as_micros();
             let unaccounted = total_time.as_micros().saturating_sub(accounted);
-            eprintln!("[PROFILE-BREAKDOWN] LnPost: {:.1}ms, Total: {:.1}ms", ln_post_time.as_millis(), total_time.as_millis());
+            eprintln!(
+                "[PROFILE-BREAKDOWN] LnPost: {:.1}ms, Total: {:.1}ms",
+                ln_post_time.as_millis(),
+                total_time.as_millis()
+            );
             eprintln!("[PROFILE-SUMMARY] Conv={:.0}µs PosEmb={:.0}µs Upload={:.0}µs Layers={:.0}µs Download={:.0}µs LnPost={:.0}µs",
                 conv_time.as_micros(), pos_time.as_micros(), upload_time.as_micros(),
                 layer_sum, download_time.as_micros(), ln_post_time.as_micros());
-            eprintln!("[PROFILE-SUMMARY] Accounted: {:.1}ms, Unaccounted: {:.1}ms ({:.1}%)",
-                accounted as f64 / 1000.0, unaccounted as f64 / 1000.0,
-                unaccounted as f64 / total_time.as_micros() as f64 * 100.0);
+            eprintln!(
+                "[PROFILE-SUMMARY] Accounted: {:.1}ms, Unaccounted: {:.1}ms ({:.1}%)",
+                accounted as f64 / 1000.0,
+                unaccounted as f64 / 1000.0,
+                unaccounted as f64 / total_time.as_micros() as f64 * 100.0
+            );
         }
 
         Ok(result)
@@ -1739,9 +1972,9 @@ impl WhisperCuda {
         .map_err(|e| WhisperError::Inference(format!("GPU attention failed: {e}")))?;
 
         // Download result (1 D2H transfer)
-        let output = output_gpu
-            .to_host()
-            .map_err(|e| WhisperError::Inference(format!("Failed to download attention output: {e}")))?;
+        let output = output_gpu.to_host().map_err(|e| {
+            WhisperError::Inference(format!("Failed to download attention output: {e}"))
+        })?;
 
         // Log transfer stats for debugging
         if std::env::var("WHISPER_DEBUG_GPU_RESIDENT").is_ok() {
@@ -1842,13 +2075,15 @@ impl WhisperCuda {
             )));
         }
         let emb_start = (token as usize) * d_model;
-        let mut x: Vec<f32> = self.decoder.token_embedding()[emb_start..emb_start + d_model].to_vec();
+        let mut x: Vec<f32> =
+            self.decoder.token_embedding()[emb_start..emb_start + d_model].to_vec();
 
         // Add positional embedding
         let pos_start = position * d_model;
-        for (x_elem, pos_emb) in x.iter_mut().zip(
-            &self.decoder.positional_embedding()[pos_start..pos_start + d_model],
-        ) {
+        for (x_elem, pos_emb) in x
+            .iter_mut()
+            .zip(&self.decoder.positional_embedding()[pos_start..pos_start + d_model])
+        {
             *x_elem += pos_emb;
         }
 
@@ -1928,11 +2163,18 @@ impl WhisperCuda {
 
         // Cross-attention K/V from encoder
         let enc_len = encoder_output.len() / d_model;
-        let k_enc = block.cross_attn.w_k().forward_simd(encoder_output, enc_len)?;
-        let v_enc = block.cross_attn.w_v().forward_simd(encoder_output, enc_len)?;
+        let k_enc = block
+            .cross_attn
+            .w_k()
+            .forward_simd(encoder_output, enc_len)?;
+        let v_enc = block
+            .cross_attn
+            .w_v()
+            .forward_simd(encoder_output, enc_len)?;
 
         // Compute cross-attention (CPU)
-        let cross_attn_out = self.compute_cross_attention(&q_cross, &k_enc, &v_enc, n_heads, head_dim)?;
+        let cross_attn_out =
+            self.compute_cross_attention(&q_cross, &k_enc, &v_enc, n_heads, head_dim)?;
 
         let cross_proj = block.cross_attn.w_o().forward_simd(&cross_attn_out, 1)?;
         for (r, c) in residual.iter_mut().zip(cross_proj.iter()) {
@@ -1976,7 +2218,11 @@ impl WhisperCuda {
             let mut scores = vec![0.0f32; enc_len];
             for pos in 0..enc_len {
                 let k_head = &k[pos * d_model + h * head_dim..pos * d_model + (h + 1) * head_dim];
-                scores[pos] = q_head.iter().zip(k_head.iter()).map(|(a, b)| a * b).sum::<f32>()
+                scores[pos] = q_head
+                    .iter()
+                    .zip(k_head.iter())
+                    .map(|(a, b)| a * b)
+                    .sum::<f32>()
                     / (head_dim as f32).sqrt();
             }
 
@@ -2158,7 +2404,9 @@ impl WhisperCuda {
         };
 
         // Compute mel spectrogram
-        let mut mel = self.mel_filters.compute(&padded_audio, crate::audio::HOP_LENGTH)?;
+        let mut mel = self
+            .mel_filters
+            .compute(&padded_audio, crate::audio::HOP_LENGTH)?;
         let actual_frames = mel.len() / N_MELS;
 
         // Ensure exactly 3000 frames (pad or truncate)
@@ -2213,30 +2461,30 @@ impl WhisperCuda {
 
         // Process initial tokens to populate cache
         for &token in &tokens {
-            let _ = self.decoder.forward_one(token, &encoder_output, &mut cache)?;
+            let _ = self
+                .decoder
+                .forward_one(token, &encoder_output, &mut cache)?;
         }
 
         // Generate tokens
         for _ in 0..max_tokens.saturating_sub(tokens.len()) {
             // Get logits for last token
             let last_token = *tokens.last().unwrap_or(&specials.sot);
-            let mut logits = self.decoder.forward_one(last_token, &encoder_output, &mut cache)?;
+            let mut logits = self
+                .decoder
+                .forward_one(last_token, &encoder_output, &mut cache)?;
 
             // Apply token suppression
             suppressor.apply(&mut logits);
 
             // Get next token based on strategy
             let next_token = match options.strategy {
-                DecodingStrategy::Greedy => {
-                    logits
-                        .iter()
-                        .enumerate()
-                        .max_by(|(_, a), (_, b)| {
-                            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                        })
-                        .map(|(idx, _)| idx as u32)
-                        .unwrap_or(eot_token)
-                }
+                DecodingStrategy::Greedy => logits
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(idx, _)| idx as u32)
+                    .unwrap_or(eot_token),
                 DecodingStrategy::BeamSearch { .. } | DecodingStrategy::Sampling { .. } => {
                     // For now, fall back to greedy for beam search and sampling
                     logits
@@ -2313,7 +2561,9 @@ impl WhisperCuda {
 
         // Use CPU decoder to get hidden state after ln_post
         // This runs: embedding → transformer blocks → layer norm
-        let hidden = self.decoder.forward_one_hidden(token, encoder_output, cache)?;
+        let hidden = self
+            .decoder
+            .forward_one_hidden(token, encoder_output, cache)?;
 
         // Output projection on GPU using direct gemm
         // FIX 1 (WAPR-PERF-004): Use executor.gemm() which works correctly,
@@ -2388,12 +2638,7 @@ impl WhisperCuda {
 
         // 2. Run through all decoder blocks (GPU self-attention)
         for layer_idx in 0..n_layers {
-            x = self.forward_decoder_block_gpu(
-                layer_idx,
-                &x,
-                pos,
-                Some(encoder_output),
-            )?;
+            x = self.forward_decoder_block_gpu(layer_idx, &x, pos, Some(encoder_output))?;
         }
 
         // 3. Final layer norm (CPU - simple)
@@ -2464,12 +2709,7 @@ impl WhisperCuda {
 
         // 2. Run through all decoder blocks (executor path)
         for layer_idx in 0..n_layers {
-            x = self.forward_decoder_block_executor(
-                layer_idx,
-                &x,
-                pos,
-                Some(encoder_output),
-            )?;
+            x = self.forward_decoder_block_executor(layer_idx, &x, pos, Some(encoder_output))?;
         }
 
         // 3. Final layer norm (CPU - simple)
@@ -2503,7 +2743,8 @@ impl WhisperCuda {
         if hidden.len() != d_model {
             return Err(WhisperError::Inference(format!(
                 "Hidden state dimension mismatch: got {}, expected {}",
-                hidden.len(), d_model
+                hidden.len(),
+                d_model
             )));
         }
 
@@ -2530,11 +2771,16 @@ impl WhisperCuda {
 
         if std::env::var("WHISPER_DEBUG_GPU").is_ok() {
             let max_val = output.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-            let argmax = output.iter().enumerate()
+            let argmax = output
+                .iter()
+                .enumerate()
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(i, _)| i)
                 .unwrap_or(0);
-            eprintln!("[GPU] project_to_vocab_gpu: max={:.4} argmax={}", max_val, argmax);
+            eprintln!(
+                "[GPU] project_to_vocab_gpu: max={:.4} argmax={}",
+                max_val, argmax
+            );
         }
 
         Ok(output)
@@ -2589,7 +2835,9 @@ impl WhisperCuda {
         };
 
         // Compute mel spectrogram
-        let mut mel = self.mel_filters.compute(&padded_audio, crate::audio::HOP_LENGTH)?;
+        let mut mel = self
+            .mel_filters
+            .compute(&padded_audio, crate::audio::HOP_LENGTH)?;
         let actual_frames = mel.len() / N_MELS;
 
         // Ensure exactly 3000 frames
@@ -2643,7 +2891,8 @@ impl WhisperCuda {
         // Trace encoder output (layer_idx=0 for encoder, iteration=0 for prefill)
         let d_model = self.config.n_text_state as usize;
         let enc_seq_len = encoder_output.len() / d_model;
-        self.tracer.trace_layer(0, 0, Some(&encoder_output), enc_seq_len, d_model);
+        self.tracer
+            .trace_layer(0, 0, Some(&encoder_output), enc_seq_len, d_model);
 
         // Build initial tokens
         use crate::tokenizer::special_tokens::{self, SpecialTokens};
@@ -2695,10 +2944,14 @@ impl WhisperCuda {
             if use_gpu_decoder {
                 let _ = self.forward_one_gpu_total_offload(token, &encoder_output)?;
             } else {
-                let _ = self.decoder.forward_one(token, &encoder_output, &mut cache)?;
+                let _ = self
+                    .decoder
+                    .forward_one(token, &encoder_output, &mut cache)?;
             }
             #[cfg(not(feature = "cuda"))]
-            let _ = self.decoder.forward_one(token, &encoder_output, &mut cache)?;
+            let _ = self
+                .decoder
+                .forward_one(token, &encoder_output, &mut cache)?;
         }
 
         // Generate tokens
@@ -2707,7 +2960,10 @@ impl WhisperCuda {
             let last_token = *tokens.last().unwrap_or(&specials.sot);
 
             if debug_gpu && gen_idx < 5 {
-                eprintln!("[DEBUG] gen_idx={} last_token={} tokens={:?}", gen_idx, last_token, &tokens);
+                eprintln!(
+                    "[DEBUG] gen_idx={} last_token={} tokens={:?}",
+                    gen_idx, last_token, &tokens
+                );
             }
 
             // === TRACE: LM_HEAD (output projection) ===
@@ -2732,30 +2988,23 @@ impl WhisperCuda {
             suppressor.apply(&mut logits);
 
             let next_token = match options.strategy {
-                DecodingStrategy::Greedy => {
-                    logits
-                        .iter()
-                        .enumerate()
-                        .max_by(|(_, a), (_, b)| {
-                            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                        })
-                        .map(|(idx, _)| idx as u32)
-                        .unwrap_or(eot_token)
-                }
-                DecodingStrategy::BeamSearch { .. } | DecodingStrategy::Sampling { .. } => {
-                    logits
-                        .iter()
-                        .enumerate()
-                        .max_by(|(_, a), (_, b)| {
-                            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                        })
-                        .map(|(idx, _)| idx as u32)
-                        .unwrap_or(eot_token)
-                }
+                DecodingStrategy::Greedy => logits
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(idx, _)| idx as u32)
+                    .unwrap_or(eot_token),
+                DecodingStrategy::BeamSearch { .. } | DecodingStrategy::Sampling { .. } => logits
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(idx, _)| idx as u32)
+                    .unwrap_or(eot_token),
             };
 
             // Trace sampling result (temperature=0.0 for greedy, top_k=1)
-            self.tracer.trace_sample(gen_idx, &logits, next_token, 0.0, 1);
+            self.tracer
+                .trace_sample(gen_idx, &logits, next_token, 0.0, 1);
 
             if next_token == eot_token {
                 break;
@@ -2788,7 +3037,9 @@ impl WhisperCuda {
     /// Call this after `transcribe_gpu()` to see performance analysis.
     pub fn print_trace_summary(&self) {
         if !self.tracer.is_enabled() {
-            eprintln!("[TRACE] Tracing not enabled. Call enable_tracing(TraceConfig::enabled()) first.");
+            eprintln!(
+                "[TRACE] Tracing not enabled. Call enable_tracing(TraceConfig::enabled()) first."
+            );
             return;
         }
 
@@ -2799,8 +3050,10 @@ impl WhisperCuda {
         }
 
         // Compute totals by step
-        let mut step_durations: std::collections::HashMap<&'static str, u64> = std::collections::HashMap::new();
-        let mut step_counts: std::collections::HashMap<&'static str, usize> = std::collections::HashMap::new();
+        let mut step_durations: std::collections::HashMap<&'static str, u64> =
+            std::collections::HashMap::new();
+        let mut step_counts: std::collections::HashMap<&'static str, usize> =
+            std::collections::HashMap::new();
 
         for event in events {
             *step_durations.entry(event.step.name()).or_insert(0) += event.duration_us;
@@ -2813,7 +3066,10 @@ impl WhisperCuda {
         eprintln!("=== APR-Style Inference Trace Summary ===");
         eprintln!("Total: {:.2}ms ({} events)", total_ms, events.len());
         eprintln!();
-        eprintln!("{:20} {:>8} {:>8} {:>8}", "STEP", "COUNT", "TIME(ms)", "PCT");
+        eprintln!(
+            "{:20} {:>8} {:>8} {:>8}",
+            "STEP", "COUNT", "TIME(ms)", "PCT"
+        );
         eprintln!("{:-<20} {:->8} {:->8} {:->8}", "", "", "", "");
 
         // Sort by duration descending
@@ -2823,7 +3079,11 @@ impl WhisperCuda {
         for (step, us) in steps {
             let count = step_counts.get(step).unwrap_or(&0);
             let ms = *us as f64 / 1000.0;
-            let pct = if total_us > 0 { (*us as f64 / total_us as f64) * 100.0 } else { 0.0 };
+            let pct = if total_us > 0 {
+                (*us as f64 / total_us as f64) * 100.0
+            } else {
+                0.0
+            };
             eprintln!("{:20} {:>8} {:>8.2} {:>7.1}%", step, count, ms, pct);
         }
         eprintln!();
@@ -2870,81 +3130,157 @@ impl WhisperCuda {
 
             // Self-attention Q/K/V/O (transposed for GPU: [in, out])
             let w_q_t = transpose_weights(&block.self_attn.w_q().weight, d_model, d_model);
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_w_q"), &w_q_t)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.self_w_q"), &w_q_t)
                 .map_err(|e| WhisperError::Inference(format!("dec self_w_q L{layer_idx}: {e}")))?;
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_b_q"), &block.self_attn.w_q().bias)
+            total_bytes += self
+                .executor
+                .load_weights(
+                    &format!("dec.L{layer_idx}.self_b_q"),
+                    &block.self_attn.w_q().bias,
+                )
                 .map_err(|e| WhisperError::Inference(format!("dec self_b_q L{layer_idx}: {e}")))?;
 
             let w_k_t = transpose_weights(&block.self_attn.w_k().weight, d_model, d_model);
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_w_k"), &w_k_t)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.self_w_k"), &w_k_t)
                 .map_err(|e| WhisperError::Inference(format!("dec self_w_k L{layer_idx}: {e}")))?;
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_b_k"), &block.self_attn.w_k().bias)
+            total_bytes += self
+                .executor
+                .load_weights(
+                    &format!("dec.L{layer_idx}.self_b_k"),
+                    &block.self_attn.w_k().bias,
+                )
                 .map_err(|e| WhisperError::Inference(format!("dec self_b_k L{layer_idx}: {e}")))?;
 
             let w_v_t = transpose_weights(&block.self_attn.w_v().weight, d_model, d_model);
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_w_v"), &w_v_t)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.self_w_v"), &w_v_t)
                 .map_err(|e| WhisperError::Inference(format!("dec self_w_v L{layer_idx}: {e}")))?;
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_b_v"), &block.self_attn.w_v().bias)
+            total_bytes += self
+                .executor
+                .load_weights(
+                    &format!("dec.L{layer_idx}.self_b_v"),
+                    &block.self_attn.w_v().bias,
+                )
                 .map_err(|e| WhisperError::Inference(format!("dec self_b_v L{layer_idx}: {e}")))?;
 
             let w_o_t = transpose_weights(&block.self_attn.w_o().weight, d_model, d_model);
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_w_o"), &w_o_t)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.self_w_o"), &w_o_t)
                 .map_err(|e| WhisperError::Inference(format!("dec self_w_o L{layer_idx}: {e}")))?;
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.self_b_o"), &block.self_attn.w_o().bias)
+            total_bytes += self
+                .executor
+                .load_weights(
+                    &format!("dec.L{layer_idx}.self_b_o"),
+                    &block.self_attn.w_o().bias,
+                )
                 .map_err(|e| WhisperError::Inference(format!("dec self_b_o L{layer_idx}: {e}")))?;
 
             // Cross-attention Q/K/V/O
             let cross_w_q_t = transpose_weights(&block.cross_attn.w_q().weight, d_model, d_model);
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_w_q"), &cross_w_q_t)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.cross_w_q"), &cross_w_q_t)
                 .map_err(|e| WhisperError::Inference(format!("dec cross_w_q L{layer_idx}: {e}")))?;
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_b_q"), &block.cross_attn.w_q().bias)
+            total_bytes += self
+                .executor
+                .load_weights(
+                    &format!("dec.L{layer_idx}.cross_b_q"),
+                    &block.cross_attn.w_q().bias,
+                )
                 .map_err(|e| WhisperError::Inference(format!("dec cross_b_q L{layer_idx}: {e}")))?;
 
             let cross_w_k_t = transpose_weights(&block.cross_attn.w_k().weight, d_model, d_model);
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_w_k"), &cross_w_k_t)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.cross_w_k"), &cross_w_k_t)
                 .map_err(|e| WhisperError::Inference(format!("dec cross_w_k L{layer_idx}: {e}")))?;
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_b_k"), &block.cross_attn.w_k().bias)
+            total_bytes += self
+                .executor
+                .load_weights(
+                    &format!("dec.L{layer_idx}.cross_b_k"),
+                    &block.cross_attn.w_k().bias,
+                )
                 .map_err(|e| WhisperError::Inference(format!("dec cross_b_k L{layer_idx}: {e}")))?;
 
             let cross_w_v_t = transpose_weights(&block.cross_attn.w_v().weight, d_model, d_model);
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_w_v"), &cross_w_v_t)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.cross_w_v"), &cross_w_v_t)
                 .map_err(|e| WhisperError::Inference(format!("dec cross_w_v L{layer_idx}: {e}")))?;
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_b_v"), &block.cross_attn.w_v().bias)
+            total_bytes += self
+                .executor
+                .load_weights(
+                    &format!("dec.L{layer_idx}.cross_b_v"),
+                    &block.cross_attn.w_v().bias,
+                )
                 .map_err(|e| WhisperError::Inference(format!("dec cross_b_v L{layer_idx}: {e}")))?;
 
             let cross_w_o_t = transpose_weights(&block.cross_attn.w_o().weight, d_model, d_model);
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_w_o"), &cross_w_o_t)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.cross_w_o"), &cross_w_o_t)
                 .map_err(|e| WhisperError::Inference(format!("dec cross_w_o L{layer_idx}: {e}")))?;
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.cross_b_o"), &block.cross_attn.w_o().bias)
+            total_bytes += self
+                .executor
+                .load_weights(
+                    &format!("dec.L{layer_idx}.cross_b_o"),
+                    &block.cross_attn.w_o().bias,
+                )
                 .map_err(|e| WhisperError::Inference(format!("dec cross_b_o L{layer_idx}: {e}")))?;
 
             // FFN weights (fc1: d_model -> d_ff, fc2: d_ff -> d_model)
             let fc1_t = transpose_weights(&block.ffn.fc1.weight, d_ff, d_model);
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ffn_fc1"), &fc1_t)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.ffn_fc1"), &fc1_t)
                 .map_err(|e| WhisperError::Inference(format!("dec ffn_fc1 L{layer_idx}: {e}")))?;
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ffn_b1"), &block.ffn.fc1.bias)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.ffn_b1"), &block.ffn.fc1.bias)
                 .map_err(|e| WhisperError::Inference(format!("dec ffn_b1 L{layer_idx}: {e}")))?;
 
             let fc2_t = transpose_weights(&block.ffn.fc2.weight, d_model, d_ff);
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ffn_fc2"), &fc2_t)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.ffn_fc2"), &fc2_t)
                 .map_err(|e| WhisperError::Inference(format!("dec ffn_fc2 L{layer_idx}: {e}")))?;
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ffn_b2"), &block.ffn.fc2.bias)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.ffn_b2"), &block.ffn.fc2.bias)
                 .map_err(|e| WhisperError::Inference(format!("dec ffn_b2 L{layer_idx}: {e}")))?;
 
             // LayerNorm weights (gamma/beta)
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ln1_gamma"), &block.ln1.weight)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.ln1_gamma"), &block.ln1.weight)
                 .map_err(|e| WhisperError::Inference(format!("dec ln1_gamma L{layer_idx}: {e}")))?;
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ln1_beta"), &block.ln1.bias)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.ln1_beta"), &block.ln1.bias)
                 .map_err(|e| WhisperError::Inference(format!("dec ln1_beta L{layer_idx}: {e}")))?;
 
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ln2_gamma"), &block.ln2.weight)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.ln2_gamma"), &block.ln2.weight)
                 .map_err(|e| WhisperError::Inference(format!("dec ln2_gamma L{layer_idx}: {e}")))?;
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ln2_beta"), &block.ln2.bias)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.ln2_beta"), &block.ln2.bias)
                 .map_err(|e| WhisperError::Inference(format!("dec ln2_beta L{layer_idx}: {e}")))?;
 
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ln3_gamma"), &block.ln3.weight)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.ln3_gamma"), &block.ln3.weight)
                 .map_err(|e| WhisperError::Inference(format!("dec ln3_gamma L{layer_idx}: {e}")))?;
-            total_bytes += self.executor.load_weights(&format!("dec.L{layer_idx}.ln3_beta"), &block.ln3.bias)
+            total_bytes += self
+                .executor
+                .load_weights(&format!("dec.L{layer_idx}.ln3_beta"), &block.ln3.bias)
                 .map_err(|e| WhisperError::Inference(format!("dec ln3_beta L{layer_idx}: {e}")))?;
         }
 
@@ -2954,20 +3290,28 @@ impl WhisperCuda {
         let n_vocab = self.config.n_vocab as usize;
         let token_emb = self.decoder.token_embedding();
         let token_emb_t = transpose_weights(token_emb, n_vocab, d_model);
-        total_bytes += self.executor.load_weights("dec.output_proj", &token_emb_t)
+        total_bytes += self
+            .executor
+            .load_weights("dec.output_proj", &token_emb_t)
             .map_err(|e| WhisperError::Inference(format!("dec output_proj: {e}")))?;
 
         // Final layer norm
         let ln_post = self.decoder.ln_post();
-        total_bytes += self.executor.load_weights("dec.ln_post_gamma", &ln_post.weight)
+        total_bytes += self
+            .executor
+            .load_weights("dec.ln_post_gamma", &ln_post.weight)
             .map_err(|e| WhisperError::Inference(format!("dec ln_post_gamma: {e}")))?;
-        total_bytes += self.executor.load_weights("dec.ln_post_beta", &ln_post.bias)
+        total_bytes += self
+            .executor
+            .load_weights("dec.ln_post_beta", &ln_post.bias)
             .map_err(|e| WhisperError::Inference(format!("dec ln_post_beta: {e}")))?;
 
         if std::env::var("WHISPER_DEBUG_GPU").is_ok() {
-            eprintln!("[WAPR-PERF-014] Uploaded {} decoder weight tensors ({:.2} MB) to executor",
+            eprintln!(
+                "[WAPR-PERF-014] Uploaded {} decoder weight tensors ({:.2} MB) to executor",
                 self.executor.cached_weight_count(),
-                total_bytes as f64 / 1_048_576.0);
+                total_bytes as f64 / 1_048_576.0
+            );
         }
 
         Ok(total_bytes)
@@ -3020,23 +3364,35 @@ impl WhisperCuda {
         let mut k = vec![0.0f32; d_model];
         let mut v = vec![0.0f32; d_model];
 
-        self.executor.gemv_cached(
-            &format!("dec.L{layer_idx}.self_w_q"),
-            &normed, &mut q,
-            d_model as u32, d_model as u32,
-        ).map_err(|e| WhisperError::Inference(format!("Q projection: {e}")))?;
+        self.executor
+            .gemv_cached(
+                &format!("dec.L{layer_idx}.self_w_q"),
+                &normed,
+                &mut q,
+                d_model as u32,
+                d_model as u32,
+            )
+            .map_err(|e| WhisperError::Inference(format!("Q projection: {e}")))?;
 
-        self.executor.gemv_cached(
-            &format!("dec.L{layer_idx}.self_w_k"),
-            &normed, &mut k,
-            d_model as u32, d_model as u32,
-        ).map_err(|e| WhisperError::Inference(format!("K projection: {e}")))?;
+        self.executor
+            .gemv_cached(
+                &format!("dec.L{layer_idx}.self_w_k"),
+                &normed,
+                &mut k,
+                d_model as u32,
+                d_model as u32,
+            )
+            .map_err(|e| WhisperError::Inference(format!("K projection: {e}")))?;
 
-        self.executor.gemv_cached(
-            &format!("dec.L{layer_idx}.self_w_v"),
-            &normed, &mut v,
-            d_model as u32, d_model as u32,
-        ).map_err(|e| WhisperError::Inference(format!("V projection: {e}")))?;
+        self.executor
+            .gemv_cached(
+                &format!("dec.L{layer_idx}.self_w_v"),
+                &normed,
+                &mut v,
+                d_model as u32,
+                d_model as u32,
+            )
+            .map_err(|e| WhisperError::Inference(format!("V projection: {e}")))?;
 
         // Add biases (CPU - fast)
         for i in 0..d_model {
@@ -3049,9 +3405,13 @@ impl WhisperCuda {
         let ctx = self.executor.context();
 
         // Get head-first KV caches
-        let self_k_caches = self.gpu_self_k_head_first.as_mut()
+        let self_k_caches = self
+            .gpu_self_k_head_first
+            .as_mut()
             .ok_or_else(|| WhisperError::Inference("Self K cache not initialized".into()))?;
-        let self_v_caches = self.gpu_self_v_head_first.as_mut()
+        let self_v_caches = self
+            .gpu_self_v_head_first
+            .as_mut()
             .ok_or_else(|| WhisperError::Inference("Self V cache not initialized".into()))?;
 
         // Upload Q/K/V for KV cache scatter + attention
@@ -3063,42 +3423,69 @@ impl WhisperCuda {
             .map_err(|e| WhisperError::Inference(format!("V upload: {e}")))?;
 
         // Create stream for scatter + attention (TODO: reuse executor stream to avoid allocation)
-        let stream = CudaStream::new(ctx)
-            .map_err(|e| WhisperError::Inference(format!("Stream: {e}")))?;
+        let stream =
+            CudaStream::new(ctx).map_err(|e| WhisperError::Inference(format!("Stream: {e}")))?;
 
         kv_cache_scatter_gpu(
-            ctx, &k_gpu, &mut self_k_caches[layer_idx],
-            pos as u32, n_heads as u32, head_dim as u32, max_seq_len as u32, &stream
-        ).map_err(|e| WhisperError::Inference(format!("K scatter: {e}")))?;
+            ctx,
+            &k_gpu,
+            &mut self_k_caches[layer_idx],
+            pos as u32,
+            n_heads as u32,
+            head_dim as u32,
+            max_seq_len as u32,
+            &stream,
+        )
+        .map_err(|e| WhisperError::Inference(format!("K scatter: {e}")))?;
 
         kv_cache_scatter_gpu(
-            ctx, &v_gpu, &mut self_v_caches[layer_idx],
-            pos as u32, n_heads as u32, head_dim as u32, max_seq_len as u32, &stream
-        ).map_err(|e| WhisperError::Inference(format!("V scatter: {e}")))?;
+            ctx,
+            &v_gpu,
+            &mut self_v_caches[layer_idx],
+            pos as u32,
+            n_heads as u32,
+            head_dim as u32,
+            max_seq_len as u32,
+            &stream,
+        )
+        .map_err(|e| WhisperError::Inference(format!("V scatter: {e}")))?;
 
         // Incremental self-attention (WAPR-PERF-014: use shared stream)
         let seq_len = (pos + 1) as u32;
         let attn_out = incremental_attention_gpu_with_stream(
-            ctx, &q_gpu, &self_k_caches[layer_idx], &self_v_caches[layer_idx],
-            n_heads as u32, head_dim as u32, seq_len, max_seq_len as u32,
-            &stream  // Reuse stream from KV scatter (no new stream creation!)
-        ).map_err(|e| WhisperError::Inference(format!("Self attention: {e}")))?;
+            ctx,
+            &q_gpu,
+            &self_k_caches[layer_idx],
+            &self_v_caches[layer_idx],
+            n_heads as u32,
+            head_dim as u32,
+            seq_len,
+            max_seq_len as u32,
+            &stream, // Reuse stream from KV scatter (no new stream creation!)
+        )
+        .map_err(|e| WhisperError::Inference(format!("Self attention: {e}")))?;
 
         // Sync before reading back (all kernels launched on shared stream)
-        stream.synchronize()
+        stream
+            .synchronize()
             .map_err(|e| WhisperError::Inference(format!("Stream sync: {e}")))?;
 
         // WAPR-PERF-014: Drop ctx/stream borrows (NLL ends them) before &mut self.executor
-        let mut attn_out = attn_out;  // Move to local
-        let attn_out_host = attn_out.to_host()
+        let mut attn_out = attn_out; // Move to local
+        let attn_out_host = attn_out
+            .to_host()
             .map_err(|e| WhisperError::Inference(format!("Attn D2H: {e}")))?;
 
         let mut attn_proj = vec![0.0f32; d_model];
-        self.executor.gemv_cached(
-            &format!("dec.L{layer_idx}.self_w_o"),
-            &attn_out_host, &mut attn_proj,
-            d_model as u32, d_model as u32,
-        ).map_err(|e| WhisperError::Inference(format!("O projection: {e}")))?;
+        self.executor
+            .gemv_cached(
+                &format!("dec.L{layer_idx}.self_w_o"),
+                &attn_out_host,
+                &mut attn_proj,
+                d_model as u32,
+                d_model as u32,
+            )
+            .map_err(|e| WhisperError::Inference(format!("O projection: {e}")))?;
 
         // Add O bias (using pre-copied b_o)
         for i in 0..d_model {
@@ -3112,11 +3499,9 @@ impl WhisperCuda {
         if let Some(enc_out) = encoder_output {
             let block = &self.decoder.blocks()[layer_idx];
             let normed2 = block.ln2.forward(&residual)?;
-            let cross_out = block.cross_attn.forward_cross_dispatch(
-                &normed2,
-                enc_out,
-                None,
-            )?;
+            let cross_out = block
+                .cross_attn
+                .forward_cross_dispatch(&normed2, enc_out, None)?;
             for (r, c) in residual.iter_mut().zip(cross_out.iter()) {
                 *r += c;
             }
@@ -3161,12 +3546,8 @@ impl WhisperCuda {
         // Process through all layers
         let mut hidden = token_embedding.to_vec();
         for layer_idx in 0..n_layers {
-            hidden = self.forward_decoder_block_executor(
-                layer_idx,
-                &hidden,
-                pos,
-                Some(encoder_output),
-            )?;
+            hidden =
+                self.forward_decoder_block_executor(layer_idx, &hidden, pos, Some(encoder_output))?;
         }
 
         Ok(hidden)
@@ -3211,36 +3592,46 @@ mod tests {
         let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
 
         // Upload weights
-        cuda_model.upload_weights().expect("Failed to upload weights");
+        cuda_model
+            .upload_weights()
+            .expect("Failed to upload weights");
 
         // Create test hidden state (normalized random values)
         let d_model = cuda_model.config().n_text_state as usize;
-        let hidden: Vec<f32> = (0..d_model)
-            .map(|i| (i as f32 * 0.1).sin() * 0.1)
-            .collect();
+        let hidden: Vec<f32> = (0..d_model).map(|i| (i as f32 * 0.1).sin() * 0.1).collect();
 
         // Compute CPU output projection
         let cpu_logits = cuda_model.decoder.project_to_vocab_debug(&hidden);
 
         // Compute GPU output projection
-        let gpu_logits = cuda_model.project_to_vocab_gpu(&hidden)
+        let gpu_logits = cuda_model
+            .project_to_vocab_gpu(&hidden)
             .expect("GPU gemm failed");
 
         // Compare results
-        assert_eq!(cpu_logits.len(), gpu_logits.len(), "Output dimension mismatch");
+        assert_eq!(
+            cpu_logits.len(),
+            gpu_logits.len(),
+            "Output dimension mismatch"
+        );
 
         // Find max difference
-        let max_diff: f32 = cpu_logits.iter()
+        let max_diff: f32 = cpu_logits
+            .iter()
             .zip(gpu_logits.iter())
             .map(|(c, g)| (*c - *g).abs())
             .fold(0.0f32, f32::max);
 
         // Find argmax for both
-        let cpu_argmax: (usize, f32) = cpu_logits.iter().enumerate()
+        let cpu_argmax: (usize, f32) = cpu_logits
+            .iter()
+            .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, &v)| (i, v))
             .unwrap();
-        let gpu_argmax: (usize, f32) = gpu_logits.iter().enumerate()
+        let gpu_argmax: (usize, f32) = gpu_logits
+            .iter()
+            .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, &v)| (i, v))
             .unwrap();
@@ -3304,12 +3695,15 @@ mod tests {
 
         // Load audio via wav parser
         let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio file");
-        let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+        let wav_data =
+            crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
         let audio = wav_data.samples;
 
         // Run transcription with tracing
         let options = crate::TranscribeOptions::default();
-        let result = cuda_model.transcribe_gpu(&audio, options).expect("Transcription failed");
+        let result = cuda_model
+            .transcribe_gpu(&audio, options)
+            .expect("Transcription failed");
 
         eprintln!("\n=== APR-Style Inference Tracing Test (WAPR-PERF-004) ===");
         eprintln!("Transcription: \"{}\"", result.text);
@@ -3343,8 +3737,14 @@ mod tests {
         }
 
         // Verify we have expected steps
-        assert!(step_counts.contains_key("EMBED"), "Should have EMBED events");
-        assert!(step_counts.contains_key("TRANSFORMER_BLOCK"), "Should have TRANSFORMER_BLOCK events");
+        assert!(
+            step_counts.contains_key("EMBED"),
+            "Should have EMBED events"
+        );
+        assert!(
+            step_counts.contains_key("TRANSFORMER_BLOCK"),
+            "Should have TRANSFORMER_BLOCK events"
+        );
 
         eprintln!("\n✓ APR-Style Tracing Test PASSED");
     }
@@ -3380,7 +3780,8 @@ mod tests {
 
         // Load audio via wav parser
         let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio file");
-        let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+        let wav_data =
+            crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
         let audio = wav_data.samples;
 
         // Precompute mel spectrogram for fair comparison
@@ -3396,7 +3797,9 @@ mod tests {
             audio[..N_SAMPLES_30S].to_vec()
         };
 
-        let mut mel = cuda_model.mel_filters.compute(&padded_audio, crate::audio::HOP_LENGTH)
+        let mut mel = cuda_model
+            .mel_filters
+            .compute(&padded_audio, crate::audio::HOP_LENGTH)
             .expect("Mel computation failed");
         let actual_frames = mel.len() / N_MELS;
         if actual_frames < N_FRAMES {
@@ -3412,7 +3815,10 @@ mod tests {
 
         // Time CPU encoder
         let cpu_start = std::time::Instant::now();
-        let cpu_output = cuda_model.encoder.forward_mel(&mel).expect("CPU encoder failed");
+        let cpu_output = cuda_model
+            .encoder
+            .forward_mel(&mel)
+            .expect("CPU encoder failed");
         let cpu_time = cpu_start.elapsed();
 
         eprintln!("\nCPU Encoder: {:?}", cpu_time);
@@ -3432,7 +3838,8 @@ mod tests {
 
         // Verify outputs match (numerically close)
         assert_eq!(cpu_output.len(), gpu_output.len(), "Output size mismatch");
-        let max_diff: f32 = cpu_output.iter()
+        let max_diff: f32 = cpu_output
+            .iter()
             .zip(gpu_output.iter())
             .map(|(c, g)| (*c - *g).abs())
             .fold(0.0f32, f32::max);
@@ -3479,9 +3886,15 @@ mod tests {
         let d_model = n_heads * head_dim;
 
         // Create test Q, K, V
-        let q: Vec<f32> = (0..seq_len * d_model).map(|i| (i as f32 * 0.01).sin()).collect();
-        let k: Vec<f32> = (0..seq_len * d_model).map(|i| (i as f32 * 0.02).cos()).collect();
-        let v: Vec<f32> = (0..seq_len * d_model).map(|i| (i as f32 * 0.03).sin()).collect();
+        let q: Vec<f32> = (0..seq_len * d_model)
+            .map(|i| (i as f32 * 0.01).sin())
+            .collect();
+        let k: Vec<f32> = (0..seq_len * d_model)
+            .map(|i| (i as f32 * 0.02).cos())
+            .collect();
+        let v: Vec<f32> = (0..seq_len * d_model)
+            .map(|i| (i as f32 * 0.03).sin())
+            .collect();
 
         // Reset transfer counters
         reset_transfer_counters();
@@ -3545,12 +3958,8 @@ mod tests {
 
         // K/V cache in head-first layout [n_heads, max_seq_len, head_dim]
         let cache_size = (n_heads * max_seq_len * head_dim) as usize;
-        let k_cache: Vec<f32> = (0..cache_size)
-            .map(|i| ((i as f32) * 0.02).cos())
-            .collect();
-        let v_cache: Vec<f32> = (0..cache_size)
-            .map(|i| ((i as f32) * 0.03).sin())
-            .collect();
+        let k_cache: Vec<f32> = (0..cache_size).map(|i| ((i as f32) * 0.02).cos()).collect();
+        let v_cache: Vec<f32> = (0..cache_size).map(|i| ((i as f32) * 0.03).sin()).collect();
 
         // === CPU Reference Implementation ===
         let scale = 1.0 / (head_dim as f32).sqrt();
@@ -3607,9 +4016,16 @@ mod tests {
         let v_gpu = GpuResidentTensor::from_host(ctx, &v_cache).expect("V upload failed");
 
         let mut gpu_output = incremental_attention_gpu(
-            ctx, &q_gpu, &k_gpu, &v_gpu,
-            n_heads, head_dim, seq_len, max_seq_len
-        ).expect("GPU attention failed");
+            ctx,
+            &q_gpu,
+            &k_gpu,
+            &v_gpu,
+            n_heads,
+            head_dim,
+            seq_len,
+            max_seq_len,
+        )
+        .expect("GPU attention failed");
 
         let gpu_result = gpu_output.to_host().expect("D2H failed");
 
@@ -3625,7 +4041,10 @@ mod tests {
             }
             if diff > tolerance {
                 if diff_count < 5 {
-                    eprintln!("  [{}] CPU={:.6} GPU={:.6} diff={:.2e}", i, cpu_val, gpu_val, diff);
+                    eprintln!(
+                        "  [{}] CPU={:.6} GPU={:.6} diff={:.2e}",
+                        i, cpu_val, gpu_val, diff
+                    );
                 }
                 diff_count += 1;
             }
@@ -3638,7 +4057,10 @@ mod tests {
             eprintln!("\n❌ NUMERICAL PARITY FAILED");
             eprintln!("   GPU incremental attention diverges from CPU reference.");
             eprintln!("   This WILL cause garbage text in autoregressive decoding.");
-            panic!("Numerical parity test failed: max_diff={:.2e} > tolerance={:.2e}", max_diff, tolerance);
+            panic!(
+                "Numerical parity test failed: max_diff={:.2e} > tolerance={:.2e}",
+                max_diff, tolerance
+            );
         }
 
         eprintln!("\n✓ WAPR-PERF-013 Point 154: Numerical Parity PASSED");
@@ -3671,16 +4093,23 @@ mod tests {
         let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
 
         // Upload decoder weights to GPU
-        cuda_model.upload_decoder_weights_to_gpu().expect("Failed to upload decoder weights");
+        cuda_model
+            .upload_decoder_weights_to_gpu()
+            .expect("Failed to upload decoder weights");
 
         // Initialize head-first KV caches
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Failed to init KV cache");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Failed to init KV cache");
 
         let d_model = cuda_model.config().n_text_state as usize;
         let n_layers = cuda_model.config().n_text_layer as usize;
         let max_len = cuda_model.config().n_text_ctx as usize;
 
-        eprintln!("Model: d_model={}, n_layers={}, max_len={}", d_model, n_layers, max_len);
+        eprintln!(
+            "Model: d_model={}, n_layers={}, max_len={}",
+            d_model, n_layers, max_len
+        );
 
         // Generate test input (simulated decoder input embedding)
         let test_input: Vec<f32> = (0..d_model)
@@ -3692,12 +4121,14 @@ mod tests {
             eprintln!("\nTesting position {}...", pos);
 
             // Run GPU decoder block (layer 0, no cross-attention)
-            let gpu_output = cuda_model.forward_decoder_block_gpu(
-                0, // layer_idx
-                &test_input,
-                pos,
-                None, // No encoder output - skip cross-attention
-            ).expect("GPU decoder block failed");
+            let gpu_output = cuda_model
+                .forward_decoder_block_gpu(
+                    0, // layer_idx
+                    &test_input,
+                    pos,
+                    None, // No encoder output - skip cross-attention
+                )
+                .expect("GPU decoder block failed");
 
             // Verify output shape
             assert_eq!(gpu_output.len(), d_model, "Output dimension mismatch");
@@ -3713,7 +4144,10 @@ mod tests {
             let mean_abs = gpu_output.iter().map(|x| x.abs()).sum::<f32>() / d_model as f32;
 
             eprintln!("  Output shape: {}", gpu_output.len());
-            eprintln!("  Output sample: [{:.4}, {:.4}, {:.4}...]", gpu_output[0], gpu_output[1], gpu_output[2]);
+            eprintln!(
+                "  Output sample: [{:.4}, {:.4}, {:.4}...]",
+                gpu_output[0], gpu_output[1], gpu_output[2]
+            );
             eprintln!("  Max abs: {:.4}, Mean abs: {:.4}", max_abs, mean_abs);
 
             assert!(max_abs < 1000.0, "Output exploding: max_abs={}", max_abs);
@@ -3756,12 +4190,22 @@ mod tests {
         let mut cuda_model2 = apr2.into_cuda(0).expect("Failed to create CUDA model 2");
 
         // Upload weights for both paths
-        cuda_model1.upload_decoder_weights_to_gpu().expect("Upload GPU weights");
-        cuda_model1.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache 1");
+        cuda_model1
+            .upload_decoder_weights_to_gpu()
+            .expect("Upload GPU weights");
+        cuda_model1
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Init KV cache 1");
 
-        cuda_model2.upload_decoder_weights_to_gpu().expect("Upload GPU weights 2");
-        cuda_model2.upload_decoder_weights_to_executor().expect("Upload executor weights");
-        cuda_model2.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache 2");
+        cuda_model2
+            .upload_decoder_weights_to_gpu()
+            .expect("Upload GPU weights 2");
+        cuda_model2
+            .upload_decoder_weights_to_executor()
+            .expect("Upload executor weights");
+        cuda_model2
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Init KV cache 2");
 
         let d_model = cuda_model1.config().n_text_state as usize;
 
@@ -3774,20 +4218,24 @@ mod tests {
 
         // Run GPU forward pass
         let gpu_start = std::time::Instant::now();
-        let gpu_output = cuda_model1.forward_decoder_block_gpu(
-            0, &test_input, 0, None,
-        ).expect("GPU forward failed");
+        let gpu_output = cuda_model1
+            .forward_decoder_block_gpu(0, &test_input, 0, None)
+            .expect("GPU forward failed");
         let gpu_time = gpu_start.elapsed();
 
         // Run executor forward pass
         let exec_start = std::time::Instant::now();
-        let exec_output = cuda_model2.forward_decoder_block_executor(
-            0, &test_input, 0, None,
-        ).expect("Executor forward failed");
+        let exec_output = cuda_model2
+            .forward_decoder_block_executor(0, &test_input, 0, None)
+            .expect("Executor forward failed");
         let exec_time = exec_start.elapsed();
 
         // Compare outputs
-        assert_eq!(gpu_output.len(), exec_output.len(), "Output length mismatch");
+        assert_eq!(
+            gpu_output.len(),
+            exec_output.len(),
+            "Output length mismatch"
+        );
 
         let mut max_diff = 0.0f32;
         let mut sum_diff = 0.0f32;
@@ -3850,21 +4298,28 @@ mod tests {
 
         // Load audio and compute mel BEFORE into_cuda()
         let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio");
-        let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+        let wav_data =
+            crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
         let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
 
         // Now convert to CUDA
         let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
 
         // Run encoder (CPU is fine for this test)
-        let encoder_output = cuda_model.encoder.forward_mel(&mel).expect("Encoder failed");
+        let encoder_output = cuda_model
+            .encoder
+            .forward_mel(&mel)
+            .expect("Encoder failed");
 
         let d_model = cuda_model.config().n_text_state as usize;
         let n_layers = cuda_model.config().n_text_layer as usize;
         let n_vocab = cuda_model.config().n_vocab as usize;
         let max_len = cuda_model.config().n_text_ctx as usize;
 
-        eprintln!("Model: d_model={}, n_layers={}, n_vocab={}", d_model, n_layers, n_vocab);
+        eprintln!(
+            "Model: d_model={}, n_layers={}, n_vocab={}",
+            d_model, n_layers, n_vocab
+        );
         eprintln!("Encoder output: {} elements", encoder_output.len());
 
         // Test token: SOT (start of transcript)
@@ -3872,24 +4327,26 @@ mod tests {
 
         // === CPU Reference Path ===
         let mut cpu_cache = crate::model::DecoderKVCache::new(n_layers, d_model, max_len);
-        let cpu_hidden = cuda_model.decoder.forward_one_hidden(
-            sot_token,
-            &encoder_output,
-            &mut cpu_cache
-        ).expect("CPU decoder failed");
+        let cpu_hidden = cuda_model
+            .decoder
+            .forward_one_hidden(sot_token, &encoder_output, &mut cpu_cache)
+            .expect("CPU decoder failed");
 
         // Get CPU logits
         let cpu_logits = cuda_model.decoder.project_to_vocab_debug(&cpu_hidden);
 
         // === GPU Path ===
         cuda_model.reset_gpu_decoder_pos();
-        cuda_model.upload_decoder_weights_to_gpu().expect("Upload failed");
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init failed");
+        cuda_model
+            .upload_decoder_weights_to_gpu()
+            .expect("Upload failed");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Init failed");
 
-        let gpu_logits = cuda_model.forward_one_gpu_total_offload(
-            sot_token,
-            &encoder_output
-        ).expect("GPU decoder failed");
+        let gpu_logits = cuda_model
+            .forward_one_gpu_total_offload(sot_token, &encoder_output)
+            .expect("GPU decoder failed");
 
         // === Parity Check ===
         let tolerance = 1e-3_f32; // Slightly looser for full path
@@ -3897,12 +4354,14 @@ mod tests {
         let mut diff_count = 0_usize;
 
         // Find argmax for both
-        let cpu_argmax = cpu_logits.iter()
+        let cpu_argmax = cpu_logits
+            .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i)
             .unwrap_or(0);
-        let gpu_argmax = gpu_logits.iter()
+        let gpu_argmax = gpu_logits
+            .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i)
@@ -3918,16 +4377,36 @@ mod tests {
             }
         }
 
-        eprintln!("CPU argmax: {} (token '{}')", cpu_argmax, cuda_model.tokenizer.decode(&[cpu_argmax as u32]).unwrap_or_default());
-        eprintln!("GPU argmax: {} (token '{}')", gpu_argmax, cuda_model.tokenizer.decode(&[gpu_argmax as u32]).unwrap_or_default());
+        eprintln!(
+            "CPU argmax: {} (token '{}')",
+            cpu_argmax,
+            cuda_model
+                .tokenizer
+                .decode(&[cpu_argmax as u32])
+                .unwrap_or_default()
+        );
+        eprintln!(
+            "GPU argmax: {} (token '{}')",
+            gpu_argmax,
+            cuda_model
+                .tokenizer
+                .decode(&[gpu_argmax as u32])
+                .unwrap_or_default()
+        );
         eprintln!("Max absolute difference: {:.2e}", max_diff);
-        eprintln!("Elements exceeding {:.0e}: {}/{}", tolerance, diff_count, n_vocab);
+        eprintln!(
+            "Elements exceeding {:.0e}: {}/{}",
+            tolerance, diff_count, n_vocab
+        );
 
         // Critical: argmax must match for correct decoding
         if cpu_argmax != gpu_argmax {
             eprintln!("\n❌ ARGMAX MISMATCH: GPU decoder produces different token");
             eprintln!("   This WILL cause divergent text output.");
-            panic!("GPU vs CPU decoder argmax mismatch: CPU={} GPU={}", cpu_argmax, gpu_argmax);
+            panic!(
+                "GPU vs CPU decoder argmax mismatch: CPU={} GPU={}",
+                cpu_argmax, gpu_argmax
+            );
         }
 
         if max_diff > 0.1 {
@@ -3970,20 +4449,29 @@ mod tests {
         let bytes = std::fs::read(model_path).expect("Failed to read model");
         let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
         let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio");
-        let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+        let wav_data =
+            crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
         let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
 
         // Create CUDA model
         let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
 
         // Run encoder
-        let encoder_output = cuda_model.encoder.forward_mel(&mel).expect("Encoder failed");
+        let encoder_output = cuda_model
+            .encoder
+            .forward_mel(&mel)
+            .expect("Encoder failed");
         eprintln!("Encoder output: {} elements", encoder_output.len());
 
         // Initial tokens
         use crate::tokenizer::special_tokens::SpecialTokens;
         let specials = SpecialTokens::for_vocab_size(cuda_model.config().n_vocab as usize);
-        let initial_tokens = vec![specials.sot, specials.lang_base, specials.transcribe, specials.no_timestamps];
+        let initial_tokens = vec![
+            specials.sot,
+            specials.lang_base,
+            specials.transcribe,
+            specials.no_timestamps,
+        ];
 
         let num_decode_tokens = 10; // Decode 10 tokens for benchmarking
 
@@ -3991,22 +4479,32 @@ mod tests {
         // Both paths use head-first KV caches (init_gpu_decoder_kv_cache_head_first)
         cuda_model.reset_gpu_decoder_pos();
         cuda_model.reset_gpu_decoder_kv_cache();
-        cuda_model.upload_decoder_weights_to_gpu().expect("Upload GPU weights");
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache (head-first)");
+        cuda_model
+            .upload_decoder_weights_to_gpu()
+            .expect("Upload GPU weights");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Init KV cache (head-first)");
 
         // Warmup (JIT compilation)
         for &token in &initial_tokens {
-            let _ = cuda_model.forward_one_gpu_total_offload(token, &encoder_output).expect("Warmup failed");
+            let _ = cuda_model
+                .forward_one_gpu_total_offload(token, &encoder_output)
+                .expect("Warmup failed");
         }
 
         // WAPR-PERF-014: Reset state after warmup for clean benchmark
         cuda_model.reset_gpu_decoder_pos();
         cuda_model.reset_gpu_decoder_kv_cache();
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init KV cache");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Re-init KV cache");
 
         // Process initial tokens fresh for benchmark
         for &token in &initial_tokens {
-            let _ = cuda_model.forward_one_gpu_total_offload(token, &encoder_output).expect("Init tokens failed");
+            let _ = cuda_model
+                .forward_one_gpu_total_offload(token, &encoder_output)
+                .expect("Init tokens failed");
         }
 
         // Benchmark GPU path
@@ -4014,13 +4512,18 @@ mod tests {
         let mut gpu_tokens = initial_tokens.clone();
         for _ in 0..num_decode_tokens {
             let last_token = *gpu_tokens.last().unwrap_or(&specials.sot);
-            let logits = cuda_model.forward_one_gpu_total_offload(last_token, &encoder_output)
+            let logits = cuda_model
+                .forward_one_gpu_total_offload(last_token, &encoder_output)
                 .expect("GPU forward failed");
-            let next_token = logits.iter().enumerate()
+            let next_token = logits
+                .iter()
+                .enumerate()
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(idx, _)| idx as u32)
                 .unwrap_or(specials.eot);
-            if next_token == specials.eot { break; }
+            if next_token == specials.eot {
+                break;
+            }
             gpu_tokens.push(next_token);
         }
         let gpu_time = gpu_start.elapsed();
@@ -4029,22 +4532,32 @@ mod tests {
         // === Executor Path Benchmark ===
         cuda_model.reset_gpu_decoder_pos();
         cuda_model.reset_gpu_decoder_kv_cache(); // WAPR-PERF-014: Clear stale KV cache from GPU path
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache");
-        cuda_model.upload_decoder_weights_to_executor().expect("Upload executor weights");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Init KV cache");
+        cuda_model
+            .upload_decoder_weights_to_executor()
+            .expect("Upload executor weights");
 
         // Warmup (JIT compilation)
         for &token in &initial_tokens {
-            let _ = cuda_model.forward_one_executor(token, &encoder_output).expect("Warmup failed");
+            let _ = cuda_model
+                .forward_one_executor(token, &encoder_output)
+                .expect("Warmup failed");
         }
 
         // WAPR-PERF-014: Reset state after warmup for clean benchmark
         cuda_model.reset_gpu_decoder_pos();
         cuda_model.reset_gpu_decoder_kv_cache();
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init KV cache");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Re-init KV cache");
 
         // Process initial tokens fresh for benchmark
         for &token in &initial_tokens {
-            let _ = cuda_model.forward_one_executor(token, &encoder_output).expect("Init tokens failed");
+            let _ = cuda_model
+                .forward_one_executor(token, &encoder_output)
+                .expect("Init tokens failed");
         }
 
         // Benchmark Executor path
@@ -4052,13 +4565,18 @@ mod tests {
         let mut exec_tokens = initial_tokens.clone();
         for _ in 0..num_decode_tokens {
             let last_token = *exec_tokens.last().unwrap_or(&specials.sot);
-            let logits = cuda_model.forward_one_executor(last_token, &encoder_output)
+            let logits = cuda_model
+                .forward_one_executor(last_token, &encoder_output)
                 .expect("Executor forward failed");
-            let next_token = logits.iter().enumerate()
+            let next_token = logits
+                .iter()
+                .enumerate()
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(idx, _)| idx as u32)
                 .unwrap_or(specials.eot);
-            if next_token == specials.eot { break; }
+            if next_token == specials.eot {
+                break;
+            }
             exec_tokens.push(next_token);
         }
         let exec_time = exec_start.elapsed();
@@ -4070,19 +4588,34 @@ mod tests {
         let speedup = gpu_ms_per_token / exec_ms_per_token;
 
         eprintln!("\nResults ({} tokens decoded):", num_decode_tokens);
-        eprintln!("  GPU path:      {:?} ({:.1} ms/token)", gpu_time, gpu_ms_per_token);
-        eprintln!("  Executor path: {:?} ({:.1} ms/token)", exec_time, exec_ms_per_token);
+        eprintln!(
+            "  GPU path:      {:?} ({:.1} ms/token)",
+            gpu_time, gpu_ms_per_token
+        );
+        eprintln!(
+            "  Executor path: {:?} ({:.1} ms/token)",
+            exec_time, exec_ms_per_token
+        );
         eprintln!("  Speedup:       {:.2}x", speedup);
 
         // Decode text for comparison
-        let gpu_text = cuda_model.tokenizer.decode_with_options(&gpu_tokens, true).unwrap_or_default();
-        let exec_text = cuda_model.tokenizer.decode_with_options(&exec_tokens, true).unwrap_or_default();
+        let gpu_text = cuda_model
+            .tokenizer
+            .decode_with_options(&gpu_tokens, true)
+            .unwrap_or_default();
+        let exec_text = cuda_model
+            .tokenizer
+            .decode_with_options(&exec_tokens, true)
+            .unwrap_or_default();
 
         eprintln!("\nGPU text:  \"{}\"", gpu_text.trim());
         eprintln!("Exec text: \"{}\"", exec_text.trim());
 
         // Verify tokens match
-        assert_eq!(gpu_tokens, exec_tokens, "GPU and Executor paths should produce same tokens");
+        assert_eq!(
+            gpu_tokens, exec_tokens,
+            "GPU and Executor paths should produce same tokens"
+        );
 
         eprintln!("\n✓ WAPR-PERF-014: GPU vs Executor Benchmark PASSED");
         eprintln!("  - Tokens match");
@@ -4118,33 +4651,52 @@ mod tests {
         let bytes = std::fs::read(model_path).expect("Failed to read model");
         let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
         let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio");
-        let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+        let wav_data =
+            crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
         let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
 
         let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
 
         // Get encoder output
-        let encoder_output = cuda_model.encoder.forward_mel(&mel).expect("Encoder failed");
+        let encoder_output = cuda_model
+            .encoder
+            .forward_mel(&mel)
+            .expect("Encoder failed");
 
         // Initialize
         cuda_model.reset_gpu_decoder_pos();
-        cuda_model.upload_decoder_weights_to_gpu().expect("Upload GPU weights");
+        cuda_model
+            .upload_decoder_weights_to_gpu()
+            .expect("Upload GPU weights");
         cuda_model.reset_gpu_decoder_kv_cache();
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache");
-        cuda_model.upload_decoder_weights_to_executor().expect("Upload executor weights");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Init KV cache");
+        cuda_model
+            .upload_decoder_weights_to_executor()
+            .expect("Upload executor weights");
 
         // Warmup
         use crate::tokenizer::special_tokens::SpecialTokens;
         let specials = SpecialTokens::for_vocab_size(cuda_model.config().n_vocab as usize);
-        let initial_tokens = vec![specials.sot, specials.lang_base, specials.transcribe, specials.no_timestamps];
+        let initial_tokens = vec![
+            specials.sot,
+            specials.lang_base,
+            specials.transcribe,
+            specials.no_timestamps,
+        ];
         for &token in &initial_tokens {
-            let _ = cuda_model.forward_one_executor(token, &encoder_output).expect("Warmup failed");
+            let _ = cuda_model
+                .forward_one_executor(token, &encoder_output)
+                .expect("Warmup failed");
         }
 
         // Reset for profiling
         cuda_model.reset_gpu_decoder_pos();
         cuda_model.reset_gpu_decoder_kv_cache();
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init KV cache");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Re-init KV cache");
 
         // Profile each component
         let d_model = cuda_model.config().n_text_state as usize;
@@ -4177,9 +4729,9 @@ mod tests {
             // 2. Decoder blocks
             let t1 = std::time::Instant::now();
             for layer_idx in 0..n_layers {
-                x = cuda_model.forward_decoder_block_executor(
-                    layer_idx, &x, pos, Some(&encoder_output)
-                ).expect("Block failed");
+                x = cuda_model
+                    .forward_decoder_block_executor(layer_idx, &x, pos, Some(&encoder_output))
+                    .expect("Block failed");
             }
             total_block_time += t1.elapsed();
 
@@ -4190,7 +4742,9 @@ mod tests {
 
             // 4. Vocab projection (GPU)
             let t3 = std::time::Instant::now();
-            let _logits = cuda_model.project_to_vocab_gpu(&hidden).expect("Proj failed");
+            let _logits = cuda_model
+                .project_to_vocab_gpu(&hidden)
+                .expect("Proj failed");
             total_proj_time += t3.elapsed();
 
             cuda_model.gpu_decoder_pos += 1;
@@ -4203,10 +4757,26 @@ mod tests {
         let total = avg_embed + avg_block + avg_ln + avg_proj;
 
         eprintln!("\nTiming breakdown (average over {} tokens):", num_tokens);
-        eprintln!("  Token embedding (CPU): {:>8.1}µs ({:>5.1}%)", avg_embed, avg_embed / total * 100.0);
-        eprintln!("  Decoder blocks (GPU):  {:>8.1}µs ({:>5.1}%)", avg_block, avg_block / total * 100.0);
-        eprintln!("  Final LayerNorm (CPU): {:>8.1}µs ({:>5.1}%)", avg_ln, avg_ln / total * 100.0);
-        eprintln!("  Vocab projection (GPU):{:>8.1}µs ({:>5.1}%)", avg_proj, avg_proj / total * 100.0);
+        eprintln!(
+            "  Token embedding (CPU): {:>8.1}µs ({:>5.1}%)",
+            avg_embed,
+            avg_embed / total * 100.0
+        );
+        eprintln!(
+            "  Decoder blocks (GPU):  {:>8.1}µs ({:>5.1}%)",
+            avg_block,
+            avg_block / total * 100.0
+        );
+        eprintln!(
+            "  Final LayerNorm (CPU): {:>8.1}µs ({:>5.1}%)",
+            avg_ln,
+            avg_ln / total * 100.0
+        );
+        eprintln!(
+            "  Vocab projection (GPU):{:>8.1}µs ({:>5.1}%)",
+            avg_proj,
+            avg_proj / total * 100.0
+        );
         eprintln!("  ────────────────────────────────────────");
         eprintln!("  TOTAL:                 {:>8.1}µs", total);
         eprintln!("  Per-token latency:     {:>8.2}ms", total / 1000.0);
@@ -4246,11 +4816,18 @@ mod tests {
         let head_dim = d_model / n_heads;
         let max_len = cuda_model.config().n_text_ctx as usize;
 
-        eprintln!("Model: d_model={}, n_heads={}, head_dim={}, n_layers={}", d_model, n_heads, head_dim, n_layers);
+        eprintln!(
+            "Model: d_model={}, n_heads={}, head_dim={}, n_layers={}",
+            d_model, n_heads, head_dim, n_layers
+        );
 
         // Initialize GPU infrastructure
-        cuda_model.upload_decoder_weights_to_gpu().expect("Upload failed");
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init failed");
+        cuda_model
+            .upload_decoder_weights_to_gpu()
+            .expect("Upload failed");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Init failed");
 
         // Test token
         let test_token = 50258_u32; // SOT
@@ -4266,33 +4843,79 @@ mod tests {
             .zip(&pos_emb[pos_start..pos_start + d_model])
             .map(|(t, p)| t + p)
             .collect();
-        eprintln!("\n[Step 1] Token+Pos Embedding: {} elements, sum={:.4}", x.len(), x.iter().sum::<f32>());
+        eprintln!(
+            "\n[Step 1] Token+Pos Embedding: {} elements, sum={:.4}",
+            x.len(),
+            x.iter().sum::<f32>()
+        );
 
         // === Step 2: LN1 for layer 0 ===
         let block = &cuda_model.decoder.blocks()[0];
         let normed = block.ln1.forward(&x).expect("LN1 failed");
-        eprintln!("[Step 2] LN1: sum={:.4}, first 5: {:?}", normed.iter().sum::<f32>(), &normed[..5]);
+        eprintln!(
+            "[Step 2] LN1: sum={:.4}, first 5: {:?}",
+            normed.iter().sum::<f32>(),
+            &normed[..5]
+        );
 
         // === Step 3: CPU Q/K/V projections ===
-        let cpu_q = block.self_attn.w_q().forward(&normed, 1).expect("CPU Q failed");
-        let cpu_k = block.self_attn.w_k().forward(&normed, 1).expect("CPU K failed");
-        let cpu_v = block.self_attn.w_v().forward(&normed, 1).expect("CPU V failed");
+        let cpu_q = block
+            .self_attn
+            .w_q()
+            .forward(&normed, 1)
+            .expect("CPU Q failed");
+        let cpu_k = block
+            .self_attn
+            .w_k()
+            .forward(&normed, 1)
+            .expect("CPU K failed");
+        let cpu_v = block
+            .self_attn
+            .w_v()
+            .forward(&normed, 1)
+            .expect("CPU V failed");
         eprintln!("[Step 3] CPU Q: sum={:.4}", cpu_q.iter().sum::<f32>());
         eprintln!("         CPU K: sum={:.4}", cpu_k.iter().sum::<f32>());
         eprintln!("         CPU V: sum={:.4}", cpu_v.iter().sum::<f32>());
 
         // === Step 4: GPU Q/K/V projections ===
         let ctx = cuda_model.executor.context();
-        let weights = cuda_model.gpu_decoder_weights.as_ref()
+        let weights = cuda_model
+            .gpu_decoder_weights
+            .as_ref()
             .expect("Weights not uploaded");
         let layer_weights = &weights[0];
 
         let x_gpu = GpuResidentTensor::from_host(ctx, &normed).expect("x upload");
-        let mut gpu_q = x_gpu.linear(ctx, &layer_weights.self_w_q, Some(&layer_weights.self_b_q), 1, d_model as u32, d_model as u32)
+        let mut gpu_q = x_gpu
+            .linear(
+                ctx,
+                &layer_weights.self_w_q,
+                Some(&layer_weights.self_b_q),
+                1,
+                d_model as u32,
+                d_model as u32,
+            )
             .expect("GPU Q failed");
-        let mut gpu_k = x_gpu.linear(ctx, &layer_weights.self_w_k, Some(&layer_weights.self_b_k), 1, d_model as u32, d_model as u32)
+        let mut gpu_k = x_gpu
+            .linear(
+                ctx,
+                &layer_weights.self_w_k,
+                Some(&layer_weights.self_b_k),
+                1,
+                d_model as u32,
+                d_model as u32,
+            )
             .expect("GPU K failed");
-        let mut gpu_v = x_gpu.linear(ctx, &layer_weights.self_w_v, Some(&layer_weights.self_b_v), 1, d_model as u32, d_model as u32)
+        let mut gpu_v = x_gpu
+            .linear(
+                ctx,
+                &layer_weights.self_w_v,
+                Some(&layer_weights.self_b_v),
+                1,
+                d_model as u32,
+                d_model as u32,
+            )
             .expect("GPU V failed");
 
         let gpu_q_host = gpu_q.to_host().expect("Q download");
@@ -4303,14 +4926,32 @@ mod tests {
         eprintln!("         GPU V: sum={:.4}", gpu_v_host.iter().sum::<f32>());
 
         // Compare Q/K/V
-        let q_diff: f32 = cpu_q.iter().zip(gpu_q_host.iter()).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
-        let k_diff: f32 = cpu_k.iter().zip(gpu_k_host.iter()).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
-        let v_diff: f32 = cpu_v.iter().zip(gpu_v_host.iter()).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
-        eprintln!("[Step 4] Q diff: {:.2e}, K diff: {:.2e}, V diff: {:.2e}", q_diff, k_diff, v_diff);
+        let q_diff: f32 = cpu_q
+            .iter()
+            .zip(gpu_q_host.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
+        let k_diff: f32 = cpu_k
+            .iter()
+            .zip(gpu_k_host.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
+        let v_diff: f32 = cpu_v
+            .iter()
+            .zip(gpu_v_host.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
+        eprintln!(
+            "[Step 4] Q diff: {:.2e}, K diff: {:.2e}, V diff: {:.2e}",
+            q_diff, k_diff, v_diff
+        );
 
         if q_diff > 1e-4 || k_diff > 1e-4 || v_diff > 1e-4 {
             eprintln!("\n❌ DIVERGENCE at Q/K/V projections!");
-            panic!("Q/K/V divergence: q={:.2e} k={:.2e} v={:.2e}", q_diff, k_diff, v_diff);
+            panic!(
+                "Q/K/V divergence: q={:.2e} k={:.2e} v={:.2e}",
+                q_diff, k_diff, v_diff
+            );
         }
 
         eprintln!("\n✓ Q/K/V projections match within 1e-4");
@@ -4322,7 +4963,10 @@ mod tests {
         // output = [1.0] @ V = V
         eprintln!("\n[Step 5] CPU self-attention (pos=0, trivial case):");
         let cpu_attn_out = cpu_v.clone(); // For single token at pos 0, output = V
-        eprintln!("         CPU attn out: sum={:.4}", cpu_attn_out.iter().sum::<f32>());
+        eprintln!(
+            "         CPU attn out: sum={:.4}",
+            cpu_attn_out.iter().sum::<f32>()
+        );
 
         // === Step 6: GPU incremental attention ===
         // First scatter K/V to caches
@@ -4332,26 +4976,53 @@ mod tests {
         let self_v_caches = cuda_model.gpu_self_v_head_first.as_mut().unwrap();
 
         kv_cache_scatter_gpu(
-            ctx, &gpu_k, &mut self_k_caches[0],
-            pos as u32, n_heads as u32, head_dim as u32, max_len as u32, &stream
-        ).expect("K scatter");
+            ctx,
+            &gpu_k,
+            &mut self_k_caches[0],
+            pos as u32,
+            n_heads as u32,
+            head_dim as u32,
+            max_len as u32,
+            &stream,
+        )
+        .expect("K scatter");
         kv_cache_scatter_gpu(
-            ctx, &gpu_v, &mut self_v_caches[0],
-            pos as u32, n_heads as u32, head_dim as u32, max_len as u32, &stream
-        ).expect("V scatter");
+            ctx,
+            &gpu_v,
+            &mut self_v_caches[0],
+            pos as u32,
+            n_heads as u32,
+            head_dim as u32,
+            max_len as u32,
+            &stream,
+        )
+        .expect("V scatter");
 
         // Run incremental attention
         let seq_len_attn = (pos + 1) as u32;
         let mut gpu_attn_out = incremental_attention_gpu(
-            ctx, &gpu_q, &self_k_caches[0], &self_v_caches[0],
-            n_heads as u32, head_dim as u32, seq_len_attn, max_len as u32
-        ).expect("incremental attention");
+            ctx,
+            &gpu_q,
+            &self_k_caches[0],
+            &self_v_caches[0],
+            n_heads as u32,
+            head_dim as u32,
+            seq_len_attn,
+            max_len as u32,
+        )
+        .expect("incremental attention");
 
         let gpu_attn_host = gpu_attn_out.to_host().expect("attn download");
-        eprintln!("[Step 6] GPU attn out: sum={:.4}", gpu_attn_host.iter().sum::<f32>());
+        eprintln!(
+            "[Step 6] GPU attn out: sum={:.4}",
+            gpu_attn_host.iter().sum::<f32>()
+        );
 
-        let attn_diff: f32 = cpu_attn_out.iter().zip(gpu_attn_host.iter())
-            .map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        let attn_diff: f32 = cpu_attn_out
+            .iter()
+            .zip(gpu_attn_host.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
         eprintln!("[Step 6] Attention diff: {:.2e}", attn_diff);
 
         if attn_diff > 1e-4 {
@@ -4367,42 +5038,87 @@ mod tests {
         // === Step 7: Output projection (W_o) ===
         eprintln!("\n[Step 7] Output projection (W_o):");
         // CPU
-        let cpu_attn_proj = block.self_attn.w_o().forward(&cpu_attn_out, 1).expect("CPU W_o");
-        eprintln!("         CPU W_o out: sum={:.4}", cpu_attn_proj.iter().sum::<f32>());
+        let cpu_attn_proj = block
+            .self_attn
+            .w_o()
+            .forward(&cpu_attn_out, 1)
+            .expect("CPU W_o");
+        eprintln!(
+            "         CPU W_o out: sum={:.4}",
+            cpu_attn_proj.iter().sum::<f32>()
+        );
 
         // GPU
-        let mut gpu_attn_proj = gpu_attn_out.linear(ctx, &layer_weights.self_w_o, Some(&layer_weights.self_b_o), 1, d_model as u32, d_model as u32)
+        let mut gpu_attn_proj = gpu_attn_out
+            .linear(
+                ctx,
+                &layer_weights.self_w_o,
+                Some(&layer_weights.self_b_o),
+                1,
+                d_model as u32,
+                d_model as u32,
+            )
             .expect("GPU W_o");
         let gpu_attn_proj_host = gpu_attn_proj.to_host().expect("W_o download");
-        eprintln!("         GPU W_o out: sum={:.4}", gpu_attn_proj_host.iter().sum::<f32>());
+        eprintln!(
+            "         GPU W_o out: sum={:.4}",
+            gpu_attn_proj_host.iter().sum::<f32>()
+        );
 
-        let wo_diff: f32 = cpu_attn_proj.iter().zip(gpu_attn_proj_host.iter())
-            .map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        let wo_diff: f32 = cpu_attn_proj
+            .iter()
+            .zip(gpu_attn_proj_host.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
         eprintln!("[Step 7] W_o diff: {:.2e}", wo_diff);
 
         // === Step 8: Residual after self-attention ===
         eprintln!("\n[Step 8] Residual after self-attention:");
-        let cpu_residual: Vec<f32> = x.iter().zip(cpu_attn_proj.iter()).map(|(a, b)| a + b).collect();
-        let gpu_residual: Vec<f32> = x.iter().zip(gpu_attn_proj_host.iter()).map(|(a, b)| a + b).collect();
-        eprintln!("         CPU residual: sum={:.4}", cpu_residual.iter().sum::<f32>());
-        eprintln!("         GPU residual: sum={:.4}", gpu_residual.iter().sum::<f32>());
+        let cpu_residual: Vec<f32> = x
+            .iter()
+            .zip(cpu_attn_proj.iter())
+            .map(|(a, b)| a + b)
+            .collect();
+        let gpu_residual: Vec<f32> = x
+            .iter()
+            .zip(gpu_attn_proj_host.iter())
+            .map(|(a, b)| a + b)
+            .collect();
+        eprintln!(
+            "         CPU residual: sum={:.4}",
+            cpu_residual.iter().sum::<f32>()
+        );
+        eprintln!(
+            "         GPU residual: sum={:.4}",
+            gpu_residual.iter().sum::<f32>()
+        );
 
         // === Step 9: Compute CPU FFN (before mutable borrow) ===
         // LN3 of residual
         let ln3_out = block.ln3.forward(&cpu_residual).expect("LN3");
         let ffn_out = block.ffn.forward(&ln3_out).expect("FFN");
-        let cpu_final: Vec<f32> = cpu_residual.iter().zip(ffn_out.iter()).map(|(a, b)| a + b).collect();
-        eprintln!("\n[Step 9] CPU (no cross-attn): sum={:.4}", cpu_final.iter().sum::<f32>());
+        let cpu_final: Vec<f32> = cpu_residual
+            .iter()
+            .zip(ffn_out.iter())
+            .map(|(a, b)| a + b)
+            .collect();
+        eprintln!(
+            "\n[Step 9] CPU (no cross-attn): sum={:.4}",
+            cpu_final.iter().sum::<f32>()
+        );
 
         // Now drop the immutable block borrow
         let _ = block;
 
         // GPU path (no encoder output = no cross-attention)
         eprintln!("[Step 9] GPU block forward (self-attention + FFN only):");
-        let gpu_block_out = cuda_model.forward_decoder_block_gpu(
-            0, &x, 0, None
-        ).expect("GPU block forward");
-        eprintln!("         GPU block out: sum={:.4}", gpu_block_out.iter().sum::<f32>());
+        let gpu_block_out = cuda_model
+            .forward_decoder_block_gpu(0, &x, 0, None)
+            .expect("GPU block forward");
+        eprintln!(
+            "         GPU block out: sum={:.4}",
+            gpu_block_out.iter().sum::<f32>()
+        );
 
         let gpu_block_sum: f32 = gpu_block_out.iter().sum();
         if gpu_block_sum.is_nan() || gpu_block_sum.is_infinite() {
@@ -4410,8 +5126,11 @@ mod tests {
         }
 
         // Note: GPU block uses a fresh KV cache scatter, so it's comparing apples to apples
-        let block_diff: f32 = cpu_final.iter().zip(gpu_block_out.iter())
-            .map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        let block_diff: f32 = cpu_final
+            .iter()
+            .zip(gpu_block_out.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
         eprintln!("[Step 9] Block diff (no cross-attn): {:.2e}", block_diff);
 
         if block_diff > 1e-3 {
@@ -4447,21 +5166,36 @@ mod tests {
         // For single position, attention output = V
         let cpu_attn = cpu_v.clone();
         let cpu_attn_proj = block.self_attn.w_o().forward(&cpu_attn, 1).expect("CPU O");
-        let cpu_self_residual: Vec<f32> = x.iter().zip(cpu_attn_proj.iter()).map(|(a, b)| a + b).collect();
+        let cpu_self_residual: Vec<f32> = x
+            .iter()
+            .zip(cpu_attn_proj.iter())
+            .map(|(a, b)| a + b)
+            .collect();
 
         // Cross-attention on CPU
         let normed2 = block.ln2.forward(&cpu_self_residual).expect("LN2");
-        let cpu_cross_out = block.cross_attn.forward_cross_dispatch(&normed2, &enc_output, None)
+        let cpu_cross_out = block
+            .cross_attn
+            .forward_cross_dispatch(&normed2, &enc_output, None)
             .expect("CPU cross-attn");
-        let cpu_cross_residual: Vec<f32> = cpu_self_residual.iter()
-            .zip(cpu_cross_out.iter()).map(|(a, b)| a + b).collect();
+        let cpu_cross_residual: Vec<f32> = cpu_self_residual
+            .iter()
+            .zip(cpu_cross_out.iter())
+            .map(|(a, b)| a + b)
+            .collect();
 
         // FFN on CPU
         let normed3 = block.ln3.forward(&cpu_cross_residual).expect("LN3");
         let cpu_ffn_out = block.ffn.forward(&normed3).expect("FFN");
-        let cpu_block_out: Vec<f32> = cpu_cross_residual.iter()
-            .zip(cpu_ffn_out.iter()).map(|(a, b)| a + b).collect();
-        eprintln!("         CPU block (with cross-attn): sum={:.4}", cpu_block_out.iter().sum::<f32>());
+        let cpu_block_out: Vec<f32> = cpu_cross_residual
+            .iter()
+            .zip(cpu_ffn_out.iter())
+            .map(|(a, b)| a + b)
+            .collect();
+        eprintln!(
+            "         CPU block (with cross-attn): sum={:.4}",
+            cpu_block_out.iter().sum::<f32>()
+        );
 
         // Drop block borrow before mutable call
         let _ = block;
@@ -4472,18 +5206,29 @@ mod tests {
         // Re-initialize KV caches (they were modified by step 9)
         // Need to set to None first to force re-init
         cuda_model.gpu_self_k_head_first = None;
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Init KV");
 
         // Run GPU block with encoder output
-        let gpu_cross_block_out = cuda_model.forward_decoder_block_gpu(
-            0, &x, 0, Some(&enc_output)
-        ).expect("GPU block with cross-attn");
-        eprintln!("         GPU block (with cross-attn): sum={:.4}", gpu_cross_block_out.iter().sum::<f32>());
+        let gpu_cross_block_out = cuda_model
+            .forward_decoder_block_gpu(0, &x, 0, Some(&enc_output))
+            .expect("GPU block with cross-attn");
+        eprintln!(
+            "         GPU block (with cross-attn): sum={:.4}",
+            gpu_cross_block_out.iter().sum::<f32>()
+        );
 
         // Compare outputs
-        let cross_block_diff: f32 = cpu_block_out.iter().zip(gpu_cross_block_out.iter())
-            .map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
-        eprintln!("[Step 10] Block diff (with cross-attn): {:.2e}", cross_block_diff);
+        let cross_block_diff: f32 = cpu_block_out
+            .iter()
+            .zip(gpu_cross_block_out.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
+        eprintln!(
+            "[Step 10] Block diff (with cross-attn): {:.2e}",
+            cross_block_diff
+        );
 
         if cross_block_diff > 1e-3 {
             eprintln!("\n❌ DIVERGENCE at block level with cross-attention!");
@@ -4520,8 +5265,9 @@ mod tests {
         }
 
         // Load model
-        let model_path = std::env::var("WHISPER_MODEL_PATH")
-            .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/models/whisper-tiny.apr").to_string());
+        let model_path = std::env::var("WHISPER_MODEL_PATH").unwrap_or_else(|_| {
+            concat!(env!("CARGO_MANIFEST_DIR"), "/models/whisper-tiny.apr").to_string()
+        });
 
         if !std::path::Path::new(&model_path).exists() {
             eprintln!("Model not found at {}, skipping test", model_path);
@@ -4529,8 +5275,13 @@ mod tests {
         }
 
         // Load test audio
-        let audio_path = std::env::var("WHISPER_TEST_AUDIO")
-            .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/demos/test-audio/test-speech-1.5s.wav").to_string());
+        let audio_path = std::env::var("WHISPER_TEST_AUDIO").unwrap_or_else(|_| {
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/demos/test-audio/test-speech-1.5s.wav"
+            )
+            .to_string()
+        });
 
         if !std::path::Path::new(&audio_path).exists() {
             eprintln!("Test audio not found at {}, skipping test", audio_path);
@@ -4555,13 +5306,17 @@ mod tests {
         // Load audio
         let audio_bytes = std::fs::read(&audio_path).expect("Failed to read audio file");
         let wav_data = crate::audio::wav::parse_wav(&audio_bytes).expect("Failed to parse WAV");
-        eprintln!("[Audio] {} samples ({:.2}s @ {}Hz)",
+        eprintln!(
+            "[Audio] {} samples ({:.2}s @ {}Hz)",
             wav_data.samples.len(),
             wav_data.samples.len() as f64 / wav_data.sample_rate as f64,
-            wav_data.sample_rate);
+            wav_data.sample_rate
+        );
 
         // Compute mel spectrogram BEFORE into_cuda (WhisperApr method)
-        let mel = apr.compute_mel(&wav_data.samples).expect("Mel computation failed");
+        let mel = apr
+            .compute_mel(&wav_data.samples)
+            .expect("Mel computation failed");
         eprintln!("[Mel] {} frames", mel.len() / 80);
 
         // Create CUDA model
@@ -4569,10 +5324,15 @@ mod tests {
 
         // Upload weights to executor (WAPR-PERF-014)
         let upload_start = std::time::Instant::now();
-        let weight_bytes = cuda_model.upload_decoder_weights_to_executor()
+        let weight_bytes = cuda_model
+            .upload_decoder_weights_to_executor()
             .expect("Failed to upload decoder weights");
         let upload_time = upload_start.elapsed();
-        eprintln!("[Weights] {:.2} MB uploaded in {:?}", weight_bytes as f64 / 1_048_576.0, upload_time);
+        eprintln!(
+            "[Weights] {:.2} MB uploaded in {:?}",
+            weight_bytes as f64 / 1_048_576.0,
+            upload_time
+        );
 
         // Enable GPU decoder offload
         std::env::set_var("WHISPER_GPU_DECODER_OFFLOAD", "1");
@@ -4586,12 +5346,19 @@ mod tests {
 
         // === WARMUP PHASE (outside timed section) ===
         // Run encoder once to warm up
-        let encoder_output = cuda_model.encoder.forward_mel(&mel).expect("Encoder failed");
+        let encoder_output = cuda_model
+            .encoder
+            .forward_mel(&mel)
+            .expect("Encoder failed");
 
         // Initialize GPU decoder and compile kernels
         cuda_model.reset_gpu_decoder_pos();
-        cuda_model.upload_decoder_weights_to_gpu().expect("Upload decoder weights");
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache");
+        cuda_model
+            .upload_decoder_weights_to_gpu()
+            .expect("Upload decoder weights");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Init KV cache");
 
         // Build initial tokens for warmup
         let initial_tokens = {
@@ -4606,14 +5373,17 @@ mod tests {
 
         // Warmup: process initial tokens to compile kernels
         for &token in &initial_tokens {
-            let _ = cuda_model.forward_one_gpu_total_offload(token, &encoder_output)
+            let _ = cuda_model
+                .forward_one_gpu_total_offload(token, &encoder_output)
                 .expect("Warmup token forward failed");
         }
 
         // Reset state for clean benchmark
         cuda_model.reset_gpu_decoder_pos();
         cuda_model.reset_gpu_decoder_kv_cache();
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init KV cache");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Re-init KV cache");
 
         // === BENCHMARK PHASE ===
         eprintln!("\n[Benchmark] Starting GPU decoder transcription...");
@@ -4622,7 +5392,10 @@ mod tests {
         // Use the internal encoder + decoder path
         // First encode on CPU (or GPU if enabled)
         let encode_start = std::time::Instant::now();
-        let encoder_output = cuda_model.encoder.forward_mel(&mel).expect("Encoder failed");
+        let encoder_output = cuda_model
+            .encoder
+            .forward_mel(&mel)
+            .expect("Encoder failed");
         let encode_time = encode_start.elapsed();
         eprintln!("[Encoder] {:?}", encode_time);
 
@@ -4637,7 +5410,8 @@ mod tests {
 
         // Process initial tokens
         for &token in &tokens {
-            let _ = cuda_model.forward_one_gpu_total_offload(token, &encoder_output)
+            let _ = cuda_model
+                .forward_one_gpu_total_offload(token, &encoder_output)
                 .expect("Initial token forward failed");
         }
 
@@ -4649,7 +5423,8 @@ mod tests {
             let last_token = *tokens.last().unwrap_or(&specials.sot);
 
             let token_start = std::time::Instant::now();
-            let logits = cuda_model.forward_one_gpu_total_offload(last_token, &encoder_output)
+            let logits = cuda_model
+                .forward_one_gpu_total_offload(last_token, &encoder_output)
                 .expect("Token forward failed");
             let token_time = token_start.elapsed();
             token_times.push(token_time.as_micros());
@@ -4673,7 +5448,9 @@ mod tests {
         let total_time = total_start.elapsed();
 
         // Decode text
-        let text = cuda_model.tokenizer.decode_with_options(&tokens, true)
+        let text = cuda_model
+            .tokenizer
+            .decode_with_options(&tokens, true)
             .expect("Decode failed");
 
         eprintln!("\n============================================================");
@@ -4697,7 +5474,14 @@ mod tests {
             eprintln!("  Average: {:.2}ms", avg_token_us as f64 / 1000.0);
             eprintln!("  Min:     {:.2}ms", min_token_us as f64 / 1000.0);
             eprintln!("  Max:     {:.2}ms", max_token_us as f64 / 1000.0);
-            eprintln!("  First 5: {:?}", token_times.iter().take(5).map(|t| format!("{:.1}ms", *t as f64 / 1000.0)).collect::<Vec<_>>());
+            eprintln!(
+                "  First 5: {:?}",
+                token_times
+                    .iter()
+                    .take(5)
+                    .map(|t| format!("{:.1}ms", *t as f64 / 1000.0))
+                    .collect::<Vec<_>>()
+            );
         }
 
         eprintln!();
@@ -4707,7 +5491,12 @@ mod tests {
         if total_ms <= target_ms {
             eprintln!("  ✓ PASSED: {}ms ≤ {}ms target", total_ms, target_ms);
         } else {
-            eprintln!("  ✗ FAILED: {}ms > {}ms target ({:.1}x slower)", total_ms, target_ms, total_ms as f64 / target_ms as f64);
+            eprintln!(
+                "  ✗ FAILED: {}ms > {}ms target ({:.1}x slower)",
+                total_ms,
+                target_ms,
+                total_ms as f64 / target_ms as f64
+            );
         }
         eprintln!("============================================================\n");
 
@@ -4728,8 +5517,9 @@ mod tests {
         }
 
         // Load model
-        let model_path = std::env::var("WHISPER_MODEL_PATH")
-            .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/models/whisper-tiny.apr").to_string());
+        let model_path = std::env::var("WHISPER_MODEL_PATH").unwrap_or_else(|_| {
+            concat!(env!("CARGO_MANIFEST_DIR"), "/models/whisper-tiny.apr").to_string()
+        });
 
         if !std::path::Path::new(&model_path).exists() {
             eprintln!("Model not found at {}, skipping test", model_path);
@@ -4745,41 +5535,87 @@ mod tests {
 
         // Upload weights to executor
         let start = std::time::Instant::now();
-        let bytes = cuda_model.upload_decoder_weights_to_executor()
+        let bytes = cuda_model
+            .upload_decoder_weights_to_executor()
             .expect("Failed to upload weights");
         let elapsed = start.elapsed();
 
-        eprintln!("[WAPR-PERF-014] Uploaded {:.2} MB in {:?}", bytes as f64 / 1_048_576.0, elapsed);
+        eprintln!(
+            "[WAPR-PERF-014] Uploaded {:.2} MB in {:?}",
+            bytes as f64 / 1_048_576.0,
+            elapsed
+        );
 
         // Verify all expected weights are cached
         let expected_weights_per_layer = vec![
-            "self_w_q", "self_b_q", "self_w_k", "self_b_k", "self_w_v", "self_b_v", "self_w_o", "self_b_o",
-            "cross_w_q", "cross_b_q", "cross_w_k", "cross_b_k", "cross_w_v", "cross_b_v", "cross_w_o", "cross_b_o",
-            "ffn_fc1", "ffn_b1", "ffn_fc2", "ffn_b2",
-            "ln1_gamma", "ln1_beta", "ln2_gamma", "ln2_beta", "ln3_gamma", "ln3_beta",
+            "self_w_q",
+            "self_b_q",
+            "self_w_k",
+            "self_b_k",
+            "self_w_v",
+            "self_b_v",
+            "self_w_o",
+            "self_b_o",
+            "cross_w_q",
+            "cross_b_q",
+            "cross_w_k",
+            "cross_b_k",
+            "cross_w_v",
+            "cross_b_v",
+            "cross_w_o",
+            "cross_b_o",
+            "ffn_fc1",
+            "ffn_b1",
+            "ffn_fc2",
+            "ffn_b2",
+            "ln1_gamma",
+            "ln1_beta",
+            "ln2_gamma",
+            "ln2_beta",
+            "ln3_gamma",
+            "ln3_beta",
         ];
 
         for layer_idx in 0..n_layers {
             for weight_name in &expected_weights_per_layer {
                 let full_name = format!("dec.L{layer_idx}.{weight_name}");
-                assert!(cuda_model.executor.has_weights(&full_name),
-                    "Missing weight: {}", full_name);
+                assert!(
+                    cuda_model.executor.has_weights(&full_name),
+                    "Missing weight: {}",
+                    full_name
+                );
             }
         }
 
         // Verify global weights
-        assert!(cuda_model.executor.has_weights("dec.output_proj"), "Missing output_proj");
-        assert!(cuda_model.executor.has_weights("dec.ln_post_gamma"), "Missing ln_post_gamma");
-        assert!(cuda_model.executor.has_weights("dec.ln_post_beta"), "Missing ln_post_beta");
+        assert!(
+            cuda_model.executor.has_weights("dec.output_proj"),
+            "Missing output_proj"
+        );
+        assert!(
+            cuda_model.executor.has_weights("dec.ln_post_gamma"),
+            "Missing ln_post_gamma"
+        );
+        assert!(
+            cuda_model.executor.has_weights("dec.ln_post_beta"),
+            "Missing ln_post_beta"
+        );
 
         // Expected weight count: n_layers * 26 per-layer + 3 global
         let expected_count = n_layers * expected_weights_per_layer.len() + 3;
         let actual_count = cuda_model.executor.cached_weight_count();
-        eprintln!("[WAPR-PERF-014] Expected {} weights, got {}", expected_count, actual_count);
+        eprintln!(
+            "[WAPR-PERF-014] Expected {} weights, got {}",
+            expected_count, actual_count
+        );
 
         // Note: actual_count may be higher due to encoder weights from earlier tests
-        assert!(actual_count >= expected_count,
-            "Not enough weights cached: expected at least {}, got {}", expected_count, actual_count);
+        assert!(
+            actual_count >= expected_count,
+            "Not enough weights cached: expected at least {}, got {}",
+            expected_count,
+            actual_count
+        );
 
         eprintln!("✓ Executor weight upload test passed");
     }
@@ -4802,8 +5638,9 @@ mod tests {
         eprintln!("  SIMD available: {}", simd::simd_available());
 
         // Load model
-        let model_path = std::env::var("WHISPER_MODEL_PATH")
-            .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/models/whisper-tiny.apr").to_string());
+        let model_path = std::env::var("WHISPER_MODEL_PATH").unwrap_or_else(|_| {
+            concat!(env!("CARGO_MANIFEST_DIR"), "/models/whisper-tiny.apr").to_string()
+        });
 
         if !std::path::Path::new(&model_path).exists() {
             eprintln!("Model not found at {}, skipping test", model_path);
@@ -4811,8 +5648,13 @@ mod tests {
         }
 
         // Load audio
-        let audio_path = std::env::var("WHISPER_TEST_AUDIO")
-            .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/demos/test-audio/test-speech-1.5s.wav").to_string());
+        let audio_path = std::env::var("WHISPER_TEST_AUDIO").unwrap_or_else(|_| {
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/demos/test-audio/test-speech-1.5s.wav"
+            )
+            .to_string()
+        });
 
         if !std::path::Path::new(&audio_path).exists() {
             eprintln!("Test audio not found at {}, skipping test", audio_path);
@@ -4828,7 +5670,9 @@ mod tests {
 
         // Compute mel spectrogram
         let mel_start = std::time::Instant::now();
-        let mel = apr.compute_mel(&wav_data.samples).expect("Mel computation failed");
+        let mel = apr
+            .compute_mel(&wav_data.samples)
+            .expect("Mel computation failed");
         let mel_time = mel_start.elapsed();
         let mel_frames = mel.len() / 80;
         eprintln!("\n[Mel Spectrogram]");
@@ -4837,7 +5681,11 @@ mod tests {
 
         // Time convolution frontend
         let conv_start = std::time::Instant::now();
-        let conv_output = apr.encoder.conv_frontend().forward(&mel).expect("Conv failed");
+        let conv_output = apr
+            .encoder
+            .conv_frontend()
+            .forward(&mel)
+            .expect("Conv failed");
         let conv_time = conv_start.elapsed();
         let conv_frames = conv_output.len() / apr.encoder.d_model();
         eprintln!("\n[Convolutional Frontend]");
@@ -4864,7 +5712,11 @@ mod tests {
         let block_time = block_start.elapsed();
         eprintln!("\n[Single Encoder Block (Layer 0)]");
         eprintln!("  Time: {:?}", block_time);
-        eprintln!("  Projected: {:?} for {} layers", block_time * apr.encoder.n_layers() as u32, apr.encoder.n_layers());
+        eprintln!(
+            "  Projected: {:?} for {} layers",
+            block_time * apr.encoder.n_layers() as u32,
+            apr.encoder.n_layers()
+        );
 
         // Time full encoder
         let encoder_start = std::time::Instant::now();
@@ -4876,9 +5728,16 @@ mod tests {
         // Breakdown analysis
         let total_expected = conv_time + pe_time + block_time * apr.encoder.n_layers() as u32;
         eprintln!("\n[Analysis]");
-        eprintln!("  Expected (conv + pe + {} blocks): {:?}", apr.encoder.n_layers(), total_expected);
+        eprintln!(
+            "  Expected (conv + pe + {} blocks): {:?}",
+            apr.encoder.n_layers(),
+            total_expected
+        );
         eprintln!("  Actual: {:?}", encoder_time);
-        eprintln!("  Overhead: {:?}", encoder_time.saturating_sub(total_expected));
+        eprintln!(
+            "  Overhead: {:?}",
+            encoder_time.saturating_sub(total_expected)
+        );
 
         // SIMD matmul benchmark (raw performance check)
         eprintln!("\n[Raw MatMul Benchmark]");
@@ -4891,12 +5750,21 @@ mod tests {
         }
         let matmul_time = matmul_start.elapsed() / 10;
         eprintln!("  1500x384 @ 384x384 matmul: {:?}", matmul_time);
-        eprintln!("  Est. encoder matmuls (4 layers × 6): {:?}", matmul_time * 24);
+        eprintln!(
+            "  Est. encoder matmuls (4 layers × 6): {:?}",
+            matmul_time * 24
+        );
 
         // Check weights finalized status
         eprintln!("\n[Weight Finalization]");
-        eprintln!("  Block 0 self_attn finalized: {}", apr.encoder.blocks()[0].self_attn.is_finalized());
-        eprintln!("  Block 0 FFN finalized: {}", apr.encoder.blocks()[0].ffn.is_finalized());
+        eprintln!(
+            "  Block 0 self_attn finalized: {}",
+            apr.encoder.blocks()[0].self_attn.is_finalized()
+        );
+        eprintln!(
+            "  Block 0 FFN finalized: {}",
+            apr.encoder.blocks()[0].ffn.is_finalized()
+        );
 
         // Detailed encoder block breakdown
         eprintln!("\n[Encoder Block Breakdown (Layer 0)]");
@@ -4953,17 +5821,36 @@ mod tests {
 
         // Q, K, V projections
         let qkv_start = std::time::Instant::now();
-        let _q = block.self_attn.w_q().forward_simd(&normed, seq_len).expect("Q");
-        let _k = block.self_attn.w_k().forward_simd(&normed, seq_len).expect("K");
-        let _v = block.self_attn.w_v().forward_simd(&normed, seq_len).expect("V");
+        let _q = block
+            .self_attn
+            .w_q()
+            .forward_simd(&normed, seq_len)
+            .expect("Q");
+        let _k = block
+            .self_attn
+            .w_k()
+            .forward_simd(&normed, seq_len)
+            .expect("K");
+        let _v = block
+            .self_attn
+            .w_v()
+            .forward_simd(&normed, seq_len)
+            .expect("V");
         let qkv_time = qkv_start.elapsed();
         eprintln!("  QKV projections: {:?}", qkv_time);
 
         // Just the attention computation (from forward_cross_dispatch)
         // This calls forward_cross_optimal -> forward_cross_flash_v2 for long sequences
-        eprintln!("  Note: Attention uses {} heads, d_head={}", block.self_attn.n_heads(), d_model / block.self_attn.n_heads());
+        eprintln!(
+            "  Note: Attention uses {} heads, d_head={}",
+            block.self_attn.n_heads(),
+            d_model / block.self_attn.n_heads()
+        );
         eprintln!("  Note: seq_len={} > 128, uses FlashAttention-2", seq_len);
-        eprintln!("  Attention overhead (total - QKV): {:?}", attn_time.saturating_sub(qkv_time));
+        eprintln!(
+            "  Attention overhead (total - QKV): {:?}",
+            attn_time.saturating_sub(qkv_time)
+        );
 
         eprintln!("\n============================================================\n");
     }
@@ -4997,23 +5884,32 @@ mod tests {
         let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
 
         // Upload weights
-        cuda_model.upload_decoder_weights_to_gpu().expect("Upload weights");
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache");
+        cuda_model
+            .upload_decoder_weights_to_gpu()
+            .expect("Upload weights");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Init KV cache");
 
         let d_model = cuda_model.config().n_text_state as usize;
 
         // Create test input
-        let x: Vec<f32> = (0..d_model).map(|i| (i as f32 * 0.01).sin() * 0.1).collect();
+        let x: Vec<f32> = (0..d_model)
+            .map(|i| (i as f32 * 0.01).sin() * 0.1)
+            .collect();
 
         // Run standard GPU path first (requires mutable borrow)
         let old_start = std::time::Instant::now();
-        let old_output = cuda_model.forward_decoder_block_gpu(0, &x, 0, None)
+        let old_output = cuda_model
+            .forward_decoder_block_gpu(0, &x, 0, None)
             .expect("Standard GPU block");
         let old_time = old_start.elapsed();
 
         // Reset KV cache for clean comparison
         cuda_model.reset_gpu_decoder_kv_cache();
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init KV cache");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Re-init KV cache");
 
         // Now get context after mutable operations are done
         let ctx = cuda_model.executor.context();
@@ -5024,7 +5920,8 @@ mod tests {
 
         // Run new GPU-stream path
         let new_start = std::time::Instant::now();
-        let mut new_output_gpu = cuda_model.forward_decoder_block_gpu_stream(0, &x_gpu, 0, &stream)
+        let mut new_output_gpu = cuda_model
+            .forward_decoder_block_gpu_stream(0, &x_gpu, 0, &stream)
             .expect("Stream GPU block");
         stream.synchronize().expect("Sync stream");
         let new_time = new_start.elapsed();
@@ -5033,7 +5930,8 @@ mod tests {
         let new_output = new_output_gpu.to_host().expect("Download output");
 
         // Compare outputs
-        let max_diff: f32 = old_output.iter()
+        let max_diff: f32 = old_output
+            .iter()
             .zip(new_output.iter())
             .map(|(a, b)| (a - b).abs())
             .fold(0.0f32, f32::max);
@@ -5041,9 +5939,19 @@ mod tests {
         eprintln!("[Results]");
         eprintln!("  Standard GPU block: {:?}", old_time);
         eprintln!("  Stream GPU block:   {:?}", new_time);
-        eprintln!("  Speedup:            {:.2}x", old_time.as_micros() as f64 / new_time.as_micros() as f64);
+        eprintln!(
+            "  Speedup:            {:.2}x",
+            old_time.as_micros() as f64 / new_time.as_micros() as f64
+        );
         eprintln!("  Max diff:           {:.2e}", max_diff);
-        eprintln!("  Parity:             {}", if max_diff < 1e-3 { "✓ PASS" } else { "✗ FAIL" });
+        eprintln!(
+            "  Parity:             {}",
+            if max_diff < 1e-3 {
+                "✓ PASS"
+            } else {
+                "✗ FAIL"
+            }
+        );
 
         // Verify parity
         assert!(max_diff < 1e-3, "Output mismatch: max_diff={}", max_diff);
@@ -5081,8 +5989,12 @@ mod tests {
         let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
 
         // Upload weights
-        cuda_model.upload_decoder_weights_to_gpu().expect("Upload weights");
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache");
+        cuda_model
+            .upload_decoder_weights_to_gpu()
+            .expect("Upload weights");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Init KV cache");
 
         let d_model = cuda_model.config().n_text_state as usize;
         let ctx = cuda_model.executor.context();
@@ -5091,7 +6003,9 @@ mod tests {
         let stream = CudaStream::new(ctx).expect("Create stream");
 
         // Create test input
-        let x: Vec<f32> = (0..d_model).map(|i| (i as f32 * 0.01).sin() * 0.1).collect();
+        let x: Vec<f32> = (0..d_model)
+            .map(|i| (i as f32 * 0.01).sin() * 0.1)
+            .collect();
         let x_gpu = GpuResidentTensor::from_host(ctx, &x).expect("Upload x");
 
         const NUM_ITERATIONS: usize = 100;
@@ -5102,12 +6016,15 @@ mod tests {
             // Reset KV cache for each iteration to simulate fresh token
             if i % 10 == 0 {
                 cuda_model.reset_gpu_decoder_kv_cache();
-                cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init KV cache");
+                cuda_model
+                    .init_gpu_decoder_kv_cache_head_first()
+                    .expect("Re-init KV cache");
             }
 
             let pos = i % 10; // Vary position within KV cache window
             let start = std::time::Instant::now();
-            let _output = cuda_model.forward_decoder_block_gpu_stream(0, &x_gpu, pos, &stream)
+            let _output = cuda_model
+                .forward_decoder_block_gpu_stream(0, &x_gpu, pos, &stream)
                 .expect("Stream GPU block");
             stream.synchronize().expect("Sync");
             times.push(start.elapsed());
@@ -5116,25 +6033,41 @@ mod tests {
         // Calculate statistics
         let first = times[0];
         let warmup_avg: std::time::Duration = times[1..10].iter().sum::<std::time::Duration>() / 9;
-        let hot_avg: std::time::Duration = times[10..].iter().sum::<std::time::Duration>() / (NUM_ITERATIONS - 10) as u32;
+        let hot_avg: std::time::Duration =
+            times[10..].iter().sum::<std::time::Duration>() / (NUM_ITERATIONS - 10) as u32;
         let min = *times.iter().min().expect("min");
         let max = *times.iter().max().expect("max");
 
         eprintln!("[Results]");
         eprintln!("  Iterations:     {}", NUM_ITERATIONS);
-        eprintln!("  First call:     {:?} (includes kernel compilation)", first);
+        eprintln!(
+            "  First call:     {:?} (includes kernel compilation)",
+            first
+        );
         eprintln!("  Warmup avg:     {:?} (iterations 2-10)", warmup_avg);
-        eprintln!("  Hot avg:        {:?} (iterations 11-{})", hot_avg, NUM_ITERATIONS);
+        eprintln!(
+            "  Hot avg:        {:?} (iterations 11-{})",
+            hot_avg, NUM_ITERATIONS
+        );
         eprintln!("  Min:            {:?}", min);
         eprintln!("  Max:            {:?}", max);
-        eprintln!("  Speedup:        {:.1}x (first vs hot)", first.as_micros() as f64 / hot_avg.as_micros() as f64);
+        eprintln!(
+            "  Speedup:        {:.1}x (first vs hot)",
+            first.as_micros() as f64 / hot_avg.as_micros() as f64
+        );
 
         // Target: hot average should be under 500µs per decoder block
         let hot_us = hot_avg.as_micros();
         eprintln!("  Target:         <500µs per block");
-        eprintln!("  Status:         {} ({:.0}µs)",
-            if hot_us < 500 { "✓ PASS" } else { "○ BASELINE" },
-            hot_us);
+        eprintln!(
+            "  Status:         {} ({:.0}µs)",
+            if hot_us < 500 {
+                "✓ PASS"
+            } else {
+                "○ BASELINE"
+            },
+            hot_us
+        );
 
         eprintln!("\n✓ WAPR-PERF-017: Multi-iteration benchmark complete");
     }
@@ -5151,7 +6084,7 @@ mod tests {
     #[test]
     fn test_cuda_graph_capture_decoder() {
         #[allow(unused_imports)]
-        use trueno_gpu::driver::{CudaStream, CaptureMode, CudaGraphExec};
+        use trueno_gpu::driver::{CaptureMode, CudaGraphExec, CudaStream};
 
         if !CudaExecutor::is_available() {
             eprintln!("CUDA not available, skipping test");
@@ -5173,8 +6106,12 @@ mod tests {
         let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
 
         // Upload weights
-        cuda_model.upload_decoder_weights_to_gpu().expect("Upload weights");
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Init KV cache");
+        cuda_model
+            .upload_decoder_weights_to_gpu()
+            .expect("Upload weights");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Init KV cache");
 
         let d_model = cuda_model.config().n_text_state as usize;
         let ctx = cuda_model.executor.context();
@@ -5183,18 +6120,23 @@ mod tests {
         let stream = CudaStream::new(ctx).expect("Create stream");
 
         // Create test input on GPU
-        let x: Vec<f32> = (0..d_model).map(|i| (i as f32 * 0.01).sin() * 0.1).collect();
+        let x: Vec<f32> = (0..d_model)
+            .map(|i| (i as f32 * 0.01).sin() * 0.1)
+            .collect();
         let x_gpu = GpuResidentTensor::from_host(ctx, &x).expect("Upload x");
 
         // Warm up kernels first (outside capture)
         eprintln!("[Warmup] Running decoder block to compile kernels...");
-        let _ = cuda_model.forward_decoder_block_gpu_stream(0, &x_gpu, 0, &stream)
+        let _ = cuda_model
+            .forward_decoder_block_gpu_stream(0, &x_gpu, 0, &stream)
             .expect("Warmup");
         stream.synchronize().expect("Sync warmup");
 
         // Reset KV cache for capture
         cuda_model.reset_gpu_decoder_kv_cache();
-        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init KV cache");
+        cuda_model
+            .init_gpu_decoder_kv_cache_head_first()
+            .expect("Re-init KV cache");
 
         // Attempt CUDA graph capture
         eprintln!("[Capture] Beginning CUDA graph capture...");
@@ -5224,7 +6166,9 @@ mod tests {
 
                         // Reset KV cache for graph replay
                         cuda_model.reset_gpu_decoder_kv_cache();
-                        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init KV cache");
+                        cuda_model
+                            .init_gpu_decoder_kv_cache_head_first()
+                            .expect("Re-init KV cache");
 
                         // Benchmark graph replay vs direct execution
                         const NUM_REPLAYS: usize = 100;
@@ -5241,29 +6185,39 @@ mod tests {
 
                         // Reset for direct comparison
                         cuda_model.reset_gpu_decoder_kv_cache();
-                        cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init KV cache");
+                        cuda_model
+                            .init_gpu_decoder_kv_cache_head_first()
+                            .expect("Re-init KV cache");
 
                         // Direct execution benchmark
                         for i in 0..NUM_REPLAYS {
                             let pos = i % 10;
                             if i % 10 == 0 {
                                 cuda_model.reset_gpu_decoder_kv_cache();
-                                cuda_model.init_gpu_decoder_kv_cache_head_first().expect("Re-init");
+                                cuda_model
+                                    .init_gpu_decoder_kv_cache_head_first()
+                                    .expect("Re-init");
                             }
                             let start = std::time::Instant::now();
-                            let _ = cuda_model.forward_decoder_block_gpu_stream(0, &x_gpu, pos, &stream)
+                            let _ = cuda_model
+                                .forward_decoder_block_gpu_stream(0, &x_gpu, pos, &stream)
                                 .expect("Direct");
                             stream.synchronize().expect("Sync");
                             direct_times.push(start.elapsed());
                         }
 
-                        let graph_avg: std::time::Duration = graph_times.iter().sum::<std::time::Duration>() / NUM_REPLAYS as u32;
-                        let direct_avg: std::time::Duration = direct_times.iter().sum::<std::time::Duration>() / NUM_REPLAYS as u32;
+                        let graph_avg: std::time::Duration =
+                            graph_times.iter().sum::<std::time::Duration>() / NUM_REPLAYS as u32;
+                        let direct_avg: std::time::Duration =
+                            direct_times.iter().sum::<std::time::Duration>() / NUM_REPLAYS as u32;
 
                         eprintln!("\n[Results]");
                         eprintln!("  Graph replay avg:  {:?}", graph_avg);
                         eprintln!("  Direct exec avg:   {:?}", direct_avg);
-                        eprintln!("  Graph speedup:     {:.2}x", direct_avg.as_micros() as f64 / graph_avg.as_micros() as f64);
+                        eprintln!(
+                            "  Graph speedup:     {:.2}x",
+                            direct_avg.as_micros() as f64 / graph_avg.as_micros() as f64
+                        );
 
                         eprintln!("\n✓ WAPR-PERF-017: CUDA Graph capture successful!");
                     }
