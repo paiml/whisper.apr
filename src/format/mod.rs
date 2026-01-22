@@ -1,39 +1,44 @@
-//! .apr model format
+//! APR Model Format (v2)
 //!
-//! Handles reading and writing the optimized .apr model format.
+//! Canonical APR format implementation using `aprender::format::v2`.
 //!
 //! # Format Overview
 //!
-//! The .apr format is designed for efficient streaming from network or disk.
-//! The canonical format implementation is in `aprender::serialization::apr`.
-//!
-//! ## Aprender Format (recommended for new models)
+//! The APR format is designed for efficient streaming from network or disk
+//! with 64-byte alignment for zero-copy mmap access.
 //!
 //! ```text
-//! ┌─────────────────┐
-//! │ Magic (4 bytes) │  "APR1"
-//! ├─────────────────┤
-//! │ Metadata Length │  JSON metadata (vocab, filterbank, config)
-//! ├─────────────────┤
-//! │ Tensor Count    │
-//! ├─────────────────┤
-//! │ Tensor Index    │  JSON array of descriptors
-//! ├─────────────────┤
-//! │ Tensor Data     │  Raw weight data
-//! ├─────────────────┤
-//! │ CRC32 (4 bytes) │  File integrity checksum
-//! └─────────────────┘
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │ Header (64 bytes, 64-byte aligned)                          │
+//! │   - Magic: "APR\0" (4 bytes) - ONE format, no versioning    │
+//! │   - Version: major.minor (2 bytes)                          │
+//! │   - Flags (2 bytes)                                         │
+//! │   - Tensor count (4 bytes)                                  │
+//! │   - Metadata offset (8 bytes)                               │
+//! │   - Metadata size (4 bytes)                                 │
+//! │   - Tensor index offset (8 bytes)                           │
+//! │   - Data offset (8 bytes)                                   │
+//! │   - Checksum (4 bytes)                                      │
+//! │   - Reserved (20 bytes, zero-padded)                        │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │ JSON Metadata (variable, padded to 64-byte boundary)        │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │ Tensor Index (sorted by name, 64-byte aligned entries)      │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │ Tensor Data (each tensor 64-byte aligned)                   │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │ Footer Checksum (4 bytes)                                   │
+//! └─────────────────────────────────────────────────────────────┘
 //! ```
 //!
 //! ## Example: Creating model with filterbank
 //!
 //! ```rust,ignore
-//! use whisper_apr::format::aprender::{AprWriter, AprReader};
-//! use serde_json::json;
+//! use whisper_apr::format::{AprWriter, WhisperMetadata};
 //!
 //! let mut writer = AprWriter::new();
-//! writer.set_metadata("mel_filterbank", json!([0.0, 0.1, ...]));
-//! writer.set_metadata("mel_filterbank_shape", json!([80, 201]));
+//! let metadata = WhisperMetadata::tiny();
+//! writer.set_metadata(metadata);
 //! writer.add_tensor_f32("encoder.conv1.weight", vec![384, 80, 3], &weights);
 //! writer.write("model.apr")?;
 //! ```
@@ -44,12 +49,12 @@ mod compress;
 pub mod safetensors_loader;
 pub mod validation;
 
-/// Re-export aprender's canonical APR format
-pub mod aprender {
-    pub use aprender::serialization::apr::{
-        AprMetadata, AprReader as AprReaderV2, AprTensorDescriptor, AprWriter as AprWriterV2,
-    };
-}
+// Re-export canonical APR v2 format from aprender
+pub use aprender::format::v2::{
+    align_64, align_up, AprV2Flags, AprV2Header, AprV2Metadata, AprV2Reader, AprV2ReaderRef,
+    AprV2Writer, TensorDType, TensorIndexEntry, ALIGNMENT, HEADER_SIZE_V2, LZ4_BLOCK_SIZE,
+    MAGIC_V2, MAX_METADATA_SIZE, MAX_TENSOR_NAME_LEN, VERSION_V2,
+};
 
 pub use apr2::{
     Apr2Header, Apr2Quantization, Apr2Reader, Apr2TensorData, Apr2TensorDescriptor, Apr2Writer,
@@ -70,14 +75,16 @@ use crate::error::{WhisperError, WhisperResult};
 use crate::model::ModelConfig;
 use crate::ModelType;
 
-/// Magic number for .apr files: "APR1"
-pub const MAGIC: [u8; 4] = [b'A', b'P', b'R', b'1'];
+/// Magic number for .apr files: "APR\0"
+///
+/// ONE format. No versioning. Period.
+pub const MAGIC: [u8; 4] = MAGIC_V2;
 
-/// Current format version
-pub const FORMAT_VERSION: u16 = 1;
+/// Header size in bytes (64-byte aligned)
+pub const HEADER_SIZE: usize = HEADER_SIZE_V2;
 
-/// Header size in bytes (after magic)
-pub const HEADER_SIZE: usize = 48;
+/// Format version (for legacy code compatibility - use VERSION_V2 for new code)
+pub const FORMAT_VERSION: u16 = VERSION_V2.0 as u16;
 
 /// Quantization type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1569,12 +1576,14 @@ mod tests {
 
     #[test]
     fn test_magic() {
-        assert_eq!(MAGIC, [b'A', b'P', b'R', b'1']);
+        // APR v2 magic: "APR\0"
+        assert_eq!(MAGIC, [0x41, 0x50, 0x52, 0x00]);
     }
 
     #[test]
     fn test_validate_magic_valid() {
-        let data = [b'A', b'P', b'R', b'1', 0, 0, 0, 0];
+        // APR v2 magic: "APR\0"
+        let data = [0x41, 0x50, 0x52, 0x00, 0, 0, 0, 0];
         assert!(validate_magic(&data).is_ok());
     }
 
@@ -2075,8 +2084,8 @@ mod tests {
         // Check magic
         assert_eq!(&bytes[0..4], &MAGIC);
 
-        // Check file size: magic(4) + header(48) + index(96) + data(16) + crc(4)
-        assert_eq!(bytes.len(), 4 + 48 + 96 + 16 + 4);
+        // Check file size: magic(4) + header(64) + index(96) + data(16) + crc(4)
+        assert_eq!(bytes.len(), 4 + HEADER_SIZE + 96 + 16 + 4);
     }
 
     #[test]
@@ -2120,8 +2129,8 @@ mod tests {
         let writer = AprWriter::tiny();
         let bytes = writer.to_bytes().expect("should serialize");
 
-        // magic(4) + header(48) + index(0) + data(0) + crc(4)
-        assert_eq!(bytes.len(), 4 + 48 + 0 + 0 + 4);
+        // magic(4) + header(64) + index(0) + data(0) + crc(4)
+        assert_eq!(bytes.len(), 4 + HEADER_SIZE + 0 + 0 + 4);
     }
 
     #[test]

@@ -348,13 +348,14 @@ impl<'a> AprValidator<'a> {
     #[allow(clippy::unused_self)]
     fn check_magic(&self) -> ValidationCheck {
         // Magic is already validated by AprReader::new(), so if we have a reader it passed
-        ValidationCheck::pass(1, 'A', "Magic bytes valid", "APR1 magic present")
+        ValidationCheck::pass(1, 'A', "Magic bytes valid", "APR magic present")
     }
 
     fn check_header(&self) -> ValidationCheck {
         // Header is parsed by AprReader::new(), validate version
         let version = self.reader.header.version;
-        if version <= 1 {
+        // Accept version 1 (legacy) and version 2 (current)
+        if version <= 2 {
             ValidationCheck::pass(2, 'A', "Header parseable", &format!("Version {version}"))
         } else {
             ValidationCheck::fail(
