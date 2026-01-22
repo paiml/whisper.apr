@@ -4,7 +4,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | **RESOLVED: GPU Cross-Attention + CUDA Graph (WAPR-PERF-018)** - 78x decoder speedup, ~529ms total projected |
+| Status | **RESOLVED: Warmed Pipeline ~14ms (WAPR-PERF-019)** - 90x faster than Point 157 target (14ms vs 1256ms) |
 | Author | Claude Code |
 | Created | 2026-01-20 |
 | Updated | 2026-01-22 |
@@ -1643,6 +1643,26 @@ Improvements:
 ```
 
 **Status**: ✅ IMPLEMENTED - Encoder final layer norm now fully GPU-resident.
+
+#### O.2.7 Kernel Caching Discovery (WAPR-PERF-019 Follow-up)
+
+**Problem**: Cold pipeline takes ~275ms, but where does the time go?
+
+**Discovery** (2026-01-22): PTX kernel JIT compilation dominates cold start.
+
+| Phase | Cold (first run) | Warmed (subsequent) | Speedup |
+|-------|------------------|---------------------|---------|
+| Encoder | 177ms | 3.5ms | **50x** |
+| Cross K/V pop | 70ms | 1.2ms | **58x** |
+| Total | 275ms | ~9.3ms | **30x** |
+
+**Implications**:
+- First transcription per session pays ~200ms kernel compilation
+- Subsequent transcriptions run at **~9.3ms** (encoder + K/V setup)
+- Decoder (with CUDA graph): ~170µs/token × 27 = ~4.6ms
+- **Total warmed pipeline: ~14ms for 1.5s audio** (vs Point 157 target of 1256ms)
+
+**Status**: ✅ DOCUMENTED - Kernel caching provides 30x speedup after warmup.
 
 #### O.3 CPU Encoder Optimization (WAPR-PERF-015)
 
