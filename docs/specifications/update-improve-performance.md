@@ -1240,21 +1240,12 @@ Output: max_diff = 0.000000  ✓
 
 ### 10.11 CUDA Graph Performance Breakthrough (2026-01-22)
 
-**Key Finding:** CUDA graphs provide 21-41x speedup for decoder operations!
+**Key Finding:** CUDA graphs provide 21-41x speedup for decoder operations (in isolation tests).
 
 | Metric | Without Graphs | With Graphs | Speedup |
 |--------|---------------|-------------|---------|
 | Decoder (self-attn only) | 2.74ms/token | 67.6µs/token | 41x |
 | Decoder (+ cross-attn) | 3.71ms/token | 176µs/token | 21x |
-
-**GPU Encoder Performance (after kernel warmup):**
-```
-Conv: 7.3ms
-Layers: 40-50ms (4 layers)
-Total: 50ms
-vs whisper.cpp: 114ms
-Speedup: 2.3x faster than whisper.cpp!
-```
 
 **WMMA FP16 Precision Fix:**
 - Issue: WMMA FP16 causes max_diff = 22 in encoder
@@ -1263,23 +1254,64 @@ Speedup: 2.3x faster than whisper.cpp!
 - Transcription still correct with FP16 due to argmax stability
 
 **Kernel Compilation Overhead:**
-- First run: ~2.8s (16 kernels compiled)
-- Subsequent runs: ~50ms (kernels cached in memory)
-- Fix: Call `warmup()` at model initialization to pre-compile
+- First run: ~500ms (16 kernels compiled for encoder)
+- Subsequent runs in same process: Kernels cached in memory
+- Issue: No disk persistence - kernels recompile on each process start
+- Fix needed: trueno-gpu disk-based kernel cache
 
-**Projected End-to-End Performance:**
-| Component | Time | Notes |
-|-----------|------|-------|
-| GPU encoder | 50ms | 2.3x faster than whisper.cpp |
-| GPU decoder (27 tokens, graphs) | 4.8ms | 21x speedup with CUDA graphs |
-| Total | ~55ms | vs whisper.cpp 462ms = **8.4x faster** |
+### 10.12 Current Performance Reality (2026-01-22 Update)
+
+**CRITICAL: The 8.4x projection was overly optimistic. Actual end-to-end is 1.9x SLOWER.**
+
+**GPU Decoder Bug (WHISPER_GPU_DECODER_OFFLOAD=1):**
+- Status: BLOCKED - produces wrong output ("ghh" instead of "The birds can use")
+- Root cause: Hidden state divergence in transformer blocks
+- GPU decoder hidden after ln_post: mean=-0.2204 (wrong)
+- CPU decoder hidden after ln_post: mean=-0.0511 (correct)
+- Needs: Five Whys analysis to identify layer-level bug
+
+**Working Path Performance (CPU decoder + GPU encoder + GPU output projection):**
+```
+TRUENO_FORCE_FP32_GEMM=1 WHISPER_GPU_TOTAL_OFFLOAD=1
+[PROFILE-MEL] Mel spectrogram: 31ms
+[PROFILE-PREFILL] 4 tokens in 128ms (32.0ms/token)
+[PROFILE-DECODER] 5 tokens, total 98ms, avg 19.7ms, min 7.9ms
+[PROFILE-TRANSCRIBE] Total transcribe_gpu: 319ms
+Output: "The birds can use" ✓
+```
+
+**whisper.cpp Baseline:**
+```
+whisper_print_timings:      mel time =     2.46 ms
+whisper_print_timings:   encode time =    98.01 ms / 1 runs
+whisper_print_timings:   decode time =    57.33 ms / 1 runs (prefill)
+whisper_print_timings:   batchd time =    26.74 ms / 63 runs (0.42 ms per run)
+whisper_print_timings:    total time =   520.13 ms (incl 295ms load)
+```
+
+**Comparison (inference only, excluding model load):**
+| Component | whisper.apr | whisper.cpp | Ratio |
+|-----------|-------------|-------------|-------|
+| Mel spectrogram | 31ms | 2.5ms | 12.4x slower |
+| Encoder | ~130ms | 98ms | 1.3x slower |
+| Decoder prefill | 128ms | 57ms | 2.2x slower |
+| Decoder generate | 98ms | 27ms | 3.6x slower |
+| **Total inference** | **319ms** | **185ms** | **1.7x slower** |
+
+**Why We're Still Slower:**
+1. Mel spectrogram on CPU (31ms vs 2.5ms) - need GPU mel
+2. Per-token decode: 8-20ms vs 0.42ms - need CUDA graphs in transcribe path
+3. Kernel recompilation each run (~500ms overhead)
+4. GPU decoder bug prevents using optimized path
 
 **Integration Status:**
-- [x] GPU encoder with FP32 GEMM: Working, 50ms
-- [x] CUDA graph decoder: Working, 176µs/token
-- [ ] Integrate graphs into transcribe_gpu path
-- [ ] Add automatic warmup() at model load
-- [ ] Persistent kernel cache (disk-based)
+- [x] GPU encoder with FP32 GEMM: Working, ~130ms
+- [x] CUDA graph decoder tests: Working, 176µs/token (isolated)
+- [x] Warmup function: Implemented but kernels don't persist
+- [ ] **BLOCKED:** GPU decoder correctness bug
+- [ ] CUDA graphs in transcribe_gpu path (blocked by decoder bug)
+- [ ] GPU mel spectrogram computation
+- [ ] Persistent kernel cache (trueno-gpu change required)
 
 ### 10.12 Citations
 
