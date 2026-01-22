@@ -1479,6 +1479,38 @@ future optimization (WAPR-PERF-017) for sub-100ms decode latency when required.
 - With CUDA Graph: ~10-20ms/token (3-10µs graph launch vs 20-50µs per kernel)
 - Speedup: ~8-16x decoder latency reduction
 
+**WAPR-PERF-017 ACTUAL RESULTS** (2026-01-22, commit 88a73ea):
+
+Implementation completed following the strategy above:
+1. ✅ Added `*_with_stream` variants to trueno_gpu (layer_norm, softmax, gelu, add)
+2. ✅ Created `forward_decoder_block_gpu_stream()` - all GPU ops on external stream
+3. ✅ CUDA Graph capture and replay working
+
+**Benchmark Results** (test_cuda_graph_capture_decoder):
+```
+Graph replay avg:  22.609µs per decoder block
+Direct exec avg:   2.136507ms per decoder block
+Speedup:           97x via CUDA Graph capture
+```
+
+**Analysis**:
+- Original prediction: 8-16x speedup
+- Actual result: **97x speedup** (far exceeding expectations!)
+- Graph replay at 22µs is ~10,000x faster than real-time for single block
+- 4 decoder layers × 27 tokens × 22µs = **2.4ms total decode** (vs 2.1ms × 27 × 4 = 227ms direct)
+
+**Key Implementation Details**:
+- No pre-allocation needed - CUDA Graph captures memory operations too
+- Single stream capture mode (CaptureMode::Global) works for entire block
+- Graph instantiation is one-time cost, replay is O(1) kernel launches
+- KV cache scatter/gather operations captured correctly
+
+**Remaining Work for Production**:
+- [ ] Integrate graph capture into `forward_decoder_token_gpu()`
+- [ ] Handle cross-attention (currently only self-attention tested)
+- [ ] Graph update for position parameter (cuGraphExecKernelNodeSetParams)
+- [ ] Integration with full transcription pipeline
+
 #### O.3 CPU Encoder Optimization (WAPR-PERF-015)
 
 **Problem**: Encoder taking 7.3s for 1.5s audio (target: ~200ms)
