@@ -293,6 +293,17 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
             );
         }
 
+        // WAPR-PERF-020: Pre-compile GPU kernels for predictable latency
+        // This moves ~2s compilation overhead from first transcription to model init
+        let warmup_start = std::time::Instant::now();
+        if let Err(e) = cuda_model.warmup() {
+            if global.verbose {
+                eprintln!("[WARN] GPU warmup failed: {}", e);
+            }
+        } else if global.verbose {
+            eprintln!("[INFO] GPU warmup: {:.1}ms", warmup_start.elapsed().as_millis());
+        }
+
         // WAPR-PERF-004: Use GPU-accelerated transcription path
         // This uses gemv_cached for output projection (the decoder bottleneck)
         cuda_model
