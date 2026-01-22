@@ -62,7 +62,7 @@ aprender = { version = "0.24.1", default-features = false }
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
 # Updated per WAPR-PERF-002: 0.4.0 has PagedKvCache improvements for WASM
-realizar = { version = "0.6.3", optional = true, default-features = false }
+realizar = { version = "0.6.8", optional = true, default-features = false }
 
 # FFT for mel spectrogram computation
 rustfft = "6.2"
@@ -183,9 +183,9 @@ harness = false
 
 # NOTE (WAPR-PERF-004): GPU-Resident Tensor integration requires:
 # 1. trueno-gpu 0.4.10+ (with GpuResidentTensor, batched_multihead_attention)
-# 2. realizar 0.6.10+ (updated trueno-gpu dependency)
+# 2. realizar 0.6.8+ (CudaExecutor with stable API)
 #
-# LOCAL TESTING - DO NOT PUBLISH UNTIL 2x WHISPER.CPP VERIFIED
+# LOCAL TESTING - trueno-gpu uses local path, realizar uses crates.io
 [patch.crates-io]
 trueno-gpu = { path = "../trueno/trueno-gpu" }
-realizar = { path = "../realizar" }
+# realizar = { path = "../realizar" }  # Use crates.io 0.6.8 for stability
