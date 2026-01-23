@@ -32,3 +32,6 @@ demos/realtime-transcription/models/*.apr
 .pmat/backup/
 .pmat-qa/
 .pmat-metrics/
+
+# wasm-bindgen generated snippets (duplicated across pkg directories)
+**/pkg/snippets/

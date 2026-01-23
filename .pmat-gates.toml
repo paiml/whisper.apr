@@ -1,0 +1,8 @@
+# PMAT Quality Gates Configuration
+# whisper.apr - WASM-First Speech Recognition
+
+[compute-brick]
+# Enable ComputeBrick compliance tracking
+enabled = true
+# GUI testing via probar
+gui_testing = true

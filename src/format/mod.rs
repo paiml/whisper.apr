@@ -46,6 +46,7 @@
 pub mod apr2;
 pub mod checksum;
 mod compress;
+pub mod export;
 pub mod safetensors_loader;
 pub mod validation;
 

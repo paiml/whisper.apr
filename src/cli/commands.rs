@@ -14,9 +14,10 @@ use crate::{DecodingStrategy, ProfilingStats, Task, TranscribeOptions, WhisperAp
 
 use super::args::{
     Args, BackendArg, BatchArgs, BenchmarkArgs, Command, CommandArgs, ConvertArgs, DiagnoseArgs,
-    ModelAction, ModelArgs, ModelFamilyArg, OutputFormatArg, ParityArgs, QuantizeArgs,
-    QuantizeMethodArg, RecordArgs, ServeArgs, StreamArgs, SummarizeArgs, SummarizeFormat, TestArgs,
-    TranscribeArgs, TranscribeFolderArgs, TranslateArgs, ValidateArgs, ValidateOutputFormat,
+    ExportArgs, ExportFormatArg, ModelAction, ModelArgs, ModelFamilyArg, OutputFormatArg,
+    ParityArgs, QuantizeArgs, QuantizeMethodArg, RecordArgs, ServeArgs, StreamArgs, SummarizeArgs,
+    SummarizeFormat, TestArgs, TranscribeArgs, TranscribeFolderArgs, TranslateArgs, ValidateArgs,
+    ValidateOutputFormat,
 };
 
 use super::output::{format_output, OutputFormat};
@@ -148,6 +149,7 @@ pub fn run(args: Args) -> CliResult<CommandResult> {
         Command::Command(c) => run_command(c.clone(), &args),
         Command::Diagnose(d) => run_diagnose(d.clone(), &args),
         Command::Convert(c) => run_convert(c.clone(), &args),
+        Command::Export(e) => run_export(e.clone(), &args),
     }
 }
 
@@ -1022,7 +1024,7 @@ fn atomic_write_transcription(output_path: &Path, content: &str) -> Result<(), C
         fs::create_dir_all(parent)?;
     }
 
-    // Write to temp file
+    // Create temporary file for atomic write
     let temp_path = output_path.with_extension("tmp");
     fs::write(&temp_path, content)?;
 
@@ -1162,7 +1164,7 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
                 // Format output according to requested format
                 let content = format_batch_output(&result, args.format);
 
-                // Atomic write: temp file then rename
+                // Save using atomic operation (crash-safe)
                 match atomic_write_transcription(&output_path, &content) {
                     Ok(()) => processed += 1,
                     Err(e) => {
@@ -3536,6 +3538,120 @@ pub fn run_convert(args: ConvertArgs, global: &Args) -> CliResult<CommandResult>
 
     Ok(CommandResult::success(format!(
         "Converted {} tensors to {}",
+        n_tensors,
+        args.output.display()
+    )))
+}
+
+/// Export APR model to SafeTensors format (WAPR-PUB-001)
+///
+/// Converts whisper.apr models to HuggingFace SafeTensors format for publishing.
+/// Uses the native export implementation in `format::export` module.
+///
+/// # Example
+///
+/// ```bash
+/// whisper-apr export models/whisper-tiny.apr -o whisper-tiny.safetensors
+/// ```
+pub fn run_export(args: ExportArgs, global: &Args) -> CliResult<CommandResult> {
+    use crate::format::export::{SafeTensorsExporter, TensorData};
+    use crate::format::AprReader;
+    use std::collections::BTreeMap;
+    use std::time::Instant;
+
+    let start = Instant::now();
+
+    // Validate input file exists
+    if !args.input.exists() {
+        return Err(CliError::FileNotFound(args.input.display().to_string()));
+    }
+
+    // Validate APR magic bytes
+    let data = std::fs::read(&args.input)
+        .map_err(|e| CliError::Io(io::Error::new(e.kind(), format!("Failed to read APR: {e}"))))?;
+
+    if data.len() < 4 || &data[0..4] != b"APR\0" {
+        return Err(CliError::InvalidArgument(
+            "Invalid APR file: missing APR\\0 magic bytes".to_string(),
+        ));
+    }
+
+    if !global.quiet {
+        println!(
+            "Exporting: {} → {}",
+            args.input.display(),
+            args.output.display()
+        );
+        println!("Format: {}", args.format);
+    }
+
+    // Only SafeTensors format is supported currently
+    if args.format != ExportFormatArg::Safetensors {
+        return Err(CliError::NotImplemented(
+            "Only safetensors format is currently supported".to_string(),
+        ));
+    }
+
+    // Load APR model
+    let reader = AprReader::new(data)
+        .map_err(|e| CliError::InvalidArgument(format!("Failed to parse APR: {e}")))?;
+
+    let n_tensors = reader.n_tensors();
+
+    if global.verbose {
+        println!("\nTensors found: {n_tensors}");
+    }
+
+    // Convert tensors to BTreeMap for SafeTensors export
+    let mut tensors: BTreeMap<String, TensorData> = BTreeMap::new();
+
+    for tensor_desc in &reader.tensors {
+        let name = &tensor_desc.name;
+        let tensor_data = reader
+            .load_tensor(name)
+            .map_err(|e| CliError::InvalidArgument(format!("Failed to load tensor {name}: {e}")))?;
+
+        let shape: Vec<usize> = tensor_desc.shape().iter().map(|&d| d as usize).collect();
+
+        if global.verbose {
+            println!("  {} {:?} ({} elements)", name, shape, tensor_data.len());
+        }
+
+        tensors.insert(name.clone(), TensorData::new(tensor_data, shape));
+    }
+
+    if !global.quiet {
+        println!("Exporting {} tensors...", n_tensors);
+    }
+
+    // Export to SafeTensors
+    let metadata = if args.with_metadata {
+        let mut meta = BTreeMap::new();
+        meta.insert("format".to_string(), "whisper.apr".to_string());
+        meta.insert("version".to_string(), env!("CARGO_PKG_VERSION").to_string());
+        Some(meta)
+    } else {
+        None
+    };
+
+    SafeTensorsExporter::save_with_metadata(&args.output, &tensors, metadata)
+        .map_err(|e| CliError::WriteError(format!("Failed to write SafeTensors: {e}")))?;
+
+    let elapsed = start.elapsed();
+    let output_size = std::fs::metadata(&args.output)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    if !global.quiet {
+        println!("\nExport complete:");
+        println!("  Tensors: {n_tensors}");
+        println!("  Output size: {} bytes", output_size);
+        println!("  Time: {:.2}s", elapsed.as_secs_f64());
+        println!("  Output: {}", args.output.display());
+    }
+
+    Ok(CommandResult::success(format!(
+        "Exported {} tensors to {}",
         n_tensors,
         args.output.display()
     )))

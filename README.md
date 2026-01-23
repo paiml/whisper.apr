@@ -44,7 +44,7 @@
 ## Table of Contents
 
 - [Features](#features)
-- [Quick Start](#quick-start)
+- [Usage](#usage)
 - [Installation](#installation)
 - [Architecture](#architecture)
 - [Model Format](#model-format)
@@ -54,6 +54,7 @@
 - [Running Examples](#running-examples)
 - [Development](#development)
 - [Quality Metrics](#quality-metrics)
+- [Contributing](#contributing)
 - [Roadmap](#roadmap)
 - [License](#license)
 
@@ -90,7 +91,7 @@
 
 ---
 
-## Quick Start
+## Usage
 
 ### Browser (WASM)
 
@@ -225,13 +226,14 @@ cargo run --bin convert -- \
 
 | Module | Description | LOC |
 |--------|-------------|-----|
-| `audio/` | Mel spectrogram, resampling, streaming | ~2,500 |
-| `model/` | Encoder, decoder, attention, quantization | ~8,000 |
+| `audio/` | Mel spectrogram, resampling, streaming, filterbank | ~48,600 |
+| `model/` | Encoder, decoder, attention, quantization | ~21,800 |
+| `wasm/` | JavaScript bindings, Web Worker support | ~10,000 |
+| `format/` | .apr format, compression, streaming load | ~7,600 |
+| `inference/` | Greedy/beam search decoding, KV cache | ~2,600 |
 | `tokenizer/` | BPE tokenizer, vocabulary, special tokens | ~1,500 |
-| `inference/` | Greedy/beam search decoding, KV cache | ~3,000 |
-| `format/` | .apr format, compression, streaming load | ~2,000 |
-| `wasm/` | JavaScript bindings, Web Worker support | ~1,500 |
-| **Total** | | **~24,500** |
+| `cuda/`, `cli/`, `backend/`, etc. | GPU, CLI, TUI, VAD, diarization | ~53,000 |
+| **Total (src/)** | | **~145,000** |
 
 ---
 
@@ -518,30 +520,43 @@ wasm-pack test --headless --chrome
 
 ## Quality Metrics
 
-whisper.apr follows **EXTREME TDD** methodology with comprehensive quality gates:
+whisper.apr follows **EXTREME TDD** methodology with comprehensive quality gates.
 
-| Metric | Target | Achieved |
-|--------|--------|----------|
-| **Test Count** | 2000+ | 2125 |
-| **Line Coverage** | 95% | 95% |
-| **Property Tests** | 15+ | 19 |
-| **WASM Binary** | <700 KB | 668 KB |
-| **Clippy Warnings** | 0 | 0 |
-| **Security Audit** | Pass | Pass |
+### PMAT-Verified Scores (via `pmat` tooling)
 
-### PMAT Compliance
+| Metric | Score | Grade |
+|--------|-------|-------|
+| **Rust Project Score** | 156/159 | A+ (98.1%) |
+| **TDG (Technical Debt Grade)** | 90.9/100 | A |
+| **Repository Health** | 81.5/100 | B+ |
+| **Maintainability Index** | 70.0 | — |
+| **Median Cyclomatic Complexity** | 2.00 | — |
+
+### Codebase Statistics
+
+| Metric | Value |
+|--------|-------|
+| **Test Count** | 2,273 |
+| **Total Functions** | 933 |
+| **Source LOC** | ~145,000 |
+| **Examples** | 103 |
+
+### Quality Gate Configuration
 
 ```toml
-# .pmat/comply.toml
-[metrics]
-total_tickets = 64
-completed_tickets = 64
-completion_rate = 100.0
-test_count = 2125
-line_coverage = 95.0
-property_tests = 19
-source_loc = 24500
-wasm_binary_kb = 668
+# From .pmat-metrics.toml
+[quality_gates]
+min_coverage_pct = 95.0           # Target
+min_mutation_score_pct = 85.0     # Target
+max_cyclomatic_complexity = 10    # Per function
+min_tdg_grade = "A+"              # Target
+max_unwrap_calls = 0              # Zero tolerance
+
+[performance]
+max_rtf_tiny = 2.0                # ≤2.0x real-time
+max_rtf_base = 2.5                # ≤2.5x real-time
+max_memory_tiny_mb = 150          # Peak memory
+max_memory_base_mb = 350          # Peak memory
 ```
 
 ### Toyota Way Principles
@@ -549,6 +564,46 @@ wasm_binary_kb = 668
 - **Jidoka**: Automatic quality gates prevent defects
 - **Kaizen**: Continuous improvement through iteration
 - **Genchi Genbutsu**: Tests verify actual behavior, not assumptions
+
+---
+
+## Contributing
+
+Contributions are welcome! Please follow these guidelines:
+
+### Development Workflow
+
+1. Fork the repository
+2. Create a feature branch from `master`
+3. Make your changes
+4. Run quality gates: `make lint && make test && make coverage`
+5. Ensure coverage remains above 95%
+6. Submit a pull request
+
+### Code Standards
+
+- All code must pass `cargo clippy -- -D warnings`
+- Format with `cargo fmt`
+- No `unwrap()` calls - use `Result` types
+- Zero TODO/FIXME/HACK comments - create tickets instead
+- Document all public APIs
+
+### Testing Requirements
+
+```bash
+# Run all quality gates
+make test          # All tests
+make coverage      # Must be >= 95%
+pmat quality-gate  # Must pass
+```
+
+### Commit Messages
+
+Follow conventional commits format:
+- `feat(module): add new feature`
+- `fix(module): fix bug`
+- `refactor(module): improve code`
+- `docs(module): update documentation`
 
 ---
 
@@ -563,7 +618,7 @@ wasm_binary_kb = 668
 - [x] Greedy and beam search decoding
 - [x] GPU-resident tensor architecture via trueno-gpu
 - [x] CUDA acceleration with 5.8x speedup
-- [x] 2125+ tests with 95% coverage
+- [x] 2,273+ tests, TDG A grade (90.9/100)
 
 ### v0.3.0 (Planned)
 - [ ] WebGPU acceleration

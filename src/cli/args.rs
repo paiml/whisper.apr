@@ -169,6 +169,9 @@ pub enum Command {
 
     /// Convert HuggingFace safetensors to APR2 format (WAPR-LFM2-004)
     Convert(ConvertArgs),
+
+    /// Export APR model to SafeTensors format (WAPR-PUB-001)
+    Export(ExportArgs),
 }
 
 /// Arguments for transcribe command
@@ -1216,6 +1219,140 @@ pub struct ConvertArgs {
     /// Dry run (show what would be converted)
     #[arg(long)]
     pub dry_run: bool,
+}
+
+/// Arguments for export command (WAPR-PUB-001)
+///
+/// Exports APR models to SafeTensors format for HuggingFace Hub publishing.
+#[derive(Parser, Debug, Clone)]
+pub struct ExportArgs {
+    /// Input APR model file
+    pub input: PathBuf,
+
+    /// Output SafeTensors file path
+    #[arg(short, long)]
+    pub output: PathBuf,
+
+    /// Output format
+    #[arg(long, default_value = "safetensors")]
+    pub format: ExportFormatArg,
+
+    /// Include metadata in output
+    #[arg(long)]
+    pub with_metadata: bool,
+
+    /// Verbose output (show tensor names)
+    #[arg(short, long)]
+    pub verbose: bool,
+}
+
+/// Export format options
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExportFormatArg {
+    /// SafeTensors format (HuggingFace standard)
+    #[default]
+    Safetensors,
+    /// GGML format (whisper.cpp compatible)
+    Ggml,
+}
+
+impl std::fmt::Display for ExportFormatArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Safetensors => write!(f, "safetensors"),
+            Self::Ggml => write!(f, "ggml"),
+        }
+    }
+}
+
+/// Arguments for publish command (WAPR-PUB-004)
+///
+/// Complete publishing workflow to HuggingFace Hub.
+/// Generates model card, exports SafeTensors, uploads all files.
+///
+/// # Example
+///
+/// ```bash
+/// # Publish whisper-tiny to HuggingFace
+/// whisper-apr-cli publish \
+///     --input models/whisper-tiny.apr \
+///     --repo paiml/whisper-apr-tiny \
+///     --model-name "Whisper APR Tiny" \
+///     --model-size tiny
+///
+/// # Dry run (preview without uploading)
+/// whisper-apr-cli publish \
+///     --input models/whisper-tiny.apr \
+///     --repo paiml/whisper-apr-tiny \
+///     --dry-run
+/// ```
+#[derive(Parser, Debug, Clone)]
+pub struct PublishArgs {
+    /// Input APR model file
+    #[arg(short, long)]
+    pub input: PathBuf,
+
+    /// HuggingFace repository ID (e.g., paiml/whisper-apr-tiny)
+    #[arg(short, long)]
+    pub repo: String,
+
+    /// Model display name for the model card
+    #[arg(long, default_value = "Whisper APR")]
+    pub model_name: String,
+
+    /// Model size (tiny, base, small, medium, large)
+    #[arg(long, default_value = "tiny")]
+    pub model_size: ModelSize,
+
+    /// Publishing format
+    #[arg(long, default_value = "both")]
+    pub format: PublishFormatArg,
+
+    /// Commit message
+    #[arg(long, default_value = "Upload via whisper-apr publish")]
+    pub message: String,
+
+    /// Dry run (preview what would be uploaded)
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Skip model verification
+    #[arg(long)]
+    pub skip_verify: bool,
+
+    /// Custom license (default: mit)
+    #[arg(long, default_value = "mit")]
+    pub license: String,
+
+    /// Custom model card content (README.md path)
+    #[arg(long)]
+    pub model_card: Option<PathBuf>,
+
+    /// Verbose output
+    #[arg(short, long)]
+    pub verbose: bool,
+}
+
+/// Publishing format options
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PublishFormatArg {
+    /// APR format only
+    Apr,
+    /// SafeTensors format only
+    Safetensors,
+    /// Both formats (default)
+    #[default]
+    Both,
+}
+
+impl std::fmt::Display for PublishFormatArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Apr => write!(f, "apr"),
+            Self::Safetensors => write!(f, "safetensors"),
+            Self::Both => write!(f, "both"),
+        }
+    }
 }
 
 /// Model family for conversion

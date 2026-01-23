@@ -41,6 +41,18 @@ pub enum WhisperError {
     /// Speaker diarization error
     #[error("diarization error: {0}")]
     Diarization(String),
+
+    /// Authentication error (e.g., missing HF_TOKEN)
+    #[error("auth error: {0}")]
+    Auth(String),
+
+    /// Configuration error
+    #[error("config error: {0}")]
+    Config(String),
+
+    /// Verification error
+    #[error("verification error: {0}")]
+    Verification(String),
 }
 
 #[cfg(test)]
