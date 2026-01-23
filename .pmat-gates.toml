@@ -6,3 +6,14 @@
 enabled = true
 # GUI testing via probar
 gui_testing = true
+
+[file-health]
+# Adjust thresholds for mature codebase with complex modules
+max_lines_critical = 6000
+max_lines_warning = 3000
+# Exclude generated and test files
+exclude = [
+    "mel_filterbank_data.rs",
+    "tests.rs",
+    "benchmark.rs",
+]

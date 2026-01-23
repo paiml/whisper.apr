@@ -1,0 +1,13 @@
+# Files excluded from PMAT file health analysis
+# These are either generated data files or test files
+
+# Generated data (pre-computed constants)
+src/audio/mel_filterbank_data.rs
+
+# Test files
+src/cuda/tests.rs
+tests/**
+
+# Benchmark files
+src/benchmark.rs
+benches/**
