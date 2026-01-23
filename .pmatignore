@@ -25,6 +25,14 @@ scripts/
 **/*.js
 **/*.min.js
 
+# Generated data files (large, machine-generated)
+**/mel_filterbank_data.rs
+
+# Test files (don't count toward file health)
+**/tests.rs
+**/*_test.rs
+**/*_tests.rs
+
 # Python virtual environment
 scripts/venv/
 .venv/
