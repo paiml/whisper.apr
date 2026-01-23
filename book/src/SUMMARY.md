@@ -78,6 +78,7 @@
 - [Streaming Inference](./advanced/streaming.md)
 - [Voice Activity Detection](./advanced/vad.md)
 - [WebGPU Backend](./advanced/webgpu.md)
+- [HuggingFace Publishing](./advanced/huggingface-publishing.md)
 - [Server-Side Deployment](./advanced/server-side.md)
 - [Edge Deployment](./advanced/edge-deployment.md)
 - [Optimizing for Mobile](./advanced/mobile-optimization.md)
