@@ -1444,3 +1444,51 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: WAPR-PUB-001
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PUB-001'
+  status: completed
+  priority: medium
+  assigned_to: null
+  created: 2026-01-23T09:24:47.939504049+00:00
+  updated: 2026-01-23T09:35:01.969918327+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-PUB-002
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PUB-002'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-23T09:44:05.474819802+00:00
+  updated: 2026-01-23T09:44:05.474819802+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-PUB-004
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PUB-004'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-01-23T10:12:02.041676827+00:00
+  updated: 2026-01-23T10:12:02.041676827+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null

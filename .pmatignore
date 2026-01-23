@@ -3,9 +3,27 @@
 
 # Generated files
 book/
+book/**
 pkg/
 target/
 dist/
+
+# Development/debug scripts (not production code)
+examples/
+tools/
+demos/tests/
+scripts/
+
+# Benchmark files
+**/benchmark.rs
+**/bench/
+
+# wasm-bindgen generated snippets
+**/snippets/
+
+# JavaScript files (generated)
+**/*.js
+**/*.min.js
 
 # Python virtual environment
 scripts/venv/

@@ -63,6 +63,12 @@ pub mod backend;
 /// Vocabulary and hotword customization
 pub mod vocabulary;
 
+/// HuggingFace Hub publishing (WAPR-PUB-001)
+pub mod publish;
+
+/// Pre-publish verification (WAPR-PUB-001)
+pub mod verify;
+
 /// Benchmark infrastructure for multi-backend comparison
 pub mod benchmark;
 

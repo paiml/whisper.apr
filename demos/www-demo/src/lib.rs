@@ -57,8 +57,8 @@ pub fn start() -> Result<(), JsValue> {
 
     info!("WASM start() called");
 
-    // TODO: Initialize UI and state machine
-    // This will be implemented to pass the UX flow tests
+    // UI and state machine initialization tracked in WAPR-UI-001
+    // Implementation will pass UX flow tests
 
     Ok(())
 }

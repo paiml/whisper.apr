@@ -70,144 +70,147 @@ pub struct WavData {
     pub bits_per_sample: u16,
 }
 
-/// Parse a WAV file and return f32 samples normalized to [-1, 1]
-///
-/// Supports:
-/// - 8-bit unsigned PCM
-/// - 16-bit signed PCM
-/// - 24-bit signed PCM
-/// - 32-bit signed PCM
-/// - 32-bit float
-/// - Mono and stereo (stereo is converted to mono)
-///
-/// # Arguments
-/// * `data` - Raw bytes of the WAV file
-///
-/// # Returns
-/// * `Ok(WavData)` - Parsed audio data with samples and metadata
-/// * `Err(WavError)` - If the file cannot be parsed
-///
-/// # Example
-/// ```ignore
-/// use whisper_apr::audio::wav::parse_wav;
-///
-/// let wav_bytes = std::fs::read("audio.wav")?;
-/// let wav_data = parse_wav(&wav_bytes)?;
-/// println!("Sample rate: {}Hz, {} samples", wav_data.sample_rate, wav_data.samples.len());
-/// ```
-#[cfg_attr(feature = "tracing", tracing::instrument(level = "info", skip(data), fields(data_len = data.len())))]
-pub fn parse_wav(data: &[u8]) -> Result<WavData, WavError> {
-    // Check minimum size for header
+/// Parsed fmt chunk data
+struct FmtChunk {
+    audio_format: u16,
+    channels: u16,
+    sample_rate: u32,
+    bits_per_sample: u16,
+    sub_format: u16,
+}
+
+/// Parse fmt chunk from WAV data
+fn parse_fmt_chunk(data: &[u8], pos: usize, chunk_size: usize) -> Result<FmtChunk, WavError> {
+    if pos + 8 + chunk_size > data.len() {
+        return Err(WavError::FmtTruncated);
+    }
+
+    let audio_format = u16::from_le_bytes([data[pos + 8], data[pos + 9]]);
+    let channels = u16::from_le_bytes([data[pos + 10], data[pos + 11]]);
+    let sample_rate = u32::from_le_bytes([
+        data[pos + 12],
+        data[pos + 13],
+        data[pos + 14],
+        data[pos + 15],
+    ]);
+    let bits_per_sample = u16::from_le_bytes([data[pos + 22], data[pos + 23]]);
+
+    // Handle WAVE_FORMAT_EXTENSIBLE (0xFFFE)
+    let sub_format = if audio_format == WAVE_FORMAT_EXTENSIBLE && chunk_size >= 40 {
+        let sub_format_offset = pos + 8 + 24;
+        if sub_format_offset + 2 <= data.len() {
+            u16::from_le_bytes([data[sub_format_offset], data[sub_format_offset + 1]])
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    Ok(FmtChunk {
+        audio_format,
+        channels,
+        sample_rate,
+        bits_per_sample,
+        sub_format,
+    })
+}
+
+/// Convert audio data to f32 samples based on format
+fn convert_audio_samples(
+    audio_data: &[u8],
+    fmt: &FmtChunk,
+) -> Result<Vec<f32>, WavError> {
+    let effective_format = if fmt.audio_format == WAVE_FORMAT_EXTENSIBLE {
+        fmt.sub_format
+    } else {
+        fmt.audio_format
+    };
+
+    // Validate format
+    if effective_format != WAVE_FORMAT_PCM && effective_format != WAVE_FORMAT_IEEE_FLOAT {
+        return Err(WavError::UnsupportedFormat {
+            format: fmt.audio_format,
+            bits: fmt.bits_per_sample,
+        });
+    }
+
+    match (effective_format, fmt.bits_per_sample) {
+        (WAVE_FORMAT_PCM, 16) => Ok(convert_16bit_pcm(audio_data)),
+        (WAVE_FORMAT_PCM, 8) => Ok(convert_8bit_pcm(audio_data)),
+        (WAVE_FORMAT_PCM, 24) => Ok(convert_24bit_pcm(audio_data)),
+        (WAVE_FORMAT_PCM, 32) => Ok(convert_32bit_pcm(audio_data)),
+        (WAVE_FORMAT_IEEE_FLOAT, 32) => Ok(convert_32bit_float(audio_data)),
+        _ => Err(WavError::UnsupportedFormat {
+            format: fmt.audio_format,
+            bits: fmt.bits_per_sample,
+        }),
+    }
+}
+
+/// Validate WAV header (RIFF + WAVE markers)
+fn validate_wav_header(data: &[u8]) -> Result<(), WavError> {
     if data.len() < 44 {
         return Err(WavError::TooSmall);
     }
-
-    // Check RIFF header
     if &data[0..4] != b"RIFF" {
         return Err(WavError::MissingRiff);
     }
-
     if &data[8..12] != b"WAVE" {
         return Err(WavError::MissingWave);
     }
+    Ok(())
+}
 
-    // Find fmt chunk
+/// Process data chunk and return WavData
+fn process_data_chunk(
+    data: &[u8],
+    pos: usize,
+    chunk_size: usize,
+    fmt: &FmtChunk,
+) -> Result<WavData, WavError> {
+    let data_start = pos + 8;
+    let data_end = (data_start + chunk_size).min(data.len());
+    let audio_data = &data[data_start..data_end];
+
+    let samples = convert_audio_samples(audio_data, fmt)?;
+    let mono_samples = convert_to_mono(samples, fmt.channels)?;
+
+    Ok(WavData {
+        samples: mono_samples,
+        sample_rate: fmt.sample_rate,
+        original_channels: fmt.channels,
+        bits_per_sample: fmt.bits_per_sample,
+    })
+}
+
+/// Parse a WAV file and return f32 samples normalized to [-1, 1]
+///
+/// Supports 8/16/24/32-bit PCM and 32-bit float, mono and stereo.
+#[cfg_attr(feature = "tracing", tracing::instrument(level = "info", skip(data), fields(data_len = data.len())))]
+pub fn parse_wav(data: &[u8]) -> Result<WavData, WavError> {
+    validate_wav_header(data)?;
+
     let mut pos = 12;
-    let mut sample_rate = 0u32;
-    let mut channels = 0u16;
-    let mut bits_per_sample = 0u16;
-    let mut audio_format = 0u16;
-    let mut sub_format = 0u16; // For WAVE_FORMAT_EXTENSIBLE
+    let mut fmt_chunk: Option<FmtChunk> = None;
 
     while pos + 8 <= data.len() {
         let chunk_id = &data[pos..pos + 4];
-        let chunk_size =
-            u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
-                as usize;
+        let chunk_size = u32::from_le_bytes([
+            data[pos + 4],
+            data[pos + 5],
+            data[pos + 6],
+            data[pos + 7],
+        ]) as usize;
 
         if chunk_id == b"fmt " {
-            if pos + 8 + chunk_size > data.len() {
-                return Err(WavError::FmtTruncated);
-            }
-            audio_format = u16::from_le_bytes([data[pos + 8], data[pos + 9]]);
-            channels = u16::from_le_bytes([data[pos + 10], data[pos + 11]]);
-            sample_rate = u32::from_le_bytes([
-                data[pos + 12],
-                data[pos + 13],
-                data[pos + 14],
-                data[pos + 15],
-            ]);
-            bits_per_sample = u16::from_le_bytes([data[pos + 22], data[pos + 23]]);
-
-            // Handle WAVE_FORMAT_EXTENSIBLE (0xFFFE)
-            // Extension starts at offset 24 from fmt chunk data:
-            // - cbSize (2 bytes) at offset 24
-            // - wValidBitsPerSample (2 bytes) at offset 26
-            // - dwChannelMask (4 bytes) at offset 28
-            // - SubFormat GUID (16 bytes) at offset 32, first 2 bytes are the actual format
-            if audio_format == WAVE_FORMAT_EXTENSIBLE && chunk_size >= 40 {
-                // SubFormat is at fmt_data[32:34] which is pos + 8 + 32
-                let sub_format_offset = pos + 8 + 24;
-                if sub_format_offset + 2 <= data.len() {
-                    sub_format =
-                        u16::from_le_bytes([data[sub_format_offset], data[sub_format_offset + 1]]);
-                }
-            }
-
+            fmt_chunk = Some(parse_fmt_chunk(data, pos, chunk_size)?);
             pos += 8 + chunk_size;
         } else if chunk_id == b"data" {
-            // Found data chunk
-            let data_start = pos + 8;
-            let data_end = (data_start + chunk_size).min(data.len());
-            let audio_data = &data[data_start..data_end];
-
-            // Determine effective format for conversion
-            // For WAVE_FORMAT_EXTENSIBLE, use the sub-format from the GUID
-            let effective_format = if audio_format == WAVE_FORMAT_EXTENSIBLE {
-                sub_format
-            } else {
-                audio_format
-            };
-
-            // Validate format - only PCM (1) and float (3) supported
-            if effective_format != WAVE_FORMAT_PCM && effective_format != WAVE_FORMAT_IEEE_FLOAT {
-                return Err(WavError::UnsupportedFormat {
-                    format: audio_format,
-                    bits: bits_per_sample,
-                });
-            }
-
-            // Convert to f32 based on format
-            let samples: Vec<f32> = match (effective_format, bits_per_sample) {
-                (WAVE_FORMAT_PCM, 16) => convert_16bit_pcm(audio_data),
-                (WAVE_FORMAT_PCM, 8) => convert_8bit_pcm(audio_data),
-                (WAVE_FORMAT_PCM, 24) => convert_24bit_pcm(audio_data),
-                (WAVE_FORMAT_PCM, 32) => convert_32bit_pcm(audio_data),
-                (WAVE_FORMAT_IEEE_FLOAT, 32) => convert_32bit_float(audio_data),
-                _ => {
-                    return Err(WavError::UnsupportedFormat {
-                        format: audio_format,
-                        bits: bits_per_sample,
-                    });
-                }
-            };
-
-            // Convert stereo to mono if needed
-            let mono_samples = convert_to_mono(samples, channels)?;
-
-            return Ok(WavData {
-                samples: mono_samples,
-                sample_rate,
-                original_channels: channels,
-                bits_per_sample,
-            });
+            let fmt = fmt_chunk.as_ref().ok_or(WavError::NoDataChunk)?;
+            return process_data_chunk(data, pos, chunk_size, fmt);
         } else {
-            // Skip unknown chunk
-            pos += 8 + chunk_size;
-            // Align to even boundary (WAV spec)
-            if chunk_size % 2 != 0 {
-                pos += 1;
-            }
+            pos += 8 + chunk_size + (chunk_size % 2);
         }
     }
 
