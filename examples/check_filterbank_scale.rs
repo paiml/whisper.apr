@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  First 5 values: {:?}", &ref_fb[..5]);
 
     // Load our filterbank
-    use whisper_apr::audio::mel_filterbank_data::MEL_80_FILTERBANK;
+    use whisper_apr::audio::mel_filterbank_data_generated::MEL_80_FILTERBANK;
     let our_fb = &MEL_80_FILTERBANK[..];
     println!("\nOur filterbank: {} values", our_fb.len());
     let our_sum: f32 = our_fb.iter().sum();

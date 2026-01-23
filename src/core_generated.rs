@@ -1,7 +1,7 @@
 //! Core whisper types and implementations
 
 // Re-import crate modules for use in this module
-use crate::{audio, detection, error, format, inference, model, progress, simd, timestamps, tokenizer, vad};
+use crate::{audio, detection, error, format, inference, model, progress, timestamps, tokenizer, vad};
 pub use error::{WhisperError, WhisperResult};
 
 /// Whisper model configuration
@@ -2489,6 +2489,8 @@ mod tests {
 
     #[test]
     fn test_simd_operations_integration() {
+        use crate::simd;
+
         // Test that SIMD module is accessible and works
         let a = vec![1.0, 2.0, 3.0, 4.0];
         let b = vec![5.0, 6.0, 7.0, 8.0];
