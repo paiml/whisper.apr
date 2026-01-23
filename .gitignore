@@ -35,3 +35,9 @@ demos/realtime-transcription/models/*.apr
 
 # wasm-bindgen generated snippets (duplicated across pkg directories)
 **/pkg/snippets/
+
+# PMAT cache
+.pmat/hooks-cache/
+
+# Large model files
+models/*.safetensors
