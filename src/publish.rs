@@ -363,14 +363,53 @@ mod tests {
     }
 
     #[test]
-    fn test_publisher_auth_check() {
-        // Without token
-        let pub1 = Publisher::new();
-        // May or may not be authenticated depending on env
+    fn test_publish_config_default() {
+        let config = PublishConfig::default();
+        assert!(config.repo_id.is_empty());
+        assert_eq!(config.commit_message, "Upload model");
+        assert!(config.create_repo);
+        assert!(!config.private);
+        assert!(config.model_card.is_none());
+        assert!(config.extra_files.is_empty());
+    }
 
+    #[test]
+    fn test_publish_config_with_model_card() {
+        let config = PublishConfig::new("test/repo")
+            .with_model_card("# My Model Card");
+        assert_eq!(config.model_card.as_deref(), Some("# My Model Card"));
+    }
+
+    #[test]
+    fn test_publish_config_multiple_files() {
+        let config = PublishConfig::new("test/repo")
+            .with_file("file1.txt")
+            .with_file("file2.txt")
+            .with_file("file3.txt");
+        assert_eq!(config.extra_files.len(), 3);
+    }
+
+    #[test]
+    fn test_publisher_default() {
+        let pub1 = Publisher::default();
+        // Default should be same as new()
+        let pub2 = Publisher::new();
+        // Both may or may not be authenticated depending on env
+        assert_eq!(pub1.is_authenticated(), pub2.is_authenticated());
+    }
+
+    #[test]
+    fn test_publisher_auth_check() {
         // With explicit token
         let pub2 = Publisher::with_token("test_token");
         assert!(pub2.is_authenticated());
+    }
+
+    #[test]
+    fn test_publisher_empty_token() {
+        let pub1 = Publisher::with_token("");
+        // Empty string is still Some, so it's "authenticated"
+        assert!(pub1.is_authenticated());
     }
 
     #[test]
@@ -383,7 +422,78 @@ mod tests {
     }
 
     #[test]
-    fn test_publish_format_default() {
+    fn test_model_card_base_model() {
+        let card = generate_model_card("whisper-apr-base", "base");
+        assert!(card.contains("whisper-apr-base"));
+        assert!(card.contains("base"));
+        assert!(card.contains("WASM-First")); // Capital F in citation
+    }
+
+    #[test]
+    fn test_model_card_contains_usage() {
+        let card = generate_model_card("test-model", "small");
+        assert!(card.contains("Usage"));
+        assert!(card.contains("WhisperApr"));
+        assert!(card.contains("transcribe"));
+    }
+
+    #[test]
+    fn test_publish_format_variants() {
         assert_eq!(PublishFormat::default(), PublishFormat::Both);
+        assert_ne!(PublishFormat::Apr, PublishFormat::SafeTensors);
+        assert_ne!(PublishFormat::Apr, PublishFormat::Both);
+        assert_ne!(PublishFormat::SafeTensors, PublishFormat::Both);
+    }
+
+    #[test]
+    fn test_publish_format_clone_copy() {
+        let format = PublishFormat::Apr;
+        let cloned = format.clone();
+        let copied = format;
+        assert_eq!(format, cloned);
+        assert_eq!(format, copied);
+    }
+
+    #[test]
+    fn test_publish_result_fields() {
+        let result = PublishResult {
+            repo_url: "https://huggingface.co/paiml/test".to_string(),
+            commit_sha: "abc123".to_string(),
+            files_uploaded: vec!["model.safetensors".to_string()],
+            total_bytes: 1024,
+        };
+        assert_eq!(result.repo_url, "https://huggingface.co/paiml/test");
+        assert_eq!(result.commit_sha, "abc123");
+        assert_eq!(result.files_uploaded.len(), 1);
+        assert_eq!(result.total_bytes, 1024);
+    }
+
+    #[test]
+    fn test_publish_result_clone() {
+        let result = PublishResult {
+            repo_url: "https://example.com".to_string(),
+            commit_sha: "def456".to_string(),
+            files_uploaded: vec!["a.bin".to_string(), "b.bin".to_string()],
+            total_bytes: 2048,
+        };
+        let cloned = result.clone();
+        assert_eq!(result.repo_url, cloned.repo_url);
+        assert_eq!(result.files_uploaded, cloned.files_uploaded);
+    }
+
+    #[test]
+    fn test_publish_config_builder_chain() {
+        let config = PublishConfig::new("org/model")
+            .with_message("v1.0")
+            .private(false)
+            .with_model_card("# Card")
+            .with_file("f1")
+            .with_file("f2");
+
+        assert_eq!(config.repo_id, "org/model");
+        assert_eq!(config.commit_message, "v1.0");
+        assert!(!config.private);
+        assert!(config.model_card.is_some());
+        assert_eq!(config.extra_files.len(), 2);
     }
 }

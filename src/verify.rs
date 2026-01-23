@@ -374,14 +374,28 @@ pub fn verify_safetensors<P: AsRef<Path>>(path: P) -> WhisperResult<Verification
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_check_result() {
         let pass = CheckResult::pass("test", "ok");
         assert!(pass.passed);
+        assert_eq!(pass.name, "test");
+        assert_eq!(pass.message, "ok");
 
         let fail = CheckResult::fail("test", "error");
         assert!(!fail.passed);
+        assert_eq!(fail.name, "test");
+        assert_eq!(fail.message, "error");
+    }
+
+    #[test]
+    fn test_check_result_clone() {
+        let result = CheckResult::pass("name", "msg");
+        let cloned = result.clone();
+        assert_eq!(result.name, cloned.name);
+        assert_eq!(result.passed, cloned.passed);
     }
 
     #[test]
@@ -400,6 +414,64 @@ mod tests {
     }
 
     #[test]
+    fn test_verification_report_empty() {
+        let report = VerificationReport::new();
+        assert!(report.passed);
+        assert_eq!(report.total_checks, 0);
+        assert_eq!(report.passed_checks, 0);
+        assert!((report.pass_rate() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_verification_report_all_pass() {
+        let mut report = VerificationReport::new();
+        report.add(CheckResult::pass("a", "ok"));
+        report.add(CheckResult::pass("b", "ok"));
+        report.add(CheckResult::pass("c", "ok"));
+
+        assert!(report.passed);
+        assert_eq!(report.total_checks, 3);
+        assert_eq!(report.passed_checks, 3);
+        assert!((report.pass_rate() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_verification_report_all_fail() {
+        let mut report = VerificationReport::new();
+        report.add(CheckResult::fail("a", "err"));
+        report.add(CheckResult::fail("b", "err"));
+
+        assert!(!report.passed);
+        assert_eq!(report.total_checks, 2);
+        assert_eq!(report.passed_checks, 0);
+        assert!((report.pass_rate() - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_verification_report_clone() {
+        let mut report = VerificationReport::new();
+        report.add(CheckResult::pass("a", "ok"));
+        let cloned = report.clone();
+        assert_eq!(report.total_checks, cloned.total_checks);
+        assert_eq!(report.passed, cloned.passed);
+    }
+
+    #[test]
+    fn test_verification_report_default() {
+        let report = VerificationReport::default();
+        assert!(report.passed);
+        assert_eq!(report.total_checks, 0);
+    }
+
+    #[test]
+    fn test_verifier_default() {
+        let v1 = Verifier::new();
+        let v2 = Verifier::default();
+        // Both should have same default pass rate
+        assert!((v1.min_pass_rate - v2.min_pass_rate).abs() < 0.01);
+    }
+
+    #[test]
     fn test_verifier_threshold() {
         let verifier = Verifier::new().with_min_pass_rate(80.0);
 
@@ -412,6 +484,18 @@ mod tests {
 
         // 4/5 = 80%
         assert!(verifier.meets_threshold(&report));
+    }
+
+    #[test]
+    fn test_verifier_threshold_below() {
+        let verifier = Verifier::new().with_min_pass_rate(90.0);
+
+        let mut report = VerificationReport::new();
+        report.add(CheckResult::pass("a", "ok"));
+        report.add(CheckResult::fail("b", "err"));
+
+        // 50% < 90%
+        assert!(!verifier.meets_threshold(&report));
     }
 
     #[test]
@@ -438,9 +522,180 @@ mod tests {
     }
 
     #[test]
+    fn test_tensor_verification_with_inf() {
+        let verifier = Verifier::new();
+
+        let mut tensors = BTreeMap::new();
+        tensors.insert(
+            "has_inf".to_string(),
+            TensorData::new(vec![1.0, f32::INFINITY, 3.0], vec![3]),
+        );
+
+        let report = verifier.verify_tensors(&tensors).unwrap();
+        assert!(!report.passed);
+    }
+
+    #[test]
+    fn test_tensor_verification_with_neg_inf() {
+        let verifier = Verifier::new();
+
+        let mut tensors = BTreeMap::new();
+        tensors.insert(
+            "has_neg_inf".to_string(),
+            TensorData::new(vec![f32::NEG_INFINITY, 2.0, 3.0], vec![3]),
+        );
+
+        let report = verifier.verify_tensors(&tensors).unwrap();
+        assert!(!report.passed);
+    }
+
+    #[test]
+    fn test_tensor_verification_all_good() {
+        let verifier = Verifier::new();
+
+        let mut tensors = BTreeMap::new();
+        tensors.insert(
+            "tensor1".to_string(),
+            TensorData::new(vec![1.0, 2.0, 3.0], vec![3]),
+        );
+        tensors.insert(
+            "tensor2".to_string(),
+            TensorData::new(vec![4.0, 5.0, 6.0, 7.0], vec![2, 2]),
+        );
+
+        let report = verifier.verify_tensors(&tensors).unwrap();
+        assert!(report.passed);
+    }
+
+    #[test]
+    fn test_tensor_verification_shape_mismatch() {
+        let verifier = Verifier::new();
+
+        let mut tensors = BTreeMap::new();
+        // Data has 3 elements but shape says 4
+        tensors.insert(
+            "bad_shape".to_string(),
+            TensorData::new(vec![1.0, 2.0, 3.0], vec![2, 2]),
+        );
+
+        let report = verifier.verify_tensors(&tensors).unwrap();
+        assert!(!report.passed);
+    }
+
+    #[test]
     fn test_nonexistent_file() {
         let report = verify_apr("/nonexistent/path/model.apr").unwrap();
         assert!(!report.passed);
         assert!(report.checks[0].message.contains("not found"));
+    }
+
+    #[test]
+    fn test_verify_safetensors_nonexistent() {
+        let report = verify_safetensors("/nonexistent/model.safetensors").unwrap();
+        assert!(!report.passed);
+    }
+
+    #[test]
+    fn test_verify_safetensors_too_small() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&[0u8; 4]).unwrap();
+        file.flush().unwrap();
+
+        let report = verify_safetensors(file.path()).unwrap();
+        assert!(!report.passed);
+    }
+
+    #[test]
+    fn test_verify_safetensors_valid_header() {
+        let mut file = NamedTempFile::new().unwrap();
+        // Header length (2 bytes as u64)
+        let header = b"{}";
+        let header_len = (header.len() as u64).to_le_bytes();
+        file.write_all(&header_len).unwrap();
+        file.write_all(header).unwrap();
+        file.flush().unwrap();
+
+        let report = verify_safetensors(file.path()).unwrap();
+        // Should pass basic checks
+        assert!(report.checks.iter().any(|c| c.name == "A1_file_exists" && c.passed));
+    }
+
+    #[test]
+    fn test_verify_safetensors_header_too_large() {
+        let mut file = NamedTempFile::new().unwrap();
+        // Claim header is 200MB (too large)
+        let header_len = (200_000_000u64).to_le_bytes();
+        file.write_all(&header_len).unwrap();
+        file.write_all(&[0u8; 100]).unwrap();
+        file.flush().unwrap();
+
+        let report = verify_safetensors(file.path()).unwrap();
+        // Should have header limit check fail
+        let has_limit_fail = report.checks.iter().any(|c| c.name == "C11_header_limit" && !c.passed);
+        assert!(has_limit_fail);
+    }
+
+    #[test]
+    fn test_verify_apr_small_file() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&[0u8; 10]).unwrap();
+        file.flush().unwrap();
+
+        let report = verify_apr(file.path()).unwrap();
+        // File exists but is too small
+        assert!(report.checks.iter().any(|c| c.name == "A1_file_exists" && c.passed));
+    }
+
+    #[test]
+    fn test_verify_apr_wrong_magic() {
+        let mut file = NamedTempFile::new().unwrap();
+        // Write wrong magic bytes
+        file.write_all(b"XXXX").unwrap();
+        file.write_all(&[0u8; 60]).unwrap();
+        file.flush().unwrap();
+
+        let report = verify_apr(file.path()).unwrap();
+        // Magic check should fail
+        let has_magic_fail = report.checks.iter().any(|c| c.name.contains("magic") && !c.passed);
+        assert!(has_magic_fail);
+    }
+
+    #[test]
+    fn test_verify_apr_correct_magic() {
+        let mut file = NamedTempFile::new().unwrap();
+        // Write correct APR magic
+        file.write_all(b"APR\0").unwrap();
+        file.write_all(&[0u8; 60]).unwrap();
+        file.flush().unwrap();
+
+        let report = verify_apr(file.path()).unwrap();
+        // Magic check should pass
+        let has_magic_pass = report.checks.iter().any(|c| c.name.contains("magic") && c.passed);
+        assert!(has_magic_pass);
+    }
+
+    #[test]
+    fn test_verify_apr_potential_secret() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"APR\0").unwrap();
+        file.write_all(&[0u8; 56]).unwrap();
+        // Add something that looks like a secret
+        file.write_all(b"api_key=secret123").unwrap();
+        file.flush().unwrap();
+
+        let report = verify_apr(file.path()).unwrap();
+        // Should have secret check
+        let has_secret_check = report.checks.iter().any(|c| c.name.contains("secret"));
+        assert!(has_secret_check);
+    }
+
+    #[test]
+    fn test_convenience_functions() {
+        // Test that convenience functions work
+        let apr_result = verify_apr("/nonexistent.apr");
+        assert!(apr_result.is_ok());
+
+        let st_result = verify_safetensors("/nonexistent.safetensors");
+        assert!(st_result.is_ok());
     }
 }
