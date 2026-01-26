@@ -90,4 +90,41 @@ mod tests {
             "diarization error: speaker identification failed"
         );
     }
+
+    #[test]
+    fn test_auth_error() {
+        let err = WhisperError::Auth("missing token".into());
+        assert_eq!(err.to_string(), "auth error: missing token");
+        assert!(matches!(err, WhisperError::Auth(_)));
+    }
+
+    #[test]
+    fn test_config_error() {
+        let err = WhisperError::Config("invalid setting".into());
+        assert_eq!(err.to_string(), "config error: invalid setting");
+        assert!(matches!(err, WhisperError::Config(_)));
+    }
+
+    #[test]
+    fn test_verification_error() {
+        let err = WhisperError::Verification("checksum mismatch".into());
+        assert_eq!(err.to_string(), "verification error: checksum mismatch");
+        assert!(matches!(err, WhisperError::Verification(_)));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_io_error_from() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err: WhisperError = io_err.into();
+        assert!(matches!(err, WhisperError::Io(_)));
+        assert!(err.to_string().contains("file not found"));
+    }
+
+    #[test]
+    fn test_error_debug() {
+        let err = WhisperError::Model("test error".into());
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("Model"));
+    }
 }
