@@ -2,6 +2,8 @@
 
 // Re-import crate modules for use in this module
 use crate::{audio, detection, error, format, inference, model, progress, timestamps, tokenizer, vad};
+#[cfg(feature = "realizar-gpu")]
+use crate::cuda;
 pub use error::{WhisperError, WhisperResult};
 
 /// Whisper model configuration

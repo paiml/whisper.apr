@@ -1,6 +1,6 @@
 [package]
 name = "whisper-apr"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 rust-version = "1.75"
 description = "WASM-first automatic speech recognition engine implementing OpenAI Whisper"
@@ -46,7 +46,8 @@ tui = ["ratatui", "crossterm"]
 realizar-inference = ["dep:realizar"]
 # Enable realizar's CUDA backend (50x speedup via trueno-gpu)
 # WAPR-PERF-004: Include cuda feature to enable GPU-resident tensor architecture
-realizar-gpu = ["dep:realizar", "realizar/cuda", "cuda"]
+# Note: realizar needs both 'gpu' and 'cuda' features for full CUDA support
+realizar-gpu = ["dep:realizar", "realizar/gpu", "realizar/cuda", "cuda"]
 # Experimental probar APIs (zero-js validation, worker harness)
 probar-experimental = []
 
@@ -55,21 +56,19 @@ probar-experimental = []
 thiserror = "2"
 
 # SIMD acceleration (trueno integration)
-# Updated per WAPR-PERF-002: 0.11.0 has enhanced WASM SIMD, fused_layernorm_linear
-trueno = { path = "../trueno" }
+# Using crates.io versions for reproducible builds
+trueno = "0.14.3"
 # GPU-resident tensor architecture (WAPR-PERF-004)
-trueno-gpu = { path = "../trueno/trueno-gpu", optional = true }
+trueno-gpu = { version = "0.4.12", optional = true }
 
 # Model format (aprender is the canonical .apr format library)
 # Note: safetensors-compare pulls hf-hub which doesn't support WASM
 # Use target-specific deps below to enable it only for native builds
-# Updated per WAPR-PERF-002: 0.21.0 has embedded mel filterbank support
-aprender = { path = "../aprender", default-features = false }
+aprender = { version = "0.24.1", default-features = false }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
-# Updated per WAPR-PERF-002: 0.4.0 has PagedKvCache improvements for WASM
-realizar = { path = "../realizar", optional = true, default-features = false }
+realizar = { version = "0.6.10", optional = true, default-features = false }
 
 # FFT for mel spectrogram computation
 rustfft = "6.2"
@@ -145,10 +144,10 @@ getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# Enable safetensors-compare and inference-monitoring only for native builds
+# Enable safetensors-compare only for native builds
 # safetensors-compare: pulls hf-hub which doesn't support WASM
-# inference-monitoring: enables entrenar NeuralPath for explainable ASR (attention visualization)
-aprender = { path = "../aprender", default-features = false, features = ["safetensors-compare", "inference-monitoring"] }
+# Note: inference-monitoring disabled due to cyclic dependency with entrenar
+aprender = { version = "0.24.1", default-features = false, features = ["safetensors-compare"] }
 
 [profile.release]
 lto = true
