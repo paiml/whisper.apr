@@ -344,4 +344,123 @@ mod tests {
         let energy = SilenceDetector::compute_energy(&frame);
         assert!((energy - 1.0).abs() < f32::EPSILON);
     }
+
+    // =========================================================================
+    // Additional Coverage Tests
+    // =========================================================================
+
+    #[test]
+    fn test_silence_detector_silence_to_speech_transition() {
+        let mut detector = SilenceDetector::default();
+
+        // Start with silence
+        let silence = vec![0.0; 480];
+        detector.process_frame(&silence);
+        assert!(detector.is_silence());
+
+        // Transition to speech
+        let speech: Vec<f32> = (0..480).map(|i| (i as f32 * 0.1).sin() * 0.5).collect();
+        let result = detector.process_frame(&speech);
+        // May return a silence segment if silence was long enough
+        assert!(!detector.is_silence());
+        // Result depends on whether silence was long enough
+        let _ = result;
+    }
+
+    #[test]
+    fn test_silence_detector_max_silence_duration() {
+        let config = SilenceConfig::default().with_max_silence_duration(0.1);
+        let mut detector = SilenceDetector::new(config, 16000);
+
+        // Process enough silence to hit max duration
+        let silence = vec![0.0; 480];
+        let mut segments_found = 0;
+        for _ in 0..100 {
+            if let Some(_segment) = detector.process_frame(&silence) {
+                segments_found += 1;
+            }
+        }
+        // Should have found at least one segment due to max duration
+        assert!(segments_found > 0);
+    }
+
+    #[test]
+    fn test_silence_detector_adaptive_disabled() {
+        let config = SilenceConfig::default().with_adaptive(false);
+        let mut detector = SilenceDetector::new(config, 16000);
+
+        let frame: Vec<f32> = (0..480).map(|i| (i as f32 * 0.01).sin() * 0.01).collect();
+        detector.process_frame(&frame);
+        // Noise floor should not be updated when adaptive is disabled
+        assert!((detector.noise_floor() - 0.001).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_silence_detector_detect_speech_then_silence() {
+        let mut detector = SilenceDetector::default();
+
+        // Speech followed by silence
+        let speech: Vec<f32> = (0..8000)
+            .map(|i| (i as f32 * 0.1).sin() * 0.5)
+            .collect();
+        let silence = vec![0.0; 8000];
+
+        let mut audio = speech;
+        audio.extend(silence);
+
+        let segments = detector.detect(&audio, 480);
+        // Should detect silence after speech
+        assert!(segments.len() >= 1);
+    }
+
+    #[test]
+    fn test_silence_detector_current_time() {
+        let mut detector = SilenceDetector::default();
+        let frame = vec![0.0; 480];
+
+        // Process some frames
+        for _ in 0..10 {
+            detector.process_frame(&frame);
+        }
+
+        // Should have processed 10 * 480 = 4800 samples at 16kHz = 0.3 seconds
+        let duration = detector.current_silence_duration();
+        assert!(duration > 0.0);
+    }
+
+    #[test]
+    fn test_silence_config_builder() {
+        let config = SilenceConfig::new()
+            .with_min_silence_duration(0.5)
+            .with_max_silence_duration(3.0)
+            .with_silence_threshold(0.005)
+            .with_adaptive(false)
+            .with_adaptation_rate(0.05);
+
+        assert!((config.min_silence_duration - 0.5).abs() < f32::EPSILON);
+        assert!((config.max_silence_duration - 3.0).abs() < f32::EPSILON);
+        assert!((config.silence_threshold - 0.005).abs() < f32::EPSILON);
+        assert!(!config.adaptive);
+        assert!((config.adaptation_rate - 0.05).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_silence_detector_short_frames() {
+        let mut detector = SilenceDetector::default();
+        // Very short frame (less than half frame size)
+        let short_frame = vec![0.0; 100];
+        let segments = detector.detect(&short_frame, 480);
+        assert!(segments.is_empty());
+    }
+
+    #[test]
+    fn test_silence_segment_properties() {
+        let segment = SilenceSegment {
+            start: 1.5,
+            end: 3.0,
+            noise_floor: 0.002,
+        };
+        assert!((segment.duration() - 1.5).abs() < f32::EPSILON);
+        assert!((segment.noise_floor - 0.002).abs() < f32::EPSILON);
+    }
 }
