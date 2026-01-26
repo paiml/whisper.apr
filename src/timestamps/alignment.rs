@@ -721,4 +721,25 @@ mod tests {
         let words = extractor.group_tokens_into_words(&[], &[]);
         assert!(words.is_empty());
     }
+
+    // Additional coverage tests (unique)
+
+    #[test]
+    fn test_token_alignment_with_attention_weights_coverage() {
+        let alignment = TokenAlignment::new(0, 100, 50, 0.9)
+            .with_attention_weights(vec![0.1, 0.2, 0.3]);
+        assert_eq!(alignment.attention_weights.len(), 3);
+    }
+
+    #[test]
+    fn test_alignment_config_with_layers_coverage() {
+        let config = AlignmentConfig::default().with_layers(vec![0, 1, 2]);
+        assert_eq!(config.layers, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_alignment_config_with_min_attention_coverage() {
+        let config = AlignmentConfig::default().with_min_attention(0.2);
+        assert!((config.min_attention - 0.2).abs() < 0.001);
+    }
 }
