@@ -1121,4 +1121,147 @@ mod tests {
         // Should fail gracefully (return None or replacement char)
         assert!(result.is_none() || result.as_ref().map_or(false, |s| s.contains('\u{FFFD}')));
     }
+
+    // =========================================================================
+    // Additional Edge Case Coverage Tests
+    // =========================================================================
+
+    #[test]
+    fn test_vocabulary_default() {
+        let vocab = Vocabulary::default();
+        assert!(vocab.is_empty());
+        assert_eq!(vocab.len(), 0);
+        assert_eq!(vocab.num_merges(), 0);
+    }
+
+    #[test]
+    fn test_vocabulary_is_not_empty() {
+        let vocab = Vocabulary::with_base_tokens();
+        assert!(!vocab.is_empty());
+    }
+
+    #[test]
+    fn test_from_bytes_truncated_token_len() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // n_tokens = 1
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // n_merges = 0
+        // Only 1 byte for token len instead of 2
+        bytes.push(5u8);
+
+        assert!(Vocabulary::from_bytes(&bytes).is_none());
+    }
+
+    #[test]
+    fn test_from_bytes_truncated_merge_first_len() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // n_tokens = 0
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // n_merges = 1
+        // Only 1 byte for first_len instead of 2
+        bytes.push(3u8);
+
+        assert!(Vocabulary::from_bytes(&bytes).is_none());
+    }
+
+    #[test]
+    fn test_from_bytes_truncated_merge_first_data() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // n_tokens = 0
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // n_merges = 1
+        bytes.extend_from_slice(&5u16.to_le_bytes()); // first_len = 5
+        bytes.extend_from_slice(&[1, 2, 3]); // Only 3 bytes, need 5
+
+        assert!(Vocabulary::from_bytes(&bytes).is_none());
+    }
+
+    #[test]
+    fn test_from_bytes_truncated_merge_second_len() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // n_tokens = 0
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // n_merges = 1
+        bytes.extend_from_slice(&2u16.to_le_bytes()); // first_len = 2
+        bytes.extend_from_slice(&[104, 105]); // first data "hi"
+        // Only 1 byte for second_len instead of 2
+        bytes.push(3u8);
+
+        assert!(Vocabulary::from_bytes(&bytes).is_none());
+    }
+
+    #[test]
+    fn test_from_bytes_truncated_merge_second_data() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // n_tokens = 0
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // n_merges = 1
+        bytes.extend_from_slice(&2u16.to_le_bytes()); // first_len = 2
+        bytes.extend_from_slice(&[104, 105]); // first data "hi"
+        bytes.extend_from_slice(&5u16.to_le_bytes()); // second_len = 5
+        bytes.extend_from_slice(&[1, 2, 3]); // Only 3 bytes, need 5
+
+        assert!(Vocabulary::from_bytes(&bytes).is_none());
+    }
+
+    #[test]
+    fn test_get_merge_nonexistent() {
+        let vocab = Vocabulary::with_base_tokens();
+        assert!(vocab.get_merge(&[200], &[201]).is_none());
+    }
+
+    #[test]
+    fn test_add_merge_reuses_existing_merged_token() {
+        let mut vocab = Vocabulary::with_base_tokens();
+        // First manually add a token "ab"
+        let ab_id = vocab.add_token(vec![97, 98]); // "ab"
+
+        // Now add a merge a + b -> should reuse the existing "ab" token
+        let merge_id = vocab.add_merge(vec![97], vec![98]);
+
+        // The merge should reference the existing token
+        assert_eq!(merge_id, ab_id);
+        assert_eq!(vocab.get_merge(&[97], &[98]), Some(ab_id));
+    }
+
+    #[test]
+    fn test_decode_multiple_special_tokens() {
+        let vocab = Vocabulary::with_base_tokens();
+        // Test that multiple special tokens are all skipped
+        let result = vocab.decode(&[
+            72, // 'H'
+            special_tokens::EOT,
+            105, // 'i'
+            special_tokens::SOT,
+            special_tokens::TRANSCRIBE,
+        ]);
+        assert_eq!(result, Some("Hi".to_string()));
+    }
+
+    #[test]
+    fn test_decode_only_special_tokens() {
+        let vocab = Vocabulary::with_base_tokens();
+        let result = vocab.decode(&[
+            special_tokens::EOT,
+            special_tokens::SOT,
+            special_tokens::TRANSCRIBE,
+        ]);
+        assert_eq!(result, Some(String::new()));
+    }
+
+    #[test]
+    fn test_timestamp_boundary_values() {
+        // Test boundary at TIMESTAMP_BASE - 1
+        assert!(!special_tokens::is_timestamp(special_tokens::TIMESTAMP_BASE - 1));
+        assert!(special_tokens::is_timestamp(special_tokens::TIMESTAMP_BASE));
+
+        // Test timestamp conversion for boundary
+        assert_eq!(special_tokens::timestamp_to_seconds(special_tokens::TIMESTAMP_BASE - 1), None);
+        assert_eq!(special_tokens::timestamp_to_seconds(special_tokens::TIMESTAMP_BASE), Some(0.0));
+    }
+
+    #[test]
+    fn test_special_tokens_equality() {
+        let multi1 = special_tokens::SpecialTokens::multilingual();
+        let multi2 = special_tokens::SpecialTokens::multilingual();
+        assert_eq!(multi1, multi2);
+
+        let english = special_tokens::SpecialTokens::english_only();
+        assert_ne!(multi1, english);
+    }
 }
