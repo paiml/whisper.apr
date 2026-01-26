@@ -137,4 +137,74 @@ mod tests {
         // [1, 4, 2, 5, 3, 6] as 3x2
         assert!(vec_approx_eq(&result, &[1.0, 4.0, 2.0, 5.0, 3.0, 6.0]));
     }
+
+    #[test]
+    fn test_matmul_owned() {
+        let a = vec![1.0, 2.0, 3.0, 4.0]; // 2x2
+        let b = vec![5.0, 6.0, 7.0, 8.0]; // 2x2
+        let result = matmul_owned(a, b, 2, 2, 2);
+        assert!(vec_approx_eq(&result, &[19.0, 22.0, 43.0, 50.0]));
+    }
+
+    #[test]
+    fn test_matmul_owned_rectangular() {
+        let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2x3
+        let b = vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0]; // 3x2
+        let result = matmul_owned(a, b, 2, 3, 2);
+        // Row 0: [1*7+2*9+3*11, 1*8+2*10+3*12] = [58, 64]
+        // Row 1: [4*7+5*9+6*11, 4*8+5*10+6*12] = [139, 154]
+        assert!(vec_approx_eq(&result, &[58.0, 64.0, 139.0, 154.0]));
+    }
+
+    #[test]
+    fn test_matmul_with_matrix() {
+        let a = vec![1.0, 2.0, 3.0, 4.0]; // 2x2
+        let b_matrix = Matrix::from_vec(2, 2, vec![5.0, 6.0, 7.0, 8.0]).unwrap();
+        let result = matmul_with_matrix(&a, &b_matrix, 2, 2);
+        assert!(vec_approx_eq(&result, &[19.0, 22.0, 43.0, 50.0]));
+    }
+
+    #[test]
+    fn test_matmul_with_matrix_rectangular() {
+        let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2x3
+        let b_matrix = Matrix::from_vec(3, 2, vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0]).unwrap();
+        let result = matmul_with_matrix(&a, &b_matrix, 2, 3);
+        assert!(vec_approx_eq(&result, &[58.0, 64.0, 139.0, 154.0]));
+    }
+
+    #[test]
+    fn test_matmul_larger() {
+        // 3x4 @ 4x2 = 3x2
+        let a: Vec<f32> = (1..=12).map(|x| x as f32).collect();
+        let b: Vec<f32> = (1..=8).map(|x| x as f32).collect();
+        let result = matmul(&a, &b, 3, 4, 2);
+        assert_eq!(result.len(), 6);
+        assert!(result.iter().all(|&x| x.is_finite()));
+    }
+
+    #[test]
+    fn test_matvec_larger() {
+        // 4x3 @ 3 = 4
+        let a: Vec<f32> = (1..=12).map(|x| x as f32).collect();
+        let x = vec![1.0, 2.0, 3.0];
+        let result = matvec(&a, &x, 4, 3);
+        assert_eq!(result.len(), 4);
+        // Row 0: 1*1 + 2*2 + 3*3 = 14
+        assert!(approx_eq(result[0], 14.0));
+    }
+
+    #[test]
+    fn test_transpose_square() {
+        let a = vec![1.0, 2.0, 3.0, 4.0]; // 2x2
+        let result = transpose(&a, 2, 2);
+        assert!(vec_approx_eq(&result, &[1.0, 3.0, 2.0, 4.0]));
+    }
+
+    #[test]
+    fn test_transpose_tall() {
+        // 3x2 -> 2x3
+        let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let result = transpose(&a, 3, 2);
+        assert!(vec_approx_eq(&result, &[1.0, 3.0, 5.0, 2.0, 4.0, 6.0]));
+    }
 }

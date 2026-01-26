@@ -89,4 +89,41 @@ mod tests {
         // Just verify it doesn't panic
         let _ = simd_available();
     }
+
+    #[test]
+    fn test_backend_name_valid() {
+        let name = backend_name();
+        let valid_names = [
+            "Scalar", "SSE2", "AVX", "AVX2", "AVX512", "NEON", "WasmSIMD", "GPU", "Auto",
+        ];
+        assert!(
+            valid_names.contains(&name),
+            "Backend name '{name}' not in valid list"
+        );
+    }
+
+    #[test]
+    fn test_best_backend_consistency() {
+        // Multiple calls should return the same backend
+        let b1 = best_backend();
+        let b2 = best_backend();
+        assert_eq!(b1, b2);
+    }
+
+    #[test]
+    fn test_simd_available_consistency() {
+        let a1 = simd_available();
+        let a2 = simd_available();
+        assert_eq!(a1, a2);
+    }
+
+    #[test]
+    fn test_re_exports() {
+        // Verify key re-exports are accessible
+        let _ = dot(&[1.0, 2.0], &[3.0, 4.0]);
+        let _ = softmax(&[1.0, 2.0, 3.0]);
+        let _ = gelu(&[0.0, 1.0]);
+        let _ = relu(&[-1.0, 0.0, 1.0]);
+        let _ = matmul(&[1.0, 0.0, 0.0, 1.0], &[1.0, 2.0, 3.0, 4.0], 2, 2, 2);
+    }
 }
