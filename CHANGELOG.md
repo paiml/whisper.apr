@@ -7,15 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2025-01-26
+
+### Changed
+- Refactored 20+ modules into modular directory structure (file.rs → file/{mod.rs, tests.rs})
+- Improved code organization for TDG (Technical Debt Grade) scoring
+- Split test code from implementation across all major modules
+
+### Modules Refactored
+- `audio/mel`, `audio/vad`, `audio/wav`, `audio/resampler`, `audio/ring_buffer`
+- `backend/selector`, `backend/traits`
+- `cli/parity`, `cli/output`
+- `diarization/detection`, `diarization/clustering`, `diarization/embedding`, `diarization/segmentation`
+- `format/compress`, `format/validation`
+- `gpu/detect`, `gpu/pipeline`
+- `inference/beam`, `inference/streaming`
+- `memory/mmap`
+- `model/lfm2/model`, `model/lfm2/tokenizer`
+- `publish`
+- `timestamps/alignment`, `timestamps/interpolation`, `timestamps/boundaries`
+- `vocabulary/adapter`, `vocabulary/hotwords`, `vocabulary/trie`
+- `wasm/capabilities`, `wasm/timestamps`, `wasm/worker`
+
+## [0.2.0] - 2025-01-09
+
 ### Added
 - LFM2-2.6B-Transcript Post-Transcription Benchmark (GitHub Issue #10) (#10)
 - WAPR-182: Phase 3 - Transcription in Worker (#6)
 - WAPR-181: Phase 2 - Model Loading in Worker (#2)
 - WAPR-180: Phase 1 - Async Worker Foundation (#1)
 - WAPR-184: Probar GUI & Pixel Regression Tests (#5)
-- WAPR-181: Phase 2 - Model Loading in Worker (#2)
 - WAPR-183: Phase 4 - Robustness & Testing (#4)
-- WAPR-180: Phase 1 - Async Worker Foundation (#1)
 - SIMD-optimized Conv1d with im2col transformation
 - SIMD-optimized LayerNorm with batch processing
 - SIMD-optimized attention with unified dispatch pattern
@@ -59,5 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - .apr model format with LZ4 compression
 - Support for tiny, base, and small model sizes
 
-[Unreleased]: https://github.com/paiml/whisper.apr/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/paiml/whisper.apr/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/paiml/whisper.apr/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/paiml/whisper.apr/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/paiml/whisper.apr/releases/tag/v0.1.0
