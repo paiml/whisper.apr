@@ -659,4 +659,87 @@ mod tests {
         assert!(caps.available);
         assert!(caps.max_parallelism > 0);
     }
+
+    #[test]
+    fn test_backend_selector_gpu_available() {
+        let selector = BackendSelector::default_config();
+        // Just ensure method works, GPU may or may not be available
+        let _available = selector.gpu_available();
+    }
+
+    #[test]
+    fn test_selector_prefer_gpu_memory_exceeds_limit() {
+        // Create selector with very low GPU memory limit
+        let config = SelectorConfig::prefer_gpu().with_max_gpu_memory(1);
+        let selector = BackendSelector::new(config);
+        let op = MatMulOp::new(1024, 1024, 1024); // Large memory requirement
+        let selection = selector.select(&op);
+
+        // If GPU available, should fall back to SIMD due to memory
+        if selector.gpu_available() {
+            assert!(
+                selection.reason.contains("Memory exceeds")
+                    || selection.reason.contains("GPU not available")
+            );
+        }
+    }
+
+    #[test]
+    fn test_selector_threshold_with_large_memory() {
+        let config = SelectorConfig::default()
+            .with_strategy(SelectionStrategy::threshold(100))
+            .with_max_gpu_memory(1);
+        let selector = BackendSelector::new(config);
+        let op = MatMulOp::new(1024, 1024, 1024);
+        let selection = selector.select(&op);
+
+        // Should fall back to SIMD due to memory constraint
+        assert!(!selection.reason.is_empty());
+    }
+
+    #[test]
+    fn test_selector_automatic_large_workload() {
+        let config = SelectorConfig::default().with_gpu_threshold(10);
+        let selector = BackendSelector::new(config);
+        let op = MatMulOp::new(256, 512, 256); // Large enough
+        let selection = selector.select(&op);
+        assert!(!selection.reason.is_empty());
+    }
+
+    #[test]
+    fn test_selector_is_gpu_worthwhile_below_threshold() {
+        let config = SelectorConfig::default().with_gpu_threshold(1_000_000_000);
+        let selector = BackendSelector::new(config);
+        let op = MatMulOp::new(8, 8, 8); // Small workload
+        let selection = selector.select(&op);
+        assert!(selection.is_simd());
+    }
+
+    #[test]
+    fn test_selector_batch_with_varying_sizes() {
+        let selector = BackendSelector::default_config();
+        let ops = vec![
+            MatMulOp::new(8, 8, 8),
+            MatMulOp::new(128, 128, 128),
+            MatMulOp::new(64, 64, 64),
+        ];
+        let selection = selector.select_batch(&ops);
+        assert!(!selection.reason.is_empty());
+    }
+
+    #[test]
+    fn test_selector_summary_with_different_strategies() {
+        let configs = vec![
+            SelectorConfig::default(),
+            SelectorConfig::prefer_gpu(),
+            SelectorConfig::prefer_simd(),
+            SelectorConfig::for_inference(),
+        ];
+
+        for config in configs {
+            let selector = BackendSelector::new(config);
+            let summary = selector.summary();
+            assert!(summary.contains("SIMD"));
+        }
+    }
 }
