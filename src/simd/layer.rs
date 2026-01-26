@@ -106,4 +106,71 @@ mod tests {
         let result = layer_norm(&x, &gamma, &beta, 1e-5);
         assert!(result.is_empty());
     }
+
+    #[test]
+    fn test_layer_norm_single() {
+        let x = vec![5.0];
+        let gamma = vec![1.0];
+        let beta = vec![0.0];
+        let result = layer_norm(&x, &gamma, &beta, 1e-5);
+        assert_eq!(result.len(), 1);
+        // Single element normalizes to 0
+        assert!(result[0].is_finite());
+    }
+
+    #[test]
+    fn test_layer_norm_identity() {
+        // Already normalized data
+        let x = vec![-1.0, 0.0, 1.0];
+        let gamma = vec![1.0, 1.0, 1.0];
+        let beta = vec![0.0, 0.0, 0.0];
+        let result = layer_norm(&x, &gamma, &beta, 1e-5);
+        assert_eq!(result.len(), 3);
+        // Should be close to normalized form
+        assert!(result.iter().all(|&v| v.is_finite()));
+    }
+
+    #[test]
+    fn test_batch_layer_norm_single_batch() {
+        let x = vec![1.0, 2.0, 3.0, 4.0];
+        let gamma = vec![1.0, 1.0, 1.0, 1.0];
+        let beta = vec![0.0, 0.0, 0.0, 0.0];
+        let result = batch_layer_norm(&x, &gamma, &beta, 1, 4, 1e-5);
+        assert_eq!(result.len(), 4);
+        assert!(approx_eq(mean(&result), 0.0));
+    }
+
+    #[test]
+    fn test_batch_layer_norm_many_batches() {
+        // 4 batches x 2 features
+        let x = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let gamma = vec![1.0, 1.0];
+        let beta = vec![0.0, 0.0];
+        let result = batch_layer_norm(&x, &gamma, &beta, 4, 2, 1e-5);
+        assert_eq!(result.len(), 8);
+        // Each row should be normalized
+        for i in 0..4 {
+            let row_mean = mean(&result[i * 2..(i + 1) * 2]);
+            assert!(approx_eq(row_mean, 0.0));
+        }
+    }
+
+    #[test]
+    fn test_layer_norm_large_values() {
+        let x = vec![1000.0, 2000.0, 3000.0, 4000.0];
+        let gamma = vec![1.0, 1.0, 1.0, 1.0];
+        let beta = vec![0.0, 0.0, 0.0, 0.0];
+        let result = layer_norm(&x, &gamma, &beta, 1e-5);
+        assert!(result.iter().all(|&v| v.is_finite()));
+        assert!(approx_eq(mean(&result), 0.0));
+    }
+
+    #[test]
+    fn test_layer_norm_small_values() {
+        let x = vec![0.001, 0.002, 0.003, 0.004];
+        let gamma = vec![1.0, 1.0, 1.0, 1.0];
+        let beta = vec![0.0, 0.0, 0.0, 0.0];
+        let result = layer_norm(&x, &gamma, &beta, 1e-5);
+        assert!(result.iter().all(|&v| v.is_finite()));
+    }
 }

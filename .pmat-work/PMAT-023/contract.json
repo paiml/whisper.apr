@@ -1,0 +1,2532 @@
+{
+  "work_item_id": "PMAT-023",
+  "created_at": "2026-01-26T09:32:49.231182573Z",
+  "baseline_commit": "25a693bdabf40e5099360776c6ff1f8a09872bcf",
+  "baseline_tdg": 0.0,
+  "baseline_coverage": 0.0,
+  "baseline_rust_score": 0.0,
+  "baseline_file_manifest": {
+    "files": {
+      "examples/check_filterbank_scale.rs": {
+        "content_hash": "34ce37a59f4bda42b9cbc5c5ba53652b486f7e8486b13b043cbd3a9254bad925",
+        "lines": 63,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/check_mel.rs": {
+        "content_hash": "78950491685a1acdb5378862cbbefdde919da7cf96af90338c45d3de2299d9c6",
+        "lines": 73,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_decoder.rs": {
+        "content_hash": "48ba432923503b568bfc809a5e909349f530cdb2f49b8c8953b6509dd32be798",
+        "lines": 121,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/gpu/buffer.rs": {
+        "content_hash": "44b682158e1fd661b14c56f9d6e5aa2811955297fcfa84b2dda488249cc785ba",
+        "lines": 509,
+        "functions": 57,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/audio/mel.rs": {
+        "content_hash": "40ae59d0b3626d7894b147122f4ac1454bc1e24316b0b3625979897817041fcf",
+        "lines": 1312,
+        "functions": 68,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/simd_operations.rs": {
+        "content_hash": "5415c76d05e7ee9c36d6a16bf649a443a372c19f03f51d9d23ef13ccb1b45ae7",
+        "lines": 157,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "tools/convert.rs": {
+        "content_hash": "1afe7541a5206bf3ccb77ba002a8eecdaf2be52be7380b5308baccb7e8a963ec",
+        "lines": 1024,
+        "functions": 24,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/benchmark_generated.rs": {
+        "content_hash": "fd333b77506ca798bd536943da2b68da8ac84d0ddce6636e4b450493d3066f15",
+        "lines": 3766,
+        "functions": 142,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_mel_log_base.rs": {
+        "content_hash": "32d63cad1f140cc6653c4120ba67da0c4600cf15d0ef9937753946200c3494a0",
+        "lines": 99,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_k_q_dot.rs": {
+        "content_hash": "f7650b4e1a38d09caeadfd7968f1a5c448f137cea89ec1e6d73dcdcd12cd8c9d",
+        "lines": 225,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www/pkg/whisper_apr_demo_bg.wasm.d.ts": {
+        "content_hash": "64e19b75bbe1b6cb7ee96fa14239dcb2b24443a2aa241c3d2da5faa44448e4d8",
+        "lines": 504,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TypeScriptSource"
+      },
+      "demos/www-demo/src/bricks/audio.rs": {
+        "content_hash": "35913419b97fd3e6bc40701f1885bd659babbd9fd7a05153f94d92ab5a73b567",
+        "lines": 424,
+        "functions": 43,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_names.rs": {
+        "content_hash": "bcfacd81e30ee9db11458e27b93cfe2f9537ade3d66bd32024d6c48707f1e6e7",
+        "lines": 53,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/decoder_generated.rs": {
+        "content_hash": "adaa6bca2bec260a56d6183e60e099fa34c60a26c643f759ccafdba224f0a78b",
+        "lines": 5869,
+        "functions": 298,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_mel_normalization.rs": {
+        "content_hash": "a8e5a534e29491b07bd1823588c5dac5b4af80d7932d3595c8ed621e1eb3ffbb",
+        "lines": 207,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/bricks/mod.rs": {
+        "content_hash": "3ce0d1832c68328dc9df47be896d091784bd4c7de16178bcd8ac91ee3c4e1841",
+        "lines": 74,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "scripts/dump_cross_attn_golden.py": {
+        "content_hash": "241fd7821cde44704a2584586d25827fca9f57de116af5b115555be3e8a4c052",
+        "lines": 126,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "PythonSource"
+      },
+      "examples/debug_encoder_output.rs": {
+        "content_hash": "35c66ac2a3d0a03ffc58408ebcdefa256245a7ed8754d860c3f759383cffc83f",
+        "lines": 120,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_conv_stem_h25.rs": {
+        "content_hash": "cfe03df74010d487c3cad067278f8eae78277bc753bbdc077c4d3676fadacd08",
+        "lines": 236,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/zero_js_tests.rs": {
+        "content_hash": "ec46cc2ca67a36f143de4deba41c1e36da70218779a96971f31e12a28ed54c09",
+        "lines": 457,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "examples/basic_transcription.rs": {
+        "content_hash": "32b81733ebdcd7564e0ead60d36f2592180e221a8fe46171d700b20addd15a9f",
+        "lines": 89,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/component_timing.rs": {
+        "content_hash": "75041c92c8734d307afc0c31efaad2849baa1bff1695391f38d5abbeab547b11",
+        "lines": 113,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/bricks/codegen.rs": {
+        "content_hash": "a91d154e9239f43d4aaa34b73caf95a89217fd6de29a1ffdec5001f773b586d7",
+        "lines": 358,
+        "functions": 13,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/wasm/timestamps.rs": {
+        "content_hash": "d22d7afb508e75a6195caceeca895fd9ecd8081c54de1d537649d2440653923b",
+        "lines": 872,
+        "functions": 87,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_mel_content.rs": {
+        "content_hash": "849c1082fa11d34de8581b9ae26e85f5eb987125637c6a3bdd26501b4e3e7e1f",
+        "lines": 165,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/tui/visualization.rs": {
+        "content_hash": "d91df3faad17dfdd23e7452f3ca372526259498e5c4e270fbfc9397dd75c2fcc",
+        "lines": 373,
+        "functions": 15,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/inference/greedy.rs": {
+        "content_hash": "2b2a14e0eb3d7d7cd4dc6c732839e0ff4df51044fc7fc50fa585ef7583006159",
+        "lines": 593,
+        "functions": 46,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/time_encoder.rs": {
+        "content_hash": "75ae37b51130af9f7c3d767359e49cd9de03b281789f7c156dca7aa527791d1e",
+        "lines": 107,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/diarization/embedding.rs": {
+        "content_hash": "b19e8aa0f76af3e0d5934e158145a9a03295bc19adfd7d774f9f4657e99d6097",
+        "lines": 812,
+        "functions": 54,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/compare_hidden_states.rs": {
+        "content_hash": "cd3bb23c97cc20bb586c6f72fd7a292851c1f03ddf59c7fb162184dc27e8c35c",
+        "lines": 153,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/wasm/diarization.rs": {
+        "content_hash": "54e572fc4165032e5443fcad3dde773095874e9a61ec2448db47d56c4cef6aa3",
+        "lines": 1466,
+        "functions": 111,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/lfm2/gqa.rs": {
+        "content_hash": "cbb6034b7e9a3ff06c36334747b1af91caccff2712f66f78b9d66380864e2128",
+        "lines": 550,
+        "functions": 22,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/layer_comparison.rs": {
+        "content_hash": "e2df67661c2cf6d3e6e64b92c88dcfa13472494a9a289e3aea2131e3ee22ca71",
+        "lines": 525,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/tui/panels.rs": {
+        "content_hash": "3fc97ec1f4eb95c8b2e4d36f0198eb390f1a1926dc955ba502879de5bf78c370",
+        "lines": 413,
+        "functions": 12,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/format/mod.rs": {
+        "content_hash": "2cc9748620d12f78ee24451a3d9be1fa5c75f7ee4fbd5a23d2a4ff1b95179190",
+        "lines": 79,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/bricks/audio_level.rs": {
+        "content_hash": "466e62046ca38d289170f439b22defb30c286dc7711d32dd0d5b758b075a4489",
+        "lines": 697,
+        "functions": 57,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/detection.rs": {
+        "content_hash": "8d0a822a3703549ab906d2dde124129949e7f1ca5f4e86b22e5434485256bbb6",
+        "lines": 646,
+        "functions": 40,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/bricks/file_info.rs": {
+        "content_hash": "cb637945db36d092f4838de1480ca47934739e9456fa68ffd89aaac619c05833",
+        "lines": 577,
+        "functions": 44,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/attention.rs": {
+        "content_hash": "88f4941ece317f2e092b1a9a8d0ccdfb1c03cc8ef91776188b38dab073c2e56f",
+        "lines": 6,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/inference/streaming.rs": {
+        "content_hash": "2022533ea2b865202b8c9dc8cefabac42ed41ddb35ff982edebd27a36e93661e",
+        "lines": 780,
+        "functions": 52,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_transcribe.rs": {
+        "content_hash": "37831ce808c35aa1c399ff1115a6ea1e3af664660573e6f788f885754fd21792",
+        "lines": 176,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/bin/whisper-apr-cli.rs": {
+        "content_hash": "7375a3f278261fae124a8c40b96641306269fd2a0ba016450831ba72a34b93c7",
+        "lines": 46,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/encoder.rs": {
+        "content_hash": "f23ef1e82bdf6dc223328599707eb60cd0f3dc2d83b69a9586b5afdf002ad0ff",
+        "lines": 1554,
+        "functions": 101,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/backend/traits.rs": {
+        "content_hash": "20e79da4375a2070a75d600019be74c163cda2001845390526e714ec423a8b07",
+        "lines": 719,
+        "functions": 84,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_cross_attn_live.rs": {
+        "content_hash": "6f1742a69dc53e9c99b71390ba89c1693f1e3e3319b887f5a0683dc599fd09ec",
+        "lines": 216,
+        "functions": 4,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_conv_layout.rs": {
+        "content_hash": "0bfaf473a4cd338809b8ad9ad58d2b6ad0b1215cbdfa119861e3503f4e99dda8",
+        "lines": 248,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/check_biases.rs": {
+        "content_hash": "4d8185e3d742a49e989e4765955586bb3ba3805eb6e81ecd92bca863aa60738f",
+        "lines": 111,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/check_ln_weights.rs": {
+        "content_hash": "cf00c49236615d23fd3e1257db566b98e34adf934bf988f13511f21f9e38c030",
+        "lines": 108,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/gpu/pipeline.rs": {
+        "content_hash": "9743d9ded01f4ceda5ad1c73fd781b20e63c2dbd42f9549caa21b37c64aa669a",
+        "lines": 975,
+        "functions": 96,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/inference/processors.rs": {
+        "content_hash": "058746738a51d0182a22428cc268974c590f58acee704c26a9056216405511a6",
+        "lines": 298,
+        "functions": 20,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/mod.rs": {
+        "content_hash": "3ad6b63aef361737f6242ea2a5ba96019373ebf012a5c350d571afa150bcd6a4",
+        "lines": 661,
+        "functions": 50,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/format/impl_generated.rs": {
+        "content_hash": "b6e133b51283671860ab6121676e9990b9287bf982ba8549a92358948f81a554",
+        "lines": 2235,
+        "functions": 143,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/format/export.rs": {
+        "content_hash": "a6679c1cb33d1b39ffb4f50d5ab66de823a9696487604b1bc436f35a9a3b1eb5",
+        "lines": 353,
+        "functions": 13,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/language_detection.rs": {
+        "content_hash": "6fade4dff432a37239b625d0aaeece0d649b2dd1cdb7ba592a757f53394d88e4",
+        "lines": 145,
+        "functions": 4,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/inference/beam.rs": {
+        "content_hash": "a57e8521870b13a80ba0612c03b212bd37b84ca0fad000452ae4061433ea841d",
+        "lines": 825,
+        "functions": 51,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/test_default_ln.rs": {
+        "content_hash": "b07a33f8ee9693acd0b1623fd463b9435de490df209243c59d141b8e9a1a4e79",
+        "lines": 98,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_decode_loop.rs": {
+        "content_hash": "9b98769c2e16ae8f468de809278e95aa23394c870dcdd78c6513e42514187aa2",
+        "lines": 76,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/wasm/gpu.rs": {
+        "content_hash": "c4fe406e064ce4e54dac5a3fa34801ddf26eee88e3aebf2744b9ff3caa3f66fb",
+        "lines": 1386,
+        "functions": 124,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/bricks/compute.rs": {
+        "content_hash": "e05fb7721b9e9e627d08954647c6794dea6aec6d47746f13b80433fcd4f456ab",
+        "lines": 271,
+        "functions": 12,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "tests/realizar_integration.rs": {
+        "content_hash": "c2783569f0cd76bcde0ca977dd2132241fec5dcab183b3053df66335c3673948",
+        "lines": 185,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "demos/www-demo/src/bricks/tui_bricks.rs": {
+        "content_hash": "40cc06ed9ea16c9a0d373d17f246a392eb28a4ad16c6f23b3948c65c741ab13d",
+        "lines": 689,
+        "functions": 40,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/pipeline_ground_truth.rs": {
+        "content_hash": "cfb565ad341ad79c0c7a3e6687e0b47f6f4ccd2bfcd118e18c6dfbd56f0f66cd",
+        "lines": 274,
+        "functions": 6,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www/pkg/whisper_apr_demo.js": {
+        "content_hash": "a4da3022c2f4f95729d663a9478d969879531ef1684f1db9a1429ab022b6a6c1",
+        "lines": 6892,
+        "functions": 176,
+        "max_complexity": 0,
+        "category": "TypeScriptSource"
+      },
+      "demos/tests/examples/coverage_pattern.rs": {
+        "content_hash": "fde378f3011978ac3a929f2eabb98b8841592a9eb0f9d404671d9edecc66fe10",
+        "lines": 172,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "demos/www-demo/tests/brick_spec.rs": {
+        "content_hash": "595716610832babcd78e615ba8a7a3537f02be1300e0316d3fd07608706ff106",
+        "lines": 111,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "examples/test_force_prefix.rs": {
+        "content_hash": "6846e642cf0d7f613b533ca11910e76f9ab228fee8975afe919470bf763fc073",
+        "lines": 115,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "tests/realizar_50x_integration.rs": {
+        "content_hash": "10b708620933f55ed455bdc9fd371e75e0b6e40f5e419fadaa283c3749c363c4",
+        "lines": 965,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "scripts/perf_qa_2x_whisper_cpp.rs": {
+        "content_hash": "cdad23edceade297c599ea278e6a39d56a633dffac41ee93ef833cde8071c477",
+        "lines": 304,
+        "functions": 11,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/audioworklet_js.rs": {
+        "content_hash": "89a1759140aa855dd878a424a2c90035737a320eb8ca2f4438b6bfc3f94ab4ff",
+        "lines": 46,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/gpu/ops/mel.rs": {
+        "content_hash": "a39568d4e70986f33ae16b2429f65a379841294ac81563afdee2cf7625a43049",
+        "lines": 514,
+        "functions": 32,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/quantized_generated.rs": {
+        "content_hash": "3b4fbe9b2a1dce7dd999dc46d3207e895d6a6cb78ffb2f262f4d1fc77eb4eb6c",
+        "lines": 5883,
+        "functions": 296,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/inference/mod.rs": {
+        "content_hash": "66f962b026e7aa2a878830ed65046599638e43e8d56d6f3e7c6f21ab723555ca",
+        "lines": 96,
+        "functions": 4,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "tools/generate_filterbank_const.py": {
+        "content_hash": "917f3cd5cc6c7227209cb6418d6f9a52de8903606886938e617303b1b71c6187",
+        "lines": 81,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "PythonSource"
+      },
+      "examples/debug_forward_one.rs": {
+        "content_hash": "68ea4a98a9debf4dd147e00b6953afcd9f107ddd9ac6c94420b2e3f4acebd26a",
+        "lines": 140,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/lib.rs": {
+        "content_hash": "0633f408ff7709a27cfed1769ca6bce7d5bcf3528688b0c32bbf0a4f5eae5617",
+        "lines": 410,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "src/vocabulary/hotwords.rs": {
+        "content_hash": "73d0a05f0d9db0bac1c7b35c375b1aeae36f19a0a5d1eaf61b665d3eed983d4e",
+        "lines": 732,
+        "functions": 64,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/vocabulary/mod.rs": {
+        "content_hash": "80e2af50accf56592d8ef0e699ee2e25a8b21457695c9a148b5f3522a3d4dbfe",
+        "lines": 210,
+        "functions": 17,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/inspect_model.rs": {
+        "content_hash": "29422e2b5c658381e4ce9bde23717fe362bfe2c0f612c6880fc32f110d906a92",
+        "lines": 273,
+        "functions": 6,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/publish.rs": {
+        "content_hash": "640c9008f916bb4ab8ecd5e7e5f42c9361a6185d0e53eddeda9d3308a4ae9670",
+        "lines": 499,
+        "functions": 29,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/worker_rebuild_tests.rs": {
+        "content_hash": "68739228c84b4f3d25b0698880c5b043d49c8a7fea00ec9ba80473ad5cd2eb6f",
+        "lines": 390,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "examples/debug_query_alignment.rs": {
+        "content_hash": "758a3dd2d96646032c805c2c87bdf0aa03db2489cbb625ed0b54ecb35324f735",
+        "lines": 215,
+        "functions": 5,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/audio/mod.rs": {
+        "content_hash": "56996650d8145861a24d8f6e181d0bd533f950f84fede330afe2e4a83f001c8a",
+        "lines": 198,
+        "functions": 13,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/decoder.rs": {
+        "content_hash": "929449463ad6c52964767ccaade9213c0f51ecc2171bcb09e7e19c1baedd7a16",
+        "lines": 6,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_positional_dominance.rs": {
+        "content_hash": "81037d30adeaafe2e77f11169fcee80547a4b2de5512f3b5924879b96ec4529b",
+        "lines": 178,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/gpu/ops/attention.rs": {
+        "content_hash": "cfd80ef7f5164c5ce13bba2400d40b288a2c3ea404542a5bb35007f6a223136a",
+        "lines": 627,
+        "functions": 32,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/examples/print_worker_js.rs": {
+        "content_hash": "429582e5556b29bfe100368189894994572c770fbe72858a09556e56c33145e9",
+        "lines": 5,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/format/safetensors_loader.rs": {
+        "content_hash": "009fe3c12a9c1896791e0a0a87d0c9b376f86406e8f3073bf25ced797b06aa53",
+        "lines": 699,
+        "functions": 29,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/core_generated.rs": {
+        "content_hash": "b4ec82474ae4223f01c18e5524cf68b9cc0c6bbbfb88c07a0fcc7fdd3e96869f",
+        "lines": 4489,
+        "functions": 218,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_weights_loaded.rs": {
+        "content_hash": "5c69f3aec7bb88452295b50b125f6040781aaa234d52fbe7d83daa2d8123cc2f",
+        "lines": 121,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_transpose_verify.rs": {
+        "content_hash": "36eccae7be9ed7dc61d298d64359003080ebb0b2bd2fa9cce4b684b7eb2eefc6",
+        "lines": 89,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_cross_attn.rs": {
+        "content_hash": "93ceea13dd3ab106a3e6707789ce470c943a6c3e7cd95478883efa95662a320c",
+        "lines": 315,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/tokenizer/mod.rs": {
+        "content_hash": "2e6e15216ab07e002597124045f66b6e7a7b3aba3a0880447d85242247d29dd7",
+        "lines": 562,
+        "functions": 40,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/benchmark_tui_tests.rs": {
+        "content_hash": "41368bfd70798d65a615b68e0796e12fb8f6711be11729604fcff275a5c2f0e0",
+        "lines": 676,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "demos/www-demo/src/bricks/html_gen.rs": {
+        "content_hash": "027fa1c9aef2a2f7b866bc19434623dd1d53e5389726f51a6ff110479942b736",
+        "lines": 380,
+        "functions": 11,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/gpu/executor.rs": {
+        "content_hash": "4cd3941c02bd8f4fed42a17479be8c22fc0a9d1e5a7354216ffb3960fadaf67b",
+        "lines": 500,
+        "functions": 22,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_token_sequence.rs": {
+        "content_hash": "4ed84eb5b079bea2babbd047249fddec20df6f9e52de538a206c3fdec5cc68df",
+        "lines": 159,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/test_hf_encoder.rs": {
+        "content_hash": "00439ec55520affbd434e50d49bb0a9d2a5c7811c08eb95bfb09e09ec354afd5",
+        "lines": 173,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/tui/tests.rs": {
+        "content_hash": "b91ebfb4b4195ecba773360adb400d5c30b6539be3ba27880cb0eae2da923448",
+        "lines": 983,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "examples/debug_fft_scale.rs": {
+        "content_hash": "e8af4a684309c1f1af5da77f27e312cbe84b40a161298366a92887366389fcca",
+        "lines": 157,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/bin/gen_index.rs": {
+        "content_hash": "0b2630677b1ae31bad722a4ff2635aa2ac27d4c733fb33b66438646aca90b6e0",
+        "lines": 36,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/trace_encoder.rs": {
+        "content_hash": "506a9a1a737bd3a81836274126be7c168d36afb75ef77fc598c967fe8b857ef8",
+        "lines": 238,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/pkg/whisper_apr_demo_bg.wasm.d.ts": {
+        "content_hash": "64e19b75bbe1b6cb7ee96fa14239dcb2b24443a2aa241c3d2da5faa44448e4d8",
+        "lines": 504,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TypeScriptSource"
+      },
+      "demos/www-demo/pkg/whisper_apr_demo.d.ts": {
+        "content_hash": "2ed9c152e5588b8d9c7ae5fb60c339fd8a00913da60216904b079e63bbf0d7aa",
+        "lines": 2962,
+        "functions": 26,
+        "max_complexity": 0,
+        "category": "TypeScriptSource"
+      },
+      "src/gpu/device.rs": {
+        "content_hash": "6a0c8bc8e9a1341c8e5555ca2533391bd1b9e2b95cf12545d33b6e117705b33a",
+        "lines": 347,
+        "functions": 33,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/trace_decoder_blocks.rs": {
+        "content_hash": "1073e1d95f203a1bec6ef90d630b29179a191d4d7eb28ec73e805e8cf6239a80",
+        "lines": 98,
+        "functions": 5,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/tokenizer/vocab.rs": {
+        "content_hash": "70ada749b5d6619862e2fefa8a0466e6e1eb562538d7cc1df362b64fbd3e76e7",
+        "lines": 950,
+        "functions": 57,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_filterbank.rs": {
+        "content_hash": "5ff6b031b9f9c2700a95611ff3244a333943fb3344c31245d9b7d160069c1c14",
+        "lines": 154,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/lfm2/rope.rs": {
+        "content_hash": "634202a54dc1e510133fd36922278ebb43bd446c1e5aa6d139213eaa8182dea6",
+        "lines": 467,
+        "functions": 18,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/vad.rs": {
+        "content_hash": "0b7b7c0a7156629a4e13070dbfdc076a74b8cd94d0022dbf7babcd7c5d8bb432",
+        "lines": 1416,
+        "functions": 111,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/tui/app.rs": {
+        "content_hash": "d530d9a3a5db88ff5947c8199e7769a35fcbf70f68ef789677ae117012280979",
+        "lines": 507,
+        "functions": 19,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/parallel.rs": {
+        "content_hash": "ce225ca2a324f1599d6d148d6f964a69e671fd6cf770c6898feea5c6acf3bbae",
+        "lines": 235,
+        "functions": 16,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/memory/mmap.rs": {
+        "content_hash": "bd6d09b047630e9496d6e873c708ec564ce561b1267a73f43b02a8a931fe0b8d",
+        "lines": 687,
+        "functions": 61,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/diarization/mod.rs": {
+        "content_hash": "7d2ae2bdb0a1fa3c2aa1108656eec1ee45a59103ac01c5dedec1d5e6f8912767",
+        "lines": 581,
+        "functions": 38,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/check_model_filterbank.rs": {
+        "content_hash": "0f1aef3ebc4d61b14e3bd40aff4ab6a83bc420d43ed475e928a2b55313d78910",
+        "lines": 66,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/wasm/lfm2.rs": {
+        "content_hash": "709b9049938659bc480daa1bc86cc5905e5c18e2ae77e5cbccff34c02a47df54",
+        "lines": 709,
+        "functions": 47,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/gpu/ops/gelu.rs": {
+        "content_hash": "473dd19674a94f306671eabf6e4ca969ddc678303cfe89992c6ded455401c12d",
+        "lines": 591,
+        "functions": 56,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/audio/wav.rs": {
+        "content_hash": "89bc70fce2d4259c8bdf1e9909b475417a471c7461559ca193ff85eab814fead",
+        "lines": 989,
+        "functions": 51,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "tests/pipeline_fuzz.rs": {
+        "content_hash": "53de92e6db737ef4a1603f0dcd8f109df594d146754eb2042f49fb4fcb7e4ec8",
+        "lines": 436,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "examples/test_fixed_ln.rs": {
+        "content_hash": "a46372d0fac421035fd183e74f0a3145bf9bac5d0de12f1577268fdb48608bb0",
+        "lines": 99,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/diarization/clustering.rs": {
+        "content_hash": "2a8c43a84ef37253a2626189126c355388cbcc202ed601d77105caae8eb2d763",
+        "lines": 815,
+        "functions": 49,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/cuda/mod.rs": {
+        "content_hash": "253f22b8352866d54d16a6eabdc4e141e42813d70b9b15092bcc60540c75f313",
+        "lines": 9,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "tests/cli_parity_tests.rs": {
+        "content_hash": "211a5e2514e35cfb703b3e277be33bfe7cce7376299ecece618e4884b14aacb1",
+        "lines": 6774,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "src/wasm/mod.rs": {
+        "content_hash": "5fbd6188bb5ba8b19f7361ffcccd02f79e1284f38695e9d4928f0b50b1e46a4c",
+        "lines": 83,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/compare_hf_outputs.rs": {
+        "content_hash": "438e46c3a37068c54799f9a2201eab541814a348e9ee38fdb9825f48a0fe200e",
+        "lines": 276,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/quantized.rs": {
+        "content_hash": "544ccedf99b2c0f21b024f40be4df9cef54e6898d0d36a0a49bd2f7b87671114",
+        "lines": 6,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/lib.rs": {
+        "content_hash": "314b5ae926f4e213a7b293aec19b6bd642c74b62edb894f4a6bac6e9eda051c6",
+        "lines": 133,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/worker.rs": {
+        "content_hash": "732d4990a23f75819a846575eaf5339e2e6fbb972d03fa5907c2293c23489fcb",
+        "lines": 356,
+        "functions": 12,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/streaming_ux_tests.rs": {
+        "content_hash": "5e749340fb79feb4efe3ba3ad91e7b53e44c20503863970120715197d1c576cc",
+        "lines": 538,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "benches/pipeline.rs": {
+        "content_hash": "87770826c6ceaea02dc1730f84a9dfecf7a2e3bbe4200d4d93026c0e72610374",
+        "lines": 446,
+        "functions": 10,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "tests/probar_full_stack.rs": {
+        "content_hash": "6c8a2a39f0f7b2dfd7c52eca8c70bf1c067113b594b911aa7f3d62c7d3e4356d",
+        "lines": 920,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "examples/backend_test.rs": {
+        "content_hash": "a2a105bff1b985f637827a8dd950e8898fd4207baf0fb1bdbca2cc546897ab9d",
+        "lines": 830,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "examples/test_suppressed.rs": {
+        "content_hash": "7142c53cb907e2ba2df97e64adee3893ccc3736d54c451a147001dbe24332f2b",
+        "lines": 113,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/pixel_tests.rs": {
+        "content_hash": "cc853a2c739e984fe07d4382ed15275337db972b62d570a8fb887d2fda3d2ebc",
+        "lines": 221,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "examples/debug_projection.rs": {
+        "content_hash": "fa83957feec7605798014169cd8c2371ddc291fc4e4fd712bc61fe34c3a174b9",
+        "lines": 220,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/list_tensors.rs": {
+        "content_hash": "1e170316e2dc933b9c727a32346f6104fe56b998c0e5e418134b8495bb9a1821",
+        "lines": 96,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/quality_gates.rs": {
+        "content_hash": "7aebf8f1aa8ceba496e3232c96f6f720217566238f88df466b6ef2e98104983e",
+        "lines": 108,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "demos/tests/src/sparta.rs": {
+        "content_hash": "45664be8edc24b334e2f084d01a6f8e609d22139006555c4bb4e11de7a9081a7",
+        "lines": 338,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "src/format/apr2.rs": {
+        "content_hash": "1096a0b091e38274454f414418e480e7b29d1bde8c12fd51dc62c87ab0a906a7",
+        "lines": 6,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_logits.rs": {
+        "content_hash": "99da0c611f05391579e9249084cc72ebc7a258157ed94cab55e3dc0a5a3357ad",
+        "lines": 190,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/wasm/capabilities.rs": {
+        "content_hash": "122815bf60300e3dc8d839d544b699030a9970dd327f0a28a19c4d935629bacf",
+        "lines": 748,
+        "functions": 62,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/format/validation.rs": {
+        "content_hash": "3fe2c7c7733e535a9ac0061e156382f59c8f9b35adc2e20285b25228ee7b0aa4",
+        "lines": 1400,
+        "functions": 71,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/audio/streaming.rs": {
+        "content_hash": "73e279bae84bd067977535d6ca33015aa8278850d302f9cd9fa65417aa09c021",
+        "lines": 6,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "benches/format_comparison.rs": {
+        "content_hash": "2458c91ec710f800b9d9a3d86045bb1a11533040bdf8ce424f0696a8ca28e28c",
+        "lines": 272,
+        "functions": 8,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_fft_norm.rs": {
+        "content_hash": "bc0c5c3f6fb39cff7127ef9eb613e781978225d0e3cca11f49a1afda2d2838d7",
+        "lines": 87,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/compare_apr_ln.rs": {
+        "content_hash": "6856c5927f11fa61578bf0a6b5cb140fd65ed4ba5f4ffe82ac57d01611df458b",
+        "lines": 59,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/property_tests.rs": {
+        "content_hash": "7bab7c38127956888b1436287c78276d202c954d814728c58f3389d8483052c7",
+        "lines": 540,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "examples/inspect_apr_ln.rs": {
+        "content_hash": "46cdbeb87f95dc1a29093ff0b01c3ccac0205f0d9d409bb5c2c25f2c57b0f7c5",
+        "lines": 67,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/benchmark_tui.rs": {
+        "content_hash": "eef9f4a55c239ea8d93d7a6d57dd3f20f541ffbba01fee661403ad2defad7b96",
+        "lines": 794,
+        "functions": 27,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/audio/resampler.rs": {
+        "content_hash": "3d9336e74c7ba2201f383bc2dd24f69dc03861fd1d99ca0f0499d650a9da562f",
+        "lines": 680,
+        "functions": 38,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "tools/compare_layer_norm.py": {
+        "content_hash": "9f471a1d2a726e12acd7ebb01537d1e493608f575ccd45612ff34989f1b2f9cd",
+        "lines": 151,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "PythonSource"
+      },
+      "examples/debug_attn_entropy.rs": {
+        "content_hash": "4dd641caaadfd72f3fb86ba2bacdf9882fe6363c6ede8b8639c454f5ad044ed8",
+        "lines": 274,
+        "functions": 4,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/test_int8fb.rs": {
+        "content_hash": "0691749ea89cd4a5f2852af0259574e8d19e6948056d988b00a88966e0537889",
+        "lines": 15,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/test_hf_mel.rs": {
+        "content_hash": "41a28bb26832a5bfd0528630192c61adacc1c8a7a4666419adba5adcd4a86d81",
+        "lines": 129,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/dump_hf_tensors.rs": {
+        "content_hash": "ba8c5b381e6f7848127d4e06e4c855599600d2bf2eb767d035aca16bb0a7cb12",
+        "lines": 121,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_decoder_hidden.rs": {
+        "content_hash": "84c5f7fad5063d9e7b1be307db95832cf59628418f7c281913fcc9e0cd14abe9",
+        "lines": 287,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/cli_usage.rs": {
+        "content_hash": "8e0c2949427df4cb11f20a492094c720707f8fe778bac48d014a2bceec9549ce",
+        "lines": 101,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/timestamps/boundaries.rs": {
+        "content_hash": "8c8c1fa93a2e2285b8782abb2ff52c359c83817f57fb5d4945605ee41ad399e6",
+        "lines": 775,
+        "functions": 60,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/verify.rs": {
+        "content_hash": "0d0dbae35ab43cce86ef4ae2ed10f3701e91a9aa6344fe7ffdf6e8147bb4ddec",
+        "lines": 701,
+        "functions": 41,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "benches/inference.rs": {
+        "content_hash": "91a8fb0b306b159261bce88bed2b462bb04a4ae194d281e3b3aa9f1fb7145191",
+        "lines": 350,
+        "functions": 9,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/compare_encoder_hf.rs": {
+        "content_hash": "382240261790c431a6d3a9bcb97c592c4edfbe95e24b95ae4ca99b8b691edebb",
+        "lines": 179,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_kv_projection.rs": {
+        "content_hash": "8b4f40aab12452605aa87c21cfb3304157c7eaf1f94ee53ec9be7b181c6fda2a",
+        "lines": 143,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/five_whys_validation.rs": {
+        "content_hash": "084115f4948e60b01c9b736abe3974a872edb632324285e47f4637c0d0e4c628",
+        "lines": 260,
+        "functions": 4,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "tools/extract_ground_truth.py": {
+        "content_hash": "5130bfae41a0389c3b5681a4f4f2e644e6e2aa0f29fd12e44223a9e06fffce6f",
+        "lines": 357,
+        "functions": 10,
+        "max_complexity": 0,
+        "category": "PythonSource"
+      },
+      "examples/test_our_encoder.rs": {
+        "content_hash": "b803bd64eb80164d742cbfd0e38d7f817e762d3a4f52c9bc7f2a90e5645223d8",
+        "lines": 118,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/cli/args.rs": {
+        "content_hash": "e158dc9e4d0627a8b9dd13d7d060ba37c1290ff73b343cefd3dc33b053a9148b",
+        "lines": 6,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/cuda/tests_generated.rs": {
+        "content_hash": "fa0fa248b1888e264c532e7b4e4d29c04073e94062852d0e50cdb37ae411f82d",
+        "lines": 5479,
+        "functions": 33,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/comply_tests.rs": {
+        "content_hash": "90dcc1b24ba2b72f30c3cac0eac147bf411880b657fd06e15b017846192ab375",
+        "lines": 343,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "demos/www-demo/src/bricks/partial_results.rs": {
+        "content_hash": "7a1933a7f75b042588303602660dfc8c9d0dcd902a34b7fbaa214476d3494246",
+        "lines": 825,
+        "functions": 68,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "scripts/publish.rs": {
+        "content_hash": "4c97107ced917bd51f6da88803330f38a76a03341360669ba7373e73cbadd376",
+        "lines": 274,
+        "functions": 4,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_enc_pos_embed.rs": {
+        "content_hash": "2076fdc032d320ec89fa3cec262a09113cdb737013f21f4eb31964d27ffcc93f",
+        "lines": 141,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/ux_flow_tests.rs": {
+        "content_hash": "a5100d0312334f86a2e98a3d9229ae53698569076dce40515cb117393ae0ab69",
+        "lines": 565,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "demos/www-demo/src/bricks/vu_meter.rs": {
+        "content_hash": "acc50864c79985939ca07e59d97aa30ab7c3122c7a258050fe87aedd266d36c6",
+        "lines": 362,
+        "functions": 36,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/bricks/waveform.rs": {
+        "content_hash": "d3061e1695b87511958dec7e5384ea726d4f6785b1b11366ea9eba8491f29700",
+        "lines": 393,
+        "functions": 36,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/wasm/worker.rs": {
+        "content_hash": "80ef8f319f7849c2f95c5827568b654761a9d1ee24c0fb6d7c087f7e2df6fbe9",
+        "lines": 663,
+        "functions": 47,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/verify_mel_pipeline.rs": {
+        "content_hash": "aa4dbf701411948b78262633e807421bb306a6e0f0ea4745ef3c889ec2380ed8",
+        "lines": 190,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/backend/selector.rs": {
+        "content_hash": "52d67e44d4d418813bf6ca4c7a2cfce7e28aabbd57403e0420932aea7f9c6623",
+        "lines": 588,
+        "functions": 50,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/lfm2/swiglu.rs": {
+        "content_hash": "d3540c1a67989fe50997a116a0b84d2c646f17f1a2ce98352464d78b82bfb54f",
+        "lines": 377,
+        "functions": 24,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/format/apr2_generated.rs": {
+        "content_hash": "70e4a1cd998c9ac09d2e2fd00787e571eb43222b941c4512677670f4ac2610ff",
+        "lines": 2038,
+        "functions": 101,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/cli/mod.rs": {
+        "content_hash": "46bf04cba45f06f005442758e8ce49389af26d1f1e41a710a275ef18efbfee15",
+        "lines": 36,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/pkg/whisper_apr_demo.js": {
+        "content_hash": "b5baea755f2c7e8d6643d0a626691daba09e0a04b36f3e670e8cdc91a076410a",
+        "lines": 6899,
+        "functions": 177,
+        "max_complexity": 0,
+        "category": "TypeScriptSource"
+      },
+      "pkg/whisper_apr.d.ts": {
+        "content_hash": "85d7bd7084ad0367112e6b98d1a37ff29eeac7e4d2223e99c30f76c085eae7f4",
+        "lines": 2791,
+        "functions": 23,
+        "max_complexity": 0,
+        "category": "TypeScriptSource"
+      },
+      "examples/test_copied_ln.rs": {
+        "content_hash": "fd4ff7d77d011481c18bf57c599b228e958d2cada68ec70fbf329f96f531bafc",
+        "lines": 110,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/progress.rs": {
+        "content_hash": "e157f595bbfe16d8311b98cd13450f63594707c6d25f8113c91650f3ca752bad",
+        "lines": 524,
+        "functions": 51,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_mel_stages.rs": {
+        "content_hash": "de94cc2c61ef0a40262377bc89d5a8cc3fa8e806fd1db0da1fa814cdd6703b34",
+        "lines": 162,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/worker_js.rs": {
+        "content_hash": "681802603c04b89e2a51372c7b885a60b9a12fdc89a21c681a9aaf8dd4382778",
+        "lines": 138,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/bricks/transcription.rs": {
+        "content_hash": "dc3d5fc1587b242466cdd3e7da8e86bc8b76d99d774007796ac59fa1a6a12802",
+        "lines": 442,
+        "functions": 39,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/cli/commands_generated.rs": {
+        "content_hash": "f738fe3e437aae72674ba718d32463b5ebf03ad5f42d77f67ce65d57cd10af7e",
+        "lines": 5302,
+        "functions": 143,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "tests/integration_transcribe.rs": {
+        "content_hash": "2ae3c0f45e6a2389dbcfca00bef2b5d19b27a148179c4064406de65b03cbec71",
+        "lines": 1508,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "examples/debug_h35_positional_singularity.rs": {
+        "content_hash": "3974dc11d675d35df808d7b25c7ee5b69902e207b21b3a2f7fbbd5cc459586bc",
+        "lines": 253,
+        "functions": 5,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/bricks/performance_stats.rs": {
+        "content_hash": "4517ab10b89e04452626dc4b9f8b3beb7a15c2c374a1da9852dc06e97075b402",
+        "lines": 1018,
+        "functions": 73,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/timestamps/mod.rs": {
+        "content_hash": "a3bdb46ef93b0d428af3d4d6284aca41691e1dbc4b75bdf9dbe08b30206c4e54",
+        "lines": 254,
+        "functions": 19,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "benches/wasm_simd.rs": {
+        "content_hash": "5639a0523da32735d839d53d9508743e842bd3a89082f67d1a579b9bc57dc79d",
+        "lines": 252,
+        "functions": 6,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/lib.rs": {
+        "content_hash": "e0c544954ce9fb582e2d53000d56eb0c0d57d5721c14c9f07e7532161c0e5205",
+        "lines": 64,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/compare_filterbank.rs": {
+        "content_hash": "bb981a050024730be4b295062b91a9f0bd64166d1cd6b40ac49a64ac11305e7d",
+        "lines": 252,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/show_decoder_tensors.rs": {
+        "content_hash": "f51a0331233d6ceb330212ae4f287f1421ef368e508eb2de0db66d3b0e86641d",
+        "lines": 24,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/single_token_bench.rs": {
+        "content_hash": "e1481ee4bf43317fc79a6c4ecbc54ed8e806ddca3f065934c7fd0cb86ab9ce68",
+        "lines": 101,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/memory/zram.rs": {
+        "content_hash": "5dc2fbc442b439ad0bfee93e1b4a2f35ff1286a2beedcdab4afc5c0946234ed8",
+        "lines": 414,
+        "functions": 22,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/gpu/capabilities.rs": {
+        "content_hash": "ab33e0a52db86c775b63ca46702404fbcb0c4a81318dfb147a245d8f242f16ca",
+        "lines": 407,
+        "functions": 32,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/mel_spectrogram.rs": {
+        "content_hash": "c0adcb0e7942ca4cd51cb76bdfde5ba32d9805470bb65e57eb28a99054fe27e1",
+        "lines": 156,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/compare_mel_hf.rs": {
+        "content_hash": "e383662bde83e8383a2a27588b736fe14299419de950e8c43e6938e43add8a65",
+        "lines": 169,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/diarization/segmentation.rs": {
+        "content_hash": "2e4c2f4a480c6c33767d81e6026ee68fadb699dba6352ae77d75d3b180adb722",
+        "lines": 699,
+        "functions": 53,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/lfm2/tokenizer.rs": {
+        "content_hash": "6cf17302bbd3d173499b3e908f257058ff4396e8c10b220b46472352a7d195b7",
+        "lines": 956,
+        "functions": 50,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/trace_decoder.rs": {
+        "content_hash": "d74476f4beb8dfa2be036567191a82f4158f1deb20fbf60083dc46d98dfd34f0",
+        "lines": 282,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/memory/mod.rs": {
+        "content_hash": "16003d902f7f407ce46cdf520ddb7d4fa167c1e0ea318f5b4c5fb4eb3933f3b4",
+        "lines": 15,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/format/compress.rs": {
+        "content_hash": "16bd0ee42bd828b70f2cd8a48654dcbe94e2f6b90cf125816e1b30ac46f58479",
+        "lines": 804,
+        "functions": 47,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/bricks/chunk_progress.rs": {
+        "content_hash": "3ddac2f81a98358a62fa4286b4fb9ae73a881790d21fae25a447701a70deb05a",
+        "lines": 880,
+        "functions": 68,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/compare_models.rs": {
+        "content_hash": "24ab15e1ed5b06c65aa976322ce9299074a1c7c4b3f0d35fa89ffb62ea501218",
+        "lines": 78,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "pkg/whisper_apr_bg.wasm.d.ts": {
+        "content_hash": "7e7cce81747be7ae19f63c1ce6252ec6293c66f6f5ff2046525bac6669f6eabe",
+        "lines": 463,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TypeScriptSource"
+      },
+      "examples/tui_demo.rs": {
+        "content_hash": "a2c948a79422cfb55c12af77dcbaa241d7be70a7e42e4a35fdfcc84eeb335705",
+        "lines": 182,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/simd.rs": {
+        "content_hash": "60f9a66fc431680f50f2ac1e01344bcb500f33ea95de7efd3c1b97e7ccb288e4",
+        "lines": 1181,
+        "functions": 84,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/trace.rs": {
+        "content_hash": "82a6ff5a4df5065b0ea5d7e26e75c5401f2a1d36a9d9968e04afef587aa4ad5f",
+        "lines": 102,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "benches/streaming_latency.rs": {
+        "content_hash": "53e6b91be7c4a67215ed411e10b73d16bb5196b2ac286f3d5e1be1e4d42300f8",
+        "lines": 442,
+        "functions": 8,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "tools/compare_logits_hf.py": {
+        "content_hash": "e4675d356477a69e7579159832ea023d97bf432a1dd035f58bb696e83ce2bc3c",
+        "lines": 134,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "PythonSource"
+      },
+      "src/wasm/vocabulary.rs": {
+        "content_hash": "06927f67e77ff85dbc40d85d038fd9a5be9eccdd1b9dc7d6a330c4353ea7cf48",
+        "lines": 1249,
+        "functions": 134,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/audio/batch.rs": {
+        "content_hash": "af8ff7b7b8d3607c88e6d8b88e2b05319e697fa62bdeb00efed0efd90b82b8df",
+        "lines": 497,
+        "functions": 42,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/tui/mod.rs": {
+        "content_hash": "31a5225cb4806ae692252036c359728522d8088d440f05df5b04fbd83289390d",
+        "lines": 52,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/streaming_audio.rs": {
+        "content_hash": "7ea7426939ac28c4ff0c92c1c6cdd4df9d3e5c6321491950d88100665adcd3b4",
+        "lines": 104,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "tests/ground_truth_tests.rs": {
+        "content_hash": "90d2a570e4d49b8d9ee6da2a2e97ede8b53c6ecf0ea49ddbbe2b9ddf58118c89",
+        "lines": 814,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "demos/tests/src/performance_tests.rs": {
+        "content_hash": "ba374afc4f6f5830ed455d0f46ac3645a62308129a275a2982724469b293dd13",
+        "lines": 516,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "demos/www-demo/src/bricks/progress.rs": {
+        "content_hash": "ee4eb127b8d5ceec6832095e215e6d2200af747a7fbfd61eb30606baca864c6b",
+        "lines": 699,
+        "functions": 60,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/lfm2/mod.rs": {
+        "content_hash": "ece32108c7fa31292ee5c590428d8a5ee562601cda30699b20b5d1c3b93b44bb",
+        "lines": 46,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/bricks/score.rs": {
+        "content_hash": "0ee2ff433b7c1e7f9a7156d3c78de59a434d3206ddd2eef6c35ecbcc95eb4cfc",
+        "lines": 602,
+        "functions": 39,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/vocabulary/trie.rs": {
+        "content_hash": "a2e7c56a1e0e555233a9ba6fc8658bd9f538d97f4458a3e57f862b8f48b6bb86",
+        "lines": 729,
+        "functions": 66,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/test_transcribe_api.rs": {
+        "content_hash": "c0eba639f491a736563d5f32132fb658a918b4ca4cced6be3d235b349bbe336d",
+        "lines": 72,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/timestamps/alignment.rs": {
+        "content_hash": "89b355b681ca5bee2f0893a3b3b1545f2e2544073d34315552e5188597f27790",
+        "lines": 724,
+        "functions": 49,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/examples/uat_browser.rs": {
+        "content_hash": "2dacb1d8535b2b17dc7845b1a749da4552ff59d9902c60d8b0fedfe79d4aaf56",
+        "lines": 187,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "src/memory/pool.rs": {
+        "content_hash": "dc7dbeb134772f7049e87aa9409b8cc1e08cb274536f1cb6a6bd837b9d76de3f",
+        "lines": 590,
+        "functions": 51,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/audio/ring_buffer.rs": {
+        "content_hash": "63dae83e338675f2b215fa7dc224d80de838919b20d675e9e98844b438be8fbc",
+        "lines": 675,
+        "functions": 37,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/gpu/mod.rs": {
+        "content_hash": "f79ef9c2885d46506cf9cfdc0a0e718e228cf96bc7b7330414b3acfb9fd9c8b2",
+        "lines": 81,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/error.rs": {
+        "content_hash": "93e37f3fc252a5dc8e52b4e2a1fe29c876bf1d03424adbb9d802466b44b40b57",
+        "lines": 93,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/cli/commands.rs": {
+        "content_hash": "100208227ee20c2656abe68bf579ac1255429da708993dad7c28681c33d1ace5",
+        "lines": 6,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "pkg/whisper_apr.js": {
+        "content_hash": "0b880c273d824531d043ef0294f6537eab016f47aaad767162d4801de3926c17",
+        "lines": 6472,
+        "functions": 138,
+        "max_complexity": 0,
+        "category": "TypeScriptSource"
+      },
+      "tests/publish_integration.rs": {
+        "content_hash": "e2a3e9a1b6e9a5b0e8f03417123a514cda4e02793bdf15a8d5b3352ffc4fa4d8",
+        "lines": 326,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "demos/www-demo/src/bricks/status.rs": {
+        "content_hash": "2771fdd84a9542a2ca79e45e7ecf86d6c66819d072053198cc96f223c26dbdf8",
+        "lines": 391,
+        "functions": 39,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "tools/check_hf_weights.py": {
+        "content_hash": "ebc62ef00f7b0819c9e032893407acce9ad78f352f95ffbd7cd9943b8f0f11d4",
+        "lines": 88,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "PythonSource"
+      },
+      "demos/www-demo/src/bricks/tui.rs": {
+        "content_hash": "e05ec4e355d3702e1a9575cfa7277a6b0b3bd0e3456e1ff64abc32001b537572",
+        "lines": 397,
+        "functions": 25,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/download.rs": {
+        "content_hash": "c142e4db09a4128c9513f0a7d5178c1051c0478fcc5634b9e2494912bbf2f1c5",
+        "lines": 379,
+        "functions": 21,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/verify_optimization.rs": {
+        "content_hash": "235d5c99dfde125c417ebfff56d6b7eafc96a17f68dd72c2001b35f9d781074d",
+        "lines": 73,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/wasm/impl_generated.rs": {
+        "content_hash": "3d53736fae5a7a504a03d8fcd33a5e73ac8df8732d5bcbf6149fc0ceb6cbf7db",
+        "lines": 2537,
+        "functions": 222,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/cli/output.rs": {
+        "content_hash": "e878b6a11aacca54ebe1af8a10ed7d41620f364ad1828209abbce339a368a93c",
+        "lines": 686,
+        "functions": 47,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/cuda/impl_generated.rs": {
+        "content_hash": "8b92c804003c83a931d50015e244bdb8ee5cbdcf07908af79174cfc8b5a3b962",
+        "lines": 4248,
+        "functions": 58,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/backend/mod.rs": {
+        "content_hash": "390076a136db7b2b7bca456c746735648cd9a895c08da7b10269a118af4f2297",
+        "lines": 45,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/browser_tests.rs": {
+        "content_hash": "c955615ace5f948a63af454a517b1f48c89b77ba2b90df9062452766941935a5",
+        "lines": 2369,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "examples/debug_attn_scores.rs": {
+        "content_hash": "3f1016d0ac2e2a078ba7dba449c3761296686670e1d815bbb21159e02ba323cd",
+        "lines": 205,
+        "functions": 4,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/list_model_tensors.rs": {
+        "content_hash": "611846d741388906562100ea36fc1613898ccd00bc6e724f4f912ca7d4d9e5e1",
+        "lines": 76,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/integration_rebuild_tests.rs": {
+        "content_hash": "412aaa0e1416d8b7d923eeb2f7aa65cc3794b424f0b3a6168837b3a0f30b80d5",
+        "lines": 459,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "scripts/ground_truth_compare.rs": {
+        "content_hash": "071746a099fdb43ea885efc29358bf251e63b8aa6d8d64e0290a06878e3b658c",
+        "lines": 44,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/gpu/ops/mod.rs": {
+        "content_hash": "b54ce339e05f6da7e1d42783ee83835f867ca6e7ea42c652246705167343bf70",
+        "lines": 60,
+        "functions": 4,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_attention_mask_fix.rs": {
+        "content_hash": "57acb2814d329ce8104cf8bb2774ad0992595e2069384e0c7b59e1dd4967b452",
+        "lines": 219,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_decoder_cross_attn.rs": {
+        "content_hash": "eaf5721daea4f000dc108e7d87011709e0649e73d235f43c55b9aa2e542563db",
+        "lines": 317,
+        "functions": 5,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/compare_mel.rs": {
+        "content_hash": "088d5c7671a2fb5dd3c8cb6e450594b651a86065f939a2f5b74a994eb103fb13",
+        "lines": 146,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/compare_mel_exact.rs": {
+        "content_hash": "a4479acf0f16a5b7bfb98fc8e63e24fc32a54557acb8e768edbaa90fb6f2a7a1",
+        "lines": 126,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/falsification_tests.rs": {
+        "content_hash": "be2038a371d57c45a94819c71ff8d8cba7fbca233d5b66962e249d33994d04b9",
+        "lines": 2401,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "tools/extract_filterbank.py": {
+        "content_hash": "d54266077cb910c3005f42059d3b8a82adcddf0a4a36feaff42bf380bd38233c",
+        "lines": 102,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "PythonSource"
+      },
+      "examples/trace_hidden_state.rs": {
+        "content_hash": "bf9ed51ca1e6f9901fe7bf170bb29bc7b8d60017013ef2124a15b5d3e6bed03a",
+        "lines": 160,
+        "functions": 7,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_end_positions.rs": {
+        "content_hash": "f91854457a780e48f02434679ac519afed022d068c160ff29b2dc8881d5781eb",
+        "lines": 129,
+        "functions": 3,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/token_scaling.rs": {
+        "content_hash": "e0c29c824b8ee6a1694ac0cf44526d4a520a5eef9ff0d123c9182f37bf569cb5",
+        "lines": 33,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/gpu/ops/softmax.rs": {
+        "content_hash": "18b004ca2b14dc3e2bd70be980d3d3a48949387410885d7be9f9354ac9ee23de",
+        "lines": 549,
+        "functions": 40,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/cli/args_generated.rs": {
+        "content_hash": "0bae98f0835033bd3a78ce4b262e3869306d576e84e6a4976a076ff94279ee72",
+        "lines": 2220,
+        "functions": 51,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/timestamps/segment.rs": {
+        "content_hash": "df921823bf4c3462a9668756c2256f60c700868fc216ab5df7013ae27a4f113a",
+        "lines": 677,
+        "functions": 42,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "benches/cli_benchmarks.rs": {
+        "content_hash": "beb665e8692ba3503a432e60211b3b8b9d4e8239bbebb96c028ddb0a42d2cdf0",
+        "lines": 163,
+        "functions": 5,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www/pkg/whisper_apr_demo.d.ts": {
+        "content_hash": "2ed9c152e5588b8d9c7ae5fb60c339fd8a00913da60216904b079e63bbf0d7aa",
+        "lines": 2962,
+        "functions": 26,
+        "max_complexity": 0,
+        "category": "TypeScriptSource"
+      },
+      "demos/www-demo/src/worker_manager.rs": {
+        "content_hash": "2f5b94ec16b6fb217c32f9fe987dbdf89814e4d3f934ed867dd7048a75dc589c",
+        "lines": 279,
+        "functions": 11,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/cli/model_loader.rs": {
+        "content_hash": "87a13dc052284036315787f99accb1394c06a178732508fe102210ac7913f9db",
+        "lines": 575,
+        "functions": 17,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/format_comparison.rs": {
+        "content_hash": "5e9c7f2c56178a629716ab4fb34a78417b4cbbb0efa8535c69ccdd87bcab9a3b",
+        "lines": 215,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/cli/parity.rs": {
+        "content_hash": "332cdc69f6bb5a10a51f300e01d0553e8808f77825f1a1767aa97f118cde607e",
+        "lines": 735,
+        "functions": 48,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/timestamps/interpolation.rs": {
+        "content_hash": "b1cc0a8cbaa33fc5df268e1a800115a631cd1563e8c99885c16873a0aab8bc5a",
+        "lines": 687,
+        "functions": 39,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_k_transpose_test.rs": {
+        "content_hash": "1052b344345261983a91df287c0390b2399f67aa79064d2c2f3be3445cb223e2",
+        "lines": 289,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "examples/list_all_tensors.rs": {
+        "content_hash": "2c8c182155304ddbc25bff51fcdc91c36c0469d12c6ffa607fff2199b2134508",
+        "lines": 56,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/transcription_test.rs": {
+        "content_hash": "7bcfefdadb1b09428cd5a559c2fc458df328e02435b773c114f27238589a1082",
+        "lines": 161,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "src/gpu/detect.rs": {
+        "content_hash": "668908c68b5777aa5abf2314a858b448a0e2b3df1e5b0e74f443e70a213857da",
+        "lines": 888,
+        "functions": 58,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/check_decoder_tensors.rs": {
+        "content_hash": "156fde0e3dcd9f4b3c29c7086503d5385fc97a523091748419827e7282944bf9",
+        "lines": 51,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/attention_generated.rs": {
+        "content_hash": "dabe63337ae6821719760b6966ec2970328d13d3f0ea3d73aa9f4b58207313f2",
+        "lines": 2601,
+        "functions": 116,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/worker_js_tests.rs": {
+        "content_hash": "6edc056f0e4298bc93c85effe1c691f323409ba4a4a5776b3469c85e9607ffa4",
+        "lines": 314,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "demos/www-demo/src/bricks/timing_stats.rs": {
+        "content_hash": "163a79230010ced9e2bc178e005c81da3b3688866236a352996b16b2b955c752",
+        "lines": 860,
+        "functions": 58,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/tests/brick_check.rs": {
+        "content_hash": "b181c5ef045cd9a7f85072beb4e70e7f2c6ad9f926b9e8c1fd7e12aaa71c5f2a",
+        "lines": 29,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      },
+      "examples/debug_mel_values.rs": {
+        "content_hash": "1271fe92dfbe9cfc090e22c78eed6907fcc0e6f75c1032fe3dbd810293e25574",
+        "lines": 106,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/www-demo/src/ring_buffer.rs": {
+        "content_hash": "0c32925434311190a0b4ed1984034f2e78c22e7053128c77497bddbba0fee040",
+        "lines": 195,
+        "functions": 9,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/benchmark_pipeline.rs": {
+        "content_hash": "90daf989b9673f39d6f6ce6efedd9c019a8eef26e79b785ff7855498c5fc55c9",
+        "lines": 220,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/gpu/ops/layernorm.rs": {
+        "content_hash": "f2ca9c9a1a714899e9db7798e4cb7bce9553e8cf4b7cfc23e1daa8fdc8d5686b",
+        "lines": 613,
+        "functions": 46,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/wasm/threading.rs": {
+        "content_hash": "05084b3b7daf1b92ab803fd70ee58abbf4ce12e5dd74fdd72555d320ddbbbca2",
+        "lines": 304,
+        "functions": 22,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/audio/mel_filterbank_data_generated.rs": {
+        "content_hash": "efcbf1f78d93b5bf8123472e876dc6f82f89578c3ec1f2396f2fd8fb69f492c3",
+        "lines": 41846,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_transformer_collapse.rs": {
+        "content_hash": "cc8022c6ee977771902f1a430c34a5270d2bc78cdb245fbf59fefb3bfe7d2e2a",
+        "lines": 250,
+        "functions": 5,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/verify_encoder_post_fix.rs": {
+        "content_hash": "03b43869e5cedeb8951f84862a63ad512798c00ebd0f19e956c19ee2a2353489",
+        "lines": 116,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/pipeline_falsification.rs": {
+        "content_hash": "9ed32d68da87c5906ace365476c32ee9b82d65c89a2ab34cb58631cb3812224e",
+        "lines": 627,
+        "functions": 11,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/gpu/ops/matmul.rs": {
+        "content_hash": "85d616f392e1b0d6bd570f9bfca6f425336545edb9170b724e8c39b040a44bbe",
+        "lines": 604,
+        "functions": 55,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/compare_hf_padded.rs": {
+        "content_hash": "752232173bcc17447a2cd6c58595a8dcbf469be75df0c8a272ff4bc6c2595906",
+        "lines": 224,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/parallel_inference.rs": {
+        "content_hash": "03870cceef7d5426bb627e1790bfd8f82a74f4833534d9db99eae9d70886cfb0",
+        "lines": 112,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/lfm2/conv.rs": {
+        "content_hash": "052d8aa6e48d84aad933ffd028c0f0bd28953e1a1d961fe7df634630eb1722c1",
+        "lines": 558,
+        "functions": 23,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/gpu/error.rs": {
+        "content_hash": "0bf5b5c50b0aba879f926bf4c24f4dfbee822bf035dbcb998f9da955f13a0f4e",
+        "lines": 199,
+        "functions": 15,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/format/checksum.rs": {
+        "content_hash": "944567daab77f9d7c54ca59621ef68afdf928662468b3624da52de66c9172567",
+        "lines": 392,
+        "functions": 33,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/debug_forward_trace.rs": {
+        "content_hash": "c23ce589a424c84aef04e6a17ba6903b7108619e6db45d550880d96d8baf977c",
+        "lines": 236,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/audio/streaming_generated.rs": {
+        "content_hash": "53a9e2d8607b17d095e5845a79693af05560743bc46a436e1713c13594b1932e",
+        "lines": 2456,
+        "functions": 170,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/pipeline_tui.rs": {
+        "content_hash": "8519ff40834d201d50f3f72aab6aac8317edf603ebb35ac5d2213384fcff4e51",
+        "lines": 476,
+        "functions": 6,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/vocabulary/adapter.rs": {
+        "content_hash": "fad9d64bf9872fe2284f5ec2e2171e2b73aec92314041bb76e1a0f3cb179bb68",
+        "lines": 827,
+        "functions": 73,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/profile_encoder.rs": {
+        "content_hash": "a2e3df9315dda56d7cb5980f42ade9b5238af6c87dd70aa02c28695e974cdc78",
+        "lines": 278,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "src/model/lfm2/model.rs": {
+        "content_hash": "134f00472c2eb6ad6c806ccaa274165021d7bc84f6fd498a878e4d85f8727823",
+        "lines": 1908,
+        "functions": 74,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/test_decode_hf_enc.rs": {
+        "content_hash": "ecc02da96dc3ea0510c04cc120d240fc081fbe34dc22ab51ef02fc51496422a6",
+        "lines": 101,
+        "functions": 2,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/verify_hf_weights.rs": {
+        "content_hash": "dd437b3f89c37d5614338ab84b4001cfe94f5ba9ba6cc7d270a5d4af4ae4a7e2",
+        "lines": 176,
+        "functions": 1,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "examples/filterbank_embedding.rs": {
+        "content_hash": "7e87974ce31d230d0770d9090838937eed0c29296ea629e1ab1962d59581ca85",
+        "lines": 281,
+        "functions": 8,
+        "max_complexity": 0,
+        "category": "RustSource"
+      },
+      "demos/tests/src/tui_render_tests.rs": {
+        "content_hash": "5c2770f8bade2010cb699c79f43394e7d70e06e37e084eaf5349f896c61523a4",
+        "lines": 898,
+        "functions": 0,
+        "max_complexity": 0,
+        "category": "TestCode"
+      }
+    },
+    "coverage_required": [
+      "src/bin/whisper-apr-cli.rs",
+      "src/trace.rs",
+      "src/tui/mod.rs",
+      "src/tui/panels.rs",
+      "src/tui/visualization.rs",
+      "src/tui/app.rs",
+      "src/vad.rs",
+      "src/backend/selector.rs",
+      "src/backend/mod.rs",
+      "src/backend/traits.rs",
+      "src/diarization/mod.rs",
+      "src/diarization/embedding.rs",
+      "src/diarization/segmentation.rs",
+      "src/diarization/clustering.rs",
+      "src/progress.rs",
+      "src/tokenizer/mod.rs",
+      "src/tokenizer/vocab.rs",
+      "src/detection.rs",
+      "src/vocabulary/hotwords.rs",
+      "src/vocabulary/mod.rs",
+      "src/vocabulary/trie.rs",
+      "src/vocabulary/adapter.rs",
+      "src/memory/zram.rs",
+      "src/memory/mod.rs",
+      "src/memory/mmap.rs",
+      "src/memory/pool.rs",
+      "src/parallel.rs",
+      "src/gpu/capabilities.rs",
+      "src/gpu/mod.rs",
+      "src/gpu/device.rs",
+      "src/gpu/executor.rs",
+      "src/gpu/pipeline.rs",
+      "src/gpu/error.rs",
+      "src/gpu/ops/mod.rs",
+      "src/gpu/ops/attention.rs",
+      "src/gpu/ops/mel.rs",
+      "src/gpu/ops/gelu.rs",
+      "src/gpu/ops/softmax.rs",
+      "src/gpu/ops/matmul.rs",
+      "src/gpu/ops/layernorm.rs",
+      "src/gpu/detect.rs",
+      "src/gpu/buffer.rs",
+      "src/publish.rs",
+      "src/core_generated.rs",
+      "src/wasm/gpu.rs",
+      "src/wasm/timestamps.rs",
+      "src/wasm/capabilities.rs",
+      "src/wasm/mod.rs",
+      "src/wasm/impl_generated.rs",
+      "src/wasm/threading.rs",
+      "src/wasm/lfm2.rs",
+      "src/wasm/diarization.rs",
+      "src/wasm/worker.rs",
+      "src/wasm/vocabulary.rs",
+      "src/benchmark_generated.rs",
+      "src/cli/args_generated.rs",
+      "src/cli/mod.rs",
+      "src/cli/commands_generated.rs",
+      "src/cli/args.rs",
+      "src/cli/model_loader.rs",
+      "src/cli/parity.rs",
+      "src/cli/output.rs",
+      "src/cli/commands.rs",
+      "src/model/mod.rs",
+      "src/model/attention.rs",
+      "src/model/encoder.rs",
+      "src/model/quantized_generated.rs",
+      "src/model/decoder.rs",
+      "src/model/quantized.rs",
+      "src/model/attention_generated.rs",
+      "src/model/download.rs",
+      "src/model/decoder_generated.rs",
+      "src/model/lfm2/mod.rs",
+      "src/model/lfm2/rope.rs",
+      "src/model/lfm2/gqa.rs",
+      "src/model/lfm2/conv.rs",
+      "src/model/lfm2/tokenizer.rs",
+      "src/model/lfm2/model.rs",
+      "src/model/lfm2/swiglu.rs",
+      "src/timestamps/mod.rs",
+      "src/timestamps/boundaries.rs",
+      "src/timestamps/interpolation.rs",
+      "src/timestamps/segment.rs",
+      "src/timestamps/alignment.rs",
+      "src/format/mod.rs",
+      "src/format/checksum.rs",
+      "src/format/impl_generated.rs",
+      "src/format/safetensors_loader.rs",
+      "src/format/apr2_generated.rs",
+      "src/format/validation.rs",
+      "src/format/export.rs",
+      "src/format/compress.rs",
+      "src/format/apr2.rs",
+      "src/error.rs",
+      "src/lib.rs",
+      "src/cuda/mod.rs",
+      "src/cuda/impl_generated.rs",
+      "src/cuda/tests_generated.rs",
+      "src/simd.rs",
+      "src/inference/mod.rs",
+      "src/inference/beam.rs",
+      "src/inference/processors.rs",
+      "src/inference/greedy.rs",
+      "src/inference/streaming.rs",
+      "src/verify.rs",
+      "src/audio/mel_filterbank_data_generated.rs",
+      "src/audio/mod.rs",
+      "src/audio/streaming_generated.rs",
+      "src/audio/mel.rs",
+      "src/audio/ring_buffer.rs",
+      "src/audio/wav.rs",
+      "src/audio/batch.rs",
+      "src/audio/streaming.rs",
+      "src/audio/resampler.rs",
+      "tools/convert.rs",
+      "benches/streaming_latency.rs",
+      "benches/wasm_simd.rs",
+      "benches/cli_benchmarks.rs",
+      "benches/format_comparison.rs",
+      "benches/pipeline.rs",
+      "benches/inference.rs",
+      "examples/trace_decoder.rs",
+      "examples/debug_mel_values.rs",
+      "examples/debug_positional_dominance.rs",
+      "examples/compare_filterbank.rs",
+      "examples/debug_transformer_collapse.rs",
+      "examples/debug_mel_log_base.rs",
+      "examples/compare_mel_exact.rs",
+      "examples/test_our_encoder.rs",
+      "examples/language_detection.rs",
+      "examples/tui_demo.rs",
+      "examples/debug_query_alignment.rs",
+      "examples/test_default_ln.rs",
+      "examples/verify_encoder_post_fix.rs",
+      "examples/debug_attention_mask_fix.rs",
+      "examples/debug_weights_loaded.rs",
+      "examples/debug_cross_attn_live.rs",
+      "examples/debug_forward_one.rs",
+      "examples/debug_enc_pos_embed.rs",
+      "examples/debug_mel_content.rs",
+      "examples/test_decode_hf_enc.rs",
+      "examples/debug_transpose_verify.rs",
+      "examples/check_filterbank_scale.rs",
+      "examples/verify_hf_weights.rs",
+      "examples/debug_forward_trace.rs",
+      "examples/list_all_tensors.rs",
+      "examples/test_transcribe_api.rs",
+      "examples/single_token_bench.rs",
+      "examples/check_mel.rs",
+      "examples/test_int8fb.rs",
+      "examples/debug_encoder_output.rs",
+      "examples/debug_attn_scores.rs",
+      "examples/check_model_filterbank.rs",
+      "examples/basic_transcription.rs",
+      "examples/show_decoder_tensors.rs",
+      "examples/debug_decoder_cross_attn.rs",
+      "examples/profile_encoder.rs",
+      "examples/debug_fft_norm.rs",
+      "examples/benchmark_pipeline.rs",
+      "examples/check_ln_weights.rs",
+      "examples/pipeline_tui.rs",
+      "examples/streaming_audio.rs",
+      "examples/debug_mel_stages.rs",
+      "examples/test_hf_mel.rs",
+      "examples/debug_conv_layout.rs",
+      "examples/test_fixed_ln.rs",
+      "examples/debug_filterbank.rs",
+      "examples/five_whys_validation.rs",
+      "examples/format_comparison.rs",
+      "examples/verify_optimization.rs",
+      "examples/debug_k_q_dot.rs",
+      "examples/list_model_tensors.rs",
+      "examples/test_copied_ln.rs",
+      "examples/mel_spectrogram.rs",
+      "examples/benchmark_tui.rs",
+      "examples/debug_mel_normalization.rs",
+      "examples/debug_fft_scale.rs",
+      "examples/inspect_model.rs",
+      "examples/compare_mel.rs",
+      "examples/debug_projection.rs",
+      "examples/debug_decode_loop.rs",
+      "examples/test_force_prefix.rs",
+      "examples/debug_decoder_hidden.rs",
+      "examples/trace_decoder_blocks.rs",
+      "examples/inspect_apr_ln.rs",
+      "examples/trace_encoder.rs",
+      "examples/dump_hf_tensors.rs",
+      "examples/compare_models.rs",
+      "examples/test_suppressed.rs",
+      "examples/cli_usage.rs",
+      "examples/trace_hidden_state.rs",
+      "examples/simd_operations.rs",
+      "examples/debug_conv_stem_h25.rs",
+      "examples/debug_h35_positional_singularity.rs",
+      "examples/token_scaling.rs",
+      "examples/debug_logits.rs",
+      "examples/check_decoder_tensors.rs",
+      "examples/compare_hf_padded.rs",
+      "examples/debug_kv_projection.rs",
+      "examples/debug_attn_entropy.rs",
+      "examples/compare_hf_outputs.rs",
+      "examples/component_timing.rs",
+      "examples/debug_decoder.rs",
+      "examples/verify_mel_pipeline.rs",
+      "examples/pipeline_ground_truth.rs",
+      "examples/debug_token_sequence.rs",
+      "examples/compare_apr_ln.rs",
+      "examples/check_biases.rs",
+      "examples/debug_names.rs",
+      "examples/filterbank_embedding.rs",
+      "examples/debug_end_positions.rs",
+      "examples/list_tensors.rs",
+      "examples/layer_comparison.rs",
+      "examples/time_encoder.rs",
+      "examples/test_hf_encoder.rs",
+      "examples/parallel_inference.rs",
+      "examples/debug_transcribe.rs",
+      "examples/debug_cross_attn.rs",
+      "examples/compare_mel_hf.rs",
+      "examples/compare_hidden_states.rs",
+      "examples/compare_encoder_hf.rs",
+      "examples/pipeline_falsification.rs",
+      "scripts/ground_truth_compare.rs",
+      "scripts/publish.rs",
+      "scripts/perf_qa_2x_whisper_cpp.rs",
+      "demos/www-demo/src/bin/gen_index.rs",
+      "demos/www-demo/src/audioworklet_js.rs",
+      "demos/www-demo/src/worker_js.rs",
+      "demos/www-demo/src/worker_manager.rs",
+      "demos/www-demo/src/ring_buffer.rs",
+      "demos/www-demo/src/bricks/audio_level.rs",
+      "demos/www-demo/src/bricks/tui_bricks.rs",
+      "demos/www-demo/src/bricks/status.rs",
+      "demos/www-demo/src/bricks/compute.rs",
+      "demos/www-demo/src/bricks/transcription.rs",
+      "demos/www-demo/src/bricks/file_info.rs",
+      "demos/www-demo/src/bricks/timing_stats.rs",
+      "demos/www-demo/src/bricks/score.rs",
+      "demos/www-demo/src/bricks/codegen.rs",
+      "demos/www-demo/src/bricks/mod.rs",
+      "demos/www-demo/src/bricks/html_gen.rs",
+      "demos/www-demo/src/bricks/progress.rs",
+      "demos/www-demo/src/bricks/chunk_progress.rs",
+      "demos/www-demo/src/bricks/partial_results.rs",
+      "demos/www-demo/src/bricks/performance_stats.rs",
+      "demos/www-demo/src/bricks/waveform.rs",
+      "demos/www-demo/src/bricks/vu_meter.rs",
+      "demos/www-demo/src/bricks/audio.rs",
+      "demos/www-demo/src/bricks/tui.rs",
+      "demos/www-demo/src/lib.rs",
+      "demos/www-demo/src/worker.rs",
+      "demos/www-demo/examples/print_worker_js.rs"
+    ],
+    "manifest_hash": "6a112ed8790e6aa1e7be3a3fa9833c7ba3fddb3496d8c3f5f32aaedb7aa53876"
+  },
+  "thresholds": {
+    "min_coverage_pct": 95.0,
+    "max_tdg_regression": 0.0,
+    "max_function_complexity": 20,
+    "max_file_lines": 500,
+    "min_spec_score": 95,
+    "require_github_sync": true,
+    "require_spec_update": true,
+    "require_roadmap_update": true
+  },
+  "claims": [
+    {
+      "hypothesis": "All baseline files still exist",
+      "falsification_method": "ManifestIntegrity",
+      "evidence_required": {
+        "FileList": []
+      },
+      "result": null,
+      "override_info": null
+    },
+    {
+      "hypothesis": "The falsifier is active and detecting (Meta-Check)",
+      "falsification_method": "MetaFalsification",
+      "evidence_required": {
+        "CounterExample": {
+          "details": ""
+        }
+      },
+      "result": null,
+      "override_info": null
+    },
+    {
+      "hypothesis": "No coverage exclusion gaming",
+      "falsification_method": "CoverageGaming",
+      "evidence_required": {
+        "FileList": []
+      },
+      "result": null,
+      "override_info": null
+    },
+    {
+      "hypothesis": "All changed lines are covered",
+      "falsification_method": "DifferentialCoverage",
+      "evidence_required": {
+        "NumericComparison": {
+          "actual": 0.0,
+          "threshold": 100.0
+        }
+      },
+      "result": null,
+      "override_info": null
+    },
+    {
+      "hypothesis": "Total coverage >= 95%",
+      "falsification_method": "AbsoluteCoverage",
+      "evidence_required": {
+        "NumericComparison": {
+          "actual": 0.0,
+          "threshold": 95.0
+        }
+      },
+      "result": null,
+      "override_info": null
+    },
+    {
+      "hypothesis": "TDG score >= baseline",
+      "falsification_method": "TdgRegression",
+      "evidence_required": {
+        "NumericComparison": {
+          "actual": 0.0,
+          "threshold": 0.0
+        }
+      },
+      "result": null,
+      "override_info": null
+    },
+    {
+      "hypothesis": "No function exceeds complexity 20",
+      "falsification_method": "ComplexityRegression",
+      "evidence_required": {
+        "NumericComparison": {
+          "actual": 0.0,
+          "threshold": 20.0
+        }
+      },
+      "result": null,
+      "override_info": null
+    },
+    {
+      "hypothesis": "No vulnerable dependencies added",
+      "falsification_method": "SupplyChainIntegrity",
+      "evidence_required": {
+        "CounterExample": {
+          "details": ""
+        }
+      },
+      "result": null,
+      "override_info": null
+    },
+    {
+      "hypothesis": "No file exceeds 500 lines",
+      "falsification_method": "FileSizeRegression",
+      "evidence_required": {
+        "NumericComparison": {
+          "actual": 0.0,
+          "threshold": 500.0
+        }
+      },
+      "result": null,
+      "override_info": null
+    },
+    {
+      "hypothesis": "Spec & Roadmap Quality",
+      "falsification_method": "SpecQuality",
+      "evidence_required": {
+        "NumericComparison": {
+          "actual": 0.0,
+          "threshold": 95.0
+        }
+      },
+      "result": null,
+      "override_info": null
+    },
+    {
+      "hypothesis": "All changes pushed",
+      "falsification_method": "GitHubSync",
+      "evidence_required": {
+        "GitState": {
+          "unpushed_commits": 0,
+          "dirty_files": 0
+        }
+      },
+      "result": null,
+      "override_info": null
+    },
+    {
+      "hypothesis": "All examples compile and run",
+      "falsification_method": "ExamplesCompile",
+      "evidence_required": {
+        "CounterExample": {
+          "details": ""
+        }
+      },
+      "result": null,
+      "override_info": null
+    },
+    {
+      "hypothesis": "pmat-book validation passes",
+      "falsification_method": "BookValidation",
+      "evidence_required": {
+        "CounterExample": {
+          "details": ""
+        }
+      },
+      "result": null,
+      "override_info": null
+    }
+  ]
+}
