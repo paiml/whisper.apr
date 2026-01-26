@@ -129,7 +129,7 @@ pub struct Publisher {
     /// HuggingFace API token (from HF_TOKEN env var)
     token: Option<String>,
     /// Base API URL
-    api_url: String,
+    _api_url: String,
 }
 
 impl Default for Publisher {
@@ -144,7 +144,7 @@ impl Publisher {
     pub fn new() -> Self {
         Self {
             token: std::env::var("HF_TOKEN").ok(),
-            api_url: "https://huggingface.co/api".to_string(),
+            _api_url: "https://huggingface.co/api".to_string(),
         }
     }
 
@@ -153,7 +153,7 @@ impl Publisher {
     pub fn with_token(token: impl Into<String>) -> Self {
         Self {
             token: Some(token.into()),
-            api_url: "https://huggingface.co/api".to_string(),
+            _api_url: "https://huggingface.co/api".to_string(),
         }
     }
 

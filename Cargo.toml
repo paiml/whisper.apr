@@ -29,7 +29,7 @@ required-features = ["converter"]
 # WASM users should use "wasm" feature which doesn't include parallel
 default = ["std", "simd", "realizar-inference", "parallel"]
 std = []
-wasm = ["wasm-bindgen", "js-sys", "web-sys", "console_error_panic_hook"]
+wasm = ["std", "wasm-bindgen", "js-sys", "web-sys", "console_error_panic_hook"]
 webgpu = ["wgpu", "bytemuck", "tokio", "pollster"]
 cuda = ["trueno/gpu", "dep:trueno-gpu", "trueno-gpu/cuda"]
 simd = []
@@ -56,20 +56,20 @@ thiserror = "2"
 
 # SIMD acceleration (trueno integration)
 # Updated per WAPR-PERF-002: 0.11.0 has enhanced WASM SIMD, fused_layernorm_linear
-trueno = "0.13.0"
+trueno = { path = "../trueno" }
 # GPU-resident tensor architecture (WAPR-PERF-004)
-trueno-gpu = { version = "0.4.10", optional = true }
+trueno-gpu = { path = "../trueno/trueno-gpu", optional = true }
 
 # Model format (aprender is the canonical .apr format library)
 # Note: safetensors-compare pulls hf-hub which doesn't support WASM
 # Use target-specific deps below to enable it only for native builds
 # Updated per WAPR-PERF-002: 0.21.0 has embedded mel filterbank support
-aprender = { version = "0.24.1", default-features = false }
+aprender = { path = "../aprender", default-features = false }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
 # Updated per WAPR-PERF-002: 0.4.0 has PagedKvCache improvements for WASM
-realizar = { version = "0.6.8", optional = true, default-features = false }
+realizar = { path = "../realizar", optional = true, default-features = false }
 
 # FFT for mel spectrogram computation
 rustfft = "6.2"
@@ -147,7 +147,7 @@ getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Enable safetensors-compare only for native builds (pulls hf-hub which doesn't support WASM)
 # Updated per WAPR-PERF-002: 0.24.0 has embedded mel filterbank support
-aprender = { version = "0.24", default-features = false, features = ["safetensors-compare"] }
+aprender = { path = "../aprender", default-features = false, features = ["safetensors-compare"] }
 
 [profile.release]
 lto = true
