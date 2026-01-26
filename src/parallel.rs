@@ -232,4 +232,39 @@ mod tests {
             "parallel should not be available without feature"
         );
     }
+
+    #[test]
+    fn test_configure_thread_pool() {
+        // First call should succeed
+        let result = configure_thread_pool(Some(2));
+        assert!(result.is_ok());
+        let threads = result.unwrap();
+        assert!(threads >= 1);
+    }
+
+    #[test]
+    fn test_configure_thread_pool_default() {
+        // Call without specifying thread count
+        let result = configure_thread_pool(None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parallel_map_empty() {
+        let results: Vec<i32> = parallel_map(0..0, |i| i as i32);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parallel_map_single() {
+        let results = parallel_map(0..1, |i| i * 10);
+        assert_eq!(results, vec![0]);
+    }
+
+    #[test]
+    fn test_parallel_try_map_empty() {
+        let results: WhisperResult<Vec<i32>> = parallel_try_map(0..0, |i| Ok(i as i32));
+        assert!(results.is_ok());
+        assert!(results.unwrap().is_empty());
+    }
 }
