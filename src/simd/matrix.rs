@@ -1,0 +1,140 @@
+//! SIMD-accelerated matrix operations
+
+use trueno::{Matrix, Vector};
+
+/// SIMD-accelerated matrix multiplication
+///
+/// Computes C = A @ B where A is (rows x inner) and B is (inner x cols)
+#[must_use]
+#[allow(clippy::many_single_char_names)]
+pub fn matmul(a: &[f32], b: &[f32], rows: usize, inner: usize, cols: usize) -> Vec<f32> {
+    debug_assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
+    debug_assert_eq!(b.len(), inner * cols, "B dimensions mismatch");
+
+    // Note: from_vec copies the data. For hot paths like vocab projection,
+    // consider using trueno::Matrix directly to avoid this wrapper's overhead.
+    let Ok(ma) = Matrix::from_vec(rows, inner, a.to_vec()) else {
+        return vec![0.0; rows * cols];
+    };
+    let Ok(mb) = Matrix::from_vec(inner, cols, b.to_vec()) else {
+        return vec![0.0; rows * cols];
+    };
+    ma.matmul(&mb)
+        .map_or_else(|_| vec![0.0; rows * cols], |mc| mc.as_slice().to_vec())
+}
+
+/// SIMD-accelerated matrix multiplication (zero-copy variant)
+///
+/// Takes ownership of input vectors to avoid allocation overhead.
+/// Use this when you have owned Vecs and won't need them after.
+///
+/// Computes C = A @ B where A is (rows x inner) and B is (inner x cols)
+#[must_use]
+#[allow(clippy::many_single_char_names)]
+pub fn matmul_owned(a: Vec<f32>, b: Vec<f32>, rows: usize, inner: usize, cols: usize) -> Vec<f32> {
+    debug_assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
+    debug_assert_eq!(b.len(), inner * cols, "B dimensions mismatch");
+
+    let Ok(ma) = Matrix::from_vec(rows, inner, a) else {
+        return vec![0.0; rows * cols];
+    };
+    let Ok(mb) = Matrix::from_vec(inner, cols, b) else {
+        return vec![0.0; rows * cols];
+    };
+    ma.matmul(&mb)
+        .map_or_else(|_| vec![0.0; rows * cols], |mc| mc.as_slice().to_vec())
+}
+
+/// SIMD-accelerated matrix multiplication with pre-constructed Matrix
+///
+/// Use this when B is constant (like weight matrices) to avoid repeated
+/// conversions. A is still converted from slice.
+#[must_use]
+#[allow(clippy::many_single_char_names)]
+pub fn matmul_with_matrix(a: &[f32], b: &Matrix<f32>, rows: usize, inner: usize) -> Vec<f32> {
+    debug_assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
+    debug_assert_eq!(b.rows(), inner, "B rows mismatch inner dimension");
+
+    let Ok(ma) = Matrix::from_vec(rows, inner, a.to_vec()) else {
+        return vec![0.0; rows * b.cols()];
+    };
+    ma.matmul(b)
+        .map_or_else(|_| vec![0.0; rows * b.cols()], |mc| mc.as_slice().to_vec())
+}
+
+/// SIMD-accelerated matrix-vector multiplication
+///
+/// Computes y = A @ x where A is (rows x cols) and x is (cols,)
+#[must_use]
+pub fn matvec(a: &[f32], x: &[f32], rows: usize, cols: usize) -> Vec<f32> {
+    debug_assert_eq!(a.len(), rows * cols, "A dimensions mismatch");
+    debug_assert_eq!(x.len(), cols, "x dimension mismatch");
+
+    let Ok(ma) = Matrix::from_vec(rows, cols, a.to_vec()) else {
+        return vec![0.0; rows];
+    };
+    let vx = Vector::from_slice(x);
+    ma.matvec(&vx)
+        .map_or_else(|_| vec![0.0; rows], |v| v.as_slice().to_vec())
+}
+
+/// SIMD-accelerated matrix transpose
+#[must_use]
+pub fn transpose(a: &[f32], rows: usize, cols: usize) -> Vec<f32> {
+    debug_assert_eq!(a.len(), rows * cols, "dimensions mismatch");
+
+    let Ok(ma) = Matrix::from_vec(rows, cols, a.to_vec()) else {
+        return vec![0.0; rows * cols];
+    };
+    ma.transpose().as_slice().to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EPSILON: f32 = 1e-4;
+
+    fn approx_eq(a: f32, b: f32) -> bool {
+        (a - b).abs() < EPSILON
+    }
+
+    fn vec_approx_eq(a: &[f32], b: &[f32]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| approx_eq(*x, *y))
+    }
+
+    #[test]
+    fn test_matmul_identity() {
+        // 2x2 identity matrix
+        let a = vec![1.0, 2.0, 3.0, 4.0]; // 2x2
+        let identity = vec![1.0, 0.0, 0.0, 1.0]; // 2x2
+        let result = matmul(&a, &identity, 2, 2, 2);
+        assert!(vec_approx_eq(&result, &a));
+    }
+
+    #[test]
+    fn test_matmul_2x2() {
+        let a = vec![1.0, 2.0, 3.0, 4.0]; // 2x2
+        let b = vec![5.0, 6.0, 7.0, 8.0]; // 2x2
+        let result = matmul(&a, &b, 2, 2, 2);
+        // [1*5+2*7, 1*6+2*8, 3*5+4*7, 3*6+4*8] = [19, 22, 43, 50]
+        assert!(vec_approx_eq(&result, &[19.0, 22.0, 43.0, 50.0]));
+    }
+
+    #[test]
+    fn test_matvec() {
+        let a = vec![1.0, 2.0, 3.0, 4.0]; // 2x2
+        let x = vec![5.0, 6.0]; // 2
+        let result = matvec(&a, &x, 2, 2);
+        // [1*5+2*6, 3*5+4*6] = [17, 39]
+        assert!(vec_approx_eq(&result, &[17.0, 39.0]));
+    }
+
+    #[test]
+    fn test_transpose() {
+        let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2x3
+        let result = transpose(&a, 2, 3);
+        // [1, 4, 2, 5, 3, 6] as 3x2
+        assert!(vec_approx_eq(&result, &[1.0, 4.0, 2.0, 5.0, 3.0, 6.0]));
+    }
+}
