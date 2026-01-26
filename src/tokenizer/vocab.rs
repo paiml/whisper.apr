@@ -947,4 +947,178 @@ mod tests {
         assert_eq!(rules[0].first, vec![104]);
         assert_eq!(rules[0].second, vec![105]);
     }
+
+    // =========================================================================
+    // Additional Coverage Tests
+    // =========================================================================
+
+    #[test]
+    fn test_special_tokens_initial_tokens() {
+        let multi = special_tokens::SpecialTokens::multilingual();
+        let tokens = multi.initial_tokens();
+        assert_eq!(tokens.len(), 4);
+        assert_eq!(tokens[0], multi.sot);
+        assert_eq!(tokens[1], multi.lang_base);
+        assert_eq!(tokens[2], multi.transcribe);
+        assert_eq!(tokens[3], multi.no_timestamps);
+
+        let english = special_tokens::SpecialTokens::english_only();
+        let eng_tokens = english.initial_tokens();
+        assert_eq!(eng_tokens[0], english.sot);
+    }
+
+    #[test]
+    fn test_special_tokens_default() {
+        let default = special_tokens::SpecialTokens::default();
+        let multi = special_tokens::SpecialTokens::multilingual();
+
+        assert_eq!(default.eot, multi.eot);
+        assert_eq!(default.sot, multi.sot);
+        assert!(default.is_multilingual);
+    }
+
+    #[test]
+    fn test_language_offset_coverage() {
+        use special_tokens::language_offset;
+
+        // Test more languages to increase coverage
+        assert_eq!(language_offset("en"), Some(0));
+        assert_eq!(language_offset("zh"), Some(1));
+        assert_eq!(language_offset("de"), Some(2));
+        assert_eq!(language_offset("es"), Some(3));
+        assert_eq!(language_offset("ru"), Some(4));
+        assert_eq!(language_offset("ko"), Some(5));
+        assert_eq!(language_offset("fr"), Some(6));
+        assert_eq!(language_offset("ja"), Some(7));
+        assert_eq!(language_offset("pt"), Some(8));
+        assert_eq!(language_offset("tr"), Some(9));
+        assert_eq!(language_offset("pl"), Some(10));
+        assert_eq!(language_offset("ca"), Some(11));
+        assert_eq!(language_offset("nl"), Some(12));
+        assert_eq!(language_offset("ar"), Some(13));
+        assert_eq!(language_offset("sv"), Some(14));
+        assert_eq!(language_offset("it"), Some(15));
+        assert_eq!(language_offset("id"), Some(16));
+        assert_eq!(language_offset("hi"), Some(17));
+        assert_eq!(language_offset("fi"), Some(18));
+        assert_eq!(language_offset("vi"), Some(19));
+        assert_eq!(language_offset("he"), Some(20));
+        assert_eq!(language_offset("uk"), Some(21));
+        assert_eq!(language_offset("el"), Some(22));
+        assert_eq!(language_offset("ms"), Some(23));
+        assert_eq!(language_offset("cs"), Some(24));
+        assert_eq!(language_offset("ro"), Some(25));
+        assert_eq!(language_offset("da"), Some(26));
+        assert_eq!(language_offset("hu"), Some(27));
+        assert_eq!(language_offset("ta"), Some(28));
+        assert_eq!(language_offset("no"), Some(29));
+        assert_eq!(language_offset("th"), Some(30));
+        assert_eq!(language_offset("ur"), Some(31));
+        assert_eq!(language_offset("hr"), Some(32));
+        assert_eq!(language_offset("bg"), Some(33));
+        assert_eq!(language_offset("lt"), Some(34));
+        assert_eq!(language_offset("la"), Some(35));
+        assert_eq!(language_offset("mi"), Some(36));
+        assert_eq!(language_offset("ml"), Some(37));
+        assert_eq!(language_offset("unknown"), None);
+    }
+
+    #[test]
+    fn test_language_token_extended_coverage() {
+        use special_tokens::language_token;
+
+        // Test more languages for coverage
+        assert_eq!(language_token("de"), Some(50261));
+        assert_eq!(language_token("fr"), Some(50265));
+        assert_eq!(language_token("ja"), Some(50266));
+        assert_eq!(language_token("pt"), Some(50267));
+        assert_eq!(language_token("tr"), Some(50268));
+        assert_eq!(language_token("pl"), Some(50269));
+        assert_eq!(language_token("ca"), Some(50270));
+        assert_eq!(language_token("nl"), Some(50271));
+        assert_eq!(language_token("ar"), Some(50272));
+        assert_eq!(language_token("sv"), Some(50273));
+        assert_eq!(language_token("it"), Some(50274));
+        assert_eq!(language_token("id"), Some(50275));
+        assert_eq!(language_token("hi"), Some(50276));
+        assert_eq!(language_token("fi"), Some(50277));
+        assert_eq!(language_token("vi"), Some(50278));
+        assert_eq!(language_token("he"), Some(50279));
+        assert_eq!(language_token("uk"), Some(50280));
+        assert_eq!(language_token("el"), Some(50281));
+        assert_eq!(language_token("ms"), Some(50282));
+        assert_eq!(language_token("cs"), Some(50283));
+        assert_eq!(language_token("ro"), Some(50284));
+        assert_eq!(language_token("da"), Some(50285));
+        assert_eq!(language_token("hu"), Some(50286));
+        assert_eq!(language_token("ta"), Some(50287));
+        assert_eq!(language_token("no"), Some(50288));
+        assert_eq!(language_token("th"), Some(50289));
+        assert_eq!(language_token("ur"), Some(50290));
+        assert_eq!(language_token("hr"), Some(50291));
+        assert_eq!(language_token("bg"), Some(50292));
+        assert_eq!(language_token("lt"), Some(50293));
+        assert_eq!(language_token("la"), Some(50294));
+        assert_eq!(language_token("mi"), Some(50295));
+        assert_eq!(language_token("ml"), Some(50296));
+        assert_eq!(language_token("cy"), Some(50297));
+        assert_eq!(language_token("sk"), Some(50298));
+        assert_eq!(language_token("te"), Some(50299));
+        assert_eq!(language_token("fa"), Some(50300));
+        assert_eq!(language_token("lv"), Some(50301));
+        assert_eq!(language_token("bn"), Some(50302));
+        assert_eq!(language_token("sr"), Some(50303));
+        assert_eq!(language_token("az"), Some(50304));
+        assert_eq!(language_token("sl"), Some(50305));
+        assert_eq!(language_token("kn"), Some(50306));
+        assert_eq!(language_token("et"), Some(50307));
+        assert_eq!(language_token("mk"), Some(50308));
+    }
+
+    #[test]
+    fn test_add_merge_existing_token() {
+        let mut vocab = Vocabulary::with_base_tokens();
+
+        // First add "hi" as a merged token
+        let id1 = vocab.add_merge(vec![104], vec![105]); // h + i -> hi
+
+        // Now add a new merge that results in same bytes
+        // This should reuse the existing token
+        let id2 = vocab.add_token(vec![104, 105]); // directly add "hi"
+
+        // Both should reference the same underlying bytes
+        // Note: add_token will add a new entry even if bytes exist
+        // This is expected behavior - the bytes_to_id might be updated
+        assert!(vocab.get_bytes(id1).is_some());
+        assert!(vocab.get_bytes(id2).is_some());
+    }
+
+    #[test]
+    fn test_special_tokens_english_only_struct() {
+        let eng = special_tokens::SpecialTokens::english_only();
+        assert!(!eng.is_multilingual);
+        assert_eq!(eng.eot, special_tokens::EOT_ENGLISH);
+        assert_eq!(eng.sot, special_tokens::SOT_ENGLISH);
+        assert_eq!(eng.timestamp_base, 50363);
+    }
+
+    #[test]
+    fn test_decode_merged_tokens() {
+        let mut vocab = Vocabulary::with_base_tokens();
+        let hi_id = vocab.add_merge(vec![104], vec![105]); // "hi"
+
+        // Decode using the merged token ID
+        let result = vocab.decode(&[hi_id]);
+        assert_eq!(result, Some("hi".to_string()));
+    }
+
+    #[test]
+    fn test_decode_utf8_invalid() {
+        let mut vocab = Vocabulary::new();
+        vocab.add_token(vec![0xFF, 0xFE]); // Invalid UTF-8 sequence
+
+        let result = vocab.decode(&[0]);
+        // Should fail gracefully (return None or replacement char)
+        assert!(result.is_none() || result.as_ref().map_or(false, |s| s.contains('\u{FFFD}')));
+    }
 }
