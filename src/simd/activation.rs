@@ -174,4 +174,132 @@ mod tests {
         // tanh(large) ≈ 1
         assert!(result[2] > 0.99);
     }
+
+    // =========================================================================
+    // Additional Coverage Tests
+    // =========================================================================
+
+    #[test]
+    fn test_log_softmax_empty() {
+        let x: Vec<f32> = vec![];
+        let result = log_softmax(&x);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_gelu_empty() {
+        let x: Vec<f32> = vec![];
+        let result = gelu(&x);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_relu_empty() {
+        let x: Vec<f32> = vec![];
+        let result = relu(&x);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_sigmoid_empty() {
+        let x: Vec<f32> = vec![];
+        let result = sigmoid(&x);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_tanh_empty() {
+        let x: Vec<f32> = vec![];
+        let result = tanh_activation(&x);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_softmax_single() {
+        let x = vec![1.0];
+        let result = softmax(&x);
+        assert_eq!(result.len(), 1);
+        assert!(approx_eq(result[0], 1.0)); // softmax of single element is 1
+    }
+
+    #[test]
+    fn test_log_softmax_single() {
+        let x = vec![1.0];
+        let result = log_softmax(&x);
+        assert_eq!(result.len(), 1);
+        assert!(approx_eq(result[0], 0.0)); // log(1) = 0
+    }
+
+    #[test]
+    fn test_gelu_positive() {
+        let x = vec![0.5, 1.0, 2.0, 3.0];
+        let result = gelu(&x);
+        // GELU(x) ≈ x for large positive x
+        assert!(result[3] > 2.9);
+        // All should be positive
+        assert!(result.iter().all(|&v| v > 0.0));
+    }
+
+    #[test]
+    fn test_gelu_negative() {
+        let x = vec![-3.0, -2.0, -1.0, -0.5];
+        let result = gelu(&x);
+        // GELU is bounded below
+        assert!(result.iter().all(|&v| v > -0.5));
+    }
+
+    #[test]
+    fn test_relu_all_positive() {
+        let x = vec![1.0, 2.0, 3.0, 4.0];
+        let result = relu(&x);
+        assert!(vec_approx_eq(&result, &x));
+    }
+
+    #[test]
+    fn test_relu_all_negative() {
+        let x = vec![-1.0, -2.0, -3.0, -4.0];
+        let result = relu(&x);
+        assert!(vec_approx_eq(&result, &[0.0, 0.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn test_sigmoid_gradient_region() {
+        // Test values in the gradient-sensitive region
+        let x = vec![-2.0, -1.0, 0.0, 1.0, 2.0];
+        let result = sigmoid(&x);
+        // Should be strictly increasing
+        for i in 1..result.len() {
+            assert!(result[i] > result[i - 1]);
+        }
+    }
+
+    #[test]
+    fn test_tanh_symmetry() {
+        let x = vec![-2.0, -1.0, 1.0, 2.0];
+        let result = tanh_activation(&x);
+        // tanh is odd: tanh(-x) = -tanh(x)
+        assert!(approx_eq(result[0], -result[3]));
+        assert!(approx_eq(result[1], -result[2]));
+    }
+
+    #[test]
+    fn test_softmax_uniform() {
+        let x = vec![1.0, 1.0, 1.0, 1.0];
+        let result = softmax(&x);
+        // All should be equal (0.25)
+        for &v in &result {
+            assert!(approx_eq(v, 0.25));
+        }
+    }
+
+    #[test]
+    fn test_log_softmax_numerical_stability() {
+        // Large values
+        let x = vec![1000.0, 1001.0, 1002.0];
+        let result = log_softmax(&x);
+        // All should be finite
+        assert!(result.iter().all(|&v| v.is_finite()));
+        // Should be negative
+        assert!(result.iter().all(|&v| v <= 0.0));
+    }
 }
