@@ -3,7 +3,7 @@
 //! Handles audio loading, resampling, normalization, and mel spectrogram computation.
 
 pub mod batch;
-mod mel;
+pub mod mel;
 /// OpenAI reference mel filterbank data for exact numerical matching
 pub mod mel_filterbank_data;
 mod resampler;

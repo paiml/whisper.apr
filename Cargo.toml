@@ -145,9 +145,10 @@ getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# Enable safetensors-compare only for native builds (pulls hf-hub which doesn't support WASM)
-# Updated per WAPR-PERF-002: 0.24.0 has embedded mel filterbank support
-aprender = { path = "../aprender", default-features = false, features = ["safetensors-compare"] }
+# Enable safetensors-compare and inference-monitoring only for native builds
+# safetensors-compare: pulls hf-hub which doesn't support WASM
+# inference-monitoring: enables entrenar NeuralPath for explainable ASR (attention visualization)
+aprender = { path = "../aprender", default-features = false, features = ["safetensors-compare", "inference-monitoring"] }
 
 [profile.release]
 lto = true
