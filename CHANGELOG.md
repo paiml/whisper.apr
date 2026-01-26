@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2025-01-26
+
+### Changed
+- Switched to crates.io dependencies for reproducible builds
+  - trueno 0.14.3, trueno-gpu 0.4.12, aprender 0.24.1, realizar 0.6.10
+- Fixed `realizar-gpu` feature to enable both `gpu` and `cuda` features
+- Fixed CUDA module import in core_generated.rs
+
+### Removed
+- Removed `inference-monitoring` feature due to cyclic dependency with entrenar
+
 ## [0.2.1] - 2025-01-26
 
 ### Changed
@@ -81,7 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - .apr model format with LZ4 compression
 - Support for tiny, base, and small model sizes
 
-[Unreleased]: https://github.com/paiml/whisper.apr/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/paiml/whisper.apr/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/paiml/whisper.apr/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/paiml/whisper.apr/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/paiml/whisper.apr/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/paiml/whisper.apr/releases/tag/v0.1.0
