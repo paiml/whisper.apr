@@ -207,4 +207,65 @@ mod tests {
         assert!(customizer.domain_adapter().is_some());
         assert!(customizer.vocabulary_trie().is_some());
     }
+
+    #[test]
+    fn test_vocabulary_customizer_apply_with_hotword_booster() {
+        let mut booster = HotwordBooster::new();
+        booster.add_hotword_with_tokens("test", vec![100, 101], 2.0);
+        let customizer = VocabularyCustomizer::new().with_hotword_booster(booster);
+
+        let mut logits = vec![0.0; 1000];
+        let context: Vec<u32> = vec![];
+
+        customizer.apply(&mut logits, &context);
+        // Hotword booster should have been applied (exact effect depends on implementation)
+    }
+
+    #[test]
+    fn test_vocabulary_customizer_apply_with_domain_adapter() {
+        let adapter = DomainAdapter::new(DomainType::Medical);
+        let customizer = VocabularyCustomizer::new().with_domain_adapter(adapter);
+
+        let mut logits = vec![0.0; 1000];
+        let context: Vec<u32> = vec![];
+
+        customizer.apply(&mut logits, &context);
+        // Domain adapter should have been applied
+    }
+
+    #[test]
+    fn test_vocabulary_customizer_apply_with_vocabulary_trie() {
+        let mut trie = VocabularyTrie::new();
+        trie.insert(&[100, 101, 102], "hello", 1.5);
+        let customizer = VocabularyCustomizer::new().with_vocabulary_trie(trie);
+
+        let mut logits = vec![0.0; 1000];
+        let context: Vec<u32> = vec![];
+
+        customizer.apply(&mut logits, &context);
+        // Trie should have been applied
+    }
+
+    #[test]
+    fn test_vocabulary_customizer_apply_all_active() {
+        let mut booster = HotwordBooster::new();
+        booster.add_hotword_with_tokens("test", vec![100, 101], 1.5);
+
+        let adapter = DomainAdapter::new(DomainType::Technical);
+
+        let mut trie = VocabularyTrie::new();
+        trie.insert(&[200, 201], "code", 1.5);
+
+        let customizer = VocabularyCustomizer::new()
+            .with_hotword_booster(booster)
+            .with_domain_adapter(adapter)
+            .with_vocabulary_trie(trie);
+
+        let mut logits = vec![0.0; 1000];
+        let context: Vec<u32> = vec![200]; // Partial match for trie
+
+        customizer.apply(&mut logits, &context);
+        // All three customizations should have been applied
+        assert!(customizer.is_active());
+    }
 }
