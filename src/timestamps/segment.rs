@@ -674,4 +674,227 @@ mod tests {
         assert!((TIMESTAMP_RESOLUTION - 0.02).abs() < f32::EPSILON);
         assert_eq!(MAX_TIMESTAMP_TOKENS, 1500);
     }
+
+    // =========================================================================
+    // Additional Coverage Tests
+    // =========================================================================
+
+    #[test]
+    fn test_is_timestamp_wrapper() {
+        assert!(is_timestamp(special_tokens::TIMESTAMP_BASE));
+        assert!(is_timestamp(special_tokens::TIMESTAMP_BASE + 100));
+        assert!(!is_timestamp(100));
+    }
+
+    #[test]
+    fn test_timestamp_to_seconds_wrapper() {
+        let seconds = timestamp_to_seconds(special_tokens::TIMESTAMP_BASE + 50);
+        assert!(seconds.is_some());
+        assert!((seconds.unwrap() - 1.0).abs() < 0.01);
+
+        let not_timestamp = timestamp_to_seconds(100);
+        assert!(not_timestamp.is_none());
+    }
+
+    #[test]
+    fn test_is_control_token_no_speech() {
+        assert!(is_control_token(special_tokens::NO_SPEECH));
+    }
+
+    #[test]
+    fn test_extract_segments_with_trailing_tokens() {
+        // Tokens after timestamp without closing timestamp
+        let tokens = vec![
+            special_tokens::TIMESTAMP_BASE, // 0.0s
+            100,
+            101,
+            102,
+            // No closing timestamp - should trigger finalize_remaining
+        ];
+
+        let decode = |ts: &[u32]| -> Option<String> { Some(format!("tokens:{}", ts.len())) };
+
+        let segments = extract_segments(&tokens, decode);
+        assert_eq!(segments.len(), 1);
+        // End time should be estimated from token count
+        assert!(segments[0].end > segments[0].start);
+    }
+
+    #[test]
+    fn test_extract_segments_decoder_returns_none() {
+        let tokens = vec![
+            special_tokens::TIMESTAMP_BASE,
+            100,
+            special_tokens::TIMESTAMP_BASE + 50,
+        ];
+
+        // Decoder returns None - segment should be skipped
+        let decode = |_ts: &[u32]| -> Option<String> { None };
+
+        let segments = extract_segments(&tokens, decode);
+        assert!(segments.is_empty());
+    }
+
+    #[test]
+    fn test_extract_segments_whitespace_only_text() {
+        let tokens = vec![
+            special_tokens::TIMESTAMP_BASE,
+            100,
+            special_tokens::TIMESTAMP_BASE + 50,
+        ];
+
+        // Decoder returns only whitespace - segment should be skipped
+        let decode = |_ts: &[u32]| -> Option<String> { Some("   \t\n  ".to_string()) };
+
+        let segments = extract_segments(&tokens, decode);
+        assert!(segments.is_empty());
+    }
+
+    #[test]
+    fn test_parse_timestamp_pairs_invalid_order() {
+        // Timestamps where end <= start should not be added
+        let tokens = vec![
+            special_tokens::TIMESTAMP_BASE + 100, // 2.0s
+            special_tokens::TIMESTAMP_BASE + 50,  // 1.0s (end < start)
+        ];
+
+        let pairs = parse_timestamp_pairs(&tokens);
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn test_parse_timestamp_pairs_equal() {
+        // Timestamps where end == start should not be added
+        let tokens = vec![
+            special_tokens::TIMESTAMP_BASE + 50, // 1.0s
+            special_tokens::TIMESTAMP_BASE + 50, // 1.0s (end == start)
+        ];
+
+        let pairs = parse_timestamp_pairs(&tokens);
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn test_split_long_segments_single_sentence() {
+        // Long segment with only one sentence (no split possible)
+        let segments = vec![Segment {
+            start: 0.0,
+            end: 20.0,
+            text: "Hello world no punctuation here".to_string(),
+            tokens: vec![1, 2, 3],
+        }];
+
+        let split = split_long_segments(&segments, 5.0);
+        assert_eq!(split.len(), 1);
+        assert_eq!(split[0].tokens, vec![1, 2, 3]); // Original preserved
+    }
+
+    #[test]
+    fn test_split_sentences_empty() {
+        let sentences = split_sentences("");
+        assert!(sentences.is_empty());
+    }
+
+    #[test]
+    fn test_split_sentences_only_punctuation() {
+        // Each punctuation creates a sentence with just the punctuation
+        let sentences = split_sentences("...");
+        assert_eq!(sentences.len(), 3);
+        assert!(sentences.iter().all(|s| s == "."));
+    }
+
+    #[test]
+    fn test_merge_segments_three_segments() {
+        let segments = vec![
+            Segment {
+                start: 0.0,
+                end: 1.0,
+                text: "A".to_string(),
+                tokens: vec![1],
+            },
+            Segment {
+                start: 1.1,
+                end: 2.0,
+                text: "B".to_string(),
+                tokens: vec![2],
+            },
+            Segment {
+                start: 2.1,
+                end: 3.0,
+                text: "C".to_string(),
+                tokens: vec![3],
+            },
+        ];
+
+        let merged = merge_segments(&segments, 0.2);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].text, "A B C");
+    }
+
+    #[test]
+    fn test_get_timestamps_empty() {
+        let timestamps = get_timestamps(&[]);
+        assert!(timestamps.is_empty());
+    }
+
+    #[test]
+    fn test_has_timestamps_empty() {
+        assert!(!has_timestamps(&[]));
+    }
+
+    #[test]
+    fn test_count_text_tokens_empty() {
+        assert_eq!(count_text_tokens(&[]), 0);
+    }
+
+    #[test]
+    fn test_count_text_tokens_all_special() {
+        let tokens = vec![
+            special_tokens::SOT,
+            special_tokens::EOT,
+            special_tokens::TIMESTAMP_BASE,
+        ];
+        assert_eq!(count_text_tokens(&tokens), 0);
+    }
+
+    #[test]
+    fn test_extract_segments_no_tokens_between_timestamps() {
+        // No text tokens between consecutive timestamps
+        let tokens = vec![
+            special_tokens::TIMESTAMP_BASE,
+            special_tokens::TIMESTAMP_BASE + 50,
+            special_tokens::TIMESTAMP_BASE + 50,
+            special_tokens::TIMESTAMP_BASE + 100,
+        ];
+
+        let decode = |ts: &[u32]| -> Option<String> {
+            if ts.is_empty() {
+                Some(String::new())
+            } else {
+                Some(format!("{:?}", ts))
+            }
+        };
+
+        let segments = extract_segments(&tokens, decode);
+        // Empty segments should be skipped
+        assert!(segments.is_empty());
+    }
+
+    #[test]
+    fn test_segment_extractor_handle_timestamp_no_prior_start() {
+        // First timestamp should just set start, not finalize anything
+        let tokens = vec![
+            100, // Text before any timestamp (should be ignored)
+            special_tokens::TIMESTAMP_BASE,
+            101,
+            special_tokens::TIMESTAMP_BASE + 50,
+        ];
+
+        let decode = |ts: &[u32]| -> Option<String> { Some(format!("{:?}", ts)) };
+
+        let segments = extract_segments(&tokens, decode);
+        // Only the segment between timestamps should be extracted
+        // Text before first timestamp is accumulated but never finalized
+        assert_eq!(segments.len(), 1);
+    }
 }
