@@ -127,4 +127,12 @@ mod tests {
         let debug_str = format!("{:?}", err);
         assert!(debug_str.contains("Model"));
     }
+
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn test_wasm_error() {
+        let err = WhisperError::Wasm("wasm runtime error".into());
+        assert_eq!(err.to_string(), "wasm error: wasm runtime error");
+        assert!(matches!(err, WhisperError::Wasm(_)));
+    }
 }
