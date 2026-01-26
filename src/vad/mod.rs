@@ -814,7 +814,7 @@ mod tests {
         let mut vad = VoiceActivityDetector::default();
 
         // Process silence frames - noise floor should adapt
-        let initial_noise = vad.noise_floor;
+        let _initial_noise = vad.noise_floor;
         let silence_with_noise = vec![0.001; 480];
 
         for _ in 0..100 {
