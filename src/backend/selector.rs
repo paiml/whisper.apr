@@ -585,4 +585,78 @@ mod tests {
         let simd_selection = BackendSelection::simd("test");
         assert_eq!(simd_selection.backend, BackendType::Simd);
     }
+
+    #[test]
+    fn test_selector_with_high_memory_requirement() {
+        // Create selector with low max GPU memory
+        let config = SelectorConfig::default().with_max_gpu_memory(1024);
+        let selector = BackendSelector::new(config);
+
+        // Large operation that exceeds GPU memory
+        let op = MatMulOp::new(1024, 1024, 1024);
+        let selection = selector.select(&op);
+
+        // Should use SIMD due to memory constraint
+        assert!(!selection.reason.is_empty());
+    }
+
+    #[test]
+    fn test_selector_automatic_with_small_workload() {
+        let selector = BackendSelector::new(SelectorConfig::default());
+        let op = MatMulOp::new(4, 4, 4); // Very small
+        let selection = selector.select(&op);
+
+        // Small workload should prefer SIMD
+        assert!(selection.is_simd());
+    }
+
+    #[test]
+    fn test_selector_threshold_below_flops() {
+        let selector = BackendSelector::new(
+            SelectorConfig::default().with_strategy(SelectionStrategy::threshold(1_000_000_000)),
+        );
+        let op = MatMulOp::new(32, 32, 32); // Below threshold
+        let selection = selector.select(&op);
+
+        // Below threshold should use SIMD
+        assert!(selection.is_simd());
+    }
+
+    #[test]
+    fn test_selection_strategy_all_descriptions() {
+        assert!(!SelectionStrategy::PreferGpu.description().is_empty());
+        assert!(!SelectionStrategy::PreferSimd.description().is_empty());
+        assert!(!SelectionStrategy::Automatic.description().is_empty());
+        assert!(!SelectionStrategy::threshold(1000).description().is_empty());
+    }
+
+    #[test]
+    fn test_selector_config_with_all_builders() {
+        let config = SelectorConfig::default()
+            .with_strategy(SelectionStrategy::Automatic)
+            .with_gpu_threshold(500_000)
+            .with_max_gpu_memory(1024 * 1024 * 1024);
+
+        assert_eq!(config.strategy, SelectionStrategy::Automatic);
+        assert_eq!(config.gpu_threshold_flops, 500_000);
+        assert_eq!(config.max_gpu_memory, 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_backend_selector_select_batch_large() {
+        let selector = BackendSelector::default_config();
+        let ops: Vec<MatMulOp> = (0..10)
+            .map(|_| MatMulOp::new(128, 256, 128))
+            .collect();
+        let selection = selector.select_batch(&ops);
+        assert!(!selection.reason.is_empty());
+    }
+
+    #[test]
+    fn test_backend_selector_simd_capabilities() {
+        let selector = BackendSelector::default_config();
+        let caps = selector.simd_capabilities();
+        assert!(caps.available);
+        assert!(caps.max_parallelism > 0);
+    }
 }

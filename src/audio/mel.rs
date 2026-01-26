@@ -1309,4 +1309,84 @@ mod tests {
             }
         }
     }
+
+    // ============================================================
+    // ADDITIONAL COVERAGE TESTS
+    // ============================================================
+
+    #[test]
+    fn test_filters_accessor() {
+        let mel = MelFilterbank::new(80, 400, 16000);
+        let filters = mel.filters();
+        assert_eq!(filters.len(), 80 * 201);
+        // All filter values should be non-negative
+        assert!(filters.iter().all(|&f| f >= 0.0));
+    }
+
+    #[test]
+    fn test_from_apr_data() {
+        // Create a MelFilterbankData with known values
+        let n_mels = 80u32;
+        let n_freqs = 201u32;
+        let data = vec![0.01_f32; (n_mels * n_freqs) as usize];
+
+        let filterbank_data = MelFilterbankData {
+            n_mels,
+            n_freqs,
+            data,
+        };
+
+        let mel = MelFilterbank::from_apr_data(filterbank_data, 16000);
+        assert_eq!(mel.n_mels(), 80);
+        assert_eq!(mel.n_freqs(), 201);
+        assert_eq!(mel.n_fft(), 400);
+        assert_eq!(mel.sample_rate(), 16000);
+    }
+
+    #[test]
+    fn test_from_filters() {
+        let n_mels = 40;
+        let n_fft = 256;
+        let n_freqs = n_fft / 2 + 1;
+        let filters = vec![0.1_f32; n_mels * n_freqs];
+
+        let mel = MelFilterbank::from_filters(filters, n_mels, n_fft, 16000);
+        assert_eq!(mel.n_mels(), n_mels);
+        assert_eq!(mel.n_fft(), n_fft);
+        assert_eq!(mel.n_freqs(), n_freqs);
+    }
+
+    #[test]
+    fn test_window_accessor() {
+        let mel = MelFilterbank::new(80, 400, 16000);
+        // Window length should match n_fft
+        assert_eq!(mel.window.len(), 400);
+        // Window values should be in [0, 1]
+        assert!(mel.window.iter().all(|&w| w >= 0.0 && w <= 1.0));
+    }
+
+    #[test]
+    fn test_compute_with_varying_hop_lengths() {
+        let mel = MelFilterbank::new(80, 400, 16000);
+        let audio = vec![0.0; 16000];
+
+        for hop_length in [80, 160, 320, 400] {
+            let result = mel.compute(&audio, hop_length);
+            assert!(result.is_ok());
+            let spec = result.unwrap();
+            let expected_frames = 16000 / hop_length;
+            assert_eq!(spec.len(), 80 * expected_frames);
+        }
+    }
+
+    #[test]
+    fn test_mel_to_hz_edge_cases() {
+        // Zero mel should map to zero Hz
+        let hz = MelFilterbank::mel_to_hz(0.0);
+        assert!(hz.abs() < 1e-5);
+
+        // High mel value - mel(3000) should give around 8000 Hz
+        let hz_high = MelFilterbank::mel_to_hz(3000.0);
+        assert!(hz_high > 5000.0, "3000 mel should be > 5000 Hz, got {hz_high}");
+    }
 }
