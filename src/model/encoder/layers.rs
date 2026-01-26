@@ -1,0 +1,193 @@
+//! Layer components for encoder blocks
+//!
+//! Layer normalization and feed-forward networks.
+
+use super::super::LinearWeights;
+use crate::error::{WhisperError, WhisperResult};
+
+/// Layer normalization weights
+#[derive(Debug, Clone)]
+pub struct LayerNorm {
+    /// Scale parameter (gamma)
+    pub weight: Vec<f32>,
+    /// Shift parameter (beta)
+    pub bias: Vec<f32>,
+    /// Normalized dimension
+    pub normalized_shape: usize,
+    /// Epsilon for numerical stability
+    pub eps: f32,
+}
+
+impl LayerNorm {
+    /// Create new layer normalization
+    #[must_use]
+    pub fn new(normalized_shape: usize) -> Self {
+        Self {
+            weight: vec![1.0; normalized_shape],
+            bias: vec![0.0; normalized_shape],
+            normalized_shape,
+            eps: 1e-5,
+        }
+    }
+
+    /// Apply layer normalization
+    pub fn forward(&self, input: &[f32]) -> WhisperResult<Vec<f32>> {
+        if input.len() % self.normalized_shape != 0 {
+            return Err(WhisperError::Model(
+                "input size mismatch for layer norm".into(),
+            ));
+        }
+
+        let seq_len = input.len() / self.normalized_shape;
+        let mut output = vec![0.0_f32; input.len()];
+
+        for s in 0..seq_len {
+            let start = s * self.normalized_shape;
+            let end = start + self.normalized_shape;
+            let slice = &input[start..end];
+
+            let mean: f32 = slice.iter().sum::<f32>() / self.normalized_shape as f32;
+            let variance: f32 = slice.iter().map(|&x| (x - mean).powi(2)).sum::<f32>()
+                / self.normalized_shape as f32;
+
+            let inv_std = 1.0 / (variance + self.eps).sqrt();
+
+            for i in 0..self.normalized_shape {
+                let normalized = (slice[i] - mean) * inv_std;
+                output[start + i] = normalized * self.weight[i] + self.bias[i];
+            }
+        }
+
+        Ok(output)
+    }
+}
+
+/// Feed-forward network (FFN) in transformer block
+#[derive(Debug, Clone)]
+pub struct FeedForward {
+    /// First linear layer (expansion)
+    pub fc1: LinearWeights,
+    /// Second linear layer (projection)
+    pub fc2: LinearWeights,
+    /// Hidden dimension (typically 4 * d_model)
+    pub d_ff: usize,
+    /// Model dimension
+    pub d_model: usize,
+}
+
+impl FeedForward {
+    /// Create new feed-forward network
+    #[must_use]
+    pub fn new(d_model: usize, d_ff: usize) -> Self {
+        Self {
+            fc1: LinearWeights::new(d_model, d_ff),
+            fc2: LinearWeights::new(d_ff, d_model),
+            d_ff,
+            d_model,
+        }
+    }
+
+    /// Forward pass with GELU activation
+    pub fn forward(&self, input: &[f32]) -> WhisperResult<Vec<f32>> {
+        let seq_len = input.len() / self.d_model;
+
+        // First linear + GELU
+        let mut hidden = self.fc1.forward_simd(input, seq_len)?;
+        for x in &mut hidden {
+            *x = gelu(*x);
+        }
+
+        // Second linear
+        self.fc2.forward_simd(&hidden, seq_len)
+    }
+
+    /// Finalize weights for optimized SIMD matmul
+    pub fn finalize_weights(&mut self) {
+        self.fc1.finalize_weights();
+        self.fc2.finalize_weights();
+    }
+
+    /// Check if weights have been finalized
+    #[must_use]
+    pub fn is_finalized(&self) -> bool {
+        self.fc1.is_finalized() && self.fc2.is_finalized()
+    }
+}
+
+/// GELU activation function (approximate)
+///
+/// GELU(x) ≈ 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3)))
+#[inline]
+#[must_use]
+pub fn gelu(x: f32) -> f32 {
+    let sqrt_2_over_pi = 0.797_884_6;
+    let coef = 0.044_715;
+    0.5 * x * (1.0 + (sqrt_2_over_pi * (x + coef * x.powi(3))).tanh())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_layer_norm_new() {
+        let ln = LayerNorm::new(64);
+        assert_eq!(ln.normalized_shape, 64);
+        assert_eq!(ln.weight.len(), 64);
+        assert_eq!(ln.bias.len(), 64);
+    }
+
+    #[test]
+    fn test_layer_norm_forward() {
+        let ln = LayerNorm::new(4);
+        let input = vec![1.0, 2.0, 3.0, 4.0];
+        let output = ln.forward(&input).expect("forward should succeed");
+
+        assert_eq!(output.len(), 4);
+        let mean: f32 = output.iter().sum::<f32>() / 4.0;
+        assert!(mean.abs() < 1e-5, "mean should be ~0, got {mean}");
+    }
+
+    #[test]
+    fn test_layer_norm_batch() {
+        let ln = LayerNorm::new(4);
+        let input = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let output = ln.forward(&input).expect("forward should succeed");
+        assert_eq!(output.len(), 8);
+    }
+
+    #[test]
+    fn test_feed_forward_new() {
+        let ffn = FeedForward::new(64, 256);
+        assert_eq!(ffn.d_model, 64);
+        assert_eq!(ffn.d_ff, 256);
+    }
+
+    #[test]
+    fn test_feed_forward_forward() {
+        let ffn = FeedForward::new(8, 32);
+        let input = vec![0.0_f32; 16];
+        let output = ffn.forward(&input).expect("forward should succeed");
+        assert_eq!(output.len(), 16);
+    }
+
+    #[test]
+    fn test_gelu_at_zero() {
+        let result = gelu(0.0);
+        assert!(result.abs() < 1e-6, "GELU(0) should be ~0");
+    }
+
+    #[test]
+    fn test_gelu_positive() {
+        let result = gelu(1.0);
+        assert!(result > 0.0, "GELU(1) should be positive");
+        assert!(result < 1.0, "GELU(1) should be less than 1");
+    }
+
+    #[test]
+    fn test_gelu_negative() {
+        let result = gelu(-1.0);
+        assert!(result < 0.0, "GELU(-1) should be negative");
+        assert!(result > -0.2, "GELU(-1) should be > -0.2");
+    }
+}
