@@ -15,6 +15,8 @@ patterns = [
     "**/examples/**",          # debug/development scripts (not production code)
     "**/tools/**",             # development utilities (not production code)
     "**/demos/tests/**",       # demo test files (test code, not production)
+    "**/*_generated.rs",       # auto-generated Rust code
+    "**/mel_filterbank_data.rs", # pre-computed filterbank constants (41K lines of data)
 ]
 
 [analysis]
