@@ -115,8 +115,6 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 [[package]]
 name = "aprender"
 version = "0.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbdcccadf867c37e6538dd179da518f4a9e55eb9efabcaec01323c3a12239e34"
 dependencies = [
  "bincode",
  "dirs 6.0.0",
@@ -131,7 +129,9 @@ dependencies = [
  "safetensors",
  "serde",
  "serde_json",
+ "sha2",
  "trueno",
+ "ureq",
 ]
 
 [[package]]
@@ -2943,8 +2943,6 @@ dependencies = [
 [[package]]
 name = "realizar"
 version = "0.6.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89e6d6866d26aa376b0019e7a73138834109557bfde0fac8e43bc562445cc7f2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4094,9 +4092,7 @@ dependencies = [
 
 [[package]]
 name = "trueno"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ba5457f1f184520c46e6b315d540baa4cf2a2ae3d047e13001a4a23a12c6ab8"
+version = "0.14.2"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -4114,9 +4110,7 @@ dependencies = [
 
 [[package]]
 name = "trueno-gpu"
-version = "0.4.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "156e3f2024147b216b157285e065528dcd7f36c0de3f3681541dce7ca31d8c00"
+version = "0.4.11"
 dependencies = [
  "libloading",
  "thiserror 2.0.17",

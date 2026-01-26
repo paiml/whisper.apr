@@ -157,7 +157,7 @@ impl Default for WhisperTokenSuppressor {
 
 #[cfg(feature = "realizar-inference")]
 impl LogitProcessor for WhisperTokenSuppressor {
-    fn process(&self, logits: &mut [f32], _ctx: &LogitProcessorContext) {
+    fn process(&self, logits: &mut [f32], _ctx: &LogitProcessorContext<'_>) {
         self.apply(logits);
     }
 

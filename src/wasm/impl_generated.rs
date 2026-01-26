@@ -84,6 +84,7 @@ impl From<TranscribeOptionsWasm> for TranscribeOptions {
             task,
             strategy,
             word_timestamps: false,
+            profile: false,
         }
     }
 }
