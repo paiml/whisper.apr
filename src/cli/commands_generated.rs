@@ -2575,7 +2575,7 @@ pub fn run_serve(_args: ServeArgs, _global: &Args) -> CliResult<CommandResult> {
 /// Run parity command (whisper.cpp comparison)
 #[allow(clippy::too_many_lines)]
 pub fn run_parity(args: ParityArgs, global: &Args) -> CliResult<CommandResult> {
-    use super::parity::{ParityConfig, ParityTest};
+    use crate::cli::parity::{ParityConfig, ParityTest};
 
     // Validate input file exists
     if !args.input.exists() {
