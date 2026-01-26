@@ -1492,3 +1492,22 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: PMAT-023
+  github_issue: null
+  item_type: task
+  title: 'WAPR-QA-095: Achieve 95% coverage and A+ TDG grade'
+  status: inprogress
+  priority: high
+  assigned_to: null
+  created: 2026-01-26T09:32:45Z
+  updated: 2026-01-26T09:32:49.229387902+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - qa
+  - coverage
+  - tdg
+  notes: null
