@@ -987,3 +987,249 @@ mod extensible_tests {
         );
     }
 }
+
+// =============================================================================
+// ADDITIONAL COVERAGE TESTS
+// =============================================================================
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_wav_file_wrapper() {
+        // Test the WhisperResult wrapper function
+        let samples = vec![0i16, 1000, -1000];
+        let wav = create_test_wav_16bit_mono(&samples, 16000);
+        let result = parse_wav_file(&wav);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_wav_file_error() {
+        // Test error conversion
+        let result = parse_wav_file(b"invalid");
+        assert!(result.is_err());
+        // Verify error is converted to WhisperError
+        match result {
+            Err(WhisperError::Audio(msg)) => {
+                assert!(msg.contains("small") || msg.contains("WAV"));
+            }
+            _ => panic!("Expected WhisperError::Audio"),
+        }
+    }
+
+    #[test]
+    fn test_wav_error_display_fmt_truncated() {
+        let err = WavError::FmtTruncated;
+        assert_eq!(err.to_string(), "Invalid WAV: fmt chunk truncated");
+    }
+
+    #[test]
+    fn test_wav_error_display_unsupported_format() {
+        let err = WavError::UnsupportedFormat {
+            format: 99,
+            bits: 64,
+        };
+        assert_eq!(err.to_string(), "Unsupported format: 64 bits, format 99");
+    }
+
+    #[test]
+    fn test_wav_error_display_no_data_chunk() {
+        let err = WavError::NoDataChunk;
+        assert_eq!(err.to_string(), "Invalid WAV: no data chunk found");
+    }
+
+    #[test]
+    fn test_resample_edge_last_sample() {
+        // Test when src_idx + 1 >= samples.len() but src_idx < samples.len()
+        let samples = vec![0.5, 0.6, 0.7];
+        // Use a ratio that accesses the last sample without interpolation
+        let resampled = resample(&samples, 48000, 16000);
+        // Just verify it doesn't panic and produces output
+        assert!(!resampled.is_empty());
+    }
+
+    #[test]
+    fn test_resample_out_of_bounds() {
+        // Test when src_idx >= samples.len() (should return 0.0)
+        let samples = vec![0.5];
+        // Large output len relative to input - some indices will be out of bounds
+        let resampled = resample(&samples, 8000, 48000);
+        assert!(!resampled.is_empty());
+        // Check that values are bounded (includes 0.0 for out-of-bounds)
+        for &s in &resampled {
+            assert!(s >= -1.0 && s <= 1.0);
+        }
+    }
+
+    #[test]
+    fn test_convert_24bit_pcm_negative() {
+        // Test negative 24-bit values (sign extension)
+        let data = [0x00, 0x00, 0x80]; // -8388608 in 24-bit
+        let samples = convert_24bit_pcm(&data);
+        assert_eq!(samples.len(), 1);
+        assert!(samples[0] < 0.0); // Should be negative
+    }
+
+    #[test]
+    fn test_convert_32bit_pcm() {
+        let data = [0u8, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0x7F]; // 0, max positive
+        let samples = convert_32bit_pcm(&data);
+        assert_eq!(samples.len(), 2);
+        assert!((samples[0] - 0.0).abs() < 0.001);
+        assert!(samples[1] > 0.99); // Close to 1.0
+    }
+
+    #[test]
+    fn test_convert_to_mono_unsupported() {
+        let samples = vec![0.5; 6];
+        let result = convert_to_mono(samples, 3); // 3 channels not supported
+        assert_eq!(result, Err(WavError::UnsupportedChannels(3)));
+    }
+
+    #[test]
+    fn test_parse_fmt_chunk_truncated() {
+        // Create WAV with fmt chunk claiming larger size than available
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&100u32.to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&1000u32.to_le_bytes()); // Claim 1000 bytes but don't provide them
+        // Add enough padding to pass TooSmall check (need at least 44 bytes total)
+        wav.extend_from_slice(&[0u8; 28]); // 4+4+4+4+4+28 = 48 bytes
+
+        let result = parse_wav(&wav);
+        assert_eq!(result, Err(WavError::FmtTruncated));
+    }
+
+    #[test]
+    fn test_parse_wav_unknown_chunk_padding() {
+        // Test that unknown chunks with odd sizes are properly padded
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&200u32.to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+
+        // fmt chunk
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        wav.extend_from_slice(&1u16.to_le_bytes()); // mono
+        wav.extend_from_slice(&16000u32.to_le_bytes());
+        wav.extend_from_slice(&32000u32.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+
+        // Unknown chunk with odd size (should be padded)
+        wav.extend_from_slice(b"JUNK");
+        wav.extend_from_slice(&3u32.to_le_bytes()); // 3 bytes (odd)
+        wav.extend_from_slice(&[0u8; 4]); // 3 + 1 padding
+
+        // data chunk
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&4u32.to_le_bytes());
+        wav.extend_from_slice(&[0u8; 4]);
+
+        let result = parse_wav(&wav);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_wav_data_before_fmt() {
+        // Data chunk before fmt chunk should fail (no fmt found)
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&100u32.to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&4u32.to_le_bytes());
+        // Need at least 44 bytes total to pass TooSmall check
+        wav.extend_from_slice(&[0u8; 24]); // 4+4+4+4+4+24 = 44 bytes
+
+        let result = parse_wav(&wav);
+        assert_eq!(result, Err(WavError::NoDataChunk));
+    }
+
+    #[test]
+    fn test_extensible_format_small_chunk() {
+        // WAVE_FORMAT_EXTENSIBLE with chunk_size < 40 (sub_format should be 0)
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&100u32.to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+
+        // fmt chunk - WAVE_FORMAT_EXTENSIBLE but only 16 bytes
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes()); // Small chunk, no extension
+        wav.extend_from_slice(&0xFFFEu16.to_le_bytes()); // WAVE_FORMAT_EXTENSIBLE
+        wav.extend_from_slice(&1u16.to_le_bytes()); // mono
+        wav.extend_from_slice(&16000u32.to_le_bytes());
+        wav.extend_from_slice(&32000u32.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+
+        // data chunk
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&4u32.to_le_bytes());
+        wav.extend_from_slice(&[0u8; 4]);
+
+        // This should fail with unsupported format since sub_format is 0
+        let result = parse_wav(&wav);
+        assert!(matches!(result, Err(WavError::UnsupportedFormat { .. })));
+    }
+
+    #[test]
+    fn test_unsupported_format_bits() {
+        // Create WAV with unsupported bit depth
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&100u32.to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        wav.extend_from_slice(&1u16.to_le_bytes()); // mono
+        wav.extend_from_slice(&16000u32.to_le_bytes());
+        wav.extend_from_slice(&32000u32.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&12u16.to_le_bytes()); // 12-bit not supported
+
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&4u32.to_le_bytes());
+        wav.extend_from_slice(&[0u8; 4]);
+
+        let result = parse_wav(&wav);
+        assert!(matches!(
+            result,
+            Err(WavError::UnsupportedFormat { format: 1, bits: 12 })
+        ));
+    }
+
+    /// Helper to create 16-bit mono WAV for coverage tests
+    fn create_test_wav_16bit_mono(samples: &[i16], sample_rate: u32) -> Vec<u8> {
+        let num_samples = samples.len();
+        let data_size = (num_samples * 2) as u32;
+        let file_size = 36 + data_size;
+
+        let mut wav = Vec::with_capacity(44 + num_samples * 2);
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&file_size.to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_size.to_le_bytes());
+        for sample in samples {
+            wav.extend_from_slice(&sample.to_le_bytes());
+        }
+        wav
+    }
+}
