@@ -1,0 +1,41 @@
+# PMAT Configuration for whisper.apr
+# This config controls TDG, quality-gates, and other PMAT tools
+
+[system]
+project_name = "whisper-apr"
+verbose = false
+
+[analysis]
+# Include Rust source files
+include_patterns = [
+    "**/*.rs",
+]
+
+# Exclude generated and data files from analysis
+exclude_patterns = [
+    "**/target/**",
+    "**/node_modules/**",
+    "**/pkg/**",
+    "**/*_generated.rs",
+    "**/mel_filterbank_data.rs",
+    "**/golden_traces/**",
+    "**/book/**",
+    "**/snippets/**",
+]
+
+# Skip vendor/generated code
+skip_vendor = true
+
+[quality]
+# Complexity thresholds (relaxed for complex CLI handlers)
+max_complexity = 40
+max_cognitive_complexity = 65
+
+# Coverage targets
+min_coverage = 89.0
+
+# SATD (no TODOs allowed)
+allow_satd = false
+
+# Documentation required
+require_docs = true
