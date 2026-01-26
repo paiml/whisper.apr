@@ -273,4 +273,132 @@ mod tests {
         let a = vec![1.0, 5.0, 3.0, 2.0];
         assert_eq!(argmax(&a), 1);
     }
+
+    // =========================================================================
+    // Additional Coverage Tests
+    // =========================================================================
+
+    #[test]
+    fn test_scale_inplace() {
+        let mut a = vec![1.0, 2.0, 3.0, 4.0];
+        scale_inplace(&mut a, 2.0);
+        assert!(vec_approx_eq(&a, &[2.0, 4.0, 6.0, 8.0]));
+    }
+
+    #[test]
+    fn test_scale_inplace_zero() {
+        let mut a = vec![1.0, 2.0, 3.0];
+        scale_inplace(&mut a, 0.0);
+        assert!(vec_approx_eq(&a, &[0.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn test_axpy() {
+        let x = vec![1.0, 2.0, 3.0];
+        let mut y = vec![10.0, 20.0, 30.0];
+        axpy(2.0, &x, &mut y);
+        // y = y + 2*x = [10+2, 20+4, 30+6] = [12, 24, 36]
+        assert!(vec_approx_eq(&y, &[12.0, 24.0, 36.0]));
+    }
+
+    #[test]
+    fn test_axpy_zero_scalar() {
+        let x = vec![1.0, 2.0, 3.0];
+        let mut y = vec![10.0, 20.0, 30.0];
+        axpy(0.0, &x, &mut y);
+        // y should be unchanged
+        assert!(vec_approx_eq(&y, &[10.0, 20.0, 30.0]));
+    }
+
+    #[test]
+    fn test_add_inplace() {
+        let x = vec![1.0, 2.0, 3.0];
+        let mut y = vec![10.0, 20.0, 30.0];
+        add_inplace(&x, &mut y);
+        assert!(vec_approx_eq(&y, &[11.0, 22.0, 33.0]));
+    }
+
+    #[test]
+    fn test_broadcast_add_inplace() {
+        let mut matrix = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2x3
+        let vec = vec![10.0, 20.0, 30.0];
+        broadcast_add_inplace(&mut matrix, &vec, 2, 3);
+        // Row 0: [1+10, 2+20, 3+30] = [11, 22, 33]
+        // Row 1: [4+10, 5+20, 6+30] = [14, 25, 36]
+        assert!(vec_approx_eq(&matrix, &[11.0, 22.0, 33.0, 14.0, 25.0, 36.0]));
+    }
+
+    #[test]
+    fn test_max_element() {
+        let a = vec![1.0, 5.0, 3.0, 2.0];
+        assert!(approx_eq(max_element(&a), 5.0));
+    }
+
+    #[test]
+    fn test_max_empty() {
+        let a: Vec<f32> = vec![];
+        assert_eq!(max(&a), f32::NEG_INFINITY);
+    }
+
+    #[test]
+    fn test_min_empty() {
+        let a: Vec<f32> = vec![];
+        assert_eq!(min(&a), f32::INFINITY);
+    }
+
+    #[test]
+    fn test_argmax_empty() {
+        let a: Vec<f32> = vec![];
+        assert_eq!(argmax(&a), 0);
+    }
+
+    #[test]
+    fn test_variance_empty() {
+        let a: Vec<f32> = vec![];
+        assert!(approx_eq(variance(&a), 0.0));
+    }
+
+    #[test]
+    fn test_dot_empty() {
+        let a: Vec<f32> = vec![];
+        let b: Vec<f32> = vec![];
+        assert!(approx_eq(dot(&a, &b), 0.0));
+    }
+
+    #[test]
+    fn test_sum_empty() {
+        let a: Vec<f32> = vec![];
+        assert!(approx_eq(sum(&a), 0.0));
+    }
+
+    #[test]
+    fn test_scale_empty() {
+        let a: Vec<f32> = vec![];
+        let result = scale(&a, 2.0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_add_empty() {
+        let a: Vec<f32> = vec![];
+        let b: Vec<f32> = vec![];
+        let result = add(&a, &b);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_sub_empty() {
+        let a: Vec<f32> = vec![];
+        let b: Vec<f32> = vec![];
+        let result = sub(&a, &b);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_mul_empty() {
+        let a: Vec<f32> = vec![];
+        let b: Vec<f32> = vec![];
+        let result = mul(&a, &b);
+        assert!(result.is_empty());
+    }
 }
