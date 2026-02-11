@@ -153,7 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Step 2: Add positional embedding (position 0)
-    let mut hidden: Vec<f32> = tok_emb
+    let hidden: Vec<f32> = tok_emb
         .iter()
         .zip(&pos_embed[0..d_model])
         .map(|(t, p)| t + p)

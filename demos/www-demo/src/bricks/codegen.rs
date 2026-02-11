@@ -147,6 +147,7 @@ let wasm = null;
 let transcriptionWorker = null;
 let ringBuffer = null;
 let processingInterval = null;
+let workerState = 'idle';
 
 // Override bootstrap to load WASM
 const originalOnMessage = self.onmessage;
@@ -162,10 +163,10 @@ self.onmessage = async (e) => {
             transcriptionWorker = wasmModule.initWorker();
             workerState = 'bootstrapped';
             console.log('[Worker] WASM initialized successfully');
-            self.postMessage({ type: 'ready' });
+            self.postMessage({ type: 'Ready' });
         } catch (err) {
             console.error('[Worker] Init failed:', err);
-            self.postMessage({ type: 'error', message: 'Worker init failed: ' + err.toString() });
+            self.postMessage({ type: 'Error', message: 'Worker init failed: ' + err.toString() });
         }
         return;
     }
@@ -186,7 +187,7 @@ self.onmessage = async (e) => {
             self.postMessage(result);
         } catch (err) {
             console.error('[Worker] Model load failed:', err);
-            self.postMessage({ type: 'error', message: err.toString() });
+            self.postMessage({ type: 'Error', message: err.toString() });
         }
         return;
     }
@@ -228,8 +229,10 @@ self.onmessage = async (e) => {
 };
 
 // Process audio tick - checks isDone flag like whisper.cpp
+// Note: we use transcriptionWorker.isRingBufferDone() because the ringBuffer
+// ownership was transferred to Rust via setRingBuffer(), nullifying the JS pointer.
 const processAudioTick = () => {
-    if (ringBuffer && ringBuffer.isDone()) {
+    if (transcriptionWorker.isRingBufferDone()) {
         if (processingInterval) {
             clearInterval(processingInterval);
             processingInterval = null;

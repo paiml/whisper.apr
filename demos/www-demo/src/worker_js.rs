@@ -109,9 +109,11 @@ self.onmessage = async (e) => {
 };
 
 // Process audio helper function - checks isDone flag like whisper.cpp
+// Note: we use worker.isRingBufferDone() because the ringBuffer
+// ownership was transferred to Rust via setRingBuffer(), nullifying the JS pointer.
 const processAudioTick = () => {
     // Check if buffer is done (producer stopped) - CRITICAL for stop detection
-    if (ringBuffer && ringBuffer.isDone()) {
+    if (worker.isRingBufferDone()) {
         // Stop the interval
         if (processingInterval) {
             clearInterval(processingInterval);
