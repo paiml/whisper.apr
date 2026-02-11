@@ -17,7 +17,6 @@ exclude_patterns = [
     "**/node_modules/**",
     "**/pkg/**",
     "**/*_generated.rs",
-    "**/mel_filterbank_data.rs",
     "**/golden_traces/**",
     "**/book/**",
     "**/snippets/**",

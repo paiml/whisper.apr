@@ -2,7 +2,6 @@
 //! Compare our encoder output against HuggingFace
 
 use std::fs::File;
-use std::io::BufReader;
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -138,7 +137,7 @@ fn load_npy(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
     }
 
     let version_major = data[6];
-    let version_minor = data[7];
+    let _version_minor = data[7];
 
     let header_len = if version_major == 1 {
         u16::from_le_bytes([data[8], data[9]]) as usize

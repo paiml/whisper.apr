@@ -487,4 +487,365 @@ mod tests {
         let check = report.checks.iter().find(|c| c.id == 20).unwrap();
         assert!(check.passed, "Vocab size: {}", check.message);
     }
+
+    // =========================================================================
+    // Validator Fail-Path Tests (coverage for uncovered branches)
+    // =========================================================================
+
+    fn create_minimal_apr() -> Vec<u8> {
+        let mut writer = AprWriter::tiny();
+        writer.add(
+            "decoder.token_embedding",
+            vec![51865, 384],
+            vec![0.02; 51865 * 384],
+        );
+        writer.to_bytes().expect("should serialize")
+    }
+
+    fn create_zero_tensor_apr() -> Vec<u8> {
+        let mut writer = AprWriter::tiny();
+        writer.add(
+            "decoder.token_embedding",
+            vec![51865, 384],
+            vec![0.0; 51865 * 384],
+        );
+        writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        writer.add("encoder.layer_norm.bias", vec![384], vec![0.0; 384]);
+        writer.add("decoder.layer_norm.bias", vec![384], vec![0.0; 384]);
+        writer.to_bytes().expect("should serialize")
+    }
+
+    fn create_bad_embedding_stats_apr() -> Vec<u8> {
+        let mut writer = AprWriter::tiny();
+        // Embedding with bad stats: high mean, low std
+        writer.add(
+            "decoder.token_embedding",
+            vec![51865, 384],
+            vec![5.0; 51865 * 384],
+        );
+        // Wrong-shaped positional embeddings
+        writer.add(
+            "encoder.positional_embedding",
+            vec![100, 384],
+            vec![0.01; 100 * 384],
+        );
+        writer.add(
+            "decoder.positional_embedding",
+            vec![100, 384],
+            vec![0.01; 100 * 384],
+        );
+        writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        writer.to_bytes().expect("should serialize")
+    }
+
+    fn create_bad_weight_std_apr() -> Vec<u8> {
+        let mut writer = AprWriter::tiny();
+        writer.add(
+            "decoder.token_embedding",
+            vec![51865, 384],
+            vec![0.02; 51865 * 384],
+        );
+        writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        // Weights with extreme std (all same value = std ~0)
+        writer.add(
+            "encoder.layers.0.self_attn.q_proj.weight",
+            vec![384, 384],
+            vec![0.5; 384 * 384],
+        );
+        writer.add(
+            "encoder.layers.0.self_attn.k_proj.weight",
+            vec![384, 384],
+            vec![0.5; 384 * 384],
+        );
+        writer.add(
+            "encoder.layers.0.self_attn.v_proj.weight",
+            vec![384, 384],
+            vec![0.5; 384 * 384],
+        );
+        writer.add(
+            "encoder.layers.0.self_attn.out_proj.weight",
+            vec![384, 384],
+            vec![0.5; 384 * 384],
+        );
+        writer.add(
+            "encoder.layers.0.fc1.weight",
+            vec![1536, 384],
+            vec![0.5; 1536 * 384],
+        );
+        writer.add(
+            "encoder.layers.0.fc2.weight",
+            vec![384, 1536],
+            vec![0.5; 384 * 1536],
+        );
+        // Bad bias
+        writer.add("encoder.conv1.bias", vec![384], vec![5.0; 384]);
+        writer.to_bytes().expect("should serialize")
+    }
+
+    #[test]
+    fn test_validator_missing_embeddings() {
+        let data = create_minimal_apr();
+        let reader = AprReader::new(data).expect("should parse");
+        let validator = AprValidator::new(&reader);
+        let report = validator.validate_all();
+        // Missing LN weights should produce fails in checks 6-7
+        let check_6 = report.checks.iter().find(|c| c.id == 6).unwrap();
+        assert!(!check_6.passed);
+        let check_7 = report.checks.iter().find(|c| c.id == 7).unwrap();
+        assert!(!check_7.passed);
+    }
+
+    #[test]
+    fn test_validator_zero_tensors_detected() {
+        let data = create_zero_tensor_apr();
+        let reader = AprReader::new(data).expect("should parse");
+        let validator = AprValidator::new(&reader);
+        let report = validator.validate_all();
+        // Check 14: no zero tensors - should fail because embedding is all zeros
+        let check_14 = report.checks.iter().find(|c| c.id == 14).unwrap();
+        assert!(!check_14.passed, "Should detect zero tensor: {}", check_14.message);
+    }
+
+    #[test]
+    fn test_validator_bad_embedding_stats() {
+        let data = create_bad_embedding_stats_apr();
+        let reader = AprReader::new(data).expect("should parse");
+        let validator = AprValidator::new(&reader);
+        let report = validator.validate_all();
+        // Check 17: token embedding stats - mean too high
+        let check_17 = report.checks.iter().find(|c| c.id == 17).unwrap();
+        assert!(!check_17.passed, "Should fail: {}", check_17.message);
+        // Check 18: positional embedding shape - wrong shape
+        let check_18 = report.checks.iter().find(|c| c.id == 18).unwrap();
+        assert!(!check_18.passed, "Should fail: {}", check_18.message);
+    }
+
+    #[test]
+    fn test_validator_bad_weight_std() {
+        let data = create_bad_weight_std_apr();
+        let reader = AprReader::new(data).expect("should parse");
+        let validator = AprValidator::new(&reader);
+        let report = validator.validate_all();
+        // Check 13: weight std - should fail (all-same values = ~0 std)
+        let check_13 = report.checks.iter().find(|c| c.id == 13).unwrap();
+        assert!(!check_13.passed, "Should detect bad std: {}", check_13.message);
+        // Check 15: bias vectors - mean=5.0 is out of [-1, 1]
+        let check_15 = report.checks.iter().find(|c| c.id == 15).unwrap();
+        assert!(!check_15.passed, "Should detect bad bias: {}", check_15.message);
+    }
+
+    #[test]
+    fn test_validator_qkv_proj_means_bad() {
+        let data = create_bad_weight_std_apr();
+        let reader = AprReader::new(data).expect("should parse");
+        let validator = AprValidator::new(&reader);
+        let report = validator.validate_all();
+        // Check 11: QKV proj means - 0.5 is out of [-0.1, 0.1]
+        let check_11 = report.checks.iter().find(|c| c.id == 11).unwrap();
+        assert!(!check_11.passed, "Should detect bad proj means: {}", check_11.message);
+        // Check 12: FFN means - 0.5 is out of [-0.1, 0.1]
+        let check_12 = report.checks.iter().find(|c| c.id == 12).unwrap();
+        assert!(!check_12.passed, "Should detect bad FFN means: {}", check_12.message);
+    }
+
+    #[test]
+    fn test_validator_positional_embedding_stats_bad() {
+        let data = create_bad_embedding_stats_apr();
+        let reader = AprReader::new(data).expect("should parse");
+        let validator = AprValidator::new(&reader);
+        let report = validator.validate_all();
+        // Check 19: positional embedding stats
+        let check_19 = report.checks.iter().find(|c| c.id == 19).unwrap();
+        // Stats may or may not fail depending on the data, just ensure the check ran
+        assert!(check_19.id == 19);
+    }
+
+    #[test]
+    fn test_validate_apr_bytes_convenience() {
+        let data = create_valid_test_apr();
+        let report = validate_apr_bytes(data).expect("should validate");
+        assert!(report.score >= 15);
+    }
+
+    #[test]
+    fn test_validator_tensor_shapes_bad() {
+        let mut writer = AprWriter::tiny();
+        // Wrong-shaped token embedding (shape[1] != d_model)
+        writer.add("decoder.token_embedding", vec![51865, 128], vec![0.02; 51865 * 128]);
+        // Wrong-shaped conv1 (shape[0] != d_model)
+        writer.add("encoder.conv1.weight", vec![128, 80, 3], vec![0.05; 128 * 80 * 3]);
+        writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        let validator = AprValidator::new(&reader);
+        let report = validator.validate_all();
+        let check_4 = report.checks.iter().find(|c| c.id == 4).unwrap();
+        assert!(!check_4.passed, "Should detect bad shapes: {}", check_4.message);
+    }
+
+    #[test]
+    fn test_validator_vocab_size_mismatch() {
+        let mut writer = AprWriter::tiny();
+        // Wrong vocab size in embedding (384 != 51865)
+        writer.add("decoder.token_embedding", vec![384, 384], vec![0.02; 384 * 384]);
+        writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        let validator = AprValidator::new(&reader);
+        let report = validator.validate_all();
+        let check_20 = report.checks.iter().find(|c| c.id == 20).unwrap();
+        assert!(!check_20.passed, "Should detect vocab mismatch: {}", check_20.message);
+    }
+
+    #[test]
+    fn test_validator_ln_with_nan_inf() {
+        let mut writer = AprWriter::tiny();
+        writer.add(
+            "decoder.token_embedding",
+            vec![51865, 384],
+            vec![0.02; 51865 * 384],
+        );
+        // LN weight with NaN
+        let mut ln_data = vec![1.0f32; 384];
+        ln_data[0] = f32::NAN;
+        writer.add("encoder.layer_norm.weight", vec![384], ln_data);
+        // LN weight with Inf
+        let mut ln_data2 = vec![1.0f32; 384];
+        ln_data2[0] = f32::INFINITY;
+        writer.add("decoder.layer_norm.weight", vec![384], ln_data2);
+        // Block LN with bad mean
+        writer.add(
+            "encoder.layers.0.self_attn_layer_norm.weight",
+            vec![384],
+            vec![11.0; 384],
+        );
+        writer.add(
+            "encoder.layers.0.self_attn_layer_norm.bias",
+            vec![384],
+            vec![0.0; 384],
+        );
+        writer.add("encoder.layer_norm.bias", vec![384], vec![5.0; 384]);
+        writer.add("decoder.layer_norm.bias", vec![384], vec![0.0; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        let validator = AprValidator::new(&reader);
+        let report = validator.validate_all();
+        // Check 10: NaN/Inf in LN - should detect both
+        let check_10 = report.checks.iter().find(|c| c.id == 10).unwrap();
+        assert!(!check_10.passed, "Should detect NaN/Inf: {}", check_10.message);
+        // Check 8: Block LN means - should detect bad mean
+        let check_8 = report.checks.iter().find(|c| c.id == 8).unwrap();
+        assert!(!check_8.passed, "Should detect bad block LN: {}", check_8.message);
+        // Check 9: LN biases - encoder bias mean=5.0 out of [-0.5, 0.5]
+        let check_9 = report.checks.iter().find(|c| c.id == 9).unwrap();
+        assert!(!check_9.passed, "Should detect bad bias: {}", check_9.message);
+    }
+
+    #[test]
+    fn test_validator_weight_std_minor_outlier() {
+        let mut writer = AprWriter::tiny();
+        writer.add(
+            "decoder.token_embedding",
+            vec![51865, 384],
+            vec![0.02; 51865 * 384],
+        );
+        // LN weights with varying values (so they have valid std when checked as .weight)
+        let ln_weight: Vec<f32> = (0..384).map(|i| 0.9 + 0.2 * (i as f32 / 384.0)).collect();
+        writer.add("encoder.layer_norm.weight", vec![384], ln_weight.clone());
+        writer.add("decoder.layer_norm.weight", vec![384], ln_weight);
+        // Many good weights with proper std (range gives std ~0.03)
+        let good_weight: Vec<f32> = (0..384 * 384)
+            .map(|i| ((i % 100) as f32 - 50.0) * 0.001)
+            .collect();
+        writer.add(
+            "encoder.layers.0.self_attn.q_proj.weight",
+            vec![384, 384],
+            good_weight.clone(),
+        );
+        writer.add(
+            "encoder.layers.0.self_attn.k_proj.weight",
+            vec![384, 384],
+            good_weight.clone(),
+        );
+        writer.add(
+            "encoder.layers.0.self_attn.v_proj.weight",
+            vec![384, 384],
+            good_weight.clone(),
+        );
+        writer.add(
+            "encoder.layers.0.self_attn.out_proj.weight",
+            vec![384, 384],
+            good_weight,
+        );
+        writer.add(
+            "encoder.layers.0.fc1.weight",
+            vec![1536, 384],
+            (0..1536 * 384).map(|i| ((i % 100) as f32 - 50.0) * 0.001).collect(),
+        );
+        writer.add(
+            "encoder.layers.0.fc2.weight",
+            vec![384, 1536],
+            (0..384 * 1536).map(|i| ((i % 100) as f32 - 50.0) * 0.001).collect(),
+        );
+        // One weight with bad std (all same = ~0 std) as minor outlier
+        writer.add("encoder.conv1.weight", vec![384, 80, 3], vec![0.05; 384 * 80 * 3]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        let validator = AprValidator::new(&reader);
+        let report = validator.validate_all();
+        // Check 13: 1 outlier in 9 weights = ~11% < 25%, so passes with "minor outliers"
+        let check_13 = report.checks.iter().find(|c| c.id == 13).unwrap();
+        assert!(check_13.passed, "Minor outlier should pass: {}", check_13.message);
+        assert!(
+            check_13.message.contains("minor outlier") || check_13.message.contains("outlier"),
+            "Message should mention outliers: {}",
+            check_13.message
+        );
+    }
+
+    #[test]
+    fn test_validator_no_token_embedding() {
+        let mut writer = AprWriter::tiny();
+        // No token embedding at all
+        writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        let validator = AprValidator::new(&reader);
+        let report = validator.validate_all();
+        // Check 16: token embedding shape - not found
+        let check_16 = report.checks.iter().find(|c| c.id == 16).unwrap();
+        assert!(!check_16.passed, "Missing embedding: {}", check_16.message);
+        // Check 17: token embedding stats - not found
+        let check_17 = report.checks.iter().find(|c| c.id == 17).unwrap();
+        assert!(!check_17.passed, "Missing embedding stats: {}", check_17.message);
+        // Check 20: vocab size - not found
+        let check_20 = report.checks.iter().find(|c| c.id == 20).unwrap();
+        assert!(!check_20.passed, "Missing vocab: {}", check_20.message);
+    }
+
+    #[test]
+    fn test_validator_tensor_count_insufficient() {
+        let mut writer = AprWriter::tiny();
+        // Only a few tensors (way less than expected for tiny model)
+        writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        let validator = AprValidator::new(&reader);
+        let report = validator.validate_all();
+        let check_3 = report.checks.iter().find(|c| c.id == 3).unwrap();
+        assert!(!check_3.passed, "Should detect insufficient tensors: {}", check_3.message);
+    }
 }

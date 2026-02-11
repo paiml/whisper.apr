@@ -10,9 +10,9 @@ use std::path::Path;
 /// Stats for a tensor
 #[derive(Debug)]
 struct TensorStats {
-    shape: Vec<usize>,
-    min: f32,
-    max: f32,
+    _shape: Vec<usize>,
+    _min: f32,
+    _max: f32,
     mean: f32,
     std: f32,
 }
@@ -26,9 +26,9 @@ impl TensorStats {
         let variance = data.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / n;
         let std = variance.sqrt();
         Self {
-            shape,
-            min,
-            max,
+            _shape: shape,
+            _min: min,
+            _max: max,
             mean,
             std,
         }
@@ -54,16 +54,16 @@ impl GroundTruth {
         // From test_data/reference_summary.json
         Self {
             step_a_audio: TensorStats {
-                shape: vec![24000],
-                min: -0.198,
-                max: 0.298,
+                _shape: vec![24000],
+                _min: -0.198,
+                _max: 0.298,
                 mean: 0.000178,
                 std: 0.0696,
             },
             step_c_mel: TensorStats {
-                shape: vec![148, 80],
-                min: -0.766,
-                max: 1.234,
+                _shape: vec![148, 80],
+                _min: -0.766,
+                _max: 1.234,
                 mean: -0.215,
                 std: 0.448,
             },

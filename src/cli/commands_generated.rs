@@ -150,6 +150,7 @@ pub fn run(args: Args) -> CliResult<CommandResult> {
         Command::Diagnose(d) => run_diagnose(d.clone(), &args),
         Command::Convert(c) => run_convert(c.clone(), &args),
         Command::Export(e) => run_export(e.clone(), &args),
+        Command::Apr(a) => crate::cli::apr_commands::run_apr(a, &args),
     }
 }
 

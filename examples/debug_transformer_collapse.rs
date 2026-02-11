@@ -9,7 +9,6 @@
 //! Run: cargo run --example debug_transformer_collapse
 
 use std::path::Path;
-use whisper_apr::model::{EncoderBlock, LayerNorm};
 
 fn stats(data: &[f32]) -> (f32, f32) {
     let n = data.len() as f32;

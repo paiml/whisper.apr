@@ -95,8 +95,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Through ln1 and self-attention (simplified)
     let normed1 = block0.ln1.forward(&x)?;
-    let q_self = block0.self_attn.w_q().forward_simd(&normed1, 1)?;
-    let k_self = block0.self_attn.w_k().forward_simd(&normed1, 1)?;
+    let _q_self = block0.self_attn.w_q().forward_simd(&normed1, 1)?;
+    let _k_self = block0.self_attn.w_k().forward_simd(&normed1, 1)?;
     let v_self = block0.self_attn.w_v().forward_simd(&normed1, 1)?;
 
     let attn_out_self = block0.self_attn.w_o().forward_simd(&v_self, 1)?;
@@ -128,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let k_start = enc_pos * d_model;
             let k_pos = &k_cached[k_start..k_start + d_model];
 
-            let (k_mean, k_std, _, _) = stats(k_pos);
+            let (_k_mean, k_std, _, _) = stats(k_pos);
             let k_norm: f32 = k_pos.iter().map(|&x| x * x).sum::<f32>().sqrt();
 
             // Compute Q·K score for head 0

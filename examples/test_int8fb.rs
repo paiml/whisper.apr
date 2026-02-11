@@ -1,3 +1,5 @@
+//! Int8 filterbank test example.
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let audio_bytes = std::fs::read("demos/test-audio/test-speech-1.5s.wav")?;
     let samples: Vec<f32> = audio_bytes[44..]

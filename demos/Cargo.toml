@@ -13,8 +13,8 @@ license = "MIT"
 repository = "https://github.com/paiml/whisper.apr"
 
 [workspace.dependencies]
-# Core whisper-apr library (with tracing for renacer integration)
-whisper-apr = { version = "0.2.0", features = ["tracing"] }
+# Core whisper-apr library - using local path for WASM fixes
+whisper-apr = { path = "..", default-features = false }
 
 # WASM bindings
 wasm-bindgen = "0.2"
@@ -47,3 +47,10 @@ expect_used = "warn"
 # PROBAR-SPEC-009: Prevent silent error handling via catch-all patterns
 # 27% of historical bugs caused by `_ => {}` catch-all (BH-001, BH-005)
 wildcard_enum_match_arm = "deny"
+
+# Local development: patch crates.io deps to use local versions with WASM fixes
+[patch.crates-io]
+trueno = { path = "../../trueno" }
+aprender = { path = "../../aprender" }
+jugar-probar = { path = "../../probar/crates/probar" }
+whisper-apr = { path = ".." }

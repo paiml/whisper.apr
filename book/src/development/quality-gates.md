@@ -60,9 +60,21 @@ make tier3
 make coverage
 ```
 
+The coverage target uses `cargo llvm-cov test --lib` (not nextest) to avoid profraw file explosion:
+
+```bash
+COV_THRESHOLD ?= 95
+
+coverage:
+    env RUSTC_WRAPPER= PROPTEST_CASES=2 QUICKCHECK_TESTS=2 \
+        cargo llvm-cov test --lib \
+        --ignore-filename-regex '(tests\.rs|test_.*\.rs|_generated\.rs|golden_traces|book|demos|snippets)' \
+        -- --test-threads=$(nproc)
+    cargo llvm-cov report --summary-only | tee target/coverage/summary.txt
+```
+
 Current targets:
-- **Line coverage**: ≥95% (achieved: 95.19%)
-- **Function coverage**: ≥95%
+- **Line coverage**: ≥95% (achieved: 95.17%)
 - **Branch coverage**: tracked
 
 ## Tier 4: CI/CD (5-60min)
@@ -161,11 +173,12 @@ jobs:
 ## Quality Metrics
 
 Current project status:
-- **Test count**: 841 tests
-- **Line coverage**: 95.19%
+- **Test count**: 2,428 tests
+- **Line coverage**: 95.17%
 - **Property tests**: 19 tests
 - **Zero clippy warnings** (in strict mode)
 - **Zero unsafe code**
+- **PMAT compliant**: All quality gates pass
 
 ## Best Practices
 

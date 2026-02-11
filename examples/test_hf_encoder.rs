@@ -131,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         our_enc_mean, our_enc_l2
     );
 
-    let (logits_our_enc, trace2) = model
+    let (logits_our_enc, _trace2) = model
         .decoder_mut()
         .forward_traced(&initial_tokens, &our_encoder)?;
 

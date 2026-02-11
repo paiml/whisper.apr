@@ -87,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // For each mel bin, we'd normally apply filterbank
         // Here just store raw values for first frame
         if frame_idx == 0 {
-            for mel_idx in 0..n_mels.min(5) {
+            for _mel_idx in 0..n_mels.min(5) {
                 // Sum over frequency bins (would use filterbank weights)
                 let mel_energy: f32 = power_spec.iter().sum::<f32>() / n_freqs as f32;
                 raw_mel_energies.push(mel_energy);

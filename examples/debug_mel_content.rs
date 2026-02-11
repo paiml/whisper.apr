@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let model_path = Path::new("models/whisper-tiny.apr");
     let model_bytes = std::fs::read(model_path)?;
-    let mut model = whisper_apr::WhisperApr::load_from_apr(&model_bytes)?;
+    let model = whisper_apr::WhisperApr::load_from_apr(&model_bytes)?;
 
     // Load test audio
     let audio_bytes = std::fs::read("demos/test-audio/test-speech-1.5s.wav")?;

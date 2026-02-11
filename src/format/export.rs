@@ -350,4 +350,97 @@ mod tests {
         assert_eq!(escape_json("he\\llo"), "he\\\\llo");
         assert_eq!(escape_json("he\nllo"), "he\\nllo");
     }
+
+    #[test]
+    fn test_escape_json_tab_cr_control() {
+        assert_eq!(escape_json("a\tb"), "a\\tb");
+        assert_eq!(escape_json("a\rb"), "a\\rb");
+        // Control character (bell)
+        let s = format!("a{}b", '\x07');
+        assert!(escape_json(&s).contains("\\u0007"));
+    }
+
+    #[test]
+    fn test_save_validation_error() {
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test_validation_err.safetensors");
+
+        let mut tensors = BTreeMap::new();
+        // Shape says 4 elements but data has 3
+        tensors.insert(
+            "bad".to_string(),
+            TensorData::new(vec![1.0, 2.0, 3.0], vec![2, 2]),
+        );
+
+        let result = SafeTensorsExporter::save(&path, &tensors);
+        assert!(result.is_err());
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_save_with_empty_metadata() {
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test_empty_meta.safetensors");
+
+        let mut tensors = BTreeMap::new();
+        tensors.insert("w".to_string(), TensorData::new(vec![1.0, 2.0], vec![2]));
+
+        SafeTensorsExporter::save_with_metadata(&path, &tensors, Some(BTreeMap::new()))
+            .expect("should succeed");
+
+        let data = fs::read(&path).expect("read");
+        let header_len = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
+        let header_str = std::str::from_utf8(&data[8..8 + header_len]).unwrap().trim();
+        // Empty metadata should not add __metadata__ key
+        assert!(!header_str.contains("__metadata__"));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_save_multiple_tensors_data_correct() {
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test_multi_data.safetensors");
+
+        let mut tensors = BTreeMap::new();
+        tensors.insert("a".to_string(), TensorData::new(vec![1.0, 2.0], vec![2]));
+        tensors.insert("b".to_string(), TensorData::new(vec![3.0, 4.0, 5.0], vec![3]));
+
+        SafeTensorsExporter::save(&path, &tensors).expect("save");
+
+        let data = fs::read(&path).expect("read");
+        let header_len = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
+
+        // After header, first tensor data is 2 f32s = 8 bytes, then 3 f32s = 12 bytes
+        let data_start = 8 + header_len;
+        assert!(data.len() >= data_start + 20); // 8 + 12 bytes of tensor data
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_tensor_byte_size() {
+        let t = TensorData::new(vec![1.0, 2.0, 3.0], vec![3]);
+        assert_eq!(t.byte_size(), 12);
+    }
+
+    #[test]
+    fn test_tensor_expected_elements_multidim() {
+        let t = TensorData::new(vec![0.0; 24], vec![2, 3, 4]);
+        assert_eq!(t.expected_elements(), 24);
+        assert!(t.validate().is_ok());
+    }
+
+    #[test]
+    fn test_export_stats_fields() {
+        let stats = ExportStats {
+            tensor_count: 5,
+            total_bytes: 1024,
+        };
+        assert_eq!(stats.tensor_count, 5);
+        assert_eq!(stats.total_bytes, 1024);
+        let _ = format!("{:?}", stats);
+        let cloned = stats.clone();
+        assert_eq!(cloned.tensor_count, 5);
+    }
 }
