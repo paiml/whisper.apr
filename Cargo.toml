@@ -1,6 +1,6 @@
 [package]
 name = "whisper-apr"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 rust-version = "1.75"
 description = "WASM-first automatic speech recognition engine implementing OpenAI Whisper"
@@ -62,19 +62,19 @@ thiserror = "2"
 
 # SIMD acceleration (trueno integration)
 # Using crates.io versions for reproducible builds
-trueno = "0.14.3"
+trueno = "0.14.5"
 # GPU-resident tensor architecture (WAPR-PERF-004)
-trueno-gpu = { version = "0.4.12", optional = true }
+trueno-gpu = { version = "0.4.17", optional = true }
 
 # Model format (aprender is the canonical .apr format library)
 # Note: safetensors-compare pulls hf-hub which doesn't support WASM
 # Use target-specific deps below to enable it only for native builds
 # Using local path for WASM-compatible trueno
-aprender = { path = "../aprender", default-features = false }
+aprender = { version = "0.25", path = "../aprender", default-features = false }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
-realizar = { version = "0.6.10", optional = true, default-features = false }
+realizar = { version = "0.6.12", optional = true, default-features = false }
 
 # FFT for mel spectrogram computation
 rustfft = "6.2"
@@ -160,7 +160,7 @@ getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] 
 # Enable safetensors-compare only for native builds
 # safetensors-compare: pulls hf-hub which doesn't support WASM
 # Note: inference-monitoring disabled due to cyclic dependency with entrenar
-aprender = { path = "../aprender", default-features = false, features = ["safetensors-compare"] }
+aprender = { version = "0.25", path = "../aprender", default-features = false, features = ["safetensors-compare"] }
 
 [profile.release]
 lto = true
