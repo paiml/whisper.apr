@@ -41,3 +41,8 @@ demos/realtime-transcription/models/*.apr
 
 # Large model files
 models/*.safetensors
+
+# PMAT
+.pmat/context.idx/
+.pmat/workspace.idx/
+.pmat/deps-cache.json

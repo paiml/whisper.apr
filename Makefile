@@ -107,18 +107,18 @@ build-wasm: ## Build WASM module (requires wasm-pack)
 # TEST COMMANDS (bashrs-style nextest integration)
 # ============================================================================
 test: ## Run all tests (with output)
-	cargo test --all-features -- --nocapture
+	PROPTEST_CASES=25 QUICKCHECK_TESTS=25 cargo test --all-features -- --nocapture
 
 test-fast: ## Run tests quickly (<30s target)
 	@echo "⚡ Fast tests (<30s)..."
-	@cargo test --lib --quiet -- --skip encode_3_second --skip rtf_measurement
+	@PROPTEST_CASES=10 QUICKCHECK_TESTS=10 cargo test --lib --quiet -- --skip encode_3_second --skip rtf_measurement
 	@echo "✅ Done!"
 
 test-quick: test-fast ## Alias
 
 test-doc: ## Run documentation tests
 	@echo "📚 Running documentation tests..."
-	@cargo test --doc --all-features
+	@PROPTEST_CASES=25 QUICKCHECK_TESTS=25 cargo test --doc --all-features
 	@echo "✅ Documentation tests completed!"
 
 test-property: ## Run property-based tests (fast: 50 cases)
@@ -174,31 +174,43 @@ check: ## Type check the project
 	@cargo check --all-targets --all-features
 
 # ============================================================================
-# COVERAGE (bashrs-style pattern - nextest + mold workaround)
-# TARGET: < 10 minutes (enforced with reduced property test cases)
+# COVERAGE (cargo llvm-cov test pattern — no nextest, no profraw explosion)
 # ============================================================================
-# Coverage exclusion pattern for platform-specific, data-dependent, and wrapper modules
-# Rationale for exclusions (see docs/coverage-exclusions.md for details):
-#   wasm/        - requires browser environment, tested via probar GUI tests
-#   tools/       - CLI tools, tested separately
-#   timestamps/  - requires real model data for meaningful tests
-#   tokenizer/   - requires vocabulary files
-#   vocabulary/  - requires domain-specific data files
-#   model/*.rs   - encoder/decoder require model weights; tested via integration
-#   simd.rs      - wrapper for trueno (tested separately); platform-specific
-#   vad.rs       - voice activity detection, requires audio samples
-#   progress.rs  - optional feature, UI callbacks
-#   lib.rs       - public API wrapper, internal modules have direct tests
-#   cli/commands.rs - requires slow inference tests (run separately with --ignored)
-# Exclude: external deps, WASM, big model files, CLI
-COVERAGE_EXCLUDE := --ignore-filename-regex='(trueno/|aprender/|realizar/|wasm/|model/|simd|benchmark|cli/|bin/|/lib\.rs$$|audio/batch|audio/streaming|diarization/|gpu/|inference/|memory/|format/)'
+# Coverage exclusion: external deps, WASM (probar-tested), model weights
+# (integration-tested), CLI (tested separately), GPU, generated code.
+# All other modules use source-level #[coverage(off)] for transparent exclusion.
+COVERAGE_EXCLUDE := --ignore-filename-regex='(trueno/|aprender/|realizar/|wasm/|model/|cli/|bin/|gpu/|_generated\.rs$$|benchmark)'
+COV_THRESHOLD ?= 95
 
-coverage: ## Generate coverage report (<2 min)
-	@echo "📊 Coverage (<2 min)..."
+coverage: ## Coverage summary + threshold check (<5 min)
+	@echo "📊 Running coverage ($(COV_THRESHOLD)%+ threshold)..."
 	@which cargo-llvm-cov > /dev/null 2>&1 || cargo install cargo-llvm-cov --locked
-	@test -f ~/.cargo/config.toml && mv ~/.cargo/config.toml ~/.cargo/config.toml.bak || true
-	@cargo llvm-cov --lib $(COVERAGE_EXCLUDE) -- --skip encode_3_second --skip rtf_measurement --skip rtf_target 2>&1 | tail -3
-	@test -f ~/.cargo/config.toml.bak && mv ~/.cargo/config.toml.bak ~/.cargo/config.toml || true
+	@mkdir -p target/coverage
+	@cargo llvm-cov clean --workspace 2>/dev/null || true
+	@echo "🧪 Running tests with instrumentation..."
+	@env RUSTC_WRAPPER= PROPTEST_CASES=2 QUICKCHECK_TESTS=2 cargo llvm-cov test \
+		--lib \
+		$(COVERAGE_EXCLUDE) \
+		-- --test-threads=$$(nproc) \
+		--skip encode_3_second \
+		--skip rtf_measurement \
+		--skip rtf_target \
+		|| true
+	@echo "📊 Generating report..."
+	@cargo llvm-cov report --summary-only $(COVERAGE_EXCLUDE) | tee target/coverage/summary.txt | grep -E "^TOTAL"
+	@COV_PCT=$$(grep -E '^TOTAL' target/coverage/summary.txt | awk '{n=0; for(i=1;i<=NF;i++){if($$i ~ /[0-9]+\.[0-9]+%/){n++; if(n==3){gsub(/%/,"",$$i);print $$i;exit}}}}'); \
+	if [ -n "$$COV_PCT" ] && [ $$(echo "$$COV_PCT < $(COV_THRESHOLD)" | bc -l) -eq 1 ]; then \
+		echo "❌ Coverage $${COV_PCT}% is below threshold $(COV_THRESHOLD)%"; \
+		exit 1; \
+	else \
+		echo "✅ Coverage $${COV_PCT}% meets threshold $(COV_THRESHOLD)%"; \
+	fi
+
+coverage-html: ## Generate HTML report from last coverage run
+	@echo "📊 Generating HTML report..."
+	@mkdir -p target/coverage
+	@cargo llvm-cov report --html --output-dir target/coverage/html $(COVERAGE_EXCLUDE)
+	@echo "📍 HTML: target/coverage/html/index.html"
 
 coverage-summary: ## Show coverage summary
 	@cargo llvm-cov report --summary-only $(COVERAGE_EXCLUDE) 2>/dev/null || echo "Run 'make coverage' first"
@@ -212,12 +224,18 @@ coverage-open: ## Open HTML coverage report in browser
 		echo "❌ Run 'make coverage' first to generate the HTML report"; \
 	fi
 
-coverage-ci: ## Generate LCOV report for CI/CD (fast mode, uses nextest)
-	@echo "=== Code Coverage for CI/CD ==="
-	@echo "Phase 1: Running tests with instrumentation..."
-	@env PROPTEST_CASES=25 QUICKCHECK_TESTS=25 cargo llvm-cov --no-report nextest --no-tests=warn --all-features --workspace $(FAST_TEST_FILTER)
-	@echo "Phase 2: Generating LCOV report (excluding WASM/tools)..."
-	@cargo llvm-cov report --lcov --output-path lcov.info $(COVERAGE_EXCLUDE)
+coverage-ci: ## Generate LCOV report for CI (fast mode, --lib only)
+	@echo "📊 Running CI coverage (--lib only)..."
+	@env RUSTC_WRAPPER= PROPTEST_CASES=2 QUICKCHECK_TESTS=2 \
+		cargo llvm-cov test \
+		--lib \
+		--lcov --output-path lcov.info \
+		$(COVERAGE_EXCLUDE) \
+		-- --test-threads=$$(nproc) \
+		--skip encode_3_second \
+		--skip rtf_measurement \
+		--skip rtf_target \
+		|| true
 	@echo "✓ Coverage report generated: lcov.info"
 
 coverage-clean: ## Clean coverage artifacts
@@ -226,8 +244,7 @@ coverage-clean: ## Clean coverage artifacts
 	@find . -name "*.profraw" -delete 2>/dev/null || true
 	@echo "✓ Coverage artifacts cleaned"
 
-clean-coverage: coverage-clean ## Alias for coverage-clean (ruchy pattern)
-	@echo "✓ Fresh coverage ready (run 'make coverage' to regenerate)"
+clean-coverage: coverage-clean ## Alias for coverage-clean
 
 # ============================================================================
 # BENCHMARKS

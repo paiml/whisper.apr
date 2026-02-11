@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let model_bytes = std::fs::read(model_path)?;
-    let model = whisper_apr::WhisperApr::load_from_apr(&model_bytes)?;
+    let _model = whisper_apr::WhisperApr::load_from_apr(&model_bytes)?;
 
     // Get filterbank stats (we need to access the internal filterbank)
     // Since we can't directly access it, let's use the mel computation
@@ -98,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n_mels = 80;
     let n_fft = 400;
     let sample_rate = 16000;
-    let n_freqs = n_fft / 2 + 1;
+    let _n_freqs = n_fft / 2 + 1;
 
     let mel_min = hz_to_mel(0.0);
     let mel_max = hz_to_mel(sample_rate as f32 / 2.0);

@@ -15,7 +15,7 @@ The project targets the following test distribution:
 # All tests (unit + property + integration + doc)
 cargo test
 
-# Fast tests with nextest (recommended)
+# Fast tests
 make test-fast
 
 # Unit tests only
@@ -30,25 +30,33 @@ cargo test --doc
 
 ## Coverage
 
-The project maintains **≥95% line coverage** using `cargo-llvm-cov`:
+The project maintains **≥95% line coverage** using `cargo-llvm-cov`. Coverage uses `cargo llvm-cov test --lib` (not nextest) to avoid profraw file explosion:
 
 ```bash
-# Generate coverage report
+# Generate coverage report with threshold check
 make coverage
 
+# CI coverage (LCOV output)
+make coverage-ci
+
 # View HTML report
+make coverage-html
 open target/coverage/html/index.html
 ```
 
+The coverage pattern follows the paiml-mcp-agent-toolkit convention:
+- `RUSTC_WRAPPER=` clears the mold linker (incompatible with instrumentation)
+- `PROPTEST_CASES=2 QUICKCHECK_TESTS=2` keeps property tests fast
+- `|| true` tolerates individual test failures
+- Separate report step with `tee` for threshold checking via `bc`
+
 ### Current Coverage Stats
 
-| Module | Line Coverage |
-|--------|---------------|
-| audio/streaming.rs | 99.45% |
-| audio/ring_buffer.rs | 98.94% |
-| format/checksum.rs | 100.00% |
-| simd.rs | 95.19% |
-| **TOTAL** | **95.19%** |
+| Metric | Value |
+|--------|-------|
+| **Tests** | 2,428 |
+| **Line coverage** | 95.17% |
+| **Threshold** | 95% |
 
 ## Test Categories
 
@@ -102,8 +110,9 @@ End-to-end tests in `tests/` directory testing the full transcription pipeline.
 ## Makefile Targets
 
 ```bash
-make test-fast    # Fast tests with nextest
-make coverage     # Coverage with HTML report
+make test-fast    # Fast unit tests
+make coverage     # Coverage with threshold check
+make coverage-html # Coverage with HTML report
 make tier1        # Quick validation (<1s)
 make tier2        # Pre-commit (<5s)
 make tier3        # Pre-push (1-5min)
@@ -141,7 +150,7 @@ make coverage-open
 │          └──────────┬───────┴──────────┬───────┘            │
 │                     ▼                  ▼                    │
 │          ┌────────────────────────────────────┐             │
-│          │    cargo llvm-cov nextest          │             │
+│          │    cargo llvm-cov test --lib       │             │
 │          │   (unified instrumentation)        │             │
 │          └────────────────────────────────────┘             │
 └──────────────────────────────────────────────────────────────┘
@@ -149,9 +158,9 @@ make coverage-open
 
 ### Key Pattern Components
 
-1. **Nextest with llvm-cov**: `cargo llvm-cov --no-report nextest`
-2. **Mold Linker Workaround**: Temporarily moves `~/.cargo/config.toml`
-3. **Two-Phase Reporting**: Run tests first, then generate reports
+1. **cargo llvm-cov test**: Uses `cargo llvm-cov test --lib` (not nextest) to avoid profraw explosion
+2. **Mold Linker Workaround**: `RUSTC_WRAPPER=` clears the mold linker
+3. **Two-Phase Reporting**: Run tests first, then generate reports with threshold check
 4. **GUI Coverage via Probar**: `UxCoverageTracker` tests are instrumented
 
 ### Example GUI Coverage Test

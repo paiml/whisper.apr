@@ -7,8 +7,6 @@
 //! 3. Step Function Tracing - TRANSFORMER_BLOCK gaps
 //! 4. Layer Tracing - Σ(Kernel) vs Layer time
 
-use std::time::Instant;
-use whisper_apr::WhisperApr;
 
 #[cfg(feature = "realizar-gpu")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {

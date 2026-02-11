@@ -13,7 +13,6 @@ max_lines_critical = 6000
 max_lines_warning = 3000
 # Exclude generated, test, and data files from quality gates
 exclude = [
-    "mel_filterbank_data.rs",
     "tests.rs",
     "benchmark.rs",
     "*_generated.rs",
@@ -22,7 +21,6 @@ exclude = [
 [quality-gates]
 # Exclude coverage test files from complexity/duplication analysis
 exclude = [
-    "**/mel_filterbank_data.rs",
     "**/*_generated.rs",
     "**/tests.rs",
     "**/test_*.rs",

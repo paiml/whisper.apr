@@ -1,3 +1,5 @@
+//! Token scaling analysis example.
+
 use std::fs;
 use std::time::Instant;
 

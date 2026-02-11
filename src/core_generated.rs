@@ -350,8 +350,11 @@ impl WhisperApr {
     /// Chunk size for long audio processing (30 seconds at 16kHz)
     const CHUNK_SAMPLES: usize = 30 * audio::SAMPLE_RATE as usize; // 480,000 samples
 
-    /// Overlap between chunks (2 seconds at 16kHz)
-    const OVERLAP_SAMPLES: usize = 2 * audio::SAMPLE_RATE as usize; // 32,000 samples
+    /// Overlap between chunks (5 seconds at 16kHz)
+    const OVERLAP_SAMPLES: usize = 5 * audio::SAMPLE_RATE as usize; // 80,000 samples
+
+    /// Maximum subtitle segment duration (seconds) for SRT output
+    const MAX_SUBTITLE_SECS: f32 = 10.0;
 
     /// Transcribe audio samples
     ///
@@ -436,15 +439,24 @@ impl WhisperApr {
         #[cfg(feature = "std")]
         let dec_ms = start_dec.map(|s| s.elapsed().as_secs_f64() * 1000.0);
 
-        // 6. Extract segments with timestamps
+        // 6. Convert full token sequence to text
+        let text = self.tokenizer.decode(&tokens)?;
+
+        // 7. Extract segments with timestamps (fallback: sentence-split for full audio)
         let segments = if timestamps::has_timestamps(&tokens) {
             timestamps::extract_segments(&tokens, |ts| self.tokenizer.decode(ts).ok())
+        } else if !text.trim().is_empty() {
+            let duration = audio.len() as f32 / audio::SAMPLE_RATE as f32;
+            let single = vec![Segment {
+                start: 0.0,
+                end: duration,
+                text: text.clone(),
+                tokens: tokens.clone(),
+            }];
+            timestamps::split_long_segments(&single, Self::MAX_SUBTITLE_SECS)
         } else {
             Vec::new()
         };
-
-        // 7. Convert full token sequence to text
-        let text = self.tokenizer.decode(&tokens)?;
 
         // 8. Build result with optional profiling
         #[cfg(feature = "std")]
@@ -583,10 +595,14 @@ impl WhisperApr {
         // Merge overlapping segments if any
         let merged_segments = self.merge_overlapping_segments(all_segments);
 
+        // Split long segments at sentence boundaries for proper subtitles
+        let final_segments =
+            timestamps::split_long_segments(&merged_segments, Self::MAX_SUBTITLE_SECS);
+
         Ok(TranscriptionResult {
             text: all_text,
             language,
-            segments: merged_segments,
+            segments: final_segments,
             profiling: None,
         })
     }
@@ -706,8 +722,9 @@ impl WhisperApr {
             Task::Translate => tokens.push(special_tokens::TRANSLATE),
         }
 
-        // Add no timestamps token (for now)
-        tokens.push(specials.no_timestamps);
+        // Timestamp mode: do NOT push no_timestamps token
+        // This enables the decoder to produce <|t.tt|> timestamp tokens
+        // which are needed for proper SRT/VTT segment timing
 
         tokens
     }
@@ -779,7 +796,7 @@ impl WhisperApr {
         // Create Whisper token suppressor using realizar's LogitProcessor architecture
         // This provides composable, reusable pre-sampling transforms
         let suppressor = inference::WhisperTokenSuppressor::new()
-            .with_timestamp_suppression(!options.word_timestamps)
+            .with_timestamp_suppression(false)
             .with_vocab_size(n_vocab);
 
         let logits_fn = |tokens: &[u32]| -> WhisperResult<Vec<f32>> {
@@ -800,6 +817,82 @@ impl WhisperApr {
             // Apply Whisper-specific token suppression via LogitProcessor
             // Suppresses: SOT, language tokens, task tokens, timestamps (if disabled)
             suppressor.apply(&mut logits);
+
+            // ---- N-gram repetition suppression ----
+            // Collect text-only tokens (skip special/timestamp tokens)
+            let eot_id = tokenizer::special_tokens::EOT;
+            let text_tokens: Vec<u32> = tokens
+                .iter()
+                .copied()
+                .filter(|&t| t < eot_id)
+                .collect();
+
+            // (1) Token-level penalty: penalize recently-seen tokens
+            let window_start = if text_tokens.len() > 50 {
+                text_tokens.len() - 50
+            } else {
+                0
+            };
+            for &prev_tok in &text_tokens[window_start..] {
+                if (prev_tok as usize) < n_vocab {
+                    logits[prev_tok as usize] -= 2.0;
+                }
+            }
+
+            // (2) Trigram blocking: if (prev2, prev1, X) already appeared, suppress X
+            if text_tokens.len() >= 3 {
+                let prev2 = text_tokens[text_tokens.len() - 2];
+                let prev1 = text_tokens[text_tokens.len() - 1];
+                for w in text_tokens[..text_tokens.len() - 2].windows(3) {
+                    if w[0] == prev2 && w[1] == prev1 {
+                        let completing = w[2] as usize;
+                        if completing < n_vocab {
+                            logits[completing] -= 10.0;
+                        }
+                    }
+                }
+            }
+
+            // (3) Degenerate loop kill: force EOT if any 4-gram repeats 3+ times
+            if text_tokens.len() >= 12 {
+                let mut fourgram_counts =
+                    std::collections::HashMap::<[u32; 4], u32>::new();
+                for w in text_tokens.windows(4) {
+                    *fourgram_counts
+                        .entry([w[0], w[1], w[2], w[3]])
+                        .or_insert(0) += 1;
+                }
+                if fourgram_counts.values().any(|&c| c >= 3) {
+                    if (eot_id as usize) < n_vocab {
+                        logits[eot_id as usize] = 100.0;
+                    }
+                }
+            }
+
+            // (4) Unigram frequency cap: if any token dominates recent output, suppress it
+            // In hallucinated filler, common words ("so","the","is") appear at 10%+ frequency
+            // In real speech these appear at ~5-7%
+            if text_tokens.len() >= 80 {
+                let window = &text_tokens[text_tokens.len() - 80..];
+                let mut freq =
+                    std::collections::HashMap::<u32, u32>::new();
+                for &t in window {
+                    *freq.entry(t).or_insert(0) += 1;
+                }
+                for (&tok, &count) in &freq {
+                    if count >= 8 && (tok as usize) < n_vocab {
+                        // 8/80 = 10% - apply escalating penalty
+                        logits[tok as usize] -= (count as f32 - 7.0) * 3.0;
+                    }
+                }
+                // If vocabulary diversity is very low, force EOT
+                let unique_ratio = freq.len() as f32 / 80.0;
+                if unique_ratio < 0.35 {
+                    if (eot_id as usize) < n_vocab {
+                        logits[eot_id as usize] = 100.0;
+                    }
+                }
+            }
 
             Ok(logits)
         };
@@ -2219,7 +2312,7 @@ mod tests {
 
         let tokens = whisper.get_initial_tokens("en", Task::Transcribe);
         assert_eq!(tokens[0], tokenizer::special_tokens::SOT);
-        assert!(tokens.len() >= 4); // SOT, lang, task, no_timestamps
+        assert!(tokens.len() >= 3); // SOT, lang, task
 
         let translate_tokens = whisper.get_initial_tokens("es", Task::Translate);
         assert!(translate_tokens.contains(&tokenizer::special_tokens::TRANSLATE));
@@ -4287,7 +4380,7 @@ mod tests {
         assert_eq!(WhisperApr::CHUNK_SAMPLES, 30 * 16000);
 
         // Verify overlap matches spec: 2 seconds at 16kHz
-        assert_eq!(WhisperApr::OVERLAP_SAMPLES, 2 * 16000);
+        assert_eq!(WhisperApr::OVERLAP_SAMPLES, 5 * 16000);
     }
 
     #[test]
@@ -4426,16 +4519,16 @@ mod tests {
         // Verify chunk boundaries are calculated correctly
         let total_samples = 90 * 16000; // 90 seconds
         let chunk_size = WhisperApr::CHUNK_SAMPLES; // 30 seconds
-        let overlap = WhisperApr::OVERLAP_SAMPLES; // 2 seconds
+        let overlap = WhisperApr::OVERLAP_SAMPLES; // 5 seconds
 
-        // First chunk: 0 to 32 seconds (30 + 2 overlap)
+        // First chunk: 0 to 35 seconds (30 + 5 overlap)
         let chunk1_end = (0 + chunk_size + overlap).min(total_samples);
-        assert_eq!(chunk1_end, 32 * 16000);
+        assert_eq!(chunk1_end, 35 * 16000);
 
-        // Second chunk: 30 to 62 seconds
+        // Second chunk: 30 to 65 seconds
         let chunk2_start = chunk_size; // 30 seconds
         let chunk2_end = (chunk2_start + chunk_size + overlap).min(total_samples);
-        assert_eq!(chunk2_end, 62 * 16000);
+        assert_eq!(chunk2_end, 65 * 16000);
 
         // Third chunk: 60 to 90 seconds (no overflow)
         let chunk3_start = 2 * chunk_size; // 60 seconds
@@ -4479,13 +4572,13 @@ mod tests {
         // Test: Chunked input should produce consistent output
 
         // Verify overlap is sufficient for boundary handling
-        // 2 second overlap gives ~3-4 words of context at normal speech rate
+        // 5 second overlap gives ~10-15 words of context at normal speech rate
         let overlap_seconds = WhisperApr::OVERLAP_SAMPLES as f32 / 16000.0;
-        assert!((overlap_seconds - 2.0).abs() < 0.01);
+        assert!((overlap_seconds - 5.0).abs() < 0.01);
 
         // Typical speech: 2-3 words per second
-        // 2 second overlap = 4-6 words of context
+        // 5 second overlap = 10-15 words of context
         let expected_overlap_words = overlap_seconds * 2.5;
-        assert!(expected_overlap_words >= 4.0);
+        assert!(expected_overlap_words >= 10.0);
     }
 }

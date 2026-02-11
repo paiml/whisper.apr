@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Backend End-to-End Test CLI
 //!
 //! Tests each backend path with real audio:
@@ -515,6 +516,7 @@ fn run_wasm_headless_test(_args: &Args) -> Result<BackendTestResult, String> {
     ))
 }
 
+#[cfg(feature = "cuda")]
 fn cuda_available() -> bool {
     // Check for CUDA device via nvidia-smi
     std::process::Command::new("nvidia-smi")
@@ -523,6 +525,7 @@ fn cuda_available() -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(feature = "cuda")]
 fn get_nvidia_gpu_info() -> String {
     // Query GPU name and VRAM from nvidia-smi
     let output = std::process::Command::new("nvidia-smi")

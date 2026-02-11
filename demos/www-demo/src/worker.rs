@@ -271,6 +271,19 @@ impl TranscriptionWorker {
         }
     }
 
+    /// Check if the ring buffer is marked as done (producer finished)
+    ///
+    /// Used by the worker JS to poll for completion without needing
+    /// a direct reference to the ring buffer (which was moved to Rust).
+    #[wasm_bindgen(js_name = isRingBufferDone)]
+    pub fn is_ring_buffer_done(&self) -> Result<bool, JsValue> {
+        if let Some(ref buffer) = self.ring_buffer {
+            buffer.is_done()
+        } else {
+            Ok(false) // No buffer means not done
+        }
+    }
+
     /// Get current metrics
     ///
     /// RTF (Real-Time Factor) = inference_time / audio_duration

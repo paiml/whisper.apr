@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stats_std(&encoded)
     );
 
-    let n_vocab = 51865;
+    let _n_vocab = 51865;
     let max_tokens = 448;
     let d_model = 384;
     let n_layers = 4;
@@ -87,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // 3. Sum: x = token_emb + pos_emb
-    let mut x: Vec<f32> = token_emb
+    let x: Vec<f32> = token_emb
         .iter()
         .zip(pos_slice.iter())
         .map(|(t, p)| t + p)

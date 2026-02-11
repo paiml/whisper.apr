@@ -172,6 +172,9 @@ pub enum Command {
 
     /// Export APR model to SafeTensors format (WAPR-PUB-001)
     Export(ExportArgs),
+
+    /// APR model format tools (inspect, lint, convert, diff)
+    Apr(crate::cli::apr_args::AprArgs),
 }
 
 /// Arguments for transcribe command

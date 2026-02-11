@@ -5,6 +5,7 @@
 pub mod batch;
 pub mod mel;
 /// OpenAI reference mel filterbank data for exact numerical matching
+#[path = "mel_filterbank_data_generated.rs"]
 pub mod mel_filterbank_data;
 mod resampler;
 mod ring_buffer;

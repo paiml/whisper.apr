@@ -1461,7 +1461,12 @@ pub fn estimate_model_memory_mb(header: &AprHeader) -> u32 {
     (total_bytes / (1024 * 1024)) as u32
 }
 
+/// APR v1 magic number ("APR1")
+pub const MAGIC_V1: [u8; 4] = [0x41, 0x50, 0x52, 0x31];
+
 /// Validate .apr file magic number
+///
+/// Accepts both APR v1 ("APR1") and APR v2 ("APR\0") formats.
 ///
 /// # Errors
 /// Returns error if magic number is invalid
@@ -1470,7 +1475,8 @@ pub fn validate_magic(data: &[u8]) -> WhisperResult<()> {
         return Err(WhisperError::Format("file too short".into()));
     }
 
-    if data[..4] != MAGIC {
+    // Accept both v1 (APR1) and v2 (APR\0) magic
+    if data[..4] != MAGIC && data[..4] != MAGIC_V1 {
         return Err(WhisperError::Format("invalid magic number".into()));
     }
 

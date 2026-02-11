@@ -5,7 +5,6 @@
 //!
 //! Run with: cargo run --example debug_mel_normalization
 
-use std::f32::consts::PI;
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

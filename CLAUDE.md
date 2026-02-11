@@ -364,6 +364,35 @@ All work items use prefix `WAPR-`:
 - `WAPR-DOC-XXX`: Documentation
 
 
+## Code Search (pmat query)
+
+**NEVER use grep or rg for code discovery. ALWAYS use `pmat query`.**
+
+`pmat query` returns quality-annotated, semantically ranked results with TDG grades, complexity, and fault patterns.
+
+```bash
+# Find functions by intent
+pmat query "mel spectrogram" --limit 10
+
+# Find high-quality code
+pmat query "decoder" --min-grade A --exclude-tests
+
+# Find with fault annotations (unwrap, panic, unsafe)
+pmat query "encoder forward" --faults
+
+# Include source code
+pmat query "resampler" --include-source --limit 5
+
+# Regex search
+pmat query --regex "fn\s+process_\w+" --limit 10
+
+# Literal search
+pmat query --literal "unwrap()" --exclude-tests
+
+# Coverage gaps
+pmat query --coverage-gaps --limit 20 --exclude-tests
+```
+
 ## Stack Documentation Search (RAG Oracle)
 
 **IMPORTANT: Proactively use the batuta RAG oracle when:**
