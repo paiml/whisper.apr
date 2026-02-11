@@ -22,6 +22,8 @@
 //! └── output.rs    # Output formatters (txt, srt, vtt, json)
 //! ```
 
+pub mod apr_args;
+pub mod apr_commands;
 pub mod args;
 pub mod commands;
 pub mod model_loader;
