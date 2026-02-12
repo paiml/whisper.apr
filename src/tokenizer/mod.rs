@@ -20,6 +20,11 @@ pub use vocab::{special_tokens, MergeRule, Vocabulary};
 
 use crate::error::{WhisperError, WhisperResult};
 
+/// Convert each byte into a single-element token for BPE initialization
+fn bytes_to_singleton_tokens(bytes: &[u8]) -> Vec<Vec<u8>> {
+    bytes.iter().map(|&b| vec![b]).collect()
+}
+
 /// BPE tokenizer for Whisper
 ///
 /// Handles encoding text to tokens and decoding tokens back to text.
@@ -81,7 +86,7 @@ impl BpeTokenizer {
         let bytes = text.as_bytes();
 
         // Initialize token sequence (each byte is a token)
-        let mut tokens: Vec<Vec<u8>> = bytes.iter().map(|&b| vec![b]).collect();
+        let mut tokens: Vec<Vec<u8>> = bytes_to_singleton_tokens(bytes);
 
         // Apply BPE merges iteratively
         loop {
@@ -157,13 +162,7 @@ impl BpeTokenizer {
     /// # Errors
     /// Returns error if any token ID is invalid
     pub fn decode(&self, tokens: &[u32]) -> WhisperResult<String> {
-        if tokens.is_empty() {
-            return Ok(String::new());
-        }
-
-        self.vocab
-            .decode(tokens)
-            .ok_or_else(|| WhisperError::Tokenizer("invalid token ID".into()))
+        self.decode_with_options(tokens, false)
     }
 
     /// Decode token IDs to text, filtering special tokens
@@ -251,8 +250,7 @@ mod tests {
     fn test_tokenizer_encode_empty() {
         let tokenizer = BpeTokenizer::with_base_tokens();
         let result = tokenizer.encode("");
-        assert!(result.is_ok());
-        assert!(result.map_or(false, |v| v.is_empty()));
+        assert!(matches!(result, Ok(ref v) if v.is_empty()));
     }
 
     #[test]
@@ -343,8 +341,7 @@ mod tests {
     fn test_tokenizer_decode_empty() {
         let tokenizer = BpeTokenizer::with_base_tokens();
         let result = tokenizer.decode(&[]);
-        assert!(result.is_ok());
-        assert!(result.map_or(false, |s| s.is_empty()));
+        assert!(matches!(result, Ok(ref s) if s.is_empty()));
     }
 
     #[test]
@@ -487,6 +484,11 @@ mod tests {
     // Property-Based Tests (WAPR-QA-002)
     // =========================================================================
 
+    /// Generate printable ASCII token IDs for property testing
+    fn test_token_ids(count: usize) -> Vec<u32> {
+        (0..count).map(|i| (i % 128) as u32 + 32).collect()
+    }
+
     mod property_tests {
         use super::*;
         use proptest::prelude::*;
@@ -513,7 +515,7 @@ mod tests {
             fn property_decode_produces_string(token_count in 1usize..20) {
                 let tokenizer = BpeTokenizer::with_base_tokens();
                 // Generate valid token IDs (base tokens are 0-255)
-                let tokens: Vec<u32> = (0..token_count).map(|i| (i % 128) as u32 + 32).collect();
+                let tokens = test_token_ids(token_count);
 
                 if let Ok(result) = tokenizer.decode(&tokens) {
                     // Should produce some output
