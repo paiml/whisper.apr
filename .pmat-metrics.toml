@@ -90,7 +90,7 @@ max_duplication_pct = 5.0         # <5% Type-3 clones (spec Section 9.1)
 max_dead_code_pct = 35.0          # Allow up to 35% uncovered (CLI/TUI have low test coverage)
 
 # Provability
-min_provability_score = 0.60      # Relaxed from 0.70 for mature codebase
+provability_min = 0.60            # Relaxed from 0.70 for mature codebase
 
 # Performance budgets (WASM targets from specification Section 8)
 [performance]
