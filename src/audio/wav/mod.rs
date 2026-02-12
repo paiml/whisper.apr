@@ -145,13 +145,11 @@ fn validate_wav_header(data: &[u8]) -> Result<(), WavError> {
     if data.len() < 44 {
         return Err(WavError::TooSmall);
     }
-    if data.get(0..4) != Some(b"RIFF".as_slice()) {
-        return Err(WavError::MissingRiff);
+    match (data.get(0..4), data.get(8..12)) {
+        (Some(b"RIFF"), Some(b"WAVE")) => Ok(()),
+        (Some(b"RIFF"), _) => Err(WavError::MissingWave),
+        _ => Err(WavError::MissingRiff),
     }
-    if data.get(8..12) != Some(b"WAVE".as_slice()) {
-        return Err(WavError::MissingWave);
-    }
-    Ok(())
 }
 
 /// Process data chunk and return WavData
@@ -283,12 +281,8 @@ pub(crate) fn convert_to_mono(samples: Vec<f32>, channels: u16) -> Result<Vec<f3
 /// Resampled audio at target sample rate
 #[cfg_attr(feature = "tracing", tracing::instrument(level = "info", skip(samples), fields(samples_len = samples.len())))]
 pub fn resample(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
-    if source_rate == target_rate {
+    if source_rate == target_rate || samples.is_empty() {
         return samples.to_vec();
-    }
-
-    if samples.is_empty() {
-        return Vec::new();
     }
 
     let ratio = source_rate as f64 / target_rate as f64;

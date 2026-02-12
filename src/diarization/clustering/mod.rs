@@ -243,13 +243,13 @@ impl SpectralClustering {
         max_clusters: Option<usize>,
         min_clusters: usize,
     ) -> WhisperResult<ClusteringResult> {
-        if embeddings.is_empty() {
-            return Ok(ClusteringResult::new(Vec::new(), Vec::new()));
-        }
-
-        if embeddings.len() == 1 {
-            let cluster = SpeakerCluster::new(0, vec![0], embeddings[0].clone());
-            return Ok(ClusteringResult::new(vec![0], vec![cluster]));
+        match embeddings.len() {
+            0 => return Ok(ClusteringResult::new(Vec::new(), Vec::new())),
+            1 => {
+                let cluster = SpeakerCluster::new(0, vec![0], embeddings[0].clone());
+                return Ok(ClusteringResult::new(vec![0], vec![cluster]));
+            }
+            _ => {}
         }
 
         // Step 1: Build affinity matrix
@@ -405,20 +405,19 @@ impl SpectralClustering {
 
             // Update centroids
             for (j, centroid) in centroids.iter_mut().enumerate() {
-                let members: Vec<usize> = labels
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, &l)| l == j)
-                    .map(|(i, _)| i)
-                    .collect();
-
-                if members.is_empty() {
+                let member_count = labels.iter().filter(|&&l| l == j).count();
+                if member_count == 0 {
                     continue;
                 }
 
                 for d in 0..dim {
-                    centroid[d] =
-                        members.iter().map(|&i| affinity[i][d]).sum::<f32>() / members.len() as f32;
+                    centroid[d] = labels
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, &l)| l == j)
+                        .map(|(i, _)| affinity[i][d])
+                        .sum::<f32>()
+                        / member_count as f32;
                 }
             }
 
@@ -498,10 +497,6 @@ impl SpectralClustering {
 
     /// Compute silhouette score
     fn compute_silhouette(&self, embeddings: &[SpeakerEmbedding], labels: &[usize]) -> f32 {
-        if embeddings.len() < 2 {
-            return 0.0;
-        }
-
         let unique_labels: Vec<usize> = {
             let mut v: Vec<usize> = labels.to_vec();
             v.sort_unstable();
@@ -509,7 +504,7 @@ impl SpectralClustering {
             v
         };
 
-        if unique_labels.len() < 2 {
+        if embeddings.len() < 2 || unique_labels.len() < 2 {
             return 0.0;
         }
 

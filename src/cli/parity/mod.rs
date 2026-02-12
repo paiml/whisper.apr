@@ -221,8 +221,7 @@ pub fn calculate_wer(reference: &str, hypothesis: &str) -> f64 {
             .collect()
     };
 
-    let ref_words = normalize(reference);
-    let hyp_words = normalize(hypothesis);
+    let [ref_words, hyp_words] = [reference, hypothesis].map(normalize);
 
     if ref_words.is_empty() {
         return if hyp_words.is_empty() { 0.0 } else { 1.0 };
@@ -268,8 +267,8 @@ fn levenshtein_distance<T: PartialEq>(a: &[T], b: &[T]) -> usize {
 
 /// Find specific text differences for diagnostic output
 fn find_text_differences(expected: &str, actual: &str) -> Vec<ParityDifference> {
-    let exp_words: Vec<&str> = expected.split_whitespace().collect();
-    let act_words: Vec<&str> = actual.split_whitespace().collect();
+    let [exp_words, act_words]: [Vec<&str>; 2] =
+        [expected, actual].map(|s| s.split_whitespace().collect());
 
     let mut differences = Vec::new();
 
