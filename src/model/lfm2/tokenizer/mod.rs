@@ -435,11 +435,11 @@ fn scan_quoted_string(chars: &[char], start: usize) -> Option<(String, usize)> {
         }
         i += 1;
     }
-    if i >= chars.len() {
-        return None;
-    }
-    let raw: String = chars[start + 1..i].iter().collect();
-    Some((unescape_json_string(&raw), i + 1))
+    // Return None if no closing quote found (ran past end)
+    (i < chars.len()).then(|| {
+        let raw: String = chars[start + 1..i].iter().collect();
+        (unescape_json_string(&raw), i + 1)
+    })
 }
 
 /// Skip forward to `target` char, returning position after it. Returns None if not found.
@@ -450,7 +450,6 @@ fn skip_past_char(chars: &[char], start: usize, target: char) -> Option<usize> {
 /// Parse an integer starting at `start`, returning (value, position after number).
 fn parse_u32_at(chars: &[char], start: usize) -> Option<(u32, usize)> {
     let mut i = start;
-    // Skip whitespace
     while i < chars.len() && chars[i].is_whitespace() {
         i += 1;
     }
@@ -458,9 +457,7 @@ fn parse_u32_at(chars: &[char], start: usize) -> Option<(u32, usize)> {
     while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '-') {
         i += 1;
     }
-    if num_start == i {
-        return None;
-    }
+    // Empty string naturally fails parse, no guard needed
     let num_str: String = chars[num_start..i].iter().collect();
     num_str.parse::<u32>().ok().map(|v| (v, i))
 }
