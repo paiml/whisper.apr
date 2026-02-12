@@ -106,14 +106,12 @@ impl Decompressor {
             let literal_len = Self::read_extended_length(src, &mut src_pos, literal_len)?;
 
             // Copy literals
-            if literal_len > 0 {
-                if src_pos + literal_len > src.len() {
-                    return Err(WhisperError::Format("literal overflow".into()));
-                }
-                self.buffer
-                    .extend_from_slice(&src[src_pos..src_pos + literal_len]);
-                src_pos += literal_len;
+            if src_pos + literal_len > src.len() {
+                return Err(WhisperError::Format("literal overflow".into()));
             }
+            self.buffer
+                .extend_from_slice(&src[src_pos..src_pos + literal_len]);
+            src_pos += literal_len;
 
             // Check if we've reached the end
             if self.buffer.len() >= decompressed_size {
@@ -127,12 +125,9 @@ impl Decompressor {
             let offset = u16::from_le_bytes([src[src_pos], src[src_pos + 1]]) as usize;
             src_pos += 2;
 
-            if offset == 0 {
-                return Err(WhisperError::Format("invalid zero offset".into()));
-            }
-            if offset > self.buffer.len() {
+            if offset == 0 || offset > self.buffer.len() {
                 return Err(WhisperError::Format(format!(
-                    "offset {} exceeds buffer length {}",
+                    "invalid offset {} (buffer length {})",
                     offset,
                     self.buffer.len()
                 )));
@@ -256,10 +251,6 @@ impl Compressor {
     pub fn compress_block(&mut self, data: &[u8]) -> WhisperResult<&[u8]> {
         self.buffer.clear();
 
-        if data.is_empty() {
-            return Ok(&self.buffer);
-        }
-
         // Track position and pending literals
         let mut pos = 0;
         let mut literal_start = 0;
@@ -374,10 +365,6 @@ impl Compressor {
 
     /// Encode literals only (no match)
     fn encode_literals_only(&mut self, literals: &[u8]) -> WhisperResult<()> {
-        if literals.is_empty() {
-            return Ok(());
-        }
-
         let literal_len = literals.len();
 
         // Token byte (no match, so match nibble doesn't matter for last sequence)
