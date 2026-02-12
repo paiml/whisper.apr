@@ -172,11 +172,8 @@ impl WordAlignment {
     pub fn new(word: String, tokens: Vec<TokenAlignment>) -> Self {
         let start_time = tokens.first().map_or(0.0, |t| t.start_time);
         let end_time = tokens.last().map_or(0.0, |t| t.end_time);
-        let confidence = if tokens.is_empty() {
-            0.0
-        } else {
-            tokens.iter().map(|t| t.confidence).sum::<f32>() / tokens.len() as f32
-        };
+        let n = tokens.len();
+        let confidence = tokens.iter().map(|t| t.confidence).sum::<f32>() / n.max(1) as f32;
 
         Self {
             word,

@@ -89,26 +89,17 @@ impl Decompressor {
         let src = compressed;
 
         while self.buffer.len() < decompressed_size {
-            if src_pos >= src.len() {
-                return Err(WhisperError::Format(
-                    "unexpected end of compressed data".into(),
-                ));
-            }
-
             // Read token
+            Self::require_bytes(src, src_pos, 1)?;
             let token = src[src_pos];
             src_pos += 1;
 
             let literal_len = (token >> 4) as usize;
             let match_len_base = (token & 0x0F) as usize;
 
-            // Read extended literal length
+            // Read extended literal length and copy literals
             let literal_len = Self::read_extended_length(src, &mut src_pos, literal_len)?;
-
-            // Copy literals
-            if src_pos + literal_len > src.len() {
-                return Err(WhisperError::Format("literal overflow".into()));
-            }
+            Self::require_bytes(src, src_pos, literal_len)?;
             self.buffer
                 .extend_from_slice(&src[src_pos..src_pos + literal_len]);
             src_pos += literal_len;
@@ -119,9 +110,7 @@ impl Decompressor {
             }
 
             // Read match offset (little-endian)
-            if src_pos + 2 > src.len() {
-                return Err(WhisperError::Format("missing match offset".into()));
-            }
+            Self::require_bytes(src, src_pos, 2)?;
             let offset = u16::from_le_bytes([src[src_pos], src[src_pos + 1]]) as usize;
             src_pos += 2;
 
@@ -150,18 +139,24 @@ impl Decompressor {
         Ok(&self.buffer)
     }
 
+    /// Validate that `n` bytes are available at `pos`
+    fn require_bytes(src: &[u8], pos: usize, n: usize) -> WhisperResult<()> {
+        if pos + n > src.len() {
+            return Err(WhisperError::Format(
+                "unexpected end of compressed data".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Read extended length value (used when nibble == 15)
     fn read_extended_length(src: &[u8], pos: &mut usize, base: usize) -> WhisperResult<usize> {
         let mut len = base;
-
         if base == 15 {
             loop {
-                if *pos >= src.len() {
-                    return Err(WhisperError::Format(
-                        "unexpected end reading extended length".into(),
-                    ));
-                }
-                let byte = src[*pos];
+                let &byte = src.get(*pos).ok_or_else(|| {
+                    WhisperError::Format("unexpected end reading extended length".into())
+                })?;
                 *pos += 1;
                 len += byte as usize;
                 if byte != 255 {
@@ -169,7 +164,6 @@ impl Decompressor {
                 }
             }
         }
-
         Ok(len)
     }
 
