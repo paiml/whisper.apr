@@ -442,3 +442,127 @@ fn test_stats_buffer_fill_percentage() {
     let stats = transcriber.stats();
     assert!(stats.buffer_fill >= 0.0 && stats.buffer_fill <= 1.0);
 }
+
+// =========================================================================
+// Full process() path tests via ultra-low-latency config (PMAT-023)
+// =========================================================================
+
+#[test]
+fn test_process_full_chunk_path() {
+    // Use ultra-low-latency config: 0.25s chunk = 4000 samples at 16kHz
+    let config = StreamingConfig {
+        audio: AudioStreamingConfig::ultra_low_latency().without_vad(),
+        max_tokens_per_chunk: 224,
+        overlap_tokens: 10,
+        temperature: 0.0,
+        return_partial: false,
+    };
+    let mut transcriber = StreamingTranscriber::new(config);
+
+    // Push more than 4000 samples to trigger ChunkReady
+    let samples = vec![0.1f32; 5000];
+    transcriber.push_audio(&samples);
+
+    // Process — should take the full chunk path
+    let result = transcriber.process();
+    assert!(result.is_ok());
+
+    // Chunk index should have incremented if chunk was processed
+    // (placeholder transcribe_chunk returns empty text, so text stays empty)
+}
+
+#[test]
+fn test_process_returns_partial_result() {
+    // Ultra-low-latency with partial results enabled
+    let config = StreamingConfig {
+        audio: AudioStreamingConfig::ultra_low_latency().without_vad(),
+        max_tokens_per_chunk: 224,
+        overlap_tokens: 10,
+        temperature: 0.0,
+        return_partial: true,
+    };
+    let mut transcriber = StreamingTranscriber::new(config);
+
+    // Push enough for >30% of 4000 samples = >1200 samples
+    let samples = vec![0.1f32; 2000];
+    transcriber.push_audio(&samples);
+
+    // Process should check chunk_progress() > 0.3 and return partial
+    let result = transcriber.process();
+    assert!(result.is_ok());
+    if let Some(partial) = result.expect("should succeed") {
+        assert!(!partial.is_final);
+        assert_eq!(partial.text, "[listening...]");
+        assert_eq!(partial.confidence, 0.0);
+    }
+}
+
+#[test]
+fn test_process_chunk_ready_then_finalize() {
+    let config = StreamingConfig {
+        audio: AudioStreamingConfig::ultra_low_latency().without_vad(),
+        max_tokens_per_chunk: 224,
+        overlap_tokens: 10,
+        temperature: 0.0,
+        return_partial: false,
+    };
+    let mut transcriber = StreamingTranscriber::new(config);
+
+    // Push enough for a full chunk
+    let samples = vec![0.1f32; 5000];
+    transcriber.push_audio(&samples);
+
+    // Process the chunk
+    let _ = transcriber.process();
+
+    // Now finalize with remaining audio in buffer
+    let result = transcriber.finalize();
+    assert!(result.is_ok());
+    assert_eq!(transcriber.state(), TranscriberState::Finalized);
+}
+
+#[test]
+fn test_process_multiple_chunks() {
+    let config = StreamingConfig {
+        audio: AudioStreamingConfig::ultra_low_latency().without_vad(),
+        max_tokens_per_chunk: 224,
+        overlap_tokens: 10,
+        temperature: 0.0,
+        return_partial: false,
+    };
+    let mut transcriber = StreamingTranscriber::new(config);
+
+    // Process several chunks
+    for _ in 0..3 {
+        let samples = vec![0.1f32; 5000];
+        transcriber.push_audio(&samples);
+        let _ = transcriber.process();
+    }
+
+    // Chunk index should reflect processed chunks
+    let stats = transcriber.stats();
+    assert!(stats.samples_processed > 0);
+}
+
+#[test]
+fn test_finalize_flushes_remaining_audio() {
+    let config = StreamingConfig {
+        audio: AudioStreamingConfig::ultra_low_latency().without_vad(),
+        max_tokens_per_chunk: 224,
+        overlap_tokens: 10,
+        temperature: 0.0,
+        return_partial: false,
+    };
+    let mut transcriber = StreamingTranscriber::new(config);
+
+    // Push audio that doesn't fill a complete chunk
+    let samples = vec![0.1f32; 2000];
+    transcriber.push_audio(&samples);
+
+    // Finalize should flush the partial buffer and process it
+    let result = transcriber.finalize();
+    assert!(result.is_ok());
+    let transcription = result.expect("finalize should succeed");
+    assert_eq!(transcription.language, "en");
+    assert_eq!(transcriber.state(), TranscriberState::Finalized);
+}

@@ -1511,6 +1511,11 @@ fn run_export(args: &AprExportArgs, global: &super::args::Args) -> CliResult<Com
     )))
 }
 
+/// Check if a dtype string represents a quantized format
+fn is_quantized_dtype(dtype: &str) -> bool {
+    dtype.contains("Q4") || dtype.contains("Q5") || dtype.contains("Q6")
+}
+
 fn run_f16_audit(args: &AprF16AuditArgs, global: &super::args::Args) -> CliResult<CommandResult> {
     let rosetta = RosettaStone::new();
     let report = rosetta
@@ -1520,29 +1525,26 @@ fn run_f16_audit(args: &AprF16AuditArgs, global: &super::args::Args) -> CliResul
     let mut total_scales = 0usize;
     let unsafe_count = 0usize;
     let subnormal_count = 0usize;
+    let include_details = args.verbose || args.file.extension().is_some_and(|e| e == "gguf");
     let mut tensor_issues: Vec<String> = Vec::new();
 
     for tensor in &report.tensors {
-        // Only audit quantized tensors (Q4_K, Q6_K, etc.)
-        let dtype = &tensor.dtype;
-        if !dtype.contains("Q4") && !dtype.contains("Q6") && !dtype.contains("Q5") {
+        if !is_quantized_dtype(&tensor.dtype) {
             continue;
         }
-
-        // Each super-block has an f16 scale factor
         let elements: usize = tensor.shape.iter().product();
         let num_blocks = elements.div_ceil(256); // QK_K = 256
         total_scales += num_blocks;
 
-        // We can't read raw bytes via rosetta, so just report structure
-        if args.verbose || args.file.extension().is_some_and(|e| e == "gguf") {
+        if include_details {
             tensor_issues.push(format!(
                 "{}: {} blocks ({} dtype)",
-                tensor.name, num_blocks, dtype
+                tensor.name, num_blocks, tensor.dtype
             ));
         }
     }
 
+    let status = if unsafe_count == 0 { "PASS" } else { "FAIL" };
     if global.json {
         let json = serde_json::json!({
             "file": args.file.display().to_string(),
@@ -1552,27 +1554,22 @@ fn run_f16_audit(args: &AprF16AuditArgs, global: &super::args::Args) -> CliResul
             "f16_min_normal": F16_MIN_NORMAL,
             "tensor_details": tensor_issues,
         });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json).unwrap_or_default()
-        );
+        println!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
     } else {
         println!("F16 Scale Factor Audit: {}", args.file.display());
         println!("  Estimated scale blocks: {total_scales}");
         println!("  F16 min normal: {F16_MIN_NORMAL:.6e}");
         println!("  Unsafe (NaN/Inf): {unsafe_count}");
         println!("  Subnormal: {subnormal_count}");
-        if args.verbose && !tensor_issues.is_empty() {
+        if !tensor_issues.is_empty() {
             println!("  Tensor details:");
             for detail in &tensor_issues {
                 println!("    - {detail}");
             }
         }
-        let status = if unsafe_count == 0 { "PASS" } else { "FAIL" };
         println!("  Result: {status}");
     }
 
-    let status = if unsafe_count == 0 { "PASS" } else { "FAIL" };
     Ok(CommandResult::success(format!(
         "F16 audit {status}: {unsafe_count} unsafe scales"
     )))
@@ -1811,6 +1808,30 @@ fn run_sign(args: &AprSignArgs, global: &super::args::Args) -> CliResult<Command
     }
 }
 
+/// Load a verifying key from a file or from embedded bytes
+#[cfg(feature = "format-signing")]
+fn load_verifying_key_from_file(
+    pk_path: &std::path::Path,
+) -> CliResult<ed25519_dalek::VerifyingKey> {
+    let pk_bytes = fs::read(pk_path).map_err(|e| {
+        CliError::InvalidArgument(format!("Failed to read pubkey: {e}"))
+    })?;
+    if pk_bytes.len() < 32 {
+        return Err(CliError::InvalidArgument("Pubkey file too small".to_string()));
+    }
+    let bytes: [u8; 32] = pk_bytes[..32].try_into().unwrap();
+    ed25519_dalek::VerifyingKey::from_bytes(&bytes)
+        .map_err(|e| CliError::InvalidArgument(format!("Invalid public key: {e}")))
+}
+
+/// Load a verifying key from embedded bytes in model content
+#[cfg(feature = "format-signing")]
+fn load_verifying_key_embedded(content: &[u8], pubkey_start: usize) -> CliResult<ed25519_dalek::VerifyingKey> {
+    let bytes: [u8; 32] = content[pubkey_start..].try_into().unwrap();
+    ed25519_dalek::VerifyingKey::from_bytes(&bytes)
+        .map_err(|e| CliError::InvalidArgument(format!("Invalid embedded public key: {e}")))
+}
+
 /// Verify Ed25519 signature on a model file (feature: `format-signing`)
 fn run_verify_sig(
     args: &AprVerifySigArgs,
@@ -1845,25 +1866,9 @@ fn run_verify_sig(
             .map_err(|_| CliError::InvalidArgument("Invalid signature".to_string()))?;
         let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
 
-        // Use provided pubkey or extract embedded one
-        let verifying_key = if let Some(pk_path) = &args.pubkey {
-            let pk_bytes = fs::read(pk_path).map_err(|e| {
-                CliError::InvalidArgument(format!("Failed to read pubkey: {e}"))
-            })?;
-            if pk_bytes.len() < 32 {
-                return Err(CliError::InvalidArgument(
-                    "Pubkey file too small".to_string(),
-                ));
-            }
-            let bytes: [u8; 32] = pk_bytes[..32].try_into().unwrap();
-            ed25519_dalek::VerifyingKey::from_bytes(&bytes).map_err(|e| {
-                CliError::InvalidArgument(format!("Invalid public key: {e}"))
-            })?
-        } else {
-            let bytes: [u8; 32] = content[pubkey_start..].try_into().unwrap();
-            ed25519_dalek::VerifyingKey::from_bytes(&bytes).map_err(|e| {
-                CliError::InvalidArgument(format!("Invalid embedded public key: {e}"))
-            })?
+        let verifying_key = match &args.pubkey {
+            Some(pk_path) => load_verifying_key_from_file(pk_path)?,
+            None => load_verifying_key_embedded(&content, pubkey_start)?,
         };
 
         let model_data = &content[..sig_start];
@@ -1873,11 +1878,7 @@ fn run_verify_sig(
         if global.json {
             println!("{{\"valid\":{valid}}}");
         } else if !global.quiet {
-            if valid {
-                println!("Signature VALID");
-            } else {
-                println!("Signature INVALID");
-            }
+            println!("Signature {}", if valid { "VALID" } else { "INVALID" });
         }
 
         if valid {
@@ -2031,6 +2032,33 @@ fn run_decrypt(args: &AprDecryptArgs, global: &super::args::Args) -> CliResult<C
     }
 }
 
+/// Parse quantization type string into `QuantType`
+#[cfg(feature = "format-quantize")]
+fn parse_quant_type(type_str: &str) -> CliResult<aprender::format::quantize::QuantType> {
+    use aprender::format::quantize::QuantType;
+    match type_str.to_lowercase().as_str() {
+        "q4_0" | "q4" => Ok(QuantType::Q4_0),
+        "q8_0" | "q8" => Ok(QuantType::Q8_0),
+        other => Err(CliError::InvalidArgument(format!(
+            "Unknown quantization type: {other} (supported: q4_0, q8_0)"
+        ))),
+    }
+}
+
+/// Verify quantized block accuracy via dequantize round-trip
+#[cfg(feature = "format-quantize")]
+fn verify_quantization_mse(
+    data: &[f32],
+    qblock: &aprender::format::quantize::QuantizedBlock,
+    max_mse: &mut f32,
+) {
+    use aprender::format::quantize::{dequantize, quantization_mse};
+    if let Ok(dequantized) = dequantize(qblock) {
+        let mse = quantization_mse(data, &dequantized);
+        *max_mse = max_mse.max(mse);
+    }
+}
+
 /// Quantize model to `Q4_0`/`Q8_0` (feature: `format-quantize`)
 fn run_quantize(args: &AprQuantizeArgs, global: &super::args::Args) -> CliResult<CommandResult> {
     #[cfg(not(feature = "format-quantize"))]
@@ -2043,21 +2071,10 @@ fn run_quantize(args: &AprQuantizeArgs, global: &super::args::Args) -> CliResult
 
     #[cfg(feature = "format-quantize")]
     {
-        use aprender::format::quantize::{
-            dequantize, quantize, quantization_mse, QuantType,
-        };
+        use aprender::format::quantize::quantize;
 
-        let quant_type = match args.r#type.to_lowercase().as_str() {
-            "q4_0" | "q4" => QuantType::Q4_0,
-            "q8_0" | "q8" => QuantType::Q8_0,
-            other => {
-                return Err(CliError::InvalidArgument(format!(
-                    "Unknown quantization type: {other} (supported: q4_0, q8_0)"
-                )));
-            }
-        };
+        let quant_type = parse_quant_type(&args.r#type)?;
 
-        // Load model via Rosetta for format-agnostic access
         let rosetta = RosettaStone::new();
         let report = rosetta
             .inspect(&args.file)
@@ -2068,30 +2085,20 @@ fn run_quantize(args: &AprQuantizeArgs, global: &super::args::Args) -> CliResult
         let mut max_mse = 0.0_f32;
         let mut tensor_count = 0usize;
 
-        // Quantize each tensor
         for tensor in &report.tensors {
-            let data = match rosetta.load_tensor_f32(&args.file, &tensor.name) {
-                Ok(d) => d,
-                Err(_) => continue,
+            let Ok(data) = rosetta.load_tensor_f32(&args.file, &tensor.name) else {
+                continue;
+            };
+            let Ok(qblock) = quantize(&data, &tensor.shape, quant_type) else {
+                continue;
             };
 
-            let shape = &tensor.shape;
-            match quantize(&data, shape, quant_type) {
-                Ok(qblock) => {
-                    total_original_bytes += qblock.original_size_bytes() as u64;
-                    total_quantized_bytes += qblock.size_bytes() as u64;
-                    tensor_count += 1;
+            total_original_bytes += qblock.original_size_bytes() as u64;
+            total_quantized_bytes += qblock.size_bytes() as u64;
+            tensor_count += 1;
 
-                    if args.verify {
-                        if let Ok(dequantized) = dequantize(&qblock) {
-                            let mse = quantization_mse(&data, &dequantized);
-                            if mse > max_mse {
-                                max_mse = mse;
-                            }
-                        }
-                    }
-                }
-                Err(_) => continue,
+            if args.verify {
+                verify_quantization_mse(&data, &qblock, &mut max_mse);
             }
         }
 

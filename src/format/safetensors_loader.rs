@@ -696,4 +696,61 @@ mod tests {
         // bf16 0.0 = 0x0000
         assert_eq!(bf16_to_f32(0x0000), 0.0);
     }
+
+    // =========================================================================
+    // half_to_f32 edge cases for full branch coverage (PMAT-023)
+    // =========================================================================
+
+    #[test]
+    fn test_half_to_f32_subnormal() {
+        // Subnormal: exp == 0, mant != 0
+        // Smallest subnormal: 0x0001 = 2^(-14) * 2^(-10) = 2^(-24)
+        let val = half_to_f32(0x0001);
+        assert!(val > 0.0);
+        assert!(val < 1e-6);
+
+        // Larger subnormal: 0x0200 = 2^(-14) * 0.5 = 2^(-15)
+        let val2 = half_to_f32(0x0200);
+        assert!(val2 > val);
+    }
+
+    #[test]
+    fn test_half_to_f32_infinity_nan() {
+        // Positive infinity: exp=31, mant=0 -> 0x7C00
+        let inf = half_to_f32(0x7C00);
+        assert!(inf.is_infinite());
+        assert!(inf > 0.0);
+
+        // Negative infinity: 0xFC00
+        let neg_inf = half_to_f32(0xFC00);
+        assert!(neg_inf.is_infinite());
+        assert!(neg_inf < 0.0);
+
+        // NaN: exp=31, mant!=0 -> 0x7C01
+        let nan = half_to_f32(0x7C01);
+        assert!(nan.is_nan());
+    }
+
+    #[test]
+    fn test_half_to_f32_negative_zero() {
+        // Negative zero: sign=1, exp=0, mant=0 -> 0x8000
+        let neg_zero = half_to_f32(0x8000);
+        assert_eq!(neg_zero, 0.0);
+        assert!(neg_zero.is_sign_negative());
+    }
+
+    #[test]
+    fn test_half_to_f32_negative_subnormal() {
+        // Negative subnormal: sign=1, exp=0, mant!=0 -> 0x8001
+        let val = half_to_f32(0x8001);
+        assert!(val < 0.0);
+        assert!(val > -1e-6);
+    }
+
+    #[test]
+    fn test_bf16_to_f32_negative() {
+        // bf16 -1.0 = 0xBF80
+        let neg_one = bf16_to_f32(0xBF80);
+        assert!((neg_one + 1.0).abs() < 1e-6);
+    }
 }
