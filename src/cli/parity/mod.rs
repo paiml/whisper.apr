@@ -189,11 +189,7 @@ impl ParityTest {
         }
 
         if self.config.normalize_punctuation {
-            // Remove punctuation for comparison
-            result = result
-                .chars()
-                .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-                .collect();
+            result = strip_punctuation(&result);
         }
 
         if self.config.case_insensitive {
@@ -204,6 +200,13 @@ impl ParityTest {
     }
 }
 
+/// Strip non-alphanumeric characters (keep whitespace) from text
+fn strip_punctuation(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .collect()
+}
+
 /// Calculate Word Error Rate between reference and hypothesis
 ///
 /// WER = (S + D + I) / N
@@ -212,10 +215,7 @@ impl ParityTest {
 pub fn calculate_wer(reference: &str, hypothesis: &str) -> f64 {
     // Normalize: lowercase and strip punctuation for fair comparison (D.2, D.3)
     let normalize = |s: &str| -> Vec<String> {
-        s.to_lowercase()
-            .chars()
-            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-            .collect::<String>()
+        strip_punctuation(&s.to_lowercase())
             .split_whitespace()
             .map(|w| w.to_string())
             .collect()

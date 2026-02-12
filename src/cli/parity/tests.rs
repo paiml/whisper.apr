@@ -2,6 +2,14 @@
 
 use super::*;
 
+/// Generate a word sequence "word0 word1 word2 ..." for parity testing
+fn word_sequence(count: usize) -> String {
+    (0..count)
+        .map(|i| format!("word{i}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 // -------------------------------------------------------------------------
 // ParityResult tests
 // -------------------------------------------------------------------------
@@ -162,10 +170,7 @@ fn test_parity_test_whitespace_normalization() {
 #[test]
 fn test_parity_test_within_tolerance() {
     // 1 word different out of 100 = 1% WER, at threshold
-    let reference: String = (0..100)
-        .map(|i| format!("word{i}"))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let reference = word_sequence(100);
     let mut hypothesis = reference.clone();
     hypothesis = hypothesis.replace("word50", "changed");
 
@@ -178,10 +183,7 @@ fn test_parity_test_within_tolerance() {
 #[test]
 fn test_parity_test_exceeds_tolerance() {
     // 5 words different out of 100 = 5% WER, exceeds 1% threshold
-    let reference: String = (0..100)
-        .map(|i| format!("word{i}"))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let reference = word_sequence(100);
     let mut hypothesis = reference.clone();
     hypothesis = hypothesis.replace("word10", "changed10");
     hypothesis = hypothesis.replace("word20", "changed20");
