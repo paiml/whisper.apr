@@ -84,12 +84,12 @@ impl MelFilterbank {
     pub fn compute_simd(&self, audio: &[f32], hop_length: usize) -> WhisperResult<Vec<f32>> {
         let _span = crate::trace_enter!("step_f_mel_simd");
 
-        if audio.is_empty() {
-            return Ok(Vec::new());
-        }
-
         if hop_length == 0 {
             return Err(WhisperError::Audio("hop_length must be positive".into()));
+        }
+
+        if audio.is_empty() {
+            return Ok(Vec::new());
         }
 
         // Center padding: pad n_fft//2 zeros on each side to match librosa/HuggingFace
@@ -123,11 +123,7 @@ impl MelFilterbank {
             // Apply window and prepare FFT input
             let mut fft_input: Vec<Complex<f32>> = (0..self.n_fft)
                 .map(|i| {
-                    let sample = if start + i < padded_audio.len() {
-                        padded_audio[start + i]
-                    } else {
-                        0.0
-                    };
+                    let sample = padded_audio.get(start + i).copied().unwrap_or(0.0);
                     Complex::new(sample * self.window[i], 0.0)
                 })
                 .collect();
@@ -153,11 +149,11 @@ impl MelFilterbank {
             }
         }
 
-        // Apply Whisper normalization
+        // Apply Whisper normalization: clamp to max-8, then shift and scale
         let max_val = mel_spec.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        let floor = max_val - 8.0;
         for x in &mut mel_spec {
-            *x = (*x).max(max_val - 8.0);
-            *x = (*x + 4.0) / 4.0;
+            *x = ((*x).max(floor) + 4.0) / 4.0;
         }
 
         Ok(mel_spec)

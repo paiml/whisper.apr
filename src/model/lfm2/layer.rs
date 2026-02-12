@@ -191,98 +191,55 @@ impl Lfm2Layer {
     ) -> WhisperResult<LoadStats> {
         let mut stats = LoadStats::default();
 
-        // Load input layer norm
-        let ln1_name = format!("layers.{layer_idx}.ln1.weight");
-        if let Ok(weight) = reader.load_tensor_f32(&ln1_name) {
-            if weight.len() == self.input_norm.weight.len() {
-                self.input_norm.weight = weight;
-                stats.tensors_loaded += 1;
-                stats.params_loaded += self.input_norm.weight.len();
-            }
-        }
-
-        // Load post-attention layer norm
-        let ln2_name = format!("layers.{layer_idx}.ln2.weight");
-        if let Ok(weight) = reader.load_tensor_f32(&ln2_name) {
-            if weight.len() == self.post_attn_norm.weight.len() {
-                self.post_attn_norm.weight = weight;
-                stats.tensors_loaded += 1;
-                stats.params_loaded += self.post_attn_norm.weight.len();
-            }
-        }
+        // Load layer norms
+        try_load_tensor(reader, &format!("layers.{layer_idx}.ln1.weight"), &mut self.input_norm.weight, &mut stats);
+        try_load_tensor(reader, &format!("layers.{layer_idx}.ln2.weight"), &mut self.post_attn_norm.weight, &mut stats);
 
         // Load attention weights (if attention layer)
         if let Some(ref mut attn) = self.attention {
             let prefix = format!("layers.{layer_idx}.attn");
-
-            if let Ok(w) = reader.load_tensor_f32(&format!("{prefix}.q.weight")) {
-                if w.len() == attn.w_q.len() {
-                    attn.w_q = w;
-                    stats.tensors_loaded += 1;
-                    stats.params_loaded += attn.w_q.len();
-                }
-            }
-            if let Ok(w) = reader.load_tensor_f32(&format!("{prefix}.k.weight")) {
-                if w.len() == attn.w_k.len() {
-                    attn.w_k = w;
-                    stats.tensors_loaded += 1;
-                    stats.params_loaded += attn.w_k.len();
-                }
-            }
-            if let Ok(w) = reader.load_tensor_f32(&format!("{prefix}.v.weight")) {
-                if w.len() == attn.w_v.len() {
-                    attn.w_v = w;
-                    stats.tensors_loaded += 1;
-                    stats.params_loaded += attn.w_v.len();
-                }
-            }
-            if let Ok(w) = reader.load_tensor_f32(&format!("{prefix}.o.weight")) {
-                if w.len() == attn.w_o.len() {
-                    attn.w_o = w;
-                    stats.tensors_loaded += 1;
-                    stats.params_loaded += attn.w_o.len();
-                }
+            for (suffix, target) in [
+                ("q.weight", &mut attn.w_q),
+                ("k.weight", &mut attn.w_k),
+                ("v.weight", &mut attn.w_v),
+                ("o.weight", &mut attn.w_o),
+            ] {
+                try_load_tensor(reader, &format!("{prefix}.{suffix}"), target, &mut stats);
             }
         }
 
         // Load convolution weights (if conv layer)
         if let Some(ref mut conv) = self.conv {
-            let conv_name = format!("layers.{layer_idx}.conv.weight");
-            if let Ok(weight) = reader.load_tensor_f32(&conv_name) {
-                if weight.len() == conv.weight.len() {
-                    conv.weight = weight;
-                    stats.tensors_loaded += 1;
-                    stats.params_loaded += conv.weight.len();
-                }
-            }
+            try_load_tensor(reader, &format!("layers.{layer_idx}.conv.weight"), &mut conv.weight, &mut stats);
         }
 
         // Load FFN weights
         let ffn_prefix = format!("layers.{layer_idx}.ffn");
-
-        if let Ok(w) = reader.load_tensor_f32(&format!("{ffn_prefix}.gate.weight")) {
-            if w.len() == self.ffn.w_gate.len() {
-                self.ffn.w_gate = w;
-                stats.tensors_loaded += 1;
-                stats.params_loaded += self.ffn.w_gate.len();
-            }
-        }
-        if let Ok(w) = reader.load_tensor_f32(&format!("{ffn_prefix}.up.weight")) {
-            if w.len() == self.ffn.w_up.len() {
-                self.ffn.w_up = w;
-                stats.tensors_loaded += 1;
-                stats.params_loaded += self.ffn.w_up.len();
-            }
-        }
-        if let Ok(w) = reader.load_tensor_f32(&format!("{ffn_prefix}.down.weight")) {
-            if w.len() == self.ffn.w_down.len() {
-                self.ffn.w_down = w;
-                stats.tensors_loaded += 1;
-                stats.params_loaded += self.ffn.w_down.len();
-            }
+        for (suffix, target) in [
+            ("gate.weight", &mut self.ffn.w_gate),
+            ("up.weight", &mut self.ffn.w_up),
+            ("down.weight", &mut self.ffn.w_down),
+        ] {
+            try_load_tensor(reader, &format!("{ffn_prefix}.{suffix}"), target, &mut stats);
         }
 
         Ok(stats)
+    }
+}
+
+/// Try to load a tensor from the reader into the target, updating stats on success
+fn try_load_tensor(
+    reader: &crate::format::Apr2Reader,
+    name: &str,
+    target: &mut Vec<f32>,
+    stats: &mut LoadStats,
+) {
+    if let Ok(w) = reader.load_tensor_f32(name) {
+        if w.len() == target.len() {
+            stats.tensors_loaded += 1;
+            stats.params_loaded += w.len();
+            *target = w;
+        }
     }
 }
 
