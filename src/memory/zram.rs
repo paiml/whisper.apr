@@ -204,9 +204,8 @@ pub fn optimal_buffer_size_for_path(path: &Path) -> usize {
 /// Scan sysfs ublk-control for a device with GPU attribute enabled.
 #[cfg(feature = "std")]
 fn scan_ublk_gpu_devices() -> bool {
-    let entries = match fs::read_dir("/sys/class/ublk-control") {
-        Ok(e) => e,
-        Err(_) => return false,
+    let Ok(entries) = fs::read_dir("/sys/class/ublk-control") else {
+        return false;
     };
     for entry in entries.flatten() {
         let gpu_path = entry.path().join("gpu");
