@@ -225,13 +225,8 @@ impl Encoder {
     pub fn forward_batch_padded(&self, batch: &[Vec<f32>]) -> WhisperResult<BatchEncoderOutput> {
         let encoded = self.forward_batch(batch)?;
 
-        let max_seq_len = encoded
-            .iter()
-            .map(|e| e.len() / self.d_model)
-            .max()
-            .unwrap_or(0);
-
         let seq_lengths: Vec<usize> = encoded.iter().map(|e| e.len() / self.d_model).collect();
+        let max_seq_len = seq_lengths.iter().copied().max().unwrap_or(0);
 
         let batch_size = encoded.len();
         let total_size = batch_size * max_seq_len * self.d_model;

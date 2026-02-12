@@ -138,18 +138,13 @@ impl GpuMelFilterbank {
         let mel_min = Self::hz_to_mel(config.f_min);
         let mel_max = Self::hz_to_mel(config.f_max);
 
-        // Mel bin centers
-        let mel_points: Vec<f32> = (0..=n_mels + 1)
-            .map(|i| mel_min + (mel_max - mel_min) * (i as f32) / ((n_mels + 1) as f32))
-            .collect();
-
-        // Convert back to Hz
-        let hz_points: Vec<f32> = mel_points.iter().map(|&m| Self::mel_to_hz(m)).collect();
-
-        // Convert to FFT bin indices
-        let fft_bins: Vec<f32> = hz_points
-            .iter()
-            .map(|&hz| (config.n_fft as f32 + 1.0) * hz / (config.sample_rate as f32))
+        // Compute FFT bin indices directly: mel scale → Hz → FFT bin
+        let fft_bins: Vec<f32> = (0..=n_mels + 1)
+            .map(|i| {
+                let mel = mel_min + (mel_max - mel_min) * (i as f32) / ((n_mels + 1) as f32);
+                let hz = Self::mel_to_hz(mel);
+                (config.n_fft as f32 + 1.0) * hz / (config.sample_rate as f32)
+            })
             .collect();
 
         // Create triangular filters
