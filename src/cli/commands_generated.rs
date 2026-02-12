@@ -683,37 +683,9 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
     let input_text = read_summarize_input(&args)?;
     log_summarize_params(&args, &input_text, global);
 
-    // Load model and tokenizer
-    let model_path = args.model_path.as_ref().ok_or_else(|| {
-        CliError::InvalidArgument(
-            "LFM2 summarization requires --model-path to be specified. \
-             Use 'whisper-apr model download' to get a model, then convert it with 'whisper-apr convert'."
-                .to_string(),
-        )
-    })?;
-
-    if !model_path.exists() {
-        return Err(CliError::FileNotFound(model_path.display().to_string()));
-    }
-
-    if !global.quiet {
-        println!("Loading LFM2 model from {}...", model_path.display());
-    }
-
     let load_start = Instant::now();
-    let model_data = fs::read(model_path)?;
-    let model = crate::model::lfm2::Lfm2::from_apr2_bytes(model_data)
-        .map_err(|e| CliError::InvalidArgument(format!("Failed to load model: {e}")))?;
+    let model = load_summarize_model(&args, global)?;
     let load_time = load_start.elapsed();
-
-    if global.verbose {
-        eprintln!(
-            "[INFO] Model loaded in {:.2}s ({} params, {:.2} MB)",
-            load_time.as_secs_f64(),
-            model.num_params(),
-            model.memory_bytes() as f64 / (1024.0 * 1024.0)
-        );
-    }
 
     let tokenizer = load_summarize_tokenizer(&args, global)?;
 
@@ -752,15 +724,7 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
     let summary_ids = &output_ids[input_ids.len()..];
     let summary = tokenizer.decode(summary_ids);
 
-    if global.verbose {
-        eprintln!(
-            "[INFO] Generated {} tokens in {:.1}ms ({:.1} tokens/s)",
-            gen_stats.tokens_generated, gen_stats.total_ms, gen_stats.tokens_per_sec
-        );
-        if gen_stats.hit_eos {
-            eprintln!("[INFO] Generation completed (hit EOS token)");
-        }
-    }
+    log_generation_stats(&gen_stats, global);
 
     let total_time = start.elapsed();
     let output = format_summary_output(
@@ -773,25 +737,7 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
         total_time,
     );
 
-    // Write result
-    if let Some(output_path) = args.output {
-        fs::write(&output_path, &output)?;
-        if !global.quiet {
-            println!("Summary written to: {}", output_path.display());
-        }
-    } else if !global.quiet {
-        println!("\n{output}");
-    }
-
-    if !global.quiet {
-        let stream_indicator = if args.stream { " (streamed)" } else { "" };
-        println!(
-            "\nCompleted in {:.2}s ({} tokens at {:.1} tokens/s{stream_indicator})",
-            total_time.as_secs_f64(),
-            gen_stats.tokens_generated,
-            gen_stats.tokens_per_sec
-        );
-    }
+    write_summary_result(&args, global, &output, &gen_stats, total_time)?;
 
     Ok(CommandResult::success(format!(
         "Generated {} token summary{}",
@@ -833,6 +779,42 @@ fn log_summarize_params(args: &SummarizeArgs, input_text: &str, global: &Args) {
         eprintln!("[INFO] Max tokens: {}", args.max_tokens);
         eprintln!("[INFO] Temperature: {:.2}", args.temperature);
     }
+}
+
+/// Load LFM2 model for summarization
+fn load_summarize_model(
+    args: &SummarizeArgs,
+    global: &Args,
+) -> CliResult<crate::model::lfm2::Lfm2> {
+    let model_path = args.model_path.as_ref().ok_or_else(|| {
+        CliError::InvalidArgument(
+            "LFM2 summarization requires --model-path to be specified. \
+             Use 'whisper-apr model download' to get a model, then convert it with 'whisper-apr convert'."
+                .to_string(),
+        )
+    })?;
+
+    if !model_path.exists() {
+        return Err(CliError::FileNotFound(model_path.display().to_string()));
+    }
+
+    if !global.quiet {
+        println!("Loading LFM2 model from {}...", model_path.display());
+    }
+
+    let model_data = fs::read(model_path)?;
+    let model = crate::model::lfm2::Lfm2::from_apr2_bytes(model_data)
+        .map_err(|e| CliError::InvalidArgument(format!("Failed to load model: {e}")))?;
+
+    if global.verbose {
+        eprintln!(
+            "[INFO] Model loaded ({} params, {:.2} MB)",
+            model.num_params(),
+            model.memory_bytes() as f64 / (1024.0 * 1024.0)
+        );
+    }
+
+    Ok(model)
 }
 
 /// Load tokenizer for summarization
@@ -935,6 +917,48 @@ fn format_summary_output(
             .collect::<Vec<_>>()
             .join("\n"),
     }
+}
+
+/// Log generation statistics in verbose mode
+fn log_generation_stats(gen_stats: &crate::model::lfm2::GenerationStats, global: &Args) {
+    if global.verbose {
+        eprintln!(
+            "[INFO] Generated {} tokens in {:.1}ms ({:.1} tokens/s)",
+            gen_stats.tokens_generated, gen_stats.total_ms, gen_stats.tokens_per_sec
+        );
+        if gen_stats.hit_eos {
+            eprintln!("[INFO] Generation completed (hit EOS token)");
+        }
+    }
+}
+
+/// Write summary output to file or stdout
+fn write_summary_result(
+    args: &SummarizeArgs,
+    global: &Args,
+    output: &str,
+    gen_stats: &crate::model::lfm2::GenerationStats,
+    total_time: std::time::Duration,
+) -> CliResult<()> {
+    if let Some(output_path) = &args.output {
+        fs::write(output_path, output)?;
+        if !global.quiet {
+            println!("Summary written to: {}", output_path.display());
+        }
+    } else if !global.quiet {
+        println!("\n{output}");
+    }
+
+    if !global.quiet {
+        let stream_indicator = if args.stream { " (streamed)" } else { "" };
+        println!(
+            "\nCompleted in {:.2}s ({} tokens at {:.1} tokens/s{stream_indicator})",
+            total_time.as_secs_f64(),
+            gen_stats.tokens_generated,
+            gen_stats.tokens_per_sec
+        );
+    }
+    Ok(())
 }
 
 /// Run record command (audio capture to file)
@@ -1202,6 +1226,7 @@ fn atomic_write_transcription(output_path: &Path, content: &str) -> Result<(), C
 /// Result of processing a single batch file
 enum BatchFileResult {
     Processed,
+    Skipped,
     Failed,
 }
 
@@ -1303,6 +1328,32 @@ fn process_batch_file(
     }
 }
 
+/// Process a single entry in batch mode (skip/transcribe/fail)
+fn process_batch_entry(
+    input_path: &Path,
+    output_path: &Path,
+    args: &BatchArgs,
+    global: &Args,
+) -> BatchFileResult {
+    if args.skip_existing && output_path.exists() {
+        if global.verbose {
+            eprintln!("[SKIP] {}", output_path.display());
+        }
+        return BatchFileResult::Skipped;
+    }
+
+    if global.verbose {
+        eprintln!(
+            "[PROC] {} → {}",
+            input_path.display(),
+            output_path.display()
+        );
+    }
+
+    let transcribe_args = build_batch_transcribe_args(input_path, args);
+    process_batch_file(&transcribe_args, output_path, args.format, global)
+}
+
 /// Run batch command (transcribe-folder)
 ///
 /// Per spec WAPR-PERF-004 (docs/specifications/transcribe-folder-spec.md):
@@ -1338,33 +1389,13 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
     let mut failed = 0;
     let start_time = Instant::now();
 
-    // Process files (sequential for now, parallel support via --parallel flag future)
     for (input_path, base_dir) in &files {
-        // Compute output path with structure mirroring
         let output_path =
             compute_mirrored_output_path(input_path, base_dir.as_deref(), &output_dir, &format_ext);
 
-        // Skip if exists and --skip-existing (resumable processing)
-        if args.skip_existing && output_path.exists() {
-            if global.verbose {
-                eprintln!("[SKIP] {}", output_path.display());
-            }
-            skipped += 1;
-            continue;
-        }
-
-        if global.verbose {
-            eprintln!(
-                "[PROC] {} → {}",
-                input_path.display(),
-                output_path.display()
-            );
-        }
-
-        let transcribe_args = build_batch_transcribe_args(input_path, &args);
-
-        match process_batch_file(&transcribe_args, &output_path, args.format, global) {
+        match process_batch_entry(input_path, &output_path, &args, global) {
             BatchFileResult::Processed => processed += 1,
+            BatchFileResult::Skipped => skipped += 1,
             BatchFileResult::Failed => failed += 1,
         }
     }
@@ -1488,21 +1519,7 @@ pub fn run_transcribe_folder(
         eprintln!("[INFO] Discovered {} audio files", files.len());
     }
 
-    // Load model once for all files (efficiency)
-    if global.verbose {
-        if let Some(path) = &args.model_path {
-            eprintln!("[INFO] Loading model from: {}", path.display());
-        } else {
-            eprintln!("[INFO] Loading model: {}", args.model);
-        }
-    }
-
-    let whisper = crate::cli::model_loader::load_or_download_model(
-        args.model,
-        args.model_path.as_deref(),
-        global.verbose,
-    )
-    .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
+    let whisper = load_folder_whisper_model(&args, global)?;
 
     let format_ext = args.format.to_string();
     let mut processed = 0;
@@ -1537,23 +1554,7 @@ pub fn run_transcribe_folder(
     let elapsed = start_time.elapsed();
     let total = processed + skipped + failed;
 
-    // Generate aggregate report if requested (spec §2.3.5)
-    if let Some(report_path) = &args.report {
-        let report = generate_folder_profile_report(&profile_entries, elapsed.as_secs_f64());
-        if let Err(e) = fs::write(report_path, report) {
-            eprintln!("[WARN] Failed to write report: {}", e);
-        } else if global.verbose {
-            eprintln!(
-                "[INFO] Profile report written to: {}",
-                report_path.display()
-            );
-        }
-    }
-
-    // Print summary if profiling enabled
-    if args.profile && !global.quiet {
-        print_folder_profile_summary(&profile_entries, elapsed.as_secs_f64());
-    }
+    finalize_folder_reports(&args, global, &profile_entries, &elapsed);
 
     // Jidoka: fail if strict budget mode and violations occurred
     if args.strict_budget && budget_violations > 0 {
@@ -1567,6 +1568,48 @@ pub fn run_transcribe_folder(
         "Folder complete: {processed} processed, {skipped} skipped, {failed} failed ({total} total) in {:.1}s",
         elapsed.as_secs_f64()
     )))
+}
+
+/// Load Whisper model for folder transcription
+fn load_folder_whisper_model(args: &TranscribeFolderArgs, global: &Args) -> CliResult<WhisperApr> {
+    if global.verbose {
+        if let Some(path) = &args.model_path {
+            eprintln!("[INFO] Loading model from: {}", path.display());
+        } else {
+            eprintln!("[INFO] Loading model: {}", args.model);
+        }
+    }
+
+    crate::cli::model_loader::load_or_download_model(
+        args.model,
+        args.model_path.as_deref(),
+        global.verbose,
+    )
+    .map_err(|e| CliError::InvalidArgument(e.to_string()))
+}
+
+/// Write report and print profiling summary for folder transcription
+fn finalize_folder_reports(
+    args: &TranscribeFolderArgs,
+    global: &Args,
+    profile_entries: &[FolderProfileEntry],
+    elapsed: &std::time::Duration,
+) {
+    if let Some(report_path) = &args.report {
+        let report = generate_folder_profile_report(profile_entries, elapsed.as_secs_f64());
+        if let Err(e) = fs::write(report_path, report) {
+            eprintln!("[WARN] Failed to write report: {}", e);
+        } else if global.verbose {
+            eprintln!(
+                "[INFO] Profile report written to: {}",
+                report_path.display()
+            );
+        }
+    }
+
+    if args.profile && !global.quiet {
+        print_folder_profile_summary(profile_entries, elapsed.as_secs_f64());
+    }
 }
 
 /// Profile entry for a single file
@@ -2623,11 +2666,91 @@ pub fn run_benchmark(args: BenchmarkArgs, global: &Args) -> CliResult<CommandRes
     Ok(CommandResult::success(format!("RTF: {rtf:.2}x")).with_rtf(rtf))
 }
 
+/// Benchmark all LFM2 components and print table
+fn run_lfm2_benchmark_all(
+    config: &crate::benchmark_generated::Lfm2BenchmarkConfig,
+    global: &Args,
+) -> CliResult<CommandResult> {
+    use crate::benchmark_generated::benchmark_lfm2_all;
+
+    let results = benchmark_lfm2_all(config)
+        .map_err(|e| CliError::InvalidArgument(format!("Benchmark failed: {e}")))?;
+
+    if !global.quiet {
+        println!("Component       │ Time (μs)  │ Tokens/sec │ Memory (KB) │ FLOPs");
+        println!("────────────────┼────────────┼────────────┼─────────────┼──────────────");
+
+        for r in &results {
+            println!(
+                "{:<15} │ {:>10.1} │ {:>10.0} │ {:>11} │ {:>12}",
+                format!("{}", r.component),
+                r.forward_us,
+                r.tokens_per_sec,
+                r.memory_bytes / 1024,
+                r.flops
+            );
+        }
+
+        let total_time: f64 = results.iter().map(|r| r.forward_us).sum();
+        let total_memory: usize = results.iter().map(|r| r.memory_bytes).sum();
+
+        println!("────────────────┴────────────┴────────────┴─────────────┴──────────────");
+        println!(
+            "Total           │ {:>10.1} │            │ {:>11} │",
+            total_time,
+            total_memory / 1024
+        );
+    }
+
+    Ok(CommandResult::success("LFM2 benchmark complete"))
+}
+
+/// Benchmark a single LFM2 component
+fn run_lfm2_benchmark_single(
+    component_str: &str,
+    config: &crate::benchmark_generated::Lfm2BenchmarkConfig,
+    global: &Args,
+) -> CliResult<CommandResult> {
+    use crate::benchmark_generated::{benchmark_lfm2_component, Lfm2Component};
+
+    let component = match component_str {
+        "gqa" => Lfm2Component::Gqa,
+        "swiglu" => Lfm2Component::SwiGlu,
+        "rope" => Lfm2Component::RoPE,
+        "conv1d" | "conv" => Lfm2Component::Conv1d,
+        "full_layer" | "full" | "layer" => Lfm2Component::FullLayer,
+        other => {
+            return Err(CliError::InvalidArgument(format!(
+                "Unknown component: {other}. Use: gqa, swiglu, rope, conv1d, full_layer, all"
+            )));
+        }
+    };
+
+    let result = benchmark_lfm2_component(component, config)
+        .map_err(|e| CliError::InvalidArgument(format!("Benchmark failed: {e}")))?;
+
+    if !global.quiet {
+        println!("Component: {}", result.component);
+        println!("───────────────────────────────────────────────────────────────────");
+        println!("  Forward time:  {:.2} μs", result.forward_us);
+        println!("  Tokens/sec:    {:.0}", result.tokens_per_sec);
+        println!("  Memory:        {} KB", result.memory_bytes / 1024);
+        println!("  FLOPs:         {}", result.flops);
+
+        if global.verbose {
+            println!("\nJSON: {}", result.to_json());
+        }
+    }
+
+    Ok(CommandResult::success(format!(
+        "{}: {:.2}μs",
+        result.component, result.forward_us
+    )))
+}
+
 /// Run LFM2 component benchmarks
 fn run_lfm2_benchmark(args: &BenchmarkArgs, global: &Args) -> CliResult<CommandResult> {
-    use crate::benchmark_generated::{
-        benchmark_lfm2_all, benchmark_lfm2_component, Lfm2BenchmarkConfig, Lfm2Component,
-    };
+    use crate::benchmark_generated::Lfm2BenchmarkConfig;
 
     // Create benchmark config
     let config = if args.full_size {
@@ -2657,79 +2780,38 @@ fn run_lfm2_benchmark(args: &BenchmarkArgs, global: &Args) -> CliResult<CommandR
     let component_str = args.component.to_lowercase();
 
     if component_str == "all" {
-        // Benchmark all components
-        let results = benchmark_lfm2_all(&config)
-            .map_err(|e| CliError::InvalidArgument(format!("Benchmark failed: {e}")))?;
-
-        if !global.quiet {
-            println!("Component       │ Time (μs)  │ Tokens/sec │ Memory (KB) │ FLOPs");
-            println!("────────────────┼────────────┼────────────┼─────────────┼──────────────");
-
-            for r in &results {
-                println!(
-                    "{:<15} │ {:>10.1} │ {:>10.0} │ {:>11} │ {:>12}",
-                    format!("{}", r.component),
-                    r.forward_us,
-                    r.tokens_per_sec,
-                    r.memory_bytes / 1024,
-                    r.flops
-                );
-            }
-
-            // Summary
-            let total_time: f64 = results.iter().map(|r| r.forward_us).sum();
-            let total_memory: usize = results.iter().map(|r| r.memory_bytes).sum();
-
-            println!("────────────────┴────────────┴────────────┴─────────────┴──────────────");
-            println!(
-                "Total           │ {:>10.1} │            │ {:>11} │",
-                total_time,
-                total_memory / 1024
-            );
-        }
-
-        Ok(CommandResult::success("LFM2 benchmark complete"))
+        run_lfm2_benchmark_all(&config, global)
     } else {
-        // Benchmark single component
-        let component = match component_str.as_str() {
-            "gqa" => Lfm2Component::Gqa,
-            "swiglu" => Lfm2Component::SwiGlu,
-            "rope" => Lfm2Component::RoPE,
-            "conv1d" | "conv" => Lfm2Component::Conv1d,
-            "full_layer" | "full" | "layer" => Lfm2Component::FullLayer,
-            other => {
-                return Err(CliError::InvalidArgument(format!(
-                    "Unknown component: {other}. Use: gqa, swiglu, rope, conv1d, full_layer, all"
-                )));
+        run_lfm2_benchmark_single(&component_str, &config, global)
+    }
+}
+
+/// Run quick APR validation mode
+fn run_quick_validation(
+    reader: &crate::format::AprReader,
+    global: &Args,
+) -> CliResult<CommandResult> {
+    match crate::format::quick_validate(reader) {
+        Ok(()) => {
+            if !global.quiet {
+                println!("✓ Quick validation passed");
             }
-        };
-
-        let result = benchmark_lfm2_component(component, &config)
-            .map_err(|e| CliError::InvalidArgument(format!("Benchmark failed: {e}")))?;
-
-        if !global.quiet {
-            println!("Component: {}", result.component);
-            println!("───────────────────────────────────────────────────────────────────");
-            println!("  Forward time:  {:.2} μs", result.forward_us);
-            println!("  Tokens/sec:    {:.0}", result.tokens_per_sec);
-            println!("  Memory:        {} KB", result.memory_bytes / 1024);
-            println!("  FLOPs:         {}", result.flops);
-
-            if global.verbose {
-                println!("\nJSON: {}", result.to_json());
-            }
+            Ok(CommandResult::success("Quick validation passed"))
         }
-
-        Ok(CommandResult::success(format!(
-            "{}: {:.2}μs",
-            result.component, result.forward_us
-        )))
+        Err(e) => {
+            if !global.quiet {
+                println!("✗ Quick validation failed: {e}");
+            }
+            Ok(CommandResult::failure(format!(
+                "Quick validation failed: {e}"
+            )))
+        }
     }
 }
 
 /// Run validate command
 pub fn run_validate(args: ValidateArgs, global: &Args) -> CliResult<CommandResult> {
-    use crate::format::{quick_validate, AprReader, AprValidator};
+    use crate::format::{AprReader, AprValidator};
 
     // Validate input file exists
     if !args.file.exists() {
@@ -2744,24 +2826,8 @@ pub fn run_validate(args: ValidateArgs, global: &Args) -> CliResult<CommandResul
     let data = fs::read(&args.file)?;
     let reader = AprReader::new(data).map_err(|e| CliError::InvalidArgument(e.to_string()))?;
 
-    // Quick validation mode
     if args.quick {
-        match quick_validate(&reader) {
-            Ok(()) => {
-                if !global.quiet {
-                    println!("✓ Quick validation passed");
-                }
-                return Ok(CommandResult::success("Quick validation passed"));
-            }
-            Err(e) => {
-                if !global.quiet {
-                    println!("✗ Quick validation failed: {e}");
-                }
-                return Ok(CommandResult::failure(format!(
-                    "Quick validation failed: {e}"
-                )));
-            }
-        }
+        return run_quick_validation(&reader, global);
     }
 
     // Full 25-point validation
@@ -2820,6 +2886,109 @@ pub fn run_serve(_args: ServeArgs, _global: &Args) -> CliResult<CommandResult> {
     ))
 }
 
+/// Find the whisper.cpp binary from args or common locations
+fn find_whisper_cpp_binary(args: &ParityArgs) -> std::path::PathBuf {
+    const CANDIDATES: &[&str] = &[
+        "/usr/local/bin/whisper-cli",
+        "/usr/bin/whisper-cli",
+        "whisper-cli",
+        "./whisper-cli",
+        "../whisper.cpp/main",
+    ];
+
+    if let Some(path) = &args.whisper_cpp {
+        return path.clone();
+    }
+    for candidate in CANDIDATES {
+        let path = std::path::PathBuf::from(candidate);
+        if path.exists() {
+            return path;
+        }
+    }
+    std::path::PathBuf::from("whisper-cli")
+}
+
+/// Execute whisper.cpp and return its text output
+fn run_whisper_cpp(whisper_cpp_path: &Path, args: &ParityArgs) -> CliResult<String> {
+    if args.verbose {
+        println!("Running whisper.cpp...");
+    }
+
+    let model_path = args.cpp_model.as_ref().map_or_else(
+        || format!("models/ggml-{}.bin", args.model),
+        |p| p.to_string_lossy().to_string(),
+    );
+    let cpp_output = std::process::Command::new(whisper_cpp_path)
+        .args([
+            "-m",
+            model_path.as_str(),
+            "-f",
+            &args.input.to_string_lossy(),
+            "--no-prints",
+        ])
+        .output();
+
+    match cpp_output {
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        }
+        Ok(output) => Err(CliError::InvalidArgument(format!(
+            "whisper.cpp failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))),
+        Err(e) => Err(CliError::InvalidArgument(format!(
+            "Failed to run whisper.cpp at {}: {}",
+            whisper_cpp_path.display(),
+            e
+        ))),
+    }
+}
+
+/// Display parity comparison results
+fn display_parity_result(
+    args: &ParityArgs,
+    global: &Args,
+    cpp_text: &str,
+    apr_text: &str,
+    parity_result: &crate::cli::parity::ParityResult,
+) {
+    if args.json {
+        let json = serde_json::json!({
+            "input": args.input.display().to_string(),
+            "whisper_cpp_output": cpp_text.trim(),
+            "whisper_apr_output": apr_text.trim(),
+            "parity": parity_result.is_pass(),
+            "wer": match parity_result {
+                crate::cli::parity::ParityResult::Pass { wer, .. }
+                | crate::cli::parity::ParityResult::Fail { wer, .. } => *wer,
+            },
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json).unwrap_or_default()
+        );
+    } else if !global.quiet {
+        println!("Results:");
+        println!("───────────────────────────────────────────────────────────────────");
+        println!("whisper.cpp: {}", cpp_text.trim());
+        println!("whisper-apr: {}", apr_text.trim());
+        println!();
+
+        match parity_result {
+            crate::cli::parity::ParityResult::Pass { wer, .. } => {
+                println!("✓ PARITY ACHIEVED (WER: {:.2}%)", wer * 100.0);
+            }
+            crate::cli::parity::ParityResult::Fail { wer, .. } => {
+                println!(
+                    "✗ PARITY FAILED (WER: {:.2}%, max: {:.2}%)",
+                    wer * 100.0,
+                    args.max_wer * 100.0
+                );
+            }
+        }
+    }
+}
+
 /// Run parity command (whisper.cpp comparison)
 #[allow(clippy::too_many_lines)]
 pub fn run_parity(args: ParityArgs, global: &Args) -> CliResult<CommandResult> {
@@ -2830,24 +2999,7 @@ pub fn run_parity(args: ParityArgs, global: &Args) -> CliResult<CommandResult> {
         return Err(CliError::FileNotFound(args.input.display().to_string()));
     }
 
-    // Find whisper.cpp binary
-    let whisper_cpp_path = args.whisper_cpp.clone().unwrap_or_else(|| {
-        // Search common locations
-        let candidates = [
-            "/usr/local/bin/whisper-cli",
-            "/usr/bin/whisper-cli",
-            "whisper-cli",
-            "./whisper-cli",
-            "../whisper.cpp/main",
-        ];
-        for candidate in candidates {
-            let path = std::path::PathBuf::from(candidate);
-            if path.exists() {
-                return path;
-            }
-        }
-        std::path::PathBuf::from("whisper-cli")
-    });
+    let whisper_cpp_path = find_whisper_cpp_binary(&args);
 
     if !global.quiet {
         println!("whisper-apr Parity Test");
@@ -2858,43 +3010,7 @@ pub fn run_parity(args: ParityArgs, global: &Args) -> CliResult<CommandResult> {
         println!();
     }
 
-    // Run whisper.cpp
-    if args.verbose {
-        println!("Running whisper.cpp...");
-    }
-
-    let model_path = args.cpp_model.as_ref().map_or_else(
-        || format!("models/ggml-{}.bin", args.model),
-        |p| p.to_string_lossy().to_string(),
-    );
-    let cpp_output = std::process::Command::new(&whisper_cpp_path)
-        .args([
-            "-m",
-            model_path.as_str(),
-            "-f",
-            &args.input.to_string_lossy(),
-            "--no-prints",
-        ])
-        .output();
-
-    let cpp_text = match cpp_output {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).to_string()
-        }
-        Ok(output) => {
-            return Err(CliError::InvalidArgument(format!(
-                "whisper.cpp failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-        Err(e) => {
-            return Err(CliError::InvalidArgument(format!(
-                "Failed to run whisper.cpp at {}: {}",
-                whisper_cpp_path.display(),
-                e
-            )));
-        }
-    };
+    let cpp_text = run_whisper_cpp(&whisper_cpp_path, &args)?;
 
     // Run whisper-apr
     if args.verbose {
@@ -2927,42 +3043,7 @@ pub fn run_parity(args: ParityArgs, global: &Args) -> CliResult<CommandResult> {
 
     let parity_result = test.verify_text_parity();
 
-    // Output results
-    if args.json {
-        let json = serde_json::json!({
-            "input": args.input.display().to_string(),
-            "whisper_cpp_output": cpp_text.trim(),
-            "whisper_apr_output": apr_text.trim(),
-            "parity": parity_result.is_pass(),
-            "wer": match &parity_result {
-                crate::cli::parity::ParityResult::Pass { wer, .. }
-                | crate::cli::parity::ParityResult::Fail { wer, .. } => *wer,
-            },
-        });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json).unwrap_or_default()
-        );
-    } else if !global.quiet {
-        println!("Results:");
-        println!("───────────────────────────────────────────────────────────────────");
-        println!("whisper.cpp: {}", cpp_text.trim());
-        println!("whisper-apr: {}", apr_text.trim());
-        println!();
-
-        match &parity_result {
-            crate::cli::parity::ParityResult::Pass { wer, .. } => {
-                println!("✓ PARITY ACHIEVED (WER: {:.2}%)", wer * 100.0);
-            }
-            crate::cli::parity::ParityResult::Fail { wer, .. } => {
-                println!(
-                    "✗ PARITY FAILED (WER: {:.2}%, max: {:.2}%)",
-                    wer * 100.0,
-                    args.max_wer * 100.0
-                );
-            }
-        }
-    }
+    display_parity_result(&args, global, &cpp_text, &apr_text, &parity_result);
 
     if parity_result.is_pass() {
         Ok(CommandResult::success("Parity achieved"))
@@ -3539,6 +3620,62 @@ fn decode_with_symphonia(data: &[u8], ext: &str) -> CliResult<Vec<f32>> {
     }
 }
 
+/// Read and decode the next audio packet, returning interleaved samples and channel count.
+/// Returns None at end of stream.
+#[cfg(feature = "symphonia")]
+/// Read the next packet belonging to the given track, returning None at EOF
+#[cfg(feature = "symphonia")]
+fn next_packet_for_track(
+    format: &mut Box<dyn symphonia::core::formats::FormatReader>,
+    track_id: u32,
+) -> CliResult<Option<symphonia::core::formats::Packet>> {
+    loop {
+        match format.next_packet() {
+            Ok(p) if p.track_id() == track_id => return Ok(Some(p)),
+            Ok(_) => continue,
+            Err(symphonia::core::errors::Error::IoError(ref e))
+                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                return Ok(None);
+            }
+            Err(e) => {
+                return Err(CliError::InvalidArgument(format!(
+                    "Failed to read packet: {e}"
+                )));
+            }
+        }
+    }
+}
+
+/// Read and decode the next audio packet, returning interleaved samples and channel count.
+/// Returns None at end of stream. Skips packets with decode errors.
+#[cfg(feature = "symphonia")]
+fn read_next_audio_packet(
+    format: &mut Box<dyn symphonia::core::formats::FormatReader>,
+    decoder: &mut dyn symphonia::core::codecs::Decoder,
+    track_id: u32,
+) -> CliResult<Option<(Vec<f32>, usize)>> {
+    use symphonia::core::audio::SampleBuffer;
+
+    loop {
+        let packet = match next_packet_for_track(format, track_id)? {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                let spec = *decoded.spec();
+                let mut sample_buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+                sample_buf.copy_interleaved_ref(decoded);
+                return Ok(Some((sample_buf.samples().to_vec(), spec.channels.count())));
+            }
+            Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
+            Err(e) => return Err(CliError::InvalidArgument(format!("Decode error: {e}"))),
+        }
+    }
+}
+
 /// Decode all audio packets from a symphonia format reader, mixing to mono
 #[cfg(feature = "symphonia")]
 fn decode_all_packets(
@@ -3546,41 +3683,13 @@ fn decode_all_packets(
     decoder: &mut dyn symphonia::core::codecs::Decoder,
     track_id: u32,
 ) -> CliResult<Vec<f32>> {
-    use symphonia::core::audio::SampleBuffer;
-
     let mut samples: Vec<f32> = Vec::new();
 
     loop {
-        let packet = match format.next_packet() {
-            Ok(p) => p,
-            Err(symphonia::core::errors::Error::IoError(ref e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                break;
-            }
-            Err(e) => {
-                return Err(CliError::InvalidArgument(format!(
-                    "Failed to read packet: {e}"
-                )));
-            }
-        };
-
-        if packet.track_id() != track_id {
-            continue;
+        match read_next_audio_packet(format, decoder, track_id)? {
+            Some((interleaved, channels)) => mix_to_mono(&interleaved, channels, &mut samples),
+            None => break,
         }
-
-        let decoded = match decoder.decode(&packet) {
-            Ok(d) => d,
-            Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
-            Err(e) => {
-                return Err(CliError::InvalidArgument(format!("Decode error: {e}")));
-            }
-        };
-
-        let spec = *decoded.spec();
-        let mut sample_buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-        sample_buf.copy_interleaved_ref(decoded);
-        mix_to_mono(sample_buf.samples(), spec.channels.count(), &mut samples);
     }
 
     Ok(samples)
@@ -3804,8 +3913,37 @@ fn log_tensor_mapping(tensor_names: &[String], n_tensors: usize, n_params: u64, 
     }
 }
 
+/// Extract tensors from an APR reader into a BTreeMap for export
+fn extract_tensors_for_export(
+    reader: &crate::format::AprReader,
+    global: &Args,
+) -> CliResult<std::collections::BTreeMap<String, crate::format::export::TensorData>> {
+    use crate::format::export::TensorData;
+    use std::collections::BTreeMap;
+
+    let mut tensors: BTreeMap<String, TensorData> = BTreeMap::new();
+
+    for tensor_desc in &reader.tensors {
+        let name = &tensor_desc.name;
+        let tensor_data = reader
+            .load_tensor(name)
+            .map_err(|e| CliError::InvalidArgument(format!("Failed to load tensor {name}: {e}")))?;
+
+        let shape: Vec<usize> = tensor_desc.shape().iter().map(|&d| d as usize).collect();
+
+        if global.verbose {
+            println!("  {} {:?} ({} elements)", name, shape, tensor_data.len());
+        }
+
+        tensors.insert(name.clone(), TensorData::new(tensor_data, shape));
+    }
+
+    Ok(tensors)
+}
+
+/// Run export command — convert APR model to SafeTensors format
 pub fn run_export(args: ExportArgs, global: &Args) -> CliResult<CommandResult> {
-    use crate::format::export::{SafeTensorsExporter, TensorData};
+    use crate::format::export::SafeTensorsExporter;
     use crate::format::AprReader;
     use std::collections::BTreeMap;
     use std::time::Instant;
@@ -3853,23 +3991,7 @@ pub fn run_export(args: ExportArgs, global: &Args) -> CliResult<CommandResult> {
         println!("\nTensors found: {n_tensors}");
     }
 
-    // Convert tensors to BTreeMap for SafeTensors export
-    let mut tensors: BTreeMap<String, TensorData> = BTreeMap::new();
-
-    for tensor_desc in &reader.tensors {
-        let name = &tensor_desc.name;
-        let tensor_data = reader
-            .load_tensor(name)
-            .map_err(|e| CliError::InvalidArgument(format!("Failed to load tensor {name}: {e}")))?;
-
-        let shape: Vec<usize> = tensor_desc.shape().iter().map(|&d| d as usize).collect();
-
-        if global.verbose {
-            println!("  {} {:?} ({} elements)", name, shape, tensor_data.len());
-        }
-
-        tensors.insert(name.clone(), TensorData::new(tensor_data, shape));
-    }
+    let tensors = extract_tensors_for_export(&reader, global)?;
 
     if !global.quiet {
         println!("Exporting {} tensors...", n_tensors);
