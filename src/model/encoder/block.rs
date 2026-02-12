@@ -11,6 +11,19 @@ use crate::error::WhisperError;
 #[cfg(feature = "realizar-inference")]
 use realizar::layers::FusedLayerNormLinear;
 
+/// Element-wise vector addition for residual connections
+fn add_residual(x: &[f32], y: &[f32]) -> Vec<f32> {
+    x.iter().zip(y.iter()).map(|(a, b)| a + b).collect()
+}
+
+/// Generate flat identity matrix of dimension d x d
+#[cfg(feature = "realizar-inference")]
+fn identity_flat(d: usize) -> Vec<f32> {
+    (0..d)
+        .flat_map(|i| (0..d).map(move |j| if i == j { 1.0 } else { 0.0 }))
+        .collect()
+}
+
 /// Single transformer encoder block
 #[derive(Debug, Clone)]
 pub struct EncoderBlock {
@@ -41,7 +54,7 @@ impl EncoderBlock {
         // Pre-norm self-attention with residual
         let normed = self.ln1.forward(x)?;
         let attn_out = self.self_attn.forward(&normed, None)?;
-        let mut residual: Vec<f32> = x.iter().zip(attn_out.iter()).map(|(a, b)| a + b).collect();
+        let mut residual = add_residual(x, &attn_out);
 
         // Pre-norm FFN with residual
         let normed = self.ln2.forward(&residual)?;
@@ -75,9 +88,7 @@ impl EncoderBlock {
         fused_ln.norm_weight_mut().copy_from_slice(&self.ln1.weight);
         fused_ln.norm_bias_mut().copy_from_slice(&self.ln1.bias);
 
-        let identity: Vec<f32> = (0..d_model)
-            .flat_map(|i| (0..d_model).map(move |j| if i == j { 1.0 } else { 0.0 }))
-            .collect();
+        let identity = identity_flat(d_model);
         fused_ln.linear_weight_mut().copy_from_slice(&identity);
         let zeros = vec![0.0_f32; d_model];
         fused_ln.linear_bias_mut().copy_from_slice(&zeros);
@@ -92,7 +103,7 @@ impl EncoderBlock {
         let normed = normed_tensor.data().to_vec();
 
         let attn_out = self.self_attn.forward(&normed, None)?;
-        let mut residual: Vec<f32> = x.iter().zip(attn_out.iter()).map(|(a, b)| a + b).collect();
+        let mut residual = add_residual(x, &attn_out);
 
         let mut fused_ln2 = FusedLayerNormLinear::new(d_model, d_model, self.ln2.eps)
             .map_err(|e| WhisperError::Model(format!("FusedLayerNormLinear error: {e}")))?;

@@ -12,6 +12,19 @@ use ratatui::{
     Frame,
 };
 
+/// Render a data table with header row and fixed-width columns
+fn render_data_table(f: &mut Frame, area: Rect, headers: &[&str], widths: &[u16], rows: Vec<Row>) {
+    let header_cells: Vec<Cell> = headers.iter().map(|&h| Cell::from(h)).collect();
+    let header = Row::new(header_cells)
+        .style(Style::default().add_modifier(Modifier::BOLD))
+        .bottom_margin(1);
+    let constraints: Vec<Constraint> = widths.iter().map(|&w| Constraint::Length(w)).collect();
+    let table = Table::new(rows, constraints)
+        .header(header)
+        .block(Block::default());
+    f.render_widget(table, area);
+}
+
 /// Render an empty-state placeholder if the data slice is empty.
 /// Returns `true` (and renders placeholder) if empty, `false` otherwise.
 fn render_empty_placeholder<T>(f: &mut Frame, area: Rect, data: &[T], message: &str) -> bool {
@@ -147,10 +160,6 @@ fn render_encoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
     }
 
     // Create table of layer metrics
-    let header = Row::new(vec!["Layer", "Mean Act.", "Max Act.", "Attn Entropy"])
-        .style(Style::default().add_modifier(Modifier::BOLD))
-        .bottom_margin(1);
-
     let rows: Vec<Row> = app
         .encoder_metrics
         .iter()
@@ -164,19 +173,13 @@ fn render_encoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
         })
         .collect();
 
-    let table = Table::new(
+    render_data_table(
+        f,
+        inner,
+        &["Layer", "Mean Act.", "Max Act.", "Attn Entropy"],
+        &[10, 12, 12, 14],
         rows,
-        [
-            Constraint::Length(10),
-            Constraint::Length(12),
-            Constraint::Length(12),
-            Constraint::Length(14),
-        ],
-    )
-    .header(header)
-    .block(Block::default());
-
-    f.render_widget(table, inner);
+    );
 }
 
 /// Render decoder panel
@@ -193,10 +196,6 @@ fn render_decoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
     }
 
     // Create table of tokens
-    let header = Row::new(vec!["Idx", "Token ID", "Text", "Log P"])
-        .style(Style::default().add_modifier(Modifier::BOLD))
-        .bottom_margin(1);
-
     let rows: Vec<Row> = app
         .decoder_tokens
         .iter()
@@ -211,19 +210,13 @@ fn render_decoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
         })
         .collect();
 
-    let table = Table::new(
+    render_data_table(
+        f,
+        inner,
+        &["Idx", "Token ID", "Text", "Log P"],
+        &[5, 10, 20, 10],
         rows,
-        [
-            Constraint::Length(5),
-            Constraint::Length(10),
-            Constraint::Length(20),
-            Constraint::Length(10),
-        ],
-    )
-    .header(header)
-    .block(Block::default());
-
-    f.render_widget(table, inner);
+    );
 }
 
 /// Render attention panel
