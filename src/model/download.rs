@@ -257,11 +257,8 @@ impl ModelDownloader {
         let mut downloaded = Vec::new();
 
         for filename in filenames {
-            match repo.get(filename) {
-                Ok(path) => {
-                    downloaded.push(path);
-                }
-                Err(_) => continue,
+            if let Ok(path) = repo.get(filename) {
+                downloaded.push(path);
             }
         }
 

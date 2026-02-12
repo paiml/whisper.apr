@@ -1634,11 +1634,12 @@ fn insert_tensor_path(
 
     // Find or create intermediate node
     let name = parts[0];
+    let rest = parts.get(1..).unwrap_or(&[]);
     if let Some(i) = node.children.iter().position(|c| c.name == name) {
-        insert_tensor_path(&mut node.children[i], &parts[1..], tensor, show_sizes);
+        insert_tensor_path(&mut node.children[i], rest, tensor, show_sizes);
     } else {
         let mut child = TreeNode::new(name, "group");
-        insert_tensor_path(&mut child, &parts[1..], tensor, show_sizes);
+        insert_tensor_path(&mut child, rest, tensor, show_sizes);
         node.add_child(child);
     }
 }
@@ -1993,13 +1994,25 @@ fn run_decrypt(args: &AprDecryptArgs, global: &super::args::Args) -> CliResult<C
         }
 
         // Parse: salt(16) + nonce(12) + ciphertext
-        let salt: [u8; 16] = content[..16]
+        let salt: [u8; 16] = content
+            .get(..16)
+            .ok_or_else(|| CliError::InvalidArgument("Missing salt in encrypted file".to_string()))?
             .try_into()
             .map_err(|_| CliError::InvalidArgument("Invalid salt in encrypted file".to_string()))?;
-        let nonce_bytes: [u8; 12] = content[16..28].try_into().map_err(|_| {
-            CliError::InvalidArgument("Invalid nonce in encrypted file".to_string())
-        })?;
-        let ciphertext = &content[28..];
+        let nonce_bytes: [u8; 12] = content
+            .get(16..28)
+            .ok_or_else(|| {
+                CliError::InvalidArgument("Missing nonce in encrypted file".to_string())
+            })?
+            .try_into()
+            .map_err(|_| {
+                CliError::InvalidArgument("Invalid nonce in encrypted file".to_string())
+            })?;
+        let ciphertext = content
+            .get(28..)
+            .ok_or_else(|| {
+                CliError::InvalidArgument("Encrypted file too short for ciphertext".to_string())
+            })?;
 
         use aes_gcm::{
             aead::{Aead, KeyInit},
@@ -2361,94 +2374,28 @@ fn run_profile(args: &AprProfileArgs, global: &super::args::Args) -> CliResult<C
 
     // Compute averages
     let n = run_results.len().max(1) as f64;
-    let avg_mel = run_results.iter().map(|r| r.mel_ms).sum::<f64>() / n;
-    let avg_enc = run_results.iter().map(|r| r.encode_ms).sum::<f64>() / n;
-    let avg_dec = run_results.iter().map(|r| r.decode_ms).sum::<f64>() / n;
-    let avg_total = run_results.iter().map(|r| r.total_ms).sum::<f64>() / n;
-    let avg_rtf = run_results.iter().map(|r| r.rtf).sum::<f64>() / n;
-    let avg_tokens =
-        run_results.iter().map(|r| r.token_count).sum::<usize>() / run_results.len().max(1);
-    let text = run_results.last().map(|r| r.text.as_str()).unwrap_or("");
+    let summary = ProfileSummary {
+        load_ms,
+        avg_mel: run_results.iter().map(|r| r.mel_ms).sum::<f64>() / n,
+        avg_enc: run_results.iter().map(|r| r.encode_ms).sum::<f64>() / n,
+        avg_dec: run_results.iter().map(|r| r.decode_ms).sum::<f64>() / n,
+        avg_total: run_results.iter().map(|r| r.total_ms).sum::<f64>() / n,
+        avg_rtf: run_results.iter().map(|r| r.rtf).sum::<f64>() / n,
+        avg_tokens: run_results.iter().map(|r| r.token_count).sum::<usize>()
+            / run_results.len().max(1),
+        text: run_results.last().map_or("", |r| r.text.as_str()),
+        audio_duration_s,
+    };
 
     if args.format == "json" {
-        let json = format!(
-            concat!(
-                "{{\"model\":\"{}\",\"audio\":\"{}\",\"audio_duration_s\":{:.3},",
-                "\"warmup\":{},\"runs\":{},",
-                "\"avg_ms\":{{\"load\":{:.1},\"mel\":{:.1},\"encode\":{:.1},",
-                "\"decode\":{:.1},\"total\":{:.1}}},",
-                "\"rtf\":{:.3},\"tokens\":{},\"text\":\"{}\"}}"
-            ),
-            args.model.display(),
-            args.audio.display(),
-            audio_duration_s,
-            args.warmup,
-            args.runs,
-            load_ms,
-            avg_mel,
-            avg_enc,
-            avg_dec,
-            avg_total,
-            avg_rtf,
-            avg_tokens,
-            text.replace('"', "\\\"")
-        );
-
+        let json = summary.format_json(args);
         if let Some(ref out) = args.output {
             fs::write(out, &json).map_err(|e| CliError::InvalidArgument(format!("Write: {e}")))?;
         } else {
             println!("{json}");
         }
     } else if !global.quiet {
-        println!(
-            "Pipeline Profile: {} runs (+ {} warmup)",
-            args.runs, args.warmup
-        );
-        println!("  Model:    {}", args.model.display());
-        println!(
-            "  Audio:    {} ({:.2}s)",
-            args.audio.display(),
-            audio_duration_s
-        );
-        println!();
-        println!("  Step          Avg (ms)    % of total");
-        println!("  ────────────  ──────────  ──────────");
-        println!("  Model load    {:>8.1}    (excluded)", load_ms);
-        println!(
-            "  Mel spec      {:>8.1}    {:>5.1}%",
-            avg_mel,
-            avg_mel / avg_total * 100.0
-        );
-        println!(
-            "  Encoder       {:>8.1}    {:>5.1}%",
-            avg_enc,
-            avg_enc / avg_total * 100.0
-        );
-        println!(
-            "  Decoder       {:>8.1}    {:>5.1}%",
-            avg_dec,
-            avg_dec / avg_total * 100.0
-        );
-        println!("  ────────────  ──────────  ──────────");
-        println!("  Total         {:>8.1}    100.0%", avg_total);
-        println!();
-        println!("  RTF:    {:.2}x", avg_rtf);
-        println!("  Tokens: {}", avg_tokens);
-        if args.per_token && avg_tokens > 0 {
-            println!("  ms/token (decode): {:.1}", avg_dec / avg_tokens as f64);
-        }
-        println!("  Text:   \"{}\"", text.trim());
-
-        // RTF quality indicator
-        if avg_rtf <= 1.0 {
-            println!("\n  [EXCELLENT] RTF <= 1.0x (faster than real-time)");
-        } else if avg_rtf <= 2.0 {
-            println!("\n  [PASS] RTF <= 2.0x (meets tiny model target)");
-        } else if avg_rtf <= 4.0 {
-            println!("\n  [WARN] RTF > 2.0x (above target for tiny model)");
-        } else {
-            println!("\n  [SLOW] RTF > 4.0x (optimization needed)");
-        }
+        summary.print_table(args);
     }
 
     Ok(CommandResult::success("Profile complete"))
@@ -2463,6 +2410,103 @@ struct ProfileRun {
     rtf: f64,
     token_count: usize,
     text: String,
+}
+
+/// Aggregated profile summary for output formatting
+struct ProfileSummary<'text> {
+    load_ms: f64,
+    avg_mel: f64,
+    avg_enc: f64,
+    avg_dec: f64,
+    avg_total: f64,
+    avg_rtf: f64,
+    avg_tokens: usize,
+    text: &'text str,
+    audio_duration_s: f64,
+}
+
+impl ProfileSummary<'_> {
+    fn format_json(&self, args: &AprProfileArgs) -> String {
+        format!(
+            concat!(
+                "{{\"model\":\"{}\",\"audio\":\"{}\",\"audio_duration_s\":{:.3},",
+                "\"warmup\":{},\"runs\":{},",
+                "\"avg_ms\":{{\"load\":{:.1},\"mel\":{:.1},\"encode\":{:.1},",
+                "\"decode\":{:.1},\"total\":{:.1}}},",
+                "\"rtf\":{:.3},\"tokens\":{},\"text\":\"{}\"}}"
+            ),
+            args.model.display(),
+            args.audio.display(),
+            self.audio_duration_s,
+            args.warmup,
+            args.runs,
+            self.load_ms,
+            self.avg_mel,
+            self.avg_enc,
+            self.avg_dec,
+            self.avg_total,
+            self.avg_rtf,
+            self.avg_tokens,
+            self.text.replace('"', "\\\"")
+        )
+    }
+
+    fn print_table(&self, args: &AprProfileArgs) {
+        println!(
+            "Pipeline Profile: {} runs (+ {} warmup)",
+            args.runs, args.warmup
+        );
+        println!("  Model:    {}", args.model.display());
+        println!(
+            "  Audio:    {} ({:.2}s)",
+            args.audio.display(),
+            self.audio_duration_s
+        );
+        println!();
+        println!("  Step          Avg (ms)    % of total");
+        println!("  ────────────  ──────────  ──────────");
+        println!("  Model load    {:>8.1}    (excluded)", self.load_ms);
+        println!(
+            "  Mel spec      {:>8.1}    {:>5.1}%",
+            self.avg_mel,
+            self.avg_mel / self.avg_total * 100.0
+        );
+        println!(
+            "  Encoder       {:>8.1}    {:>5.1}%",
+            self.avg_enc,
+            self.avg_enc / self.avg_total * 100.0
+        );
+        println!(
+            "  Decoder       {:>8.1}    {:>5.1}%",
+            self.avg_dec,
+            self.avg_dec / self.avg_total * 100.0
+        );
+        println!("  ────────────  ──────────  ──────────");
+        println!("  Total         {:>8.1}    100.0%", self.avg_total);
+        println!();
+        println!("  RTF:    {:.2}x", self.avg_rtf);
+        println!("  Tokens: {}", self.avg_tokens);
+        if args.per_token && self.avg_tokens > 0 {
+            println!(
+                "  ms/token (decode): {:.1}",
+                self.avg_dec / self.avg_tokens as f64
+            );
+        }
+        println!("  Text:   \"{}\"", self.text.trim());
+        Self::print_rtf_indicator(self.avg_rtf);
+    }
+
+    fn print_rtf_indicator(rtf: f64) {
+        if rtf <= 1.0 {
+            println!("\n  [EXCELLENT] RTF <= 1.0x (faster than real-time)");
+        } else if rtf <= 2.0 {
+            println!("\n  [PASS] RTF <= 2.0x (meets tiny model target)");
+        } else if rtf <= 4.0 {
+            println!("\n  [WARN] RTF > 2.0x (above target for tiny model)");
+        } else {
+            println!("\n  [SLOW] RTF > 4.0x (optimization needed)");
+        }
+    }
 }
 
 #[cfg(test)]

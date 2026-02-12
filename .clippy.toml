@@ -12,3 +12,10 @@ allowed-wildcard-imports = ["wasm_bindgen::prelude::*", "web_sys::*"]
 
 # MSRV for compatibility lints
 msrv = "1.75"
+
+# Disallowed methods — enforce safety invariants
+# Note: unwrap()/expect() bans enforced via Cargo.toml [lints.clippy] unwrap_used="deny"
+# which respects #[allow] attributes on test/generated code.
+[[disallowed-methods]]
+path = "std::process::exit"
+reason = "Use Result<(), Error> and propagate errors instead of calling process::exit()"

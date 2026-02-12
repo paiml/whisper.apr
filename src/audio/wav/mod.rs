@@ -153,10 +153,10 @@ fn validate_wav_header(data: &[u8]) -> Result<(), WavError> {
     if data.len() < 44 {
         return Err(WavError::TooSmall);
     }
-    if &data[0..4] != b"RIFF" {
+    if data.get(0..4) != Some(b"RIFF".as_slice()) {
         return Err(WavError::MissingRiff);
     }
-    if &data[8..12] != b"WAVE" {
+    if data.get(8..12) != Some(b"WAVE".as_slice()) {
         return Err(WavError::MissingWave);
     }
     Ok(())

@@ -2,6 +2,7 @@
 //!
 //! Uses clap derive macros for type-safe argument parsing.
 //! All argument structures are unit-testable.
+#![allow(clippy::struct_excessive_bools)]
 
 use std::path::PathBuf;
 

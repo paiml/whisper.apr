@@ -19,9 +19,15 @@ exclude = [
     "examples/",
     "benches/",
     "models/",
+    "target/",
     ".github/",
     ".pmat/",
     ".pmat-work/",
+    ".vscode/",
+    ".idea/",
+    "*.profraw",
+    "*.profdata",
+    "proptest-regressions/",
 ]
 
 [lib]
