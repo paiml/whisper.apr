@@ -224,3 +224,28 @@ fn test_mel_filterbank_dimensions() {
     assert_eq!(filterbank.len(), 80);
     assert_eq!(filterbank[0].len(), 257); // 512/2 + 1
 }
+
+// =========================================================================
+// Builder Coverage Tests (PMAT-024)
+// =========================================================================
+
+#[test]
+fn test_embedding_config_with_hop_size() {
+    let config = EmbeddingConfig::default().with_hop_size(0.25);
+    assert!((config.hop_size - 0.25).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_embedding_config_with_hop_size_small() {
+    let config = EmbeddingConfig::default().with_hop_size(0.1);
+    assert!((config.hop_size - 0.1).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_embedding_config_with_hop_and_window() {
+    let config = EmbeddingConfig::default()
+        .with_window_size(3.0)
+        .with_hop_size(1.5);
+    assert!((config.window_size - 3.0).abs() < f32::EPSILON);
+    assert!((config.hop_size - 1.5).abs() < f32::EPSILON);
+}

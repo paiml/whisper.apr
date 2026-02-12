@@ -295,4 +295,58 @@ mod tests {
             "EOT must never be suppressed"
         );
     }
+
+    // =========================================================================
+    // Builder Coverage Tests (PMAT-024)
+    // =========================================================================
+
+    #[test]
+    fn test_with_vocab_size_affects_timestamp_suppression() {
+        // with_vocab_size controls how many timestamp tokens are suppressed
+        // Default: 51865, timestamps start at 50365, so 1500 tokens suppressed
+        // With vocab_size=50400, only 35 timestamp tokens suppressed
+        let suppressor = WhisperTokenSuppressor::new().with_vocab_size(50400);
+        let mut logits = vec![1.0f32; 51865];
+        suppressor.apply(&mut logits);
+
+        // Token 50400 should NOT be suppressed (beyond n_vocab)
+        assert!(
+            logits[50400].is_finite(),
+            "tokens beyond n_vocab should not be suppressed"
+        );
+    }
+
+    #[test]
+    fn test_with_vocab_size_large() {
+        let suppressor = WhisperTokenSuppressor::new().with_vocab_size(100_000);
+        let mut logits = vec![1.0f32; 100_000];
+        suppressor.apply(&mut logits);
+        // Timestamp tokens at 50365+ should be suppressed
+        assert!(logits[special_tokens::TIMESTAMP_BASE as usize] == f32::NEG_INFINITY);
+    }
+
+    #[test]
+    fn test_with_vocab_size_chain() {
+        // Verify builder chaining works correctly
+        let suppressor = WhisperTokenSuppressor::new()
+            .with_vocab_size(32000)
+            .with_timestamp_suppression(false);
+        let mut logits = vec![1.0f32; 51865];
+        suppressor.apply(&mut logits);
+        // Timestamps should NOT be suppressed (disabled)
+        assert!(logits[special_tokens::TIMESTAMP_BASE as usize].is_finite());
+    }
+
+    #[test]
+    fn test_add_suppression_deduplication() {
+        let mut suppressor = WhisperTokenSuppressor::with_tokens(vec![100]);
+        suppressor.add_suppression(100); // Duplicate
+        suppressor.add_suppression(200); // New
+        // 100 should appear only once
+        assert_eq!(
+            suppressor.suppressed_tokens().iter().filter(|&&t| t == 100).count(),
+            1
+        );
+        assert!(suppressor.suppressed_tokens().contains(&200));
+    }
 }
