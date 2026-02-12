@@ -886,4 +886,148 @@ mod tests {
             .expect("should succeed");
         assert!((result.duration() - 2.0).abs() < 0.1);
     }
+
+    // =========================================================================
+    // Full pipeline coverage: process() steps 2-6 + cluster_speakers (PMAT-024)
+    //
+    // The VAD uses adaptive thresholding (25th percentile of energy as noise
+    // floor). Uniform sine waves have near-constant energy, so the adaptive
+    // threshold sits at ~signal level and no frames pass. These tests use
+    // audio with >25% silence so the noise floor is established from the
+    // silent region, letting speech frames exceed the threshold.
+    // =========================================================================
+
+    /// Helper: Generate audio with distinct silence and speech regions.
+    /// Returns audio where >30% is silence so VAD adaptive threshold works.
+    fn generate_speech_with_silence(
+        sample_rate: u32,
+        segments: &[(f32, f32, f32)], // (start_sec, end_sec, freq_hz)
+        total_duration: f32,
+    ) -> Vec<f32> {
+        let total_samples = (total_duration * sample_rate as f32) as usize;
+        let mut audio = vec![0.0f32; total_samples];
+        for &(start, end, freq) in segments {
+            let s = (start * sample_rate as f32) as usize;
+            let e = ((end * sample_rate as f32) as usize).min(total_samples);
+            for i in s..e {
+                let t = i as f32 / sample_rate as f32;
+                audio[i] = (t * freq * std::f32::consts::TAU).sin() * 0.8;
+            }
+        }
+        audio
+    }
+
+    #[test]
+    fn test_process_full_pipeline_single_speaker() {
+        // 1s silence + 2s speech + 1s silence = 50% silence
+        let config = DiarizationConfig::default().with_min_segment_duration(0.2);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+        let audio = generate_speech_with_silence(sr, &[(1.0, 3.0, 300.0)], 4.0);
+
+        let result = diarizer.process(&audio, sr).expect("should succeed");
+
+        // Full pipeline must detect at least 1 speaker (not early return)
+        assert!(
+            result.num_speakers() >= 1,
+            "expected >=1 speaker, got {}; VAD should detect speech region",
+            result.num_speakers()
+        );
+        assert!(
+            !result.segments().is_empty(),
+            "expected non-empty segments from full pipeline"
+        );
+    }
+
+    #[test]
+    fn test_process_full_pipeline_two_speakers() {
+        // 1s silence + 1.5s speech@200Hz + 0.5s silence + 1.5s speech@500Hz + 1s silence
+        // = 2.5s silence / 5.5s total ≈ 45% silence
+        let config = DiarizationConfig::default()
+            .with_max_speakers(3)
+            .with_min_segment_duration(0.2);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+        let audio = generate_speech_with_silence(sr, &[(1.0, 2.5, 200.0), (3.0, 4.5, 500.0)], 5.5);
+
+        let result = diarizer.process(&audio, sr).expect("should succeed");
+
+        assert!(
+            result.num_speakers() >= 1,
+            "expected >=1 speaker from two speech regions, got {}",
+            result.num_speakers()
+        );
+        assert!((result.duration() - 5.5).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_cluster_speakers_kmeans_with_vad_triggering_audio() {
+        let mut config = DiarizationConfig::default().with_min_segment_duration(0.2);
+        config.clustering.algorithm = ClusteringAlgorithm::KMeans;
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+        let audio = generate_speech_with_silence(sr, &[(1.0, 3.0, 300.0)], 4.0);
+
+        let result = diarizer.process(&audio, sr).expect("should succeed");
+        assert!(
+            result.num_speakers() >= 1,
+            "KMeans path: expected >=1 speaker, got {}",
+            result.num_speakers()
+        );
+    }
+
+    #[test]
+    fn test_cluster_speakers_agglomerative_with_vad_triggering_audio() {
+        let mut config = DiarizationConfig::default().with_min_segment_duration(0.2);
+        config.clustering.algorithm = ClusteringAlgorithm::Agglomerative;
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+        let audio = generate_speech_with_silence(sr, &[(1.0, 3.0, 300.0)], 4.0);
+
+        let result = diarizer.process(&audio, sr).expect("should succeed");
+        assert!(
+            result.num_speakers() >= 1,
+            "Agglomerative path: expected >=1 speaker, got {}",
+            result.num_speakers()
+        );
+    }
+
+    #[test]
+    fn test_process_speaker_embeddings_populated() {
+        // Verify step 6: speaker_embeddings are populated in result
+        let config = DiarizationConfig::default().with_min_segment_duration(0.2);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+        let audio = generate_speech_with_silence(sr, &[(1.0, 3.0, 300.0)], 4.0);
+
+        let result = diarizer.process(&audio, sr).expect("should succeed");
+
+        if result.num_speakers() > 0 {
+            assert!(
+                !result.speaker_embeddings().is_empty(),
+                "step 6: speaker_embeddings should be populated when speakers detected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_process_merge_adjacent_same_speaker_segments() {
+        // Continuous speech should be merged into fewer segments (step 5)
+        let config = DiarizationConfig::default().with_min_segment_duration(0.1);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+        // 3 seconds of continuous speech with silence padding
+        let audio = generate_speech_with_silence(sr, &[(1.0, 4.0, 250.0)], 5.0);
+
+        let result = diarizer.process(&audio, sr).expect("should succeed");
+
+        // Continuous speech from one "speaker" should merge into few segments
+        if !result.segments().is_empty() {
+            assert!(
+                result.segments().len() <= 5,
+                "continuous speech should merge, got {} segments",
+                result.segments().len()
+            );
+        }
+    }
 }

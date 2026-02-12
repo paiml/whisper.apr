@@ -130,18 +130,8 @@ pub fn is_trueno_ublk_mount(path: &Path) -> bool {
     // Check /proc/mounts for ublk device
     if let Ok(mounts) = fs::read_to_string("/proc/mounts") {
         let path_str = path.to_string_lossy();
-
-        for line in mounts.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 2 {
-                let device = parts[0];
-                let mount_point = parts[1];
-
-                // Check if path starts with this mount point and device is ublk
-                if path_str.starts_with(mount_point) && device.contains("ublk") {
-                    return true;
-                }
-            }
+        if check_mounts_for_ublk(&mounts, &path_str) {
+            return true;
         }
     }
 
@@ -150,12 +140,33 @@ pub fn is_trueno_ublk_mount(path: &Path) -> bool {
     if trueno_marker.exists() {
         // Check if path is within a known trueno cache directory
         let path_str = path.to_string_lossy();
-        if path_str.contains("whisper-cache") || path_str.contains("trueno") {
+        if is_trueno_cache_path(&path_str) {
             return true;
         }
     }
 
     false
+}
+
+/// Check mount table content for ublk device matching a path (pure function for testability)
+fn check_mounts_for_ublk(mounts_content: &str, path_str: &str) -> bool {
+    for line in mounts_content.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 {
+            let device = parts[0];
+            let mount_point = parts[1];
+
+            if path_str.starts_with(mount_point) && device.contains("ublk") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Check if a path string looks like a trueno cache directory
+fn is_trueno_cache_path(path_str: &str) -> bool {
+    path_str.contains("whisper-cache") || path_str.contains("trueno")
 }
 
 /// Check if a path is on a trueno-ublk mount (no_std stub)
@@ -246,30 +257,39 @@ fn is_zram_available_impl() -> bool {
 fn detect_compression_algorithm() -> CompressionAlgorithm {
     // Check trueno-ublk config
     if let Ok(algo) = fs::read_to_string("/run/trueno-ublk/algorithm") {
-        match algo.trim().to_lowercase().as_str() {
-            "lz4" => return CompressionAlgorithm::Lz4,
-            "zstd" => return CompressionAlgorithm::Zstd,
-            "none" => return CompressionAlgorithm::None,
-            _ => {}
+        let parsed = parse_algorithm_name(algo.trim());
+        if parsed != CompressionAlgorithm::Lz4 || algo.trim().to_lowercase() == "lz4" {
+            return parsed;
         }
     }
 
     // Check standard ZRAM comp_algorithm
     if let Ok(algo) = fs::read_to_string("/sys/block/zram0/comp_algorithm") {
-        // Format: "lz4 [zstd] deflate" with current in brackets
-        for part in algo.split_whitespace() {
-            if part.starts_with('[') && part.ends_with(']') {
-                let current = &part[1..part.len() - 1];
-                match current.to_lowercase().as_str() {
-                    "lz4" => return CompressionAlgorithm::Lz4,
-                    "zstd" => return CompressionAlgorithm::Zstd,
-                    _ => {}
-                }
-            }
-        }
+        return parse_comp_algorithm_sysfs(&algo);
     }
 
     CompressionAlgorithm::Lz4 // Default to LZ4
+}
+
+/// Parse a simple algorithm name string (e.g., "lz4", "zstd", "none")
+fn parse_algorithm_name(name: &str) -> CompressionAlgorithm {
+    match name.to_lowercase().as_str() {
+        "zstd" => CompressionAlgorithm::Zstd,
+        "none" => CompressionAlgorithm::None,
+        // Default to LZ4 for "lz4" and any unknown algorithm
+        _ => CompressionAlgorithm::Lz4,
+    }
+}
+
+/// Parse sysfs comp_algorithm format: "lz4 [zstd] deflate" (current in brackets)
+fn parse_comp_algorithm_sysfs(content: &str) -> CompressionAlgorithm {
+    for part in content.split_whitespace() {
+        if part.starts_with('[') && part.ends_with(']') {
+            let current = &part[1..part.len() - 1];
+            return parse_algorithm_name(current);
+        }
+    }
+    CompressionAlgorithm::Lz4
 }
 
 /// Estimate compression ratio for data type
@@ -538,5 +558,101 @@ mod tests {
         let savings = estimate_memory_savings(100, 50, 10, true);
         let debug = format!("{savings:?}");
         assert!(debug.contains("original_mb"));
+    }
+
+    // =========================================================================
+    // Parsing helpers coverage (PMAT-024)
+    // =========================================================================
+
+    #[test]
+    fn test_parse_algorithm_name_lz4() {
+        assert_eq!(parse_algorithm_name("lz4"), CompressionAlgorithm::Lz4);
+        assert_eq!(parse_algorithm_name("LZ4"), CompressionAlgorithm::Lz4);
+    }
+
+    #[test]
+    fn test_parse_algorithm_name_zstd() {
+        assert_eq!(parse_algorithm_name("zstd"), CompressionAlgorithm::Zstd);
+        assert_eq!(parse_algorithm_name("Zstd"), CompressionAlgorithm::Zstd);
+    }
+
+    #[test]
+    fn test_parse_algorithm_name_none() {
+        assert_eq!(parse_algorithm_name("none"), CompressionAlgorithm::None);
+    }
+
+    #[test]
+    fn test_parse_algorithm_name_unknown_defaults_lz4() {
+        assert_eq!(parse_algorithm_name("deflate"), CompressionAlgorithm::Lz4);
+    }
+
+    #[test]
+    fn test_parse_comp_algorithm_sysfs_zstd_active() {
+        let content = "lzo lzo-rle lz4 lz4hc 842 [zstd]";
+        assert_eq!(
+            parse_comp_algorithm_sysfs(content),
+            CompressionAlgorithm::Zstd
+        );
+    }
+
+    #[test]
+    fn test_parse_comp_algorithm_sysfs_lz4_active() {
+        let content = "[lz4] lzo zstd";
+        assert_eq!(
+            parse_comp_algorithm_sysfs(content),
+            CompressionAlgorithm::Lz4
+        );
+    }
+
+    #[test]
+    fn test_parse_comp_algorithm_sysfs_no_brackets() {
+        let content = "lz4 lzo zstd";
+        assert_eq!(
+            parse_comp_algorithm_sysfs(content),
+            CompressionAlgorithm::Lz4
+        );
+    }
+
+    #[test]
+    fn test_parse_comp_algorithm_sysfs_empty() {
+        assert_eq!(parse_comp_algorithm_sysfs(""), CompressionAlgorithm::Lz4);
+    }
+
+    #[test]
+    fn test_check_mounts_for_ublk_found() {
+        let mounts = "/dev/ublk0 /mnt/trueno ext4 rw 0 0\n/dev/sda1 / ext4 rw 0 0\n";
+        assert!(check_mounts_for_ublk(mounts, "/mnt/trueno/model.apr"));
+    }
+
+    #[test]
+    fn test_check_mounts_for_ublk_not_found() {
+        let mounts = "/dev/sda1 / ext4 rw 0 0\n/dev/nvme0n1p1 /home ext4 rw 0 0\n";
+        assert!(!check_mounts_for_ublk(mounts, "/home/user/model.apr"));
+    }
+
+    #[test]
+    fn test_check_mounts_for_ublk_empty() {
+        assert!(!check_mounts_for_ublk("", "/any/path"));
+    }
+
+    #[test]
+    fn test_check_mounts_for_ublk_malformed_lines() {
+        let mounts = "short\n\n   \n/dev/sda1\n";
+        assert!(!check_mounts_for_ublk(mounts, "/any/path"));
+    }
+
+    #[test]
+    fn test_is_trueno_cache_path_whisper_cache() {
+        assert!(is_trueno_cache_path("/opt/whisper-cache/model.apr"));
+    }
+
+    #[test]
+    fn test_is_trueno_cache_path_trueno() {
+        assert!(is_trueno_cache_path("/mnt/trueno/data"));
+    }
+
+    #[test]
+    fn test_is_trueno_cache_path_unrelated() {
+        assert!(!is_trueno_cache_path("/home/user/documents"));
     }
 }
