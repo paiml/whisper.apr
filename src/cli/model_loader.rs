@@ -493,6 +493,12 @@ fn load_mel_filters_from_preprocessor(
     })
 }
 
+/// Load a model from a file path
+fn load_model_from_path(path: &std::path::Path) -> ModelLoaderResult<WhisperApr> {
+    let bytes = fs::read(path)?;
+    WhisperApr::load_from_apr(&bytes).map_err(ModelLoaderError::from)
+}
+
 /// Load a model, downloading from HuggingFace if not cached
 ///
 /// # Arguments
@@ -509,39 +515,26 @@ pub fn load_or_download_model(
     model_path: Option<&std::path::Path>,
     verbose: bool,
 ) -> ModelLoaderResult<WhisperApr> {
-    // If explicit path provided, use it
     if let Some(path) = model_path {
         if verbose {
             eprintln!("[INFO] Loading model from: {}", path.display());
         }
-        let bytes = fs::read(path)?;
-        let model = WhisperApr::load_from_apr(&bytes)?;
-        return Ok(model);
+        return load_model_from_path(path);
     }
 
-    // Check cache
-    let cache_path = get_model_cache_path(size);
-
     if is_model_cached(size) {
+        let cache_path = get_model_cache_path(size);
         if verbose {
             eprintln!("[INFO] Loading cached model: {}", cache_path.display());
         }
-        let bytes = fs::read(&cache_path)?;
-        let model = WhisperApr::load_from_apr(&bytes)?;
-        return Ok(model);
+        return load_model_from_path(&cache_path);
     }
 
-    // Download and cache
     if verbose {
         eprintln!("[INFO] Model not cached, downloading...");
     }
     let downloaded_path = download_model(size, verbose)?;
-
-    // Load the downloaded model
-    let bytes = fs::read(&downloaded_path)?;
-    let model = WhisperApr::load_from_apr(&bytes)?;
-
-    Ok(model)
+    load_model_from_path(&downloaded_path)
 }
 
 #[cfg(test)]
