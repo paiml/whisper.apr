@@ -2,6 +2,21 @@
 //!
 //! Each command is implemented as a pure function for testability.
 //! The main `run` function dispatches to the appropriate command.
+#![allow(
+    clippy::needless_pass_by_value,
+    clippy::manual_let_else,
+    clippy::match_same_arms,
+    clippy::bool_to_int_with_if,
+    clippy::unnecessary_operation,
+    clippy::if_not_else,
+    clippy::default_constructed_unit_structs,
+    clippy::map_unwrap_or,
+    clippy::needless_continue,
+    clippy::struct_excessive_bools,
+    clippy::range_plus_one,
+    clippy::comparison_to_empty,
+    clippy::default_trait_access
+)]
 
 use std::fs;
 use std::io::{self, Write as IoWrite};

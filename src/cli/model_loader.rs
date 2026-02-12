@@ -466,7 +466,7 @@ fn load_mel_filters_from_preprocessor(
         .map_err(|e| ModelLoaderError::Download(format!("Failed to parse mel_filters: {e}")))?;
 
     let n_mels = mel_filters_2d.len();
-    let n_freqs = mel_filters_2d.first().map(|r| r.len()).unwrap_or(0);
+    let n_freqs = mel_filters_2d.first().map_or(0, Vec::len);
 
     if verbose {
         eprintln!(

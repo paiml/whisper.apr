@@ -449,7 +449,7 @@ fn find_json_section<'a>(json_str: &'a str, key: &str, open: char, close: char) 
         } else if c == close {
             depth -= 1;
             if depth == 0 {
-                return Some(&json_str[section_start..section_start + i + 1]);
+                return Some(&json_str[section_start..=section_start + i]);
             }
         }
     }

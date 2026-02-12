@@ -1,0 +1,17 @@
+# Build configuration for whisper-apr
+# See: https://doc.rust-lang.org/cargo/reference/config.html
+
+[build]
+# Incremental compilation for faster dev builds
+incremental = true
+
+[target.wasm32-unknown-unknown]
+# WASM-specific rustflags for SIMD support
+rustflags = ["-C", "target-feature=+simd128"]
+
+[target.'cfg(target_arch = "x86_64")']
+# Enable AVX2 + FMA for native SIMD acceleration
+rustflags = ["-C", "target-cpu=native"]
+
+[registries.crates-io]
+protocol = "sparse"

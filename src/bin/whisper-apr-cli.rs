@@ -14,6 +14,7 @@
 use clap::Parser;
 use whisper_apr::cli::{run, Args};
 
+#[allow(clippy::disallowed_methods)] // process::exit is appropriate in main()
 fn main() {
     // Initialize tracing if enabled
     #[cfg(feature = "tracing")]
