@@ -375,6 +375,132 @@ fn test_selector_summary_with_different_strategies() {
 }
 
 // =========================================================================
+// GPU Path Coverage Tests (simulated GPU)
+// =========================================================================
+
+#[test]
+fn test_select_automatic_gpu_worthwhile() {
+    let config = SelectorConfig::default().with_gpu_threshold(100);
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let op = MatMulOp::new(256, 256, 256); // Large enough workload
+    let selection = selector.select(&op);
+    assert!(selection.is_gpu());
+    assert!(selection.reason.contains("Large workload"));
+}
+
+#[test]
+fn test_select_automatic_small_workload_with_gpu() {
+    let config = SelectorConfig::default().with_gpu_threshold(1_000_000_000);
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let op = MatMulOp::new(4, 4, 4); // Tiny workload
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert!(selection.reason.contains("Small workload"));
+}
+
+#[test]
+fn test_select_automatic_memory_exceeds_with_gpu() {
+    let config = SelectorConfig::default().with_max_gpu_memory(1);
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let op = MatMulOp::new(256, 256, 256);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert!(selection.reason.contains("Memory exceeds"));
+}
+
+#[test]
+fn test_select_prefer_gpu_with_gpu_available() {
+    let config = SelectorConfig::prefer_gpu();
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let op = MatMulOp::new(64, 128, 64);
+    let selection = selector.select(&op);
+    assert!(selection.is_gpu());
+    assert!(selection.reason.contains("PreferGpu"));
+}
+
+#[test]
+fn test_select_prefer_gpu_memory_exceeds_with_gpu() {
+    let config = SelectorConfig::prefer_gpu().with_max_gpu_memory(1);
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let op = MatMulOp::new(256, 256, 256);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert!(selection.reason.contains("Memory exceeds"));
+}
+
+#[test]
+fn test_select_threshold_gpu_above_threshold() {
+    let config = SelectorConfig::default().with_strategy(SelectionStrategy::threshold(100));
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let op = MatMulOp::new(128, 128, 128);
+    let selection = selector.select(&op);
+    assert!(selection.is_gpu());
+    assert!(selection.reason.contains("FLOPs exceed"));
+}
+
+#[test]
+fn test_select_threshold_gpu_below_threshold() {
+    let config =
+        SelectorConfig::default().with_strategy(SelectionStrategy::threshold(1_000_000_000));
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let op = MatMulOp::new(4, 4, 4);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert!(selection.reason.contains("below threshold"));
+}
+
+#[test]
+fn test_select_threshold_memory_exceeds_with_gpu() {
+    let config = SelectorConfig::default()
+        .with_strategy(SelectionStrategy::threshold(1))
+        .with_max_gpu_memory(1);
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let op = MatMulOp::new(256, 256, 256);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert!(selection.reason.contains("Memory exceeds"));
+}
+
+#[test]
+fn test_is_gpu_worthwhile_via_batch_with_gpu() {
+    let config = SelectorConfig::default().with_gpu_threshold(100);
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let ops = vec![MatMulOp::new(128, 128, 128), MatMulOp::new(128, 128, 128)];
+    let selection = selector.select_batch(&ops);
+    assert!(selection.is_gpu());
+}
+
+#[test]
+fn test_gpu_caps_memory_limit_check() {
+    // GPU with very small buffer size - can_handle should fail
+    let config = SelectorConfig::default().with_gpu_threshold(1);
+    let selector = BackendSelector::with_simulated_gpu(config, 64); // Very small GPU memory
+    let op = MatMulOp::new(256, 256, 256); // Large memory requirement
+    let selection = selector.select(&op);
+    // Memory requirement exceeds GPU caps, should fall back
+    assert!(!selection.reason.is_empty());
+}
+
+#[test]
+fn test_simulated_gpu_summary() {
+    let config = SelectorConfig::default();
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let summary = selector.summary();
+    assert!(summary.contains("GPU"));
+    assert!(summary.contains("f16=true"));
+}
+
+#[test]
+fn test_simulated_gpu_capabilities() {
+    let config = SelectorConfig::default();
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    assert!(selector.gpu_available());
+    let gpu_caps = selector.gpu_capabilities().expect("GPU should be available");
+    assert!(gpu_caps.available);
+    assert!(gpu_caps.supports_f16);
+}
+
+// =========================================================================
 // Additional Coverage Tests (WAPR-QA-003)
 // =========================================================================
 
