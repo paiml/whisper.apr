@@ -538,18 +538,18 @@ impl EmbeddingExtractor {
         for i in 0..num_filters {
             let mut filter = vec![0.0f32; fft_size / 2 + 1];
 
-            for j in bin_points[i]..bin_points[i + 1] {
-                if j < filter.len() {
-                    filter[j] = (j - bin_points[i]) as f32
-                        / (bin_points[i + 1] - bin_points[i]).max(1) as f32;
-                }
+            let rising_end = bin_points[i + 1].min(filter.len());
+            let rising_base = bin_points[i];
+            let rising_span = (bin_points[i + 1] - rising_base).max(1) as f32;
+            for (j, val) in filter.iter_mut().enumerate().take(rising_end).skip(rising_base) {
+                *val = (j - rising_base) as f32 / rising_span;
             }
 
-            for j in bin_points[i + 1]..bin_points[i + 2] {
-                if j < filter.len() {
-                    filter[j] = (bin_points[i + 2] - j) as f32
-                        / (bin_points[i + 2] - bin_points[i + 1]).max(1) as f32;
-                }
+            let falling_end = bin_points[i + 2].min(filter.len());
+            let falling_peak = bin_points[i + 2];
+            let falling_span = (falling_peak - bin_points[i + 1]).max(1) as f32;
+            for (j, val) in filter.iter_mut().enumerate().take(falling_end).skip(bin_points[i + 1]) {
+                *val = (falling_peak - j) as f32 / falling_span;
             }
 
             filterbank.push(filter);
