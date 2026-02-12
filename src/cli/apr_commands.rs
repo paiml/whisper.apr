@@ -124,10 +124,7 @@ fn dispatch_apr(args: &AprArgs, global: &super::args::Args) -> CliResult<Command
 // ============================================================================
 
 fn run_inspect(args: &AprInspectArgs, global: &super::args::Args) -> CliResult<CommandResult> {
-    let rosetta = RosettaStone::new();
-    let report = rosetta
-        .inspect(&args.file)
-        .map_err(|e| format_model_error(&e, &args.file))?;
+    let report = inspect_model(&args.file)?;
 
     if global.json {
         let json = serde_json::json!({
@@ -277,10 +274,7 @@ fn run_hex(args: &AprHexArgs) -> CliResult<CommandResult> {
 }
 
 fn run_tree(args: &AprTreeArgs) -> CliResult<CommandResult> {
-    let rosetta = RosettaStone::new();
-    let report = rosetta
-        .inspect(&args.file)
-        .map_err(|e| format_model_error(&e, &args.file))?;
+    let report = inspect_model(&args.file)?;
 
     // Build tree from tensor names (e.g., "model.layers.0.attention.query.weight")
     let mut root = TreeNode::new(
@@ -311,10 +305,7 @@ fn run_tree(args: &AprTreeArgs) -> CliResult<CommandResult> {
 }
 
 fn run_flow(args: &AprFlowArgs) -> CliResult<CommandResult> {
-    let rosetta = RosettaStone::new();
-    let report = rosetta
-        .inspect(&args.file)
-        .map_err(|e| format_model_error(&e, &args.file))?;
+    let report = inspect_model(&args.file)?;
 
     // Extract layer info from tensor names
     let layers = extract_layers_from_tensors(&report.tensors, args.layer);
@@ -358,28 +349,8 @@ fn run_lint(args: &AprLintArgs, global: &super::args::Args) -> CliResult<Command
             "{}",
             serde_json::to_string_pretty(&json).unwrap_or_default()
         );
-    } else if report.passed() {
-        println!("PASS: No warnings or errors found\n");
     } else {
-        println!(
-            "LINT: {} issues ({} errors, {} warnings, {} info)\n",
-            report.total_issues(),
-            report.error_count,
-            report.warn_count,
-            report.info_count
-        );
-
-        for issue in &report.issues {
-            let level = match issue.level {
-                aprender::format::LintLevel::Info => "INFO",
-                aprender::format::LintLevel::Warn => "WARN",
-                aprender::format::LintLevel::Error => "ERROR",
-            };
-            println!("  [{level}] {}", issue.message);
-            if let Some(suggestion) = &issue.suggestion {
-                println!("         Suggestion: {suggestion}");
-            }
-        }
+        print_lint_text(&report);
     }
 
     let status = if report.passed() { "passed" } else { "failed" };
@@ -403,47 +374,8 @@ fn run_diff(args: &AprDiffArgs, global: &super::args::Args) -> CliResult<Command
             "{}",
             serde_json::to_string_pretty(&report).unwrap_or_default()
         );
-    } else if report.is_identical() {
-        println!("Models are identical");
     } else {
-        println!("{}", report.summary());
-        println!();
-
-        let max_display = 20;
-        let total = report.differences.len();
-        let shown = total.min(max_display);
-
-        for entry in report.differences.iter().take(max_display) {
-            println!(
-                "  [{:?}] {}: {} vs {}",
-                entry.category, entry.field, entry.value1, entry.value2
-            );
-        }
-
-        if total > max_display {
-            println!(
-                "\n  ... and {} more differences (use --json for full output)",
-                total - max_display
-            );
-        }
-
-        if shown < total {
-            // Group remaining by category for a summary
-            let mut category_counts = std::collections::HashMap::new();
-            for entry in report.differences.iter().skip(max_display) {
-                *category_counts
-                    .entry(format!("{:?}", entry.category))
-                    .or_insert(0usize) += 1;
-            }
-            let mut categories: Vec<_> = category_counts.into_iter().collect();
-            categories.sort_by(|a, b| b.1.cmp(&a.1));
-            print!("  Summary: ");
-            let parts: Vec<String> = categories
-                .iter()
-                .map(|(cat, count)| format!("{count} {cat}"))
-                .collect();
-            println!("{}", parts.join(", "));
-        }
+        print_diff_text(&report);
     }
 
     Ok(CommandResult::success(format!(
@@ -612,10 +544,7 @@ fn run_rosetta_inspect(
     args: &RosettaInspectArgs,
     global: &super::args::Args,
 ) -> CliResult<CommandResult> {
-    let rosetta = RosettaStone::new();
-    let report = rosetta
-        .inspect(&args.file)
-        .map_err(|e| format_model_error(&e, &args.file))?;
+    let report = inspect_model(&args.file)?;
 
     if global.json {
         let tensors: Vec<serde_json::Value> = report
@@ -733,14 +662,10 @@ fn run_rosetta_verify(
     args: &RosettaVerifyArgs,
     global: &super::args::Args,
 ) -> CliResult<CommandResult> {
-    let rosetta = RosettaStone::new();
-
-    let report = rosetta
-        .inspect(&args.file)
-        .map_err(|e| format_model_error(&e, &args.file))?;
+    let report = inspect_model(&args.file)?;
 
     let intermediate = aprender::format::FormatType::Apr;
-    let verification = rosetta
+    let verification = RosettaStone::new()
         .verify_roundtrip(&args.file, intermediate)
         .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
 
@@ -841,10 +766,7 @@ fn run_rosetta_fingerprint(
     args: &RosettaFingerprintArgs,
     global: &super::args::Args,
 ) -> CliResult<CommandResult> {
-    let rosetta = RosettaStone::new();
-    let report = rosetta
-        .inspect(&args.file)
-        .map_err(|e| format_model_error(&e, &args.file))?;
+    let report = inspect_model(&args.file)?;
 
     // Build per-tensor statistics — parallel tensor loading via Rayon (WAPR-APR-CLI-030)
     let tensor_names: Vec<String> = report.tensors.iter().map(|t| t.name.clone()).collect();
@@ -932,10 +854,7 @@ fn run_rosetta_fingerprint(
 // ============================================================================
 
 fn run_canary(args: &AprCanaryArgs, global: &super::args::Args) -> CliResult<CommandResult> {
-    let rosetta = RosettaStone::new();
-    let report = rosetta
-        .inspect(&args.file)
-        .map_err(|e| format_model_error(&e, &args.file))?;
+    let report = inspect_model(&args.file)?;
 
     let model_name = args
         .file
@@ -1135,10 +1054,7 @@ fn validate_embedding_consistency(
 }
 
 fn run_validate(args: &AprValidateArgs, global: &super::args::Args) -> CliResult<CommandResult> {
-    let rosetta = RosettaStone::new();
-    let report = rosetta
-        .inspect(&args.file)
-        .map_err(|e| format_model_error(&e, &args.file))?;
+    let report = inspect_model(&args.file)?;
 
     let (mut issues, total_elements) = validate_tensor_shapes(&report.tensors);
 
@@ -1206,10 +1122,7 @@ fn check_layout_contracts(
 }
 
 fn run_contract(args: &AprContractArgs, global: &super::args::Args) -> CliResult<CommandResult> {
-    let rosetta = RosettaStone::new();
-    let report = rosetta
-        .inspect(&args.file)
-        .map_err(|e| format_model_error(&e, &args.file))?;
+    let report = inspect_model(&args.file)?;
 
     let (checked, passed, errors) = check_layout_contracts(&report.tensors, args.tensor.as_deref());
 
@@ -1258,10 +1171,7 @@ fn run_family_identify(
     args: &super::apr_args::AprFamilyIdentifyArgs,
     global: &super::args::Args,
 ) -> CliResult<CommandResult> {
-    let rosetta = RosettaStone::new();
-    let report = rosetta
-        .inspect(&args.file)
-        .map_err(|e| format_model_error(&e, &args.file))?;
+    let report = inspect_model(&args.file)?;
 
     let tensor_names: Vec<&str> = report.tensors.iter().map(|t| t.name.as_str()).collect();
     let registry = build_default_registry();
@@ -1322,10 +1232,7 @@ fn run_family_check(
     args: &super::apr_args::AprFamilyCheckArgs,
     global: &super::args::Args,
 ) -> CliResult<CommandResult> {
-    let rosetta = RosettaStone::new();
-    let report = rosetta
-        .inspect(&args.file)
-        .map_err(|e| format_model_error(&e, &args.file))?;
+    let report = inspect_model(&args.file)?;
 
     let registry = build_default_registry();
     let family = registry.get(&args.family).ok_or_else(|| {
@@ -1395,15 +1302,9 @@ fn run_family_check(
 }
 
 fn run_compare(args: &AprCompareArgs, global: &super::args::Args) -> CliResult<CommandResult> {
-    let rosetta = RosettaStone::new();
-
     // Inspect both models
-    let report_a = rosetta
-        .inspect(&args.source)
-        .map_err(|e| format_model_error(&e, &args.source))?;
-    let report_b = rosetta
-        .inspect(&args.target)
-        .map_err(|e| format_model_error(&e, &args.target))?;
+    let report_a = inspect_model(&args.source)?;
+    let report_b = inspect_model(&args.target)?;
 
     // We have tensor shapes and names but not raw data via rosetta inspection,
     // so fall back to diff_models for format-agnostic structural comparison
@@ -1454,17 +1355,7 @@ fn run_compare(args: &AprCompareArgs, global: &super::args::Args) -> CliResult<C
 }
 
 fn run_export(args: &AprExportArgs, global: &super::args::Args) -> CliResult<CommandResult> {
-    let format = args
-        .format
-        .parse::<ExportFormat>()
-        .map_err(CliError::InvalidArgument)?;
-
-    if !format.is_supported() {
-        return Err(CliError::InvalidArgument(format!(
-            "Export format '{}' is not yet supported. Supported: safetensors, gguf",
-            args.format
-        )));
-    }
+    let format = parse_validated_export_format(&args.format)?;
 
     let options = ExportOptions {
         format,
@@ -1519,10 +1410,7 @@ fn is_quantized_dtype(dtype: &str) -> bool {
 }
 
 fn run_f16_audit(args: &AprF16AuditArgs, global: &super::args::Args) -> CliResult<CommandResult> {
-    let rosetta = RosettaStone::new();
-    let report = rosetta
-        .inspect(&args.file)
-        .map_err(|e| format_model_error(&e, &args.file))?;
+    let report = inspect_model(&args.file)?;
 
     let mut total_scales = 0usize;
     let unsafe_count = 0usize;
@@ -1583,6 +1471,177 @@ fn run_f16_audit(args: &AprF16AuditArgs, global: &super::args::Args) -> CliResul
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/// Inspect a model file via RosettaStone, returning the report or a
+/// user-friendly [`CliError`].
+fn inspect_model(
+    path: &std::path::Path,
+) -> CliResult<aprender::format::InspectionReport> {
+    let rosetta = RosettaStone::new();
+    rosetta
+        .inspect(path)
+        .map_err(|e| format_model_error(&e, path))
+}
+
+/// Validate that `source` is an existing sharded model directory with an index file.
+///
+/// Combines the directory-exists, is-sharded, and has-index checks into a single
+/// guard so callers can use one early-return instead of three.
+fn validate_sharded_source(
+    source: &std::path::Path,
+) -> CliResult<std::path::PathBuf> {
+    use aprender::format::sharded::is_sharded_model;
+
+    if !source.exists() {
+        return Err(CliError::InvalidArgument(format!(
+            "Source directory not found: {}",
+            source.display()
+        )));
+    }
+
+    if !is_sharded_model(source) {
+        return Err(CliError::InvalidArgument(format!(
+            "Not a sharded model directory: {} \
+             (need model.safetensors.index.json or multiple .safetensors files)",
+            source.display()
+        )));
+    }
+
+    let index_path = source.join("model.safetensors.index.json");
+    if !index_path.exists() {
+        return Err(CliError::InvalidArgument(
+            "No model.safetensors.index.json found".to_string(),
+        ));
+    }
+
+    Ok(index_path)
+}
+
+/// Extract and validate a non-empty password from an optional CLI argument.
+#[cfg(feature = "format-encryption")]
+fn require_password(password: Option<&str>) -> CliResult<String> {
+    let pw = password.unwrap_or("").to_string();
+    if pw.is_empty() {
+        return Err(CliError::InvalidArgument(
+            "Password required (use --password)".to_string(),
+        ));
+    }
+    Ok(pw)
+}
+
+/// Parse and validate an export format string, returning a supported [`ExportFormat`].
+fn parse_validated_export_format(format_str: &str) -> CliResult<ExportFormat> {
+    let format = format_str
+        .parse::<ExportFormat>()
+        .map_err(CliError::InvalidArgument)?;
+
+    if !format.is_supported() {
+        return Err(CliError::InvalidArgument(format!(
+            "Export format '{}' is not yet supported. Supported: safetensors, gguf",
+            format_str
+        )));
+    }
+
+    Ok(format)
+}
+
+/// RTF performance tier thresholds and labels, ordered by ascending RTF bound.
+const RTF_TIERS: &[(f64, &str)] = &[
+    (1.0, "\n  [EXCELLENT] RTF <= 1.0x (faster than real-time)"),
+    (2.0, "\n  [PASS] RTF <= 2.0x (meets tiny model target)"),
+    (4.0, "\n  [WARN] RTF > 2.0x (above target for tiny model)"),
+];
+
+/// Default label when RTF exceeds all tier thresholds.
+const RTF_SLOW_LABEL: &str = "\n  [SLOW] RTF > 4.0x (optimization needed)";
+
+/// Classify RTF into a human-readable performance tier label.
+fn rtf_tier_label(rtf: f64) -> &'static str {
+    RTF_TIERS
+        .iter()
+        .find(|(bound, _)| rtf <= *bound)
+        .map_or(RTF_SLOW_LABEL, |(_, label)| label)
+}
+
+/// Format lint report output for the text (non-JSON) path.
+///
+/// Separates the "passed" vs "failed with issues" branches to keep the caller
+/// free of multi-way if-else chains.
+fn print_lint_text(report: &aprender::format::LintReport) {
+    if report.passed() {
+        println!("PASS: No warnings or errors found\n");
+        return;
+    }
+
+    println!(
+        "LINT: {} issues ({} errors, {} warnings, {} info)\n",
+        report.total_issues(),
+        report.error_count,
+        report.warn_count,
+        report.info_count
+    );
+
+    for issue in &report.issues {
+        let level = match issue.level {
+            aprender::format::LintLevel::Info => "INFO",
+            aprender::format::LintLevel::Warn => "WARN",
+            aprender::format::LintLevel::Error => "ERROR",
+        };
+        println!("  [{level}] {}", issue.message);
+        if let Some(suggestion) = &issue.suggestion {
+            println!("         Suggestion: {suggestion}");
+        }
+    }
+}
+
+/// Format diff report output for the text (non-JSON) path.
+///
+/// Separates the "identical" vs "has differences" branches.
+fn print_diff_text(report: &aprender::format::DiffReport) {
+    if report.is_identical() {
+        println!("Models are identical");
+        return;
+    }
+
+    println!("{}", report.summary());
+    println!();
+
+    let max_display = 20;
+    let total = report.differences.len();
+    let shown = total.min(max_display);
+
+    for entry in report.differences.iter().take(max_display) {
+        println!(
+            "  [{:?}] {}: {} vs {}",
+            entry.category, entry.field, entry.value1, entry.value2
+        );
+    }
+
+    if total > max_display {
+        println!(
+            "\n  ... and {} more differences (use --json for full output)",
+            total - max_display
+        );
+    }
+
+    if shown < total {
+        // Group remaining by category for a summary
+        let mut category_counts = std::collections::HashMap::new();
+        for entry in report.differences.iter().skip(max_display) {
+            *category_counts
+                .entry(format!("{:?}", entry.category))
+                .or_insert(0usize) += 1;
+        }
+        let mut categories: Vec<_> = category_counts.into_iter().collect();
+        categories.sort_by(|a, b| b.1.cmp(&a.1));
+        print!("  Summary: ");
+        let parts: Vec<String> = categories
+            .iter()
+            .map(|(cat, count)| format!("{count} {cat}"))
+            .collect();
+        println!("{}", parts.join(", "));
+    }
+}
 
 /// Produce actionable error messages for model format failures
 fn format_model_error(e: &aprender::error::AprenderError, path: &std::path::Path) -> CliError {
@@ -1906,12 +1965,7 @@ fn run_encrypt(args: &AprEncryptArgs, global: &super::args::Args) -> CliResult<C
 
     #[cfg(feature = "format-encryption")]
     {
-        let password = args.password.as_deref().unwrap_or("").to_string();
-        if password.is_empty() {
-            return Err(CliError::InvalidArgument(
-                "Password required (use --password)".to_string(),
-            ));
-        }
+        let password = require_password(args.password.as_deref())?;
 
         let model_data = fs::read(&args.file)
             .map_err(|e| CliError::InvalidArgument(format!("Failed to read model: {e}")))?;
@@ -1977,12 +2031,7 @@ fn run_decrypt(args: &AprDecryptArgs, global: &super::args::Args) -> CliResult<C
 
     #[cfg(feature = "format-encryption")]
     {
-        let password = args.password.as_deref().unwrap_or("").to_string();
-        if password.is_empty() {
-            return Err(CliError::InvalidArgument(
-                "Password required (use --password)".to_string(),
-            ));
-        }
+        let password = require_password(args.password.as_deref())?;
 
         let content = fs::read(&args.file).map_err(|e| {
             CliError::InvalidArgument(format!("Failed to read encrypted file: {e}"))
@@ -2095,10 +2144,8 @@ fn run_quantize(args: &AprQuantizeArgs, global: &super::args::Args) -> CliResult
 
         let quant_type = parse_quant_type(&args.r#type)?;
 
+        let report = inspect_model(&args.file)?;
         let rosetta = RosettaStone::new();
-        let report = rosetta
-            .inspect(&args.file)
-            .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
 
         let mut total_original_bytes = 0u64;
         let mut total_quantized_bytes = 0u64;
@@ -2163,22 +2210,9 @@ fn run_import_sharded(
     args: &AprImportShardedArgs,
     global: &super::args::Args,
 ) -> CliResult<CommandResult> {
-    use aprender::format::sharded::{is_sharded_model, ShardedImportConfig, ShardedImporter};
+    use aprender::format::sharded::{ShardedImportConfig, ShardedImporter};
 
-    if !args.source.exists() {
-        return Err(CliError::InvalidArgument(format!(
-            "Source directory not found: {}",
-            args.source.display()
-        )));
-    }
-
-    if !is_sharded_model(&args.source) {
-        return Err(CliError::InvalidArgument(format!(
-            "Not a sharded model directory: {} \
-             (need model.safetensors.index.json or multiple .safetensors files)",
-            args.source.display()
-        )));
-    }
+    let index_path = validate_sharded_source(&args.source)?;
 
     let config = ShardedImportConfig {
         max_cached_shards: args.max_cache_shards,
@@ -2187,17 +2221,9 @@ fn run_import_sharded(
 
     let mut importer = ShardedImporter::new(config, args.source.clone());
 
-    // Try to parse index
-    let index_path = args.source.join("model.safetensors.index.json");
-    let index = if index_path.exists() {
-        importer
-            .parse_index(&index_path)
-            .map_err(|e| CliError::InvalidArgument(format!("Failed to parse index: {e}")))?
-    } else {
-        return Err(CliError::InvalidArgument(
-            "No model.safetensors.index.json found".to_string(),
-        ));
-    };
+    let index = importer
+        .parse_index(&index_path)
+        .map_err(|e| CliError::InvalidArgument(format!("Failed to parse index: {e}")))?;
 
     let report = importer
         .stream_merge(&index, &args.output)
@@ -2250,10 +2276,7 @@ fn run_he_inspect(args: &AprHeInspectArgs, global: &super::args::Args) -> CliRes
         use aprender::format::homomorphic::{HeParameters, HeScheme, SecurityLevel};
 
         // Inspect model file for HE metadata
-        let rosetta = RosettaStone::new();
-        let report = rosetta
-            .inspect(&args.file)
-            .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
+        let report = inspect_model(&args.file)?;
 
         // Report HE-relevant metadata from model inspection
         // For actual HE models, the parameters would be embedded in metadata
@@ -2496,15 +2519,7 @@ impl ProfileSummary<'_> {
     }
 
     fn print_rtf_indicator(rtf: f64) {
-        if rtf <= 1.0 {
-            println!("\n  [EXCELLENT] RTF <= 1.0x (faster than real-time)");
-        } else if rtf <= 2.0 {
-            println!("\n  [PASS] RTF <= 2.0x (meets tiny model target)");
-        } else if rtf <= 4.0 {
-            println!("\n  [WARN] RTF > 2.0x (above target for tiny model)");
-        } else {
-            println!("\n  [SLOW] RTF > 4.0x (optimization needed)");
-        }
+        println!("{}", rtf_tier_label(rtf));
     }
 }
 
