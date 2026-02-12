@@ -2,30 +2,27 @@
 
 use trueno::Vector;
 
+/// Apply a SIMD vector operation, handling empty input and errors.
+fn apply_vector_op<E>(x: &[f32], op: impl FnOnce(&Vector<f32>) -> Result<Vector<f32>, E>) -> Vec<f32> {
+    if x.is_empty() {
+        return vec![];
+    }
+    let vx = Vector::from_slice(x);
+    op(&vx).map_or_else(|_| vec![0.0; x.len()], |v| v.as_slice().to_vec())
+}
+
 /// SIMD-accelerated softmax with numerical stability
 ///
 /// Computes softmax(x) = exp(x - max(x)) / sum(exp(x - max(x)))
 #[must_use]
 pub fn softmax(x: &[f32]) -> Vec<f32> {
-    if x.is_empty() {
-        return vec![];
-    }
-
-    let vx = Vector::from_slice(x);
-    vx.softmax()
-        .map_or_else(|_| vec![0.0; x.len()], |v| v.as_slice().to_vec())
+    apply_vector_op(x, Vector::softmax)
 }
 
 /// SIMD-accelerated log-softmax with numerical stability
 #[must_use]
 pub fn log_softmax(x: &[f32]) -> Vec<f32> {
-    if x.is_empty() {
-        return vec![];
-    }
-
-    let vx = Vector::from_slice(x);
-    vx.log_softmax()
-        .map_or_else(|_| vec![0.0; x.len()], |v| v.as_slice().to_vec())
+    apply_vector_op(x, Vector::log_softmax)
 }
 
 /// SIMD-accelerated GELU activation
@@ -33,49 +30,25 @@ pub fn log_softmax(x: &[f32]) -> Vec<f32> {
 /// GELU(x) = x * Φ(x) ≈ 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))
 #[must_use]
 pub fn gelu(x: &[f32]) -> Vec<f32> {
-    if x.is_empty() {
-        return vec![];
-    }
-
-    let vx = Vector::from_slice(x);
-    vx.gelu()
-        .map_or_else(|_| vec![0.0; x.len()], |v| v.as_slice().to_vec())
+    apply_vector_op(x, Vector::gelu)
 }
 
 /// SIMD-accelerated ReLU activation
 #[must_use]
 pub fn relu(x: &[f32]) -> Vec<f32> {
-    if x.is_empty() {
-        return vec![];
-    }
-
-    let vx = Vector::from_slice(x);
-    vx.relu()
-        .map_or_else(|_| vec![0.0; x.len()], |v| v.as_slice().to_vec())
+    apply_vector_op(x, Vector::relu)
 }
 
 /// SIMD-accelerated sigmoid activation
 #[must_use]
 pub fn sigmoid(x: &[f32]) -> Vec<f32> {
-    if x.is_empty() {
-        return vec![];
-    }
-
-    let vx = Vector::from_slice(x);
-    vx.sigmoid()
-        .map_or_else(|_| vec![0.0; x.len()], |v| v.as_slice().to_vec())
+    apply_vector_op(x, Vector::sigmoid)
 }
 
 /// SIMD-accelerated tanh activation
 #[must_use]
 pub fn tanh_activation(x: &[f32]) -> Vec<f32> {
-    if x.is_empty() {
-        return vec![];
-    }
-
-    let vx = Vector::from_slice(x);
-    vx.tanh()
-        .map_or_else(|_| vec![0.0; x.len()], |v| v.as_slice().to_vec())
+    apply_vector_op(x, Vector::tanh)
 }
 
 #[cfg(test)]

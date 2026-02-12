@@ -38,10 +38,6 @@ impl WaveformDisplay {
 
     /// Render to ASCII art
     pub fn render(&self) -> String {
-        if self.samples.is_empty() {
-            return "No data".to_string();
-        }
-
         render_waveform(&self.samples, self.width, self.height)
     }
 }
@@ -76,10 +72,6 @@ impl MelDisplay {
 
     /// Render to ASCII heatmap
     pub fn render(&self) -> String {
-        if self.mel_data.is_empty() || self.n_frames == 0 {
-            return "No data".to_string();
-        }
-
         render_mel_spectrogram(
             &self.mel_data,
             self.n_mels,
@@ -100,7 +92,7 @@ pub fn render_waveform(samples: &[f32], width: usize, height: usize) -> String {
 
     // Find min/max for normalization
     let max_abs = samples.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
-    let scale = if max_abs > 0.0 { max_abs } else { 1.0 };
+    let scale = nonzero_scale(max_abs);
 
     // Downsample to fit width
     let samples_per_col = samples.len() / width.max(1);
@@ -146,6 +138,20 @@ pub fn render_waveform(samples: &[f32], width: usize, height: usize) -> String {
     output
 }
 
+/// Compute safe average (returns 0.0 for empty input)
+fn safe_average(sum: f32, count: usize) -> f32 {
+    if count > 0 {
+        sum / count as f32
+    } else {
+        0.0
+    }
+}
+
+/// Return value as scale factor, defaulting to 1.0 for zero/negative values
+fn nonzero_scale(val: f32) -> f32 {
+    if val > 0.0 { val } else { 1.0 }
+}
+
 /// Compute average value for a rectangular region of the mel spectrogram
 fn mel_cell_average(
     mel_data: &[f32],
@@ -166,11 +172,7 @@ fn mel_cell_average(
             }
         }
     }
-    if count > 0 {
-        sum / count as f32
-    } else {
-        0.0
-    }
+    safe_average(sum, count)
 }
 
 /// Compute average attention value for a rectangular cell
@@ -193,11 +195,7 @@ fn attention_cell_average(
             }
         }
     }
-    if count > 0 {
-        sum / count as f32
-    } else {
-        0.0
-    }
+    safe_average(sum, count)
 }
 
 /// Map a normalized value [0, 1] to a heatmap character
@@ -265,14 +263,10 @@ pub fn render_attention_heatmap(
     const HEATMAP_CHARS: [char; 10] = [' ', '·', ':', '∴', '▪', '▫', '■', '□', '▣', '█'];
 
     let _span = crate::trace_enter!("tui.render_attention_heatmap");
-    if attention_weights.is_empty() || width == 0 || height == 0 {
-        return String::new();
-    }
-
     let n_tokens = attention_weights.len();
     let n_frames = attention_weights.first().map_or(0, |a| a.len());
 
-    if n_frames == 0 {
+    if attention_weights.is_empty() || width == 0 || height == 0 || n_frames == 0 {
         return String::new();
     }
 
@@ -282,7 +276,7 @@ pub fn render_attention_heatmap(
         .flat_map(|row| row.iter())
         .copied()
         .fold(0.0_f32, f32::max);
-    let scale = if max_val > 0.0 { max_val } else { 1.0 };
+    let scale = nonzero_scale(max_val);
 
     // Calculate scaling
     let tokens_per_row = (n_tokens / height).max(1);

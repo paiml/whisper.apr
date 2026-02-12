@@ -249,8 +249,7 @@ impl TurnDetector {
         }
 
         // Step 1: Compute frame-level features
-        let energy = self.compute_energy(audio);
-        let zcr = self.compute_zcr(audio);
+        let (energy, zcr) = self.compute_energy_and_zcr(audio);
 
         // Step 2: Detect voice activity
         let vad = self.detect_voice_activity(&energy, &zcr);
@@ -270,55 +269,47 @@ impl TurnDetector {
         Ok(filtered)
     }
 
-    /// Compute frame-level energy
-    fn compute_energy(&self, audio: &[f32]) -> Vec<f32> {
+    /// Compute frame-level energy and zero crossing rate in a single pass.
+    fn compute_energy_and_zcr(&self, audio: &[f32]) -> (Vec<f32>, Vec<f32>) {
         let num_frames =
             (audio.len().saturating_sub(self.config.frame_size)) / self.config.frame_hop + 1;
 
         if num_frames == 0 {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
 
         let mut energy = Vec::with_capacity(num_frames);
-
-        for i in 0..num_frames {
-            let start = i * self.config.frame_hop;
-            let end = (start + self.config.frame_size).min(audio.len());
-
-            let frame_energy: f32 = audio[start..end].iter().map(|&s| s * s).sum();
-            let rms = (frame_energy / (end - start) as f32).sqrt();
-            energy.push(rms);
-        }
-
-        energy
-    }
-
-    /// Compute frame-level zero crossing rate
-    fn compute_zcr(&self, audio: &[f32]) -> Vec<f32> {
-        let num_frames =
-            (audio.len().saturating_sub(self.config.frame_size)) / self.config.frame_hop + 1;
-
-        if num_frames == 0 {
-            return Vec::new();
-        }
-
         let mut zcr = Vec::with_capacity(num_frames);
 
         for i in 0..num_frames {
             let start = i * self.config.frame_hop;
             let end = (start + self.config.frame_size).min(audio.len());
 
+            // Energy (RMS)
+            let frame_energy: f32 = audio[start..end].iter().map(|&s| s * s).sum();
+            energy.push((frame_energy / (end - start) as f32).sqrt());
+
+            // Zero crossing rate
             let frame = &audio[start..end];
             let crossings: f32 = frame
                 .windows(2)
                 .filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0))
                 .count() as f32;
-
-            let rate = crossings / (end - start - 1).max(1) as f32;
-            zcr.push(rate);
+            zcr.push(crossings / (end - start - 1).max(1) as f32);
         }
 
-        zcr
+        (energy, zcr)
+    }
+
+    /// Compute frame-level zero crossing rate.
+    #[cfg(test)]
+    fn compute_zcr(&self, audio: &[f32]) -> Vec<f32> {
+        self.compute_energy_and_zcr(audio).1
+    }
+
+    /// Compute frame-level energy (delegates to combined feature computation).
+    fn compute_energy(&self, audio: &[f32]) -> Vec<f32> {
+        self.compute_energy_and_zcr(audio).0
     }
 
     /// Detect voice activity from features
@@ -368,10 +359,6 @@ impl TurnDetector {
 
     /// Convert VAD decisions to segments
     fn vad_to_segments(&self, vad: &[bool], sample_rate: u32) -> Vec<SpeakerSegment> {
-        if vad.is_empty() {
-            return Vec::new();
-        }
-
         let frame_duration = self.config.frame_hop as f32 / sample_rate as f32;
         let mut segments = Vec::new();
         let mut in_speech = false;

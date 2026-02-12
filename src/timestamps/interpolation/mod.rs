@@ -174,17 +174,12 @@ impl TimestampInterpolator {
         tokens: &[String],
         start_index: usize,
     ) -> WhisperResult<Vec<TokenTimestamp>> {
-        if tokens.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        if tokens.len() == 1 {
-            return Ok(vec![TokenTimestamp::new(
-                start_index,
-                tokens[0].clone(),
-                word_start,
-                word_end,
-            )]);
+        if tokens.len() <= 1 {
+            return Ok(tokens
+                .iter()
+                .enumerate()
+                .map(|(i, t)| TokenTimestamp::new(start_index + i, t.clone(), word_start, word_end))
+                .collect());
         }
 
         match self.config.method {

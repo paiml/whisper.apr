@@ -127,14 +127,6 @@ fn convert_audio_samples(audio_data: &[u8], fmt: &FmtChunk) -> Result<Vec<f32>, 
         fmt.audio_format
     };
 
-    // Validate format
-    if effective_format != WAVE_FORMAT_PCM && effective_format != WAVE_FORMAT_IEEE_FLOAT {
-        return Err(WavError::UnsupportedFormat {
-            format: fmt.audio_format,
-            bits: fmt.bits_per_sample,
-        });
-    }
-
     match (effective_format, fmt.bits_per_sample) {
         (WAVE_FORMAT_PCM, 16) => Ok(convert_16bit_pcm(audio_data)),
         (WAVE_FORMAT_PCM, 8) => Ok(convert_8bit_pcm(audio_data)),
