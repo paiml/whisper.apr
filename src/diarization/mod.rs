@@ -810,6 +810,65 @@ mod tests {
     }
 
     #[test]
+    fn test_diarizer_process_loud_two_speaker_audio() {
+        // Generate audio with high amplitude to ensure VAD detects segments
+        // and the full process() pipeline (steps 2-6) is exercised
+        let config = DiarizationConfig::default()
+            .with_max_speakers(3)
+            .with_min_segment_duration(0.1);
+        let diarizer = Diarizer::new(config);
+        let sample_rate = 16000u32;
+
+        // Create 4 seconds of audio with distinct "speaker" regions
+        let audio: Vec<f32> = (0..sample_rate as usize * 4)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                // Speaker 1: 0-1.5s, low frequency with high amplitude
+                // Silence: 1.5-2s
+                // Speaker 2: 2-4s, high frequency with high amplitude
+                if t < 1.5 {
+                    (t * 150.0 * std::f32::consts::TAU).sin() * 0.8
+                } else if t < 2.0 {
+                    0.0 // Gap between speakers
+                } else {
+                    (t * 500.0 * std::f32::consts::TAU).sin() * 0.7
+                }
+            })
+            .collect();
+
+        let result = diarizer
+            .process(&audio, sample_rate)
+            .expect("should succeed");
+
+        // Verify duration
+        assert!((result.duration() - 4.0).abs() < 0.1);
+        // num_speakers should be >= 0 (depends on VAD sensitivity)
+        assert!(result.num_speakers() <= 3);
+    }
+
+    #[test]
+    fn test_diarizer_cluster_speakers_direct() {
+        // Exercise cluster_speakers directly by going through process()
+        // with audio that forces embedding extraction + clustering
+        let config = DiarizationConfig::default().with_min_segment_duration(0.05);
+        let diarizer = Diarizer::new(config);
+        let sample_rate = 16000u32;
+
+        // Very loud audio to ensure segments are detected
+        let audio: Vec<f32> = (0..sample_rate as usize * 3)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                (t * 300.0 * std::f32::consts::TAU).sin() * 0.9
+            })
+            .collect();
+
+        let result = diarizer
+            .process(&audio, sample_rate)
+            .expect("should succeed");
+        assert!((result.duration() - 3.0).abs() < 0.1);
+    }
+
+    #[test]
     fn test_diarizer_process_accuracy_config() {
         let config = DiarizationConfig::for_accuracy();
         let diarizer = Diarizer::new(config);

@@ -93,6 +93,9 @@ pub enum AprAction {
 
     /// Inspect homomorphic encryption metadata (feature: `format-homomorphic`)
     HeInspect(AprHeInspectArgs),
+
+    /// Profile transcription with per-step timing breakdown (renacer integration)
+    Profile(AprProfileArgs),
 }
 
 // ============================================================================
@@ -555,4 +558,46 @@ pub struct AprImportShardedArgs {
 pub struct AprHeInspectArgs {
     /// HE-encrypted model file to inspect
     pub file: PathBuf,
+}
+
+// ============================================================================
+// Tier C — Profiling (renacer integration)
+// ============================================================================
+
+/// Arguments for `apr profile`
+///
+/// Runs renacer-instrumented transcription with per-step timing breakdown:
+/// mel spectrogram, encoder, decoder (per-token), detokenize.
+/// Outputs a structured report compatible with `renacer` trace format.
+#[derive(Args, Debug, Clone)]
+pub struct AprProfileArgs {
+    /// Model file (.apr format)
+    pub model: PathBuf,
+
+    /// Audio file to transcribe (WAV, MP3, FLAC, etc.)
+    pub audio: PathBuf,
+
+    /// Number of warmup runs before measurement
+    #[arg(long, default_value = "1")]
+    pub warmup: usize,
+
+    /// Number of measurement runs (results averaged)
+    #[arg(long, default_value = "3")]
+    pub runs: usize,
+
+    /// Output format: text, json, or renacer (trace JSON)
+    #[arg(long, default_value = "text")]
+    pub format: String,
+
+    /// Output file (stdout if not specified)
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+
+    /// Show per-token decoder timing
+    #[arg(long)]
+    pub per_token: bool,
+
+    /// Compare against whisper.cpp timing (if available)
+    #[arg(long)]
+    pub compare_cpp: bool,
 }
