@@ -18,7 +18,7 @@
 //! pool.return_buffer(buffer); // Return to pool for reuse
 //! ```
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
 /// Size class for buffer pooling
@@ -145,8 +145,16 @@ impl PooledBuffer {
 pub struct MemoryPool {
     /// Pools of available buffers, keyed by size class
     pools: RefCell<BTreeMap<SizeClass, Vec<PooledBuffer>>>,
-    /// Statistics
-    stats: RefCell<PoolStats>,
+    /// Statistics counters (Cell for zero-borrow increment)
+    stat_allocations: Cell<usize>,
+    /// Hit counter
+    stat_hits: Cell<usize>,
+    /// Miss counter
+    stat_misses: Cell<usize>,
+    /// Return counter
+    stat_returns: Cell<usize>,
+    /// Drop counter
+    stat_dropped: Cell<usize>,
     /// Maximum buffers per size class
     max_per_class: usize,
 }
@@ -190,7 +198,11 @@ impl MemoryPool {
     pub fn new() -> Self {
         Self {
             pools: RefCell::new(BTreeMap::new()),
-            stats: RefCell::new(PoolStats::default()),
+            stat_allocations: Cell::new(0),
+            stat_hits: Cell::new(0),
+            stat_misses: Cell::new(0),
+            stat_returns: Cell::new(0),
+            stat_dropped: Cell::new(0),
             max_per_class: 16,
         }
     }
@@ -200,26 +212,33 @@ impl MemoryPool {
     pub fn with_max_per_class(max_per_class: usize) -> Self {
         Self {
             pools: RefCell::new(BTreeMap::new()),
-            stats: RefCell::new(PoolStats::default()),
+            stat_allocations: Cell::new(0),
+            stat_hits: Cell::new(0),
+            stat_misses: Cell::new(0),
+            stat_returns: Cell::new(0),
+            stat_dropped: Cell::new(0),
             max_per_class,
         }
+    }
+
+    /// Increment a Cell counter by 1
+    fn inc(counter: &Cell<usize>) {
+        counter.set(counter.get() + 1);
     }
 
     /// Get a buffer of at least the requested size
     pub fn get(&self, size: usize) -> PooledBuffer {
         let size_class = SizeClass::for_size(size);
         let cached = self.pools.borrow_mut().get_mut(&size_class).and_then(Vec::pop);
-
-        let mut stats = self.stats.borrow_mut();
-        stats.allocations += 1;
+        Self::inc(&self.stat_allocations);
 
         if let Some(mut buffer) = cached {
-            stats.hits += 1;
+            Self::inc(&self.stat_hits);
             buffer.set_len(size);
             buffer.fill(0.0);
             buffer
         } else {
-            stats.misses += 1;
+            Self::inc(&self.stat_misses);
             let mut buffer = PooledBuffer::new(size_class);
             buffer.set_len(size);
             buffer
@@ -235,24 +254,27 @@ impl MemoryPool {
 
     /// Return a buffer to the pool for reuse
     pub fn return_buffer(&self, buffer: PooledBuffer) {
+        Self::inc(&self.stat_returns);
         let mut pools = self.pools.borrow_mut();
         let pool = pools.entry(buffer.size_class).or_default();
-        let dropped = pool.len() >= self.max_per_class;
 
-        let mut stats = self.stats.borrow_mut();
-        stats.returns += 1;
-
-        if dropped {
-            stats.dropped += 1;
-        } else {
+        if pool.len() < self.max_per_class {
             pool.push(buffer);
+        } else {
+            Self::inc(&self.stat_dropped);
         }
     }
 
     /// Get pool statistics
     #[must_use]
     pub fn stats(&self) -> PoolStats {
-        self.stats.borrow().clone()
+        PoolStats {
+            allocations: self.stat_allocations.get(),
+            hits: self.stat_hits.get(),
+            misses: self.stat_misses.get(),
+            returns: self.stat_returns.get(),
+            dropped: self.stat_dropped.get(),
+        }
     }
 
     /// Clear all pooled buffers
