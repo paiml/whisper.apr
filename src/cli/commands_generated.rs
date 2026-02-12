@@ -169,49 +169,155 @@ pub fn run(args: Args) -> CliResult<CommandResult> {
     }
 }
 
+/// Resolve GPU backend availability based on feature flags and user request
+fn resolve_gpu_backend(requested: bool, _global: &Args) -> CliResult<bool> {
+    #[cfg(feature = "realizar-gpu")]
+    {
+        let global = _global;
+        if requested {
+            use realizar::cuda::CudaExecutor;
+            if CudaExecutor::is_available() {
+                let num_devices = CudaExecutor::num_devices();
+                if !global.quiet {
+                    eprintln!("[INFO] GPU enabled: {} CUDA device(s)", num_devices);
+                    eprintln!("[WARN] Hybrid CPU→GPU path may be slower than CPU due to PCI-E transfer overhead");
+                    eprintln!("[WARN] Full GPU-resident implementation pending (WAPR-PERF-005)");
+                }
+                return Ok(true);
+            }
+            eprintln!("[WARN] GPU requested but CUDA not available, falling back to CPU");
+            return Ok(false);
+        }
+        if global.verbose {
+            eprintln!("[INFO] Using CPU backend (default)");
+        }
+        return Ok(false);
+    }
+
+    #[cfg(not(feature = "realizar-gpu"))]
+    {
+        if requested {
+            return Err(CliError::InvalidArgument(
+                "GPU requested but whisper-apr was not compiled with 'realizar-gpu' feature. \
+                 Rebuild with: cargo build --features realizar-gpu"
+                    .to_string(),
+            ));
+        }
+        Ok(false)
+    }
+}
+
+/// Build transcription options from CLI arguments
+fn build_transcribe_options(args: &TranscribeArgs, verbose: bool) -> TranscribeOptions {
+    let task = if args.translate {
+        Task::Translate
+    } else {
+        Task::Transcribe
+    };
+    let language = if args.language == "auto" {
+        None
+    } else {
+        Some(args.language.clone())
+    };
+    let strategy = if args.beam_size > 0 {
+        DecodingStrategy::BeamSearch {
+            beam_size: args.beam_size as usize,
+            temperature: args.temperature,
+            patience: 1.0,
+        }
+    } else {
+        DecodingStrategy::Greedy
+    };
+    TranscribeOptions {
+        language,
+        task,
+        strategy,
+        word_timestamps: args.word_timestamps,
+        profile: verbose,
+    }
+}
+
+/// Print WAPR-PERF-004 component profiling breakdown
+fn print_component_profile(
+    result: &crate::TranscriptionResult,
+    timings: &Timings,
+    audio_duration_secs: f64,
+    rtf: f64,
+) {
+    let inference_ms = timings.decode_ms;
+    let tokens: usize = result
+        .segments
+        .iter()
+        .map(|s| s.text.split_whitespace().count())
+        .sum();
+    let tokens_per_sec = if inference_ms > 0.0 {
+        (tokens as f64 / inference_ms) * 1000.0
+    } else {
+        0.0
+    };
+
+    eprintln!();
+    eprintln!("=== Component Profiling (WAPR-PERF-004) ===");
+    eprintln!(
+        "[PROFILE] Model load:     {:>7.1}ms ({:>5.1}%)",
+        timings.model_load_ms,
+        (timings.model_load_ms / timings.total_ms) * 100.0
+    );
+    eprintln!(
+        "[PROFILE] Audio load:     {:>7.1}ms ({:>5.1}%)",
+        timings.audio_load_ms,
+        (timings.audio_load_ms / timings.total_ms) * 100.0
+    );
+    eprintln!(
+        "[PROFILE] Inference:      {:>7.1}ms ({:>5.1}%)",
+        inference_ms,
+        (inference_ms / timings.total_ms) * 100.0
+    );
+    eprintln!("[PROFILE] --------------------------------");
+    eprintln!("[PROFILE] Total:          {:>7.1}ms", timings.total_ms);
+    eprintln!("[PROFILE] Audio duration: {:>7.2}s", audio_duration_secs);
+    eprintln!("[PROFILE] RTF:            {:>7.3}x", rtf);
+    eprintln!("[PROFILE] Tokens:         {:>7}", tokens);
+    eprintln!("[PROFILE] Throughput:     {:>7.0} tok/s", tokens_per_sec);
+
+    let budget_target = 7692.0;
+    eprintln!(
+        "[PROFILE] Budget:         {} (target: {:.0} tok/s)",
+        if tokens_per_sec >= budget_target {
+            "✓ MET"
+        } else {
+            "✗ EXCEEDED"
+        },
+        budget_target
+    );
+    eprintln!();
+}
+
+/// Write transcription output to file or stdout
+fn write_transcription_output(
+    result: &crate::TranscriptionResult,
+    format: OutputFormat,
+    output_path: Option<&std::path::Path>,
+    global: &Args,
+) -> CliResult<()> {
+    let output_text = format_output(result, format);
+    if let Some(path) = output_path {
+        fs::write(path, &output_text)?;
+        if global.verbose {
+            eprintln!("[INFO] Written to: {}", path.display());
+        }
+    } else if !global.quiet {
+        print!("{output_text}");
+        io::stdout().flush()?;
+    }
+    Ok(())
+}
+
 /// Run transcribe command
 pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandResult> {
     let start = Instant::now();
     let mut timings = Timings::default();
-
-    // WAPR-PERF-005: CPU is default (Popper Falsification Protocol)
-    // The hybrid CPU→GPU path incurs PCI-E transfer overhead per token,
-    // likely making it slower than pure CPU. Use --gpu to explicitly enable.
-    // Full GPU-resident implementation required for actual speedup.
-    #[cfg(feature = "realizar-gpu")]
-    let use_gpu = if args.gpu {
-        // User explicitly requested GPU - warn about hybrid path limitations
-        use realizar::cuda::CudaExecutor;
-        if CudaExecutor::is_available() {
-            let num_devices = CudaExecutor::num_devices();
-            if !global.quiet {
-                eprintln!("[INFO] GPU enabled: {} CUDA device(s)", num_devices);
-                eprintln!("[WARN] Hybrid CPU→GPU path may be slower than CPU due to PCI-E transfer overhead");
-                eprintln!("[WARN] Full GPU-resident implementation pending (WAPR-PERF-005)");
-            }
-            true
-        } else {
-            eprintln!("[WARN] GPU requested but CUDA not available, falling back to CPU");
-            false
-        }
-    } else {
-        // CPU is default (the proven, stable path)
-        if global.verbose {
-            eprintln!("[INFO] Using CPU backend (default)");
-        }
-        false
-    };
-
-    #[cfg(not(feature = "realizar-gpu"))]
-    let use_gpu = if args.gpu {
-        return Err(CliError::InvalidArgument(
-            "GPU requested but whisper-apr was not compiled with 'realizar-gpu' feature. \
-             Rebuild with: cargo build --features realizar-gpu"
-                .to_string(),
-        ));
-    } else {
-        false
-    };
+    let use_gpu = resolve_gpu_backend(args.gpu, global)?;
 
     // Configure thread pool for parallel inference (§11.3.6 P.6)
     let thread_count = configure_thread_pool(args.threads)
@@ -268,31 +374,7 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
 
     // Transcribe
     let transcribe_start = Instant::now();
-    let task = if args.translate {
-        Task::Translate
-    } else {
-        Task::Transcribe
-    };
-
-    let options = TranscribeOptions {
-        language: if args.language == "auto" {
-            None
-        } else {
-            Some(args.language.clone())
-        },
-        task,
-        strategy: if args.beam_size > 0 {
-            DecodingStrategy::BeamSearch {
-                beam_size: args.beam_size as usize,
-                temperature: args.temperature,
-                patience: 1.0,
-            }
-        } else {
-            DecodingStrategy::Greedy
-        },
-        word_timestamps: args.word_timestamps,
-        profile: global.verbose,
-    };
+    let options = build_transcribe_options(&args, global.verbose);
 
     // Run transcription on GPU or CPU based on --gpu flag
     #[cfg(feature = "realizar-gpu")]
@@ -351,76 +433,16 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
 
     // WAPR-PERF-004: Component profiling output (apr-cli style)
     if args.profile {
-        let inference_ms = timings.decode_ms;
-        let tokens = result
-            .segments
-            .iter()
-            .map(|s| s.text.split_whitespace().count())
-            .sum::<usize>();
-        let tokens_per_sec = if inference_ms > 0.0 {
-            (tokens as f64 / inference_ms) * 1000.0
-        } else {
-            0.0
-        };
-
-        eprintln!();
-        eprintln!("=== Component Profiling (WAPR-PERF-004) ===");
-        eprintln!(
-            "[PROFILE] Model load:     {:>7.1}ms ({:>5.1}%)",
-            timings.model_load_ms,
-            (timings.model_load_ms / timings.total_ms) * 100.0
-        );
-        eprintln!(
-            "[PROFILE] Audio load:     {:>7.1}ms ({:>5.1}%)",
-            timings.audio_load_ms,
-            (timings.audio_load_ms / timings.total_ms) * 100.0
-        );
-        eprintln!(
-            "[PROFILE] Inference:      {:>7.1}ms ({:>5.1}%)",
-            inference_ms,
-            (inference_ms / timings.total_ms) * 100.0
-        );
-        eprintln!("[PROFILE] --------------------------------");
-        eprintln!("[PROFILE] Total:          {:>7.1}ms", timings.total_ms);
-        eprintln!("[PROFILE] Audio duration: {:>7.2}s", audio_duration_secs);
-        eprintln!("[PROFILE] RTF:            {:>7.3}x", rtf);
-        eprintln!("[PROFILE] Tokens:         {:>7}", tokens);
-        eprintln!("[PROFILE] Throughput:     {:>7.0} tok/s", tokens_per_sec);
-
-        // Budget check (spec §2.3.1: 130 µs/token = 7,692 tok/s target)
-        let budget_target = 7692.0;
-        let budget_met = tokens_per_sec >= budget_target;
-        eprintln!(
-            "[PROFILE] Budget:         {} (target: {:.0} tok/s)",
-            if budget_met {
-                "✓ MET"
-            } else {
-                "✗ EXCEEDED"
-            },
-            budget_target
-        );
-        eprintln!();
+        print_component_profile(&result, &timings, audio_duration_secs, rtf);
     }
 
-    // Format output
+    // Format and write output
     let format = convert_format_arg(args.format);
-    let output_text = format_output(&result, format);
-
-    // Write output
-    if let Some(output_path) = args.output.clone() {
-        fs::write(&output_path, &output_text)?;
-        if global.verbose {
-            eprintln!("[INFO] Written to: {}", output_path.display());
-        }
-    } else if !global.quiet {
-        print!("{output_text}");
-        io::stdout().flush()?;
-    }
+    write_transcription_output(&result, format, args.output.as_deref(), global)?;
 
     // Phase 2: Post-transcription summarization (Section 18.5)
     if args.summarize {
         let summary_result = run_post_transcription_summary(&result.text, &args, global)?;
-
         if global.verbose {
             eprintln!("[INFO] Summary generated: {} chars", summary_result.len());
         }
