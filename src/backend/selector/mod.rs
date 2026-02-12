@@ -293,6 +293,19 @@ impl BackendSelector {
         self.select_automatic(total_flops, max_memory)
     }
 
+    /// Create a selector with simulated GPU for testing
+    #[cfg(test)]
+    pub(crate) fn with_simulated_gpu(config: SelectorConfig, max_memory: u64) -> Self {
+        let simd_caps = BackendCapabilities::simd();
+        let gpu_caps = Some(BackendCapabilities::gpu(true, max_memory, 256, true));
+        Self {
+            config,
+            simd_caps,
+            gpu_available: true,
+            gpu_caps,
+        }
+    }
+
     /// Get a summary of available backends
     #[must_use]
     pub fn summary(&self) -> String {
