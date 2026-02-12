@@ -481,18 +481,16 @@ pub(crate) fn parse_vocab_entries(
             continue;
         }
 
-        let Some((token, after_quote)) = scan_quoted_string(&chars, i) else {
-            break;
-        };
-        let Some(after_colon) = skip_past_char(&chars, after_quote, ':') else {
-            break;
-        };
-        if let Some((id, after_num)) = parse_u32_at(&chars, after_colon) {
-            vocab.insert(token.clone(), id);
-            id_to_token.insert(id, token);
-            i = after_num;
-        } else {
-            i = after_colon;
+        // Parse "token": id — chain scan→skip→parse, break if any step fails
+        let Some((token, after_quote)) = scan_quoted_string(&chars, i) else { break };
+        let entry = skip_past_char(&chars, after_quote, ':').and_then(|ac| parse_u32_at(&chars, ac));
+        match entry {
+            Some((id, after_num)) => {
+                vocab.insert(token.clone(), id);
+                id_to_token.insert(id, token);
+                i = after_num;
+            }
+            None => break,
         }
     }
 }

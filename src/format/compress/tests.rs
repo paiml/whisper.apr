@@ -2,6 +2,28 @@
 
 use super::*;
 
+/// Roundtrip helper: compress_store → decompress_block → assert equality
+fn assert_store_roundtrip(original: &[u8]) {
+    let mut compressor = Compressor::new();
+    let mut decompressor = Decompressor::new();
+    let compressed = compressor.compress_store(original).expect("compress");
+    let decompressed = decompressor
+        .decompress_block(compressed, original.len())
+        .expect("decompress");
+    assert_eq!(decompressed, original);
+}
+
+/// Roundtrip helper: compress_block → decompress_block → assert equality
+fn assert_block_roundtrip(original: &[u8]) {
+    let mut compressor = Compressor::new();
+    let mut decompressor = Decompressor::new();
+    let compressed = compressor.compress_block(original).expect("compress");
+    let decompressed = decompressor
+        .decompress_block(compressed, original.len())
+        .expect("decompress");
+    assert_eq!(decompressed, original);
+}
+
 // =========================================================================
 // Decompressor Construction Tests
 // =========================================================================
@@ -86,80 +108,29 @@ fn test_roundtrip_empty() {
 
 #[test]
 fn test_roundtrip_single_byte() {
-    let mut compressor = Compressor::new();
-    let mut decompressor = Decompressor::new();
-
-    let original = [0x42u8];
-    let compressed = compressor.compress_store(&original).expect("compress");
-
-    let decompressed = decompressor
-        .decompress_block(compressed, original.len())
-        .expect("decompress");
-
-    assert_eq!(decompressed, original);
+    assert_store_roundtrip(&[0x42u8]);
 }
 
 #[test]
 fn test_roundtrip_small_data() {
-    let mut compressor = Compressor::new();
-    let mut decompressor = Decompressor::new();
-
-    let original = b"Hello, World!";
-    let compressed = compressor.compress_store(original).expect("compress");
-
-    let decompressed = decompressor
-        .decompress_block(compressed, original.len())
-        .expect("decompress");
-
-    assert_eq!(decompressed, original);
+    assert_store_roundtrip(b"Hello, World!");
 }
 
 #[test]
 fn test_roundtrip_larger_data() {
-    let mut compressor = Compressor::new();
-    let mut decompressor = Decompressor::new();
-
-    // 1KB of data
     let original: Vec<u8> = (0..1024).map(|i| (i % 256) as u8).collect();
-    let compressed = compressor.compress_store(&original).expect("compress");
-
-    let decompressed = decompressor
-        .decompress_block(compressed, original.len())
-        .expect("decompress");
-
-    assert_eq!(decompressed, &original[..]);
+    assert_store_roundtrip(&original);
 }
 
 #[test]
 fn test_roundtrip_repeated_pattern() {
-    let mut compressor = Compressor::new();
-    let mut decompressor = Decompressor::new();
-
-    // Highly compressible data
-    let original: Vec<u8> = vec![0xAB; 256];
-    let compressed = compressor.compress_store(&original).expect("compress");
-
-    let decompressed = decompressor
-        .decompress_block(compressed, original.len())
-        .expect("decompress");
-
-    assert_eq!(decompressed, &original[..]);
+    assert_store_roundtrip(&vec![0xAB; 256]);
 }
 
 #[test]
 fn test_roundtrip_binary_data() {
-    let mut compressor = Compressor::new();
-    let mut decompressor = Decompressor::new();
-
-    // Binary data with all byte values
     let original: Vec<u8> = (0u8..=255).collect();
-    let compressed = compressor.compress_store(&original).expect("compress");
-
-    let decompressed = decompressor
-        .decompress_block(compressed, original.len())
-        .expect("decompress");
-
-    assert_eq!(decompressed, &original[..]);
+    assert_store_roundtrip(&original);
 }
 
 // =========================================================================
@@ -168,34 +139,16 @@ fn test_roundtrip_binary_data() {
 
 #[test]
 fn test_roundtrip_long_literal() {
-    let mut compressor = Compressor::new();
-    let mut decompressor = Decompressor::new();
-
     // Data requiring extended literal length (> 15 bytes)
     let original: Vec<u8> = (0..100).map(|i| i as u8).collect();
-    let compressed = compressor.compress_store(&original).expect("compress");
-
-    let decompressed = decompressor
-        .decompress_block(compressed, original.len())
-        .expect("decompress");
-
-    assert_eq!(decompressed, &original[..]);
+    assert_store_roundtrip(&original);
 }
 
 #[test]
 fn test_roundtrip_very_long_literal() {
-    let mut compressor = Compressor::new();
-    let mut decompressor = Decompressor::new();
-
     // Data requiring multiple extended length bytes (> 270 bytes)
     let original: Vec<u8> = (0..500).map(|i| (i % 256) as u8).collect();
-    let compressed = compressor.compress_store(&original).expect("compress");
-
-    let decompressed = decompressor
-        .decompress_block(compressed, original.len())
-        .expect("decompress");
-
-    assert_eq!(decompressed, &original[..]);
+    assert_store_roundtrip(&original);
 }
 
 // =========================================================================
@@ -284,37 +237,19 @@ fn test_store_uncompressed_clears_previous() {
 
 #[test]
 fn test_compress_with_matches() {
-    let mut compressor = Compressor::new();
-    let mut decompressor = Decompressor::new();
-
     // Data with repeated patterns that should compress well
-    let original = b"ABCDABCDABCDABCD";
-    let compressed = compressor.compress_block(original).expect("compress");
-
-    let decompressed = decompressor
-        .decompress_block(compressed, original.len())
-        .expect("decompress");
-
-    assert_eq!(decompressed, original);
+    assert_block_roundtrip(b"ABCDABCDABCDABCD");
 }
 
 #[test]
 fn test_compress_long_run() {
     let mut compressor = Compressor::new();
-    let mut decompressor = Decompressor::new();
-
-    // Long run of same byte - very compressible
     let original: Vec<u8> = vec![0x55; 1000];
     let compressed = compressor.compress_block(&original).expect("compress");
-
     // Should compress significantly
     assert!(compressed.len() < original.len());
-
-    let decompressed = decompressor
-        .decompress_block(compressed, original.len())
-        .expect("decompress");
-
-    assert_eq!(decompressed, &original[..]);
+    // Verify roundtrip
+    assert_block_roundtrip(&original);
 }
 
 // =========================================================================
@@ -323,24 +258,11 @@ fn test_compress_long_run() {
 
 #[test]
 fn test_decompress_exact_size() {
-    let mut compressor = Compressor::new();
-    let mut decompressor = Decompressor::new();
-
-    let original = b"exact";
-    let compressed = compressor.compress_store(original).expect("compress");
-
-    let decompressed = decompressor
-        .decompress_block(compressed, original.len())
-        .expect("decompress");
-
-    assert_eq!(decompressed.len(), original.len());
+    assert_store_roundtrip(b"exact");
 }
 
 #[test]
 fn test_compress_random_data() {
-    let mut compressor = Compressor::new();
-    let mut decompressor = Decompressor::new();
-
     // Pseudo-random data (hard to compress)
     let mut original = Vec::with_capacity(256);
     let mut state = 12345u32;
@@ -348,14 +270,7 @@ fn test_compress_random_data() {
         state = state.wrapping_mul(1103515245).wrapping_add(12345);
         original.push((state >> 16) as u8);
     }
-
-    let compressed = compressor.compress_store(&original).expect("compress");
-
-    let decompressed = decompressor
-        .decompress_block(compressed, original.len())
-        .expect("decompress");
-
-    assert_eq!(decompressed, &original[..]);
+    assert_store_roundtrip(&original);
 }
 
 // =========================================================================
