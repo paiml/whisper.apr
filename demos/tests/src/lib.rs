@@ -43,6 +43,7 @@ use probar::gui_coverage;
 use probar::ux_coverage::UxCoverageTracker;
 
 pub mod benchmark_tui_tests;
+pub mod browser_parity_tests;
 pub mod browser_tests;
 pub mod comply_tests;
 pub mod falsification_tests;
