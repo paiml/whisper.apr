@@ -1719,24 +1719,25 @@ fn extract_layers_from_tensors(
         .collect()
 }
 
+/// Layer type inference table: (keywords, label) pairs checked in priority order.
+const LAYER_TYPE_TABLE: &[(&[&str], &str)] = &[
+    (&["attention", "attn", "self_attn"], "Attention"),
+    (&["ffn", "mlp", "fc"], "FFN"),
+    (&["norm", "ln", "layer_norm"], "LayerNorm"),
+    (&["embed", "token", "wte"], "Embedding"),
+    (&["conv"], "Conv"),
+    (&["proj", "head", "lm_head"], "Projection"),
+];
+
 /// Infer a human-readable layer type from tensor name patterns
 fn infer_layer_type(names: &[&str]) -> &'static str {
     let joined = names.join(" ");
-    if joined.contains("attention") || joined.contains("attn") || joined.contains("self_attn") {
-        "Attention"
-    } else if joined.contains("ffn") || joined.contains("mlp") || joined.contains("fc") {
-        "FFN"
-    } else if joined.contains("norm") || joined.contains("ln") || joined.contains("layer_norm") {
-        "LayerNorm"
-    } else if joined.contains("embed") || joined.contains("token") || joined.contains("wte") {
-        "Embedding"
-    } else if joined.contains("conv") {
-        "Conv"
-    } else if joined.contains("proj") || joined.contains("head") || joined.contains("lm_head") {
-        "Projection"
-    } else {
-        "Linear"
+    for (keywords, label) in LAYER_TYPE_TABLE {
+        if keywords.iter().any(|kw| joined.contains(kw)) {
+            return label;
+        }
     }
+    "Linear"
 }
 
 // ============================================================================
@@ -2008,11 +2009,9 @@ fn run_decrypt(args: &AprDecryptArgs, global: &super::args::Args) -> CliResult<C
             .map_err(|_| {
                 CliError::InvalidArgument("Invalid nonce in encrypted file".to_string())
             })?;
-        let ciphertext = content
-            .get(28..)
-            .ok_or_else(|| {
-                CliError::InvalidArgument("Encrypted file too short for ciphertext".to_string())
-            })?;
+        let ciphertext = content.get(28..).ok_or_else(|| {
+            CliError::InvalidArgument("Encrypted file too short for ciphertext".to_string())
+        })?;
 
         use aes_gcm::{
             aead::{Aead, KeyInit},
