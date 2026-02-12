@@ -245,12 +245,11 @@ impl CrossAttentionAlignment {
         // Find peak frame for each token
         let mut alignments = Vec::with_capacity(token_ids.len());
 
-        for (token_idx, &token_id) in token_ids.iter().enumerate() {
-            if token_idx >= averaged.len() {
-                break;
-            }
-
-            let token_attention = &averaged[token_idx];
+        for (token_idx, (&token_id, token_attention)) in token_ids
+            .iter()
+            .zip(averaged.iter())
+            .enumerate()
+        {
             let (peak_frame, peak_value) = self.find_peak(token_attention);
 
             let confidence = self.compute_confidence(token_attention, peak_frame, peak_value);
@@ -259,13 +258,9 @@ impl CrossAttentionAlignment {
                 .with_attention_weights(token_attention.clone());
 
             // Set end time based on next token or frame boundary
-            if token_idx + 1 < averaged.len() {
-                let next_attention = &averaged[token_idx + 1];
-                let (next_peak, _) = self.find_peak(next_attention);
-                alignment.set_end_time(next_peak);
-            } else {
-                alignment.set_end_time(num_frames);
-            }
+            let end_frame = averaged.get(token_idx + 1)
+                .map_or(num_frames, |next| self.find_peak(next).0);
+            alignment.set_end_time(end_frame);
 
             alignments.push(alignment);
         }
@@ -282,42 +277,33 @@ impl CrossAttentionAlignment {
         num_tokens: usize,
     ) -> WhisperResult<Vec<Vec<f32>>> {
         let mut averaged = vec![vec![0.0f32; num_frames]; num_tokens];
-        let mut count = 0;
+        let mut count = 0usize;
 
-        for (layer_idx, layer) in attention_weights.iter().enumerate() {
-            if !self.config.layers.contains(&layer_idx) {
-                continue;
-            }
+        let selected_heads: Vec<&Vec<Vec<f32>>> = attention_weights
+            .iter()
+            .enumerate()
+            .filter(|(li, _)| self.config.layers.contains(li))
+            .flat_map(|(_, layer)| {
+                layer.iter().enumerate().filter(|(hi, _)| {
+                    self.config.heads.as_ref().map_or(true, |h| h.contains(hi))
+                })
+            })
+            .map(|(_, head)| head)
+            .collect();
 
-            for (head_idx, head) in layer.iter().enumerate() {
-                if let Some(ref heads) = self.config.heads {
-                    if !heads.contains(&head_idx) {
-                        continue;
-                    }
+        for head in &selected_heads {
+            for (token_idx, token_attention) in head.iter().enumerate().take(num_tokens) {
+                for (frame_idx, &weight) in token_attention.iter().enumerate().take(num_frames) {
+                    averaged[token_idx][frame_idx] += weight;
                 }
-
-                for (token_idx, token_attention) in head.iter().enumerate() {
-                    if token_idx >= num_tokens {
-                        break;
-                    }
-
-                    for (frame_idx, &weight) in token_attention.iter().enumerate() {
-                        if frame_idx >= num_frames {
-                            break;
-                        }
-                        averaged[token_idx][frame_idx] += weight;
-                    }
-                }
-
-                count += 1;
             }
+            count += 1;
         }
 
-        if count > 0 {
-            for token_attention in &mut averaged {
-                for weight in token_attention.iter_mut() {
-                    *weight /= count as f32;
-                }
+        let scale = 1.0 / (count.max(1) as f32);
+        for token_attention in &mut averaged {
+            for weight in token_attention.iter_mut() {
+                *weight *= scale;
             }
         }
 
@@ -336,15 +322,8 @@ impl CrossAttentionAlignment {
 
     /// Compute alignment confidence
     fn compute_confidence(&self, attention: &[f32], peak_frame: usize, peak_value: f32) -> f32 {
-        if attention.is_empty() || peak_value < self.config.min_attention {
-            return 0.0;
-        }
-
-        // Confidence based on:
-        // 1. Peak value (higher is better)
-        // 2. Peakiness (concentration around peak)
         let sum: f32 = attention.iter().sum();
-        if sum <= 0.0 {
+        if attention.is_empty() || peak_value < self.config.min_attention || sum <= 0.0 {
             return 0.0;
         }
 

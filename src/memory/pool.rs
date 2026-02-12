@@ -208,23 +208,22 @@ impl MemoryPool {
     /// Get a buffer of at least the requested size
     pub fn get(&self, size: usize) -> PooledBuffer {
         let size_class = SizeClass::for_size(size);
-        self.stats.borrow_mut().allocations += 1;
+        let cached = self.pools.borrow_mut().get_mut(&size_class).and_then(Vec::pop);
 
-        let mut pools = self.pools.borrow_mut();
-        if let Some(pool) = pools.get_mut(&size_class) {
-            if let Some(mut buffer) = pool.pop() {
-                self.stats.borrow_mut().hits += 1;
-                buffer.set_len(size);
-                buffer.fill(0.0); // Zero out for safety
-                return buffer;
-            }
+        let mut stats = self.stats.borrow_mut();
+        stats.allocations += 1;
+
+        if let Some(mut buffer) = cached {
+            stats.hits += 1;
+            buffer.set_len(size);
+            buffer.fill(0.0);
+            buffer
+        } else {
+            stats.misses += 1;
+            let mut buffer = PooledBuffer::new(size_class);
+            buffer.set_len(size);
+            buffer
         }
-
-        // Allocate new buffer
-        self.stats.borrow_mut().misses += 1;
-        let mut buffer = PooledBuffer::new(size_class);
-        buffer.set_len(size);
-        buffer
     }
 
     /// Get a buffer and fill it with data from a slice
@@ -236,16 +235,17 @@ impl MemoryPool {
 
     /// Return a buffer to the pool for reuse
     pub fn return_buffer(&self, buffer: PooledBuffer) {
-        self.stats.borrow_mut().returns += 1;
-
         let mut pools = self.pools.borrow_mut();
         let pool = pools.entry(buffer.size_class).or_default();
+        let dropped = pool.len() >= self.max_per_class;
 
-        if pool.len() < self.max_per_class {
-            pool.push(buffer);
+        let mut stats = self.stats.borrow_mut();
+        stats.returns += 1;
+
+        if dropped {
+            stats.dropped += 1;
         } else {
-            self.stats.borrow_mut().dropped += 1;
-            // Buffer is dropped, releasing memory
+            pool.push(buffer);
         }
     }
 
@@ -263,17 +263,26 @@ impl MemoryPool {
     /// Get total number of buffered allocations
     #[must_use]
     pub fn buffered_count(&self) -> usize {
-        self.pools.borrow().values().map(Vec::len).sum()
+        self.with_pools(|pools| pools.values().map(Vec::len).sum())
     }
 
     /// Get total bytes held in pool
     #[must_use]
     pub fn buffered_bytes(&self) -> usize {
-        self.pools
-            .borrow()
-            .iter()
-            .map(|(class, buffers)| class.allocation_size() * buffers.len() * 4)
-            .sum()
+        self.with_pools(|pools| {
+            pools
+                .iter()
+                .map(|(class, buffers)| class.allocation_size() * buffers.len() * 4)
+                .sum()
+        })
+    }
+
+    /// Execute a closure with a shared borrow of the pools
+    fn with_pools<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&BTreeMap<SizeClass, Vec<PooledBuffer>>) -> R,
+    {
+        f(&self.pools.borrow())
     }
 
     /// Pre-allocate buffers of specific sizes

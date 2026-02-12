@@ -102,19 +102,13 @@ impl ByteLevelTokenizer {
     /// Decode tokens to text
     #[must_use]
     pub fn decode(&self, tokens: &[u32]) -> String {
+        let special = [self.special_tokens.bos, self.special_tokens.eos, self.special_tokens.pad];
         tokens
             .iter()
+            .filter(|&&t| !special.contains(&t))
             .filter_map(|&t| {
-                if t == self.special_tokens.bos
-                    || t == self.special_tokens.eos
-                    || t == self.special_tokens.pad
-                {
-                    None
-                } else if t >= self.byte_offset && t < self.byte_offset + 256 {
-                    Some((t - self.byte_offset) as u8 as char)
-                } else {
-                    None
-                }
+                let byte_val = t.checked_sub(self.byte_offset).filter(|&v| v < 256)?;
+                Some(byte_val as u8 as char)
             })
             .collect()
     }
@@ -231,27 +225,7 @@ impl Lfm2Tokenizer {
     pub fn encode(&self, text: &str) -> Vec<u32> {
         let mut tokens = Vec::with_capacity(text.len() + 2);
         tokens.push(self.special_tokens.bos);
-
-        if self.merges.is_empty() {
-            // No BPE merges, use byte-level encoding
-            for ch in text.chars() {
-                if let Some(&id) = self.vocab.get(&ch.to_string()) {
-                    tokens.push(id);
-                } else {
-                    // Encode as bytes
-                    let mut buf = [0u8; 4];
-                    let encoded = ch.encode_utf8(&mut buf);
-                    for byte in encoded.bytes() {
-                        tokens.push(u32::from(byte) + 256);
-                    }
-                }
-            }
-        } else {
-            // BPE encoding
-            let encoded = self.bpe_encode(text);
-            tokens.extend(encoded);
-        }
-
+        tokens.extend(self.encode_inner(text));
         tokens.push(self.special_tokens.eos);
         tokens
     }
@@ -259,20 +233,24 @@ impl Lfm2Tokenizer {
     /// Encode without adding special tokens
     #[must_use]
     pub fn encode_without_special(&self, text: &str) -> Vec<u32> {
-        if self.merges.is_empty() {
-            // Byte-level fallback
-            text.chars()
-                .flat_map(|ch| {
-                    if let Some(&id) = self.vocab.get(&ch.to_string()) {
-                        vec![id]
-                    } else {
-                        ch.to_string().bytes().map(|b| u32::from(b) + 256).collect()
-                    }
-                })
-                .collect()
-        } else {
-            self.bpe_encode(text)
+        self.encode_inner(text)
+    }
+
+    /// Core encoding logic shared by encode and encode_without_special
+    fn encode_inner(&self, text: &str) -> Vec<u32> {
+        if !self.merges.is_empty() {
+            return self.bpe_encode(text);
         }
+        text.chars()
+            .flat_map(|ch| {
+                self.vocab
+                    .get(&ch.to_string())
+                    .map_or_else(
+                        || ch.to_string().bytes().map(|b| u32::from(b) + 256).collect(),
+                        |&id| vec![id],
+                    )
+            })
+            .collect()
     }
 
     /// BPE encoding algorithm
@@ -308,34 +286,28 @@ impl Lfm2Tokenizer {
     /// Decode token IDs to text
     #[must_use]
     pub fn decode(&self, tokens: &[u32]) -> String {
-        let mut result = String::new();
+        tokens
+            .iter()
+            .filter(|&&id| !self.is_special_token(id))
+            .filter_map(|&id| self.decode_single_token(id))
+            .collect()
+    }
 
-        for &id in tokens {
-            if id == self.special_tokens.bos
-                || id == self.special_tokens.eos
-                || id == self.special_tokens.pad
-            {
-                continue;
-            }
-
-            if let Some(token) = self.id_to_token.get(&id) {
-                // Handle byte tokens
-                if token.starts_with("<0x") && token.ends_with('>') {
-                    if let Some(hex) = token.get(3..5) {
-                        if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                            result.push(byte as char);
-                            continue;
-                        }
-                    }
-                }
-                result.push_str(token);
-            } else if (256..512).contains(&id) {
-                // Byte fallback
-                result.push((id - 256) as u8 as char);
-            }
+    /// Decode a single non-special token to its string representation
+    fn decode_single_token(&self, id: u32) -> Option<String> {
+        if let Some(token) = self.id_to_token.get(&id) {
+            // Handle byte tokens like <0xFF>
+            let byte_decoded = token
+                .strip_prefix("<0x")
+                .and_then(|s| s.strip_suffix('>'))
+                .and_then(|hex| u8::from_str_radix(&hex[..2.min(hex.len())], 16).ok())
+                .map(|b| (b as char).to_string());
+            Some(byte_decoded.unwrap_or_else(|| token.clone()))
+        } else if (256..512).contains(&id) {
+            Some(((id - 256) as u8 as char).to_string())
+        } else {
+            None
         }
-
-        result
     }
 
     /// Get vocabulary size
@@ -475,15 +447,7 @@ fn scan_quoted_string(chars: &[char], start: usize) -> Option<(String, usize)> {
 
 /// Skip forward to `target` char, returning position after it. Returns None if not found.
 fn skip_past_char(chars: &[char], start: usize, target: char) -> Option<usize> {
-    let mut i = start;
-    while i < chars.len() && chars[i] != target {
-        i += 1;
-    }
-    if i < chars.len() {
-        Some(i + 1)
-    } else {
-        None
-    }
+    chars[start..].iter().position(|&c| c == target).map(|p| start + p + 1)
 }
 
 /// Parse an integer starting at `start`, returning (value, position after number).
