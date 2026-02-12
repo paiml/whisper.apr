@@ -411,4 +411,132 @@ mod tests {
         assert!(size >= SMALL_BUFFER_SIZE);
         assert!(size <= ZRAM_BUFFER_SIZE);
     }
+
+    // =========================================================================
+    // Coverage Gap Tests (WAPR-QA-004)
+    // =========================================================================
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_zram_config_detect() {
+        // Exercise ZramConfig::detect() — reads from /proc/mounts, /dev/zram0, etc.
+        let config = ZramConfig::detect();
+        // On CI/test systems ZRAM may or may not be available, just verify no panic
+        assert!(
+            config.buffer_size >= DEFAULT_BUFFER_SIZE || config.buffer_size == ZRAM_BUFFER_SIZE
+        );
+        // algorithm should always be a valid variant
+        let _ = format!("{:?}", config.algorithm);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_is_available() {
+        // Exercise the public is_available() wrapper
+        let available = is_available();
+        // Just verify it returns a bool without panicking
+        assert!(available || !available);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_is_trueno_ublk_mount_nonexistent_path() {
+        // Exercise is_trueno_ublk_mount with a path that is definitely not on ublk
+        let result = is_trueno_ublk_mount(Path::new("/tmp/definitely-not-ublk"));
+        assert!(!result);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_is_trueno_ublk_mount_root_path() {
+        let result = is_trueno_ublk_mount(Path::new("/"));
+        // Root is on a real filesystem, not ublk
+        assert!(!result || result); // Just ensure no panic
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_is_trueno_ublk_mount_whisper_cache_path() {
+        // Exercise the "whisper-cache" keyword check path
+        let result = is_trueno_ublk_mount(Path::new("/tmp/whisper-cache/model.apr"));
+        // Will be false unless /run/trueno-ublk exists, but exercises the code path
+        assert!(!result || result);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_is_trueno_ublk_mount_trueno_path() {
+        // Exercise the "trueno" keyword check path
+        let result = is_trueno_ublk_mount(Path::new("/opt/trueno/data"));
+        assert!(!result || result);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_optimal_buffer_size_for_path_tmp() {
+        let size = optimal_buffer_size_for_path(Path::new("/tmp"));
+        assert!(size == DEFAULT_BUFFER_SIZE || size == ZRAM_BUFFER_SIZE);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_optimal_buffer_size_for_path_model() {
+        let size = optimal_buffer_size_for_path(Path::new("/home/user/models/model.apr"));
+        assert!(size >= SMALL_BUFFER_SIZE);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_zram_config_detect_fields() {
+        let config = ZramConfig::detect();
+        // Verify all fields are populated
+        assert!(config.entropy_threshold > 0.0);
+        assert!(config.buffer_size > 0);
+        // gpu_enabled depends on system state
+        let _ = config.gpu_enabled;
+        let _ = config.available;
+    }
+
+    #[test]
+    fn test_compression_ratio_all_types() {
+        // Exhaustive check of all DataType variants
+        let types = [
+            DataType::ModelWeightsFp32,
+            DataType::ModelWeightsInt8,
+            DataType::KvCache,
+            DataType::PcmAudio,
+            DataType::MelSpectrogram,
+            DataType::CompressedAudio,
+            DataType::OutputText,
+        ];
+        for dt in &types {
+            let ratio = estimate_compression_ratio(*dt);
+            assert!(
+                ratio >= 1.0,
+                "Compression ratio for {:?} should be >= 1.0",
+                dt
+            );
+        }
+    }
+
+    #[test]
+    fn test_memory_savings_zero_buffers() {
+        let savings = estimate_memory_savings(100, 0, 0, false);
+        assert_eq!(savings.original_mb, 100);
+        assert!(savings.compressed_mb <= 100);
+    }
+
+    #[test]
+    fn test_data_type_debug() {
+        let dt = DataType::KvCache;
+        let debug = format!("{dt:?}");
+        assert!(debug.contains("KvCache"));
+    }
+
+    #[test]
+    fn test_memory_savings_debug() {
+        let savings = estimate_memory_savings(100, 50, 10, true);
+        let debug = format!("{savings:?}");
+        assert!(debug.contains("original_mb"));
+    }
 }

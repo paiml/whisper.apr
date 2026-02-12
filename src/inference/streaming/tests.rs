@@ -544,6 +544,63 @@ fn test_process_multiple_chunks() {
     assert!(stats.samples_processed > 0);
 }
 
+// =========================================================================
+// Coverage Gap: create_partial_result deep validation (WAPR-QA-004)
+// =========================================================================
+
+#[test]
+fn test_create_partial_result_fields() {
+    // Directly exercise create_partial_result by ensuring partial result has correct fields
+    let config = StreamingConfig {
+        audio: AudioStreamingConfig::ultra_low_latency().without_vad(),
+        max_tokens_per_chunk: 224,
+        overlap_tokens: 10,
+        temperature: 0.0,
+        return_partial: true,
+    };
+    let mut transcriber = StreamingTranscriber::new(config);
+
+    // Push enough for >30% progress but not full chunk
+    let samples = vec![0.1f32; 2000];
+    transcriber.push_audio(&samples);
+
+    let result = transcriber.process().expect("process should succeed");
+    if let Some(partial) = result {
+        // Validate all fields from create_partial_result
+        assert_eq!(partial.text, "[listening...]");
+        assert!(!partial.is_final);
+        assert!((partial.confidence - 0.0).abs() < f32::EPSILON);
+        assert_eq!(partial.chunk_index, 0);
+        assert!(partial.latency_ms > 0); // Should reflect chunk progress * 30000
+    }
+}
+
+#[test]
+fn test_create_partial_result_chunk_index_after_process() {
+    let config = StreamingConfig {
+        audio: AudioStreamingConfig::ultra_low_latency().without_vad(),
+        max_tokens_per_chunk: 224,
+        overlap_tokens: 10,
+        temperature: 0.0,
+        return_partial: true,
+    };
+    let mut transcriber = StreamingTranscriber::new(config);
+
+    // Process one full chunk first
+    let full_chunk = vec![0.1f32; 5000];
+    transcriber.push_audio(&full_chunk);
+    let _ = transcriber.process();
+
+    // Now push partial and get partial result
+    let partial = vec![0.1f32; 2000];
+    transcriber.push_audio(&partial);
+    let result = transcriber.process().expect("should succeed");
+    if let Some(partial_result) = result {
+        // chunk_index should reflect the processed chunks
+        assert_eq!(partial_result.chunk_index, transcriber.chunk_index());
+    }
+}
+
 #[test]
 fn test_finalize_flushes_remaining_audio() {
     let config = StreamingConfig {

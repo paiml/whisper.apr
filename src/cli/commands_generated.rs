@@ -3213,7 +3213,7 @@ fn format_validation_markdown(report: &crate::format::ValidationReport, detailed
 // ============================================================================
 
 /// Load audio samples from file
-fn load_audio_samples(path: &Path, data: &[u8]) -> CliResult<Vec<f32>> {
+pub(crate) fn load_audio_samples(path: &Path, data: &[u8]) -> CliResult<Vec<f32>> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
