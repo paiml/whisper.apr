@@ -1815,7 +1815,9 @@ fn load_verifying_key_from_file(
             "Pubkey file too small".to_string(),
         ));
     }
-    let bytes: [u8; 32] = pk_bytes[..32].try_into().unwrap();
+    let bytes: [u8; 32] = pk_bytes[..32]
+        .try_into()
+        .map_err(|_| CliError::InvalidArgument("Invalid public key length".to_string()))?;
     ed25519_dalek::VerifyingKey::from_bytes(&bytes)
         .map_err(|e| CliError::InvalidArgument(format!("Invalid public key: {e}")))
 }
@@ -1826,7 +1828,11 @@ fn load_verifying_key_embedded(
     content: &[u8],
     pubkey_start: usize,
 ) -> CliResult<ed25519_dalek::VerifyingKey> {
-    let bytes: [u8; 32] = content[pubkey_start..].try_into().unwrap();
+    let bytes: [u8; 32] = content
+        .get(pubkey_start..)
+        .ok_or_else(|| CliError::InvalidArgument("Public key offset out of bounds".to_string()))?
+        .try_into()
+        .map_err(|_| CliError::InvalidArgument("Invalid embedded public key length".to_string()))?;
     ed25519_dalek::VerifyingKey::from_bytes(&bytes)
         .map_err(|e| CliError::InvalidArgument(format!("Invalid embedded public key: {e}")))
 }
@@ -1987,8 +1993,12 @@ fn run_decrypt(args: &AprDecryptArgs, global: &super::args::Args) -> CliResult<C
         }
 
         // Parse: salt(16) + nonce(12) + ciphertext
-        let salt: [u8; 16] = content[..16].try_into().unwrap();
-        let nonce_bytes: [u8; 12] = content[16..28].try_into().unwrap();
+        let salt: [u8; 16] = content[..16]
+            .try_into()
+            .map_err(|_| CliError::InvalidArgument("Invalid salt in encrypted file".to_string()))?;
+        let nonce_bytes: [u8; 12] = content[16..28].try_into().map_err(|_| {
+            CliError::InvalidArgument("Invalid nonce in encrypted file".to_string())
+        })?;
         let ciphertext = &content[28..];
 
         use aes_gcm::{

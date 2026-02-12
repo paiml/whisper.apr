@@ -1,0 +1,14 @@
+# Clippy configuration for whisper-apr
+# See: https://doc.rust-lang.org/clippy/lint_configuration.html
+
+# Maximum cognitive complexity before warning
+cognitive-complexity-threshold = 25
+
+# Maximum lines in a function body
+too-many-lines-threshold = 200
+
+# Allowed wildcard imports (WASM bindings need these)
+allowed-wildcard-imports = ["wasm_bindgen::prelude::*", "web_sys::*"]
+
+# MSRV for compatibility lints
+msrv = "1.75"
