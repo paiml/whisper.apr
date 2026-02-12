@@ -495,7 +495,9 @@ fn test_simulated_gpu_capabilities() {
     let config = SelectorConfig::default();
     let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
     assert!(selector.gpu_available());
-    let gpu_caps = selector.gpu_capabilities().expect("GPU should be available");
+    let gpu_caps = selector
+        .gpu_capabilities()
+        .expect("GPU should be available");
     assert!(gpu_caps.available);
     assert!(gpu_caps.supports_f16);
 }
