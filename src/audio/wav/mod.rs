@@ -294,14 +294,9 @@ pub fn resample(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32>
         let src_idx = src_pos as usize;
         let frac = (src_pos - src_idx as f64) as f32;
 
-        let sample = if src_idx + 1 < samples.len() {
-            samples[src_idx].mul_add(1.0 - frac, samples[src_idx + 1] * frac)
-        } else if src_idx < samples.len() {
-            samples[src_idx]
-        } else {
-            0.0
-        };
-        output.push(sample);
+        let s0 = samples.get(src_idx).copied().unwrap_or(0.0);
+        let s1 = samples.get(src_idx + 1).copied().unwrap_or(s0);
+        output.push(s0.mul_add(1.0 - frac, s1 * frac));
     }
 
     output

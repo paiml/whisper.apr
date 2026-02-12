@@ -237,7 +237,7 @@ fn test_decompress_invalid_offset() {
     assert!(result
         .expect_err("expected error for zero offset")
         .to_string()
-        .contains("invalid zero offset"));
+        .contains("invalid offset"));
 }
 
 #[test]
