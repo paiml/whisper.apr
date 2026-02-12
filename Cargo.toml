@@ -10,6 +10,19 @@ documentation = "https://docs.rs/whisper-apr"
 readme = "README.md"
 keywords = ["whisper", "speech-recognition", "asr", "wasm", "audio"]
 categories = ["multimedia::audio", "wasm", "science"]
+exclude = [
+    "demos/",
+    "docs/",
+    "scripts/",
+    "test_data/",
+    "tests/",
+    "examples/",
+    "benches/",
+    "models/",
+    ".github/",
+    ".pmat/",
+    ".pmat-work/",
+]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
