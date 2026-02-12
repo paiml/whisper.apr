@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Benchmarks for Whisper.apr inference performance
 //!
 //! This benchmark suite measures end-to-end transcription performance
@@ -252,7 +253,7 @@ fn bench_attention(c: &mut Criterion) {
 
                 bencher.iter(|| {
                     let output = attn.scaled_dot_product_attention(&q, &k, &v, None);
-                    black_box(output);
+                    let _ = black_box(output);
                 });
             },
         );
@@ -312,7 +313,7 @@ fn bench_streaming_attention(c: &mut Criterion) {
         ("base_start", 0, 8, 512),
         ("base_mid", 50, 8, 512),
     ] {
-        let d_head = d_model / n_heads;
+        let _d_head = d_model / n_heads;
         group.throughput(Throughput::Elements(d_model as u64));
 
         group.bench_with_input(
@@ -326,7 +327,7 @@ fn bench_streaming_attention(c: &mut Criterion) {
 
                 bencher.iter(|| {
                     let result = attn.forward_streaming(&x, &cached_k, &cached_v, None);
-                    black_box(result);
+                    let _ = black_box(result);
                 });
             },
         );

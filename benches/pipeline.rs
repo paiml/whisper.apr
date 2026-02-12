@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Pipeline Step Benchmark (WAPR-BENCH-001)
 //!
 //! Measures each step of the whisper.apr transcription pipeline using

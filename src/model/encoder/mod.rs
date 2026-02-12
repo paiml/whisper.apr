@@ -356,9 +356,44 @@ mod fused {
         }
 
         /// Forward pass through fused FFN
+        ///
+        /// Computes: fc2(GELU(fused_weight @ input + fc1_bias)) + fc2_bias
+        /// where fused_weight = fc1_weight * ln_weight (pre-fused)
         pub fn forward(&self, input: &[f32]) -> WhisperResult<Vec<f32>> {
             let seq_len = input.len() / self.d_model;
-            Ok(vec![0.0; seq_len * self.d_model])
+            let mut output = vec![0.0f32; seq_len * self.d_model];
+
+            for s in 0..seq_len {
+                let x = &input[s * self.d_model..(s + 1) * self.d_model];
+
+                // FC1: fused_weight (d_ff x d_model) @ x (d_model) + fc1_bias -> hidden (d_ff)
+                let mut hidden = vec![0.0f32; self.d_ff];
+                for i in 0..self.d_ff {
+                    let mut sum = self.fc1_bias[i];
+                    for j in 0..self.d_model {
+                        sum += self.fused_weight[i * self.d_model + j] * x[j];
+                    }
+                    // GELU activation: x * 0.5 * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+                    let g = sum * 0.5
+                        * (1.0
+                            + (0.7978845608_f32
+                                * (sum + 0.044715 * sum * sum * sum))
+                                .tanh());
+                    hidden[i] = g;
+                }
+
+                // FC2: fc2_weight (d_model x d_ff) @ hidden (d_ff) + fc2_bias -> out (d_model)
+                let out = &mut output[s * self.d_model..(s + 1) * self.d_model];
+                for i in 0..self.d_model {
+                    let mut sum = self.fc2_bias[i];
+                    for j in 0..self.d_ff {
+                        sum += self.fc2_weight[i * self.d_ff + j] * hidden[j];
+                    }
+                    out[i] = sum;
+                }
+            }
+
+            Ok(output)
         }
 
         /// Set fused weights combining layer norm and FC1
