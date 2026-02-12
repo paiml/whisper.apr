@@ -426,7 +426,7 @@ impl Lfm2Tokenizer {
                 let merges_section_start = merges_start + bracket_start;
                 if let Some(bracket_end) = json_str[merges_section_start..].find(']') {
                     let merges_json =
-                        &json_str[merges_section_start..merges_section_start + bracket_end + 1];
+                        &json_str[merges_section_start..=merges_section_start + bracket_end];
                     parse_merge_entries(merges_json, &mut merges);
                 }
             }
@@ -577,6 +577,7 @@ pub(crate) fn parse_merge_entries(json: &str, merges: &mut Vec<(String, String)>
 
 /// State for JSON key-value parsing
 #[derive(Default)]
+#[allow(clippy::struct_excessive_bools)]
 struct JsonParseState {
     current_id: Option<u32>,
     current_content: Option<String>,
@@ -700,7 +701,6 @@ pub(crate) fn unescape_json_string(s: &str) -> String {
                 Some('n') => result.push('\n'),
                 Some('r') => result.push('\r'),
                 Some('t') => result.push('\t'),
-                Some('\\') => result.push('\\'),
                 Some('"') => result.push('"'),
                 Some('/') => result.push('/'),
                 Some('u') => {
@@ -712,11 +712,11 @@ pub(crate) fn unescape_json_string(s: &str) -> String {
                         }
                     }
                 }
+                None | Some('\\') => result.push('\\'),
                 Some(other) => {
                     result.push('\\');
                     result.push(other);
                 }
-                None => result.push('\\'),
             }
         } else {
             result.push(c);

@@ -73,7 +73,6 @@ pub enum AprAction {
     F16Audit(AprF16AuditArgs),
 
     // ── Phase 3: Tier B — Feature-Gated ──
-
     /// Sign model with Ed25519 key (feature: `format-signing`)
     Sign(AprSignArgs),
 

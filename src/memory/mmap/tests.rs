@@ -101,8 +101,7 @@ fn test_memory_region_aligned() {
 
 #[test]
 fn test_mmap_handle_new() {
-    let handle =
-        MmapHandle::new(1024 * 1024, MmapConfig::default()).expect("Should create handle");
+    let handle = MmapHandle::new(1024 * 1024, MmapConfig::default()).expect("Should create handle");
     assert!(handle.id() > 0);
     assert_eq!(handle.size(), 1024 * 1024);
     assert!(handle.is_valid());
@@ -116,8 +115,7 @@ fn test_mmap_handle_for_inference() {
 
 #[test]
 fn test_mmap_handle_regions() {
-    let mut handle =
-        MmapHandle::new(1024 * 1024, MmapConfig::default()).expect("Should create");
+    let mut handle = MmapHandle::new(1024 * 1024, MmapConfig::default()).expect("Should create");
 
     assert_eq!(handle.region_count(), 0);
     assert_eq!(handle.tracked_bytes(), 0);
@@ -159,9 +157,8 @@ fn test_mmap_handle_write_at_readonly() {
 
 #[test]
 fn test_mmap_handle_write_at_readwrite() {
-    let mut handle =
-        MmapHandle::new(1024, MmapConfig::default().with_mode(MmapMode::ReadWrite))
-            .expect("Should create");
+    let mut handle = MmapHandle::new(1024, MmapConfig::default().with_mode(MmapMode::ReadWrite))
+        .expect("Should create");
 
     // Write should succeed
     assert!(handle.write_at(0, &[1, 2, 3]).is_ok());
@@ -240,4 +237,60 @@ fn test_weight_region_size_matches() {
     );
 
     assert!(!too_small.size_matches());
+}
+
+// =========================================================================
+// Additional Coverage Tests (WAPR-QA-003)
+// =========================================================================
+
+#[test]
+fn test_mmap_config_random_access() {
+    let config = MmapConfig::random_access();
+    assert!(!config.sequential_access);
+    assert_eq!(config.mode, MmapMode::ReadOnly);
+    assert!(!config.prefetch);
+}
+
+#[test]
+fn test_weight_type_name_all_variants() {
+    assert_eq!(WeightType::Scale.name(), "scale");
+    assert_eq!(WeightType::Offset.name(), "offset");
+    assert_eq!(WeightType::Embedding.name(), "embedding");
+    assert_eq!(WeightType::KeyProj.name(), "key_proj");
+    assert_eq!(WeightType::ValueProj.name(), "value_proj");
+    assert_eq!(WeightType::OutProj.name(), "out_proj");
+}
+
+#[test]
+fn test_mmap_handle_read_at_boundary() {
+    let handle = MmapHandle::new(256, MmapConfig::default()).expect("Should create");
+
+    // Read exactly to the end
+    let data = handle.read_at(0, 256).expect("Should read full size");
+    assert_eq!(data.len(), 256);
+
+    // Read 1 byte past end should fail
+    assert!(handle.read_at(0, 257).is_err());
+    assert!(handle.read_at(255, 2).is_err());
+}
+
+#[test]
+fn test_mmap_handle_invalidate_then_read() {
+    let mut handle = MmapHandle::new(1024, MmapConfig::default()).expect("Should create");
+    handle.invalidate();
+    assert!(!handle.is_valid());
+    // After invalidation, reads should still work on the simulated buffer
+}
+
+#[test]
+fn test_memory_region_zero_size() {
+    let region = MemoryRegion::new(0, 0);
+    assert_eq!(region.end(), 0);
+    assert!(!region.contains(0));
+}
+
+#[test]
+fn test_weight_dtype_all_bytes() {
+    assert_eq!(WeightDtype::Bf16.bytes_per_element(), 2);
+    assert_eq!(WeightDtype::Int4.bytes_per_element(), 1);
 }

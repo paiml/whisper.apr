@@ -208,30 +208,35 @@ impl WasmMemoryEstimate {
     /// Format as human-readable summary
     #[must_use]
     pub fn summary(&self) -> String {
+        use std::fmt::Write;
         let mut s = String::new();
-        s.push_str(&format!(
-            "Model:    {:>7.2} GB\n",
+        let _ = writeln!(
+            s,
+            "Model:    {:>7.2} GB",
             self.model_bytes as f64 / 1_000_000_000.0
-        ));
-        s.push_str(&format!(
-            "KV Cache: {:>7.2} GB\n",
+        );
+        let _ = writeln!(
+            s,
+            "KV Cache: {:>7.2} GB",
             self.kv_cache_bytes as f64 / 1_000_000_000.0
-        ));
-        s.push_str(&format!(
-            "Overhead: {:>7.2} GB\n",
+        );
+        let _ = writeln!(
+            s,
+            "Overhead: {:>7.2} GB",
             self.overhead_bytes as f64 / 1_000_000_000.0
-        ));
+        );
         s.push_str("─────────────────\n");
-        s.push_str(&format!(
-            "Total:    {:>7.2} GB  {}\n",
+        let _ = writeln!(
+            s,
+            "Total:    {:>7.2} GB  {}",
             self.total_bytes as f64 / 1_000_000_000.0,
             if self.is_viable { "✅" } else { "❌" }
-        ));
+        );
 
         if !self.warnings.is_empty() {
             s.push_str("\nWarnings:\n");
             for w in &self.warnings {
-                s.push_str(&format!("  ⚠️ {w}\n"));
+                let _ = writeln!(s, "  ⚠️ {w}");
             }
         }
 

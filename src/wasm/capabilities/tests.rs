@@ -404,9 +404,7 @@ fn test_rtf_scaling() {
     assert!(simd_seq.rtf_multiplier() < scalar.rtf_multiplier());
 
     // Scalar should be 4x slower than SIMD threaded
-    assert!(
-        (scalar.rtf_multiplier() / simd_threaded.rtf_multiplier() - 4.0).abs() < f32::EPSILON
-    );
+    assert!((scalar.rtf_multiplier() / simd_threaded.rtf_multiplier() - 4.0).abs() < f32::EPSILON);
 }
 
 // =========================================================================

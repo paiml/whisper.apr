@@ -1,3 +1,4 @@
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 //! Quantized inference
 //!
 //! Int8 and Int4 quantization for memory-efficient inference.

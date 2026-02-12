@@ -863,5 +863,8 @@ fn test_mel_to_hz_edge_cases() {
 
     // High mel value - mel(3000) should give around 8000 Hz
     let hz_high = MelFilterbank::mel_to_hz(3000.0);
-    assert!(hz_high > 5000.0, "3000 mel should be > 5000 Hz, got {hz_high}");
+    assert!(
+        hz_high > 5000.0,
+        "3000 mel should be > 5000 Hz, got {hz_high}"
+    );
 }

@@ -209,10 +209,7 @@ mod tests {
     #[test]
     fn test_diarization_result_wasm_speaking_percentage() {
         let result = DiarizationResultWasm {
-            segments: vec![
-                make_segment(0, 0.0, 1.0),
-                make_segment(1, 1.0, 2.0),
-            ],
+            segments: vec![make_segment(0, 0.0, 1.0), make_segment(1, 1.0, 2.0)],
             speaker_embeddings: vec![],
             speaker_count: 2,
             total_duration: 2.0,

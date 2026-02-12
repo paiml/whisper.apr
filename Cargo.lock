@@ -149,7 +149,7 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
 name = "aprender"
-version = "0.25.2"
+version = "0.25.4"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -170,7 +170,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "trueno",
- "trueno-quant",
+ "trueno-quant 0.1.0",
  "ureq",
  "x25519-dalek",
 ]
@@ -583,7 +583,7 @@ checksum = "fe6d2e5af09e8c8ad56c969f2157a3d4238cebc7c55f0a517728c38f7b200f81"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.2.0",
+ "unicode-width 0.1.14",
 ]
 
 [[package]]
@@ -3187,9 +3187,9 @@ dependencies = [
 
 [[package]]
 name = "realizar"
-version = "0.6.10"
+version = "0.6.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81bca2153bc67e9b84d14e057c90f51f537a780ecbd48e902e3531925b52a718"
+checksum = "dd2168c3d43bb2af216463b7d29c6b25c782321555aadee5ccae98d7fd218b5a"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3208,6 +3208,7 @@ dependencies = [
  "tracing",
  "trueno",
  "trueno-gpu",
+ "trueno-quant 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "uuid",
 ]
 
@@ -4391,9 +4392,9 @@ dependencies = [
 
 [[package]]
 name = "trueno-gpu"
-version = "0.4.12"
+version = "0.4.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41a276f6c2cad6a9c1ca51516f16a1447066189769a9a3071c45dd7892cd38f6"
+checksum = "bbbe0098cf538c9e7ad0f5ed67dcfe9b04913a800b8e6839270ec6805840c959"
 dependencies = [
  "libloading",
  "thiserror 2.0.17",
@@ -4402,6 +4403,15 @@ dependencies = [
 [[package]]
 name = "trueno-quant"
 version = "0.1.0"
+dependencies = [
+ "half",
+]
+
+[[package]]
+name = "trueno-quant"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5da5ac788b596e45d1d3fa0991c04b0e1bac63ffe4ae2faf6ae7c0d9fdfc00eb"
 dependencies = [
  "half",
 ]
@@ -5012,7 +5022,7 @@ dependencies = [
 
 [[package]]
 name = "whisper-apr"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "aes-gcm",
  "aprender",
@@ -5080,7 +5090,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

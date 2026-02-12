@@ -93,8 +93,18 @@ impl<'a> AprValidator<'a> {
     #[allow(clippy::unused_self)]
     fn validate_functional(&self) -> Vec<ValidationCheck> {
         vec![
-            ValidationCheck::pass(21, 'E', "Encoder output match", "Skipped: no reference data"),
-            ValidationCheck::pass(22, 'E', "Decoder logits match", "Skipped: no reference data"),
+            ValidationCheck::pass(
+                21,
+                'E',
+                "Encoder output match",
+                "Skipped: no reference data",
+            ),
+            ValidationCheck::pass(
+                22,
+                'E',
+                "Decoder logits match",
+                "Skipped: no reference data",
+            ),
             ValidationCheck::pass(23, 'E', "Transcription test", "Skipped: no test audio"),
             ValidationCheck::pass(24, 'E', "No repetitive output", "Skipped: no test audio"),
             ValidationCheck::pass(25, 'E', "End-to-end accuracy", "Skipped: no validation set"),
@@ -111,7 +121,12 @@ impl<'a> AprValidator<'a> {
         if version <= 2 {
             ValidationCheck::pass(2, 'A', "Header parseable", &format!("Version {version}"))
         } else {
-            ValidationCheck::fail(2, 'A', "Header parseable", &format!("Unknown version {version}"))
+            ValidationCheck::fail(
+                2,
+                'A',
+                "Header parseable",
+                &format!("Unknown version {version}"),
+            )
         }
     }
 
@@ -143,14 +158,18 @@ impl<'a> AprValidator<'a> {
         if let Some(tensor) = self.reader.find_tensor("decoder.token_embedding") {
             let shape = tensor.shape();
             if shape.len() != 2 || shape[1] != d_model {
-                failures.push(format!("token_embedding shape {shape:?}, expected [*, {d_model}]"));
+                failures.push(format!(
+                    "token_embedding shape {shape:?}, expected [*, {d_model}]"
+                ));
             }
         }
 
         if let Some(tensor) = self.reader.find_tensor("encoder.conv1.weight") {
             let shape = tensor.shape();
             if shape.len() != 3 || shape[0] != d_model {
-                failures.push(format!("conv1 shape {shape:?}, expected [{d_model}, 80, 3]"));
+                failures.push(format!(
+                    "conv1 shape {shape:?}, expected [{d_model}, 80, 3]"
+                ));
             }
         }
 
@@ -195,7 +214,46 @@ impl<'a> AprValidator<'a> {
                     )
                 }
             }
-            Err(_) => ValidationCheck::fail(id, 'B', description, &format!("Tensor {name} not found")),
+            Err(_) => {
+                ValidationCheck::fail(id, 'B', description, &format!("Tensor {name} not found"))
+            }
+        }
+    }
+
+    /// Generic tensor stat validation: iterate matching tensors, check stats, collect failures.
+    fn check_tensor_stats(
+        &self,
+        id: u8,
+        category: char,
+        description: &str,
+        filter: impl Fn(&str) -> bool,
+        validate: impl Fn(&TensorStats) -> Option<String>,
+        pass_template: &str,
+    ) -> ValidationCheck {
+        let mut failures = Vec::new();
+        let mut checked = 0;
+
+        for tensor in &self.reader.tensors {
+            if filter(&tensor.name) {
+                if let Ok(data) = self.reader.load_tensor(&tensor.name) {
+                    let stats = TensorStats::compute(&tensor.name, &data);
+                    checked += 1;
+                    if let Some(msg) = validate(&stats) {
+                        failures.push(format!("{}: {msg}", tensor.name));
+                    }
+                }
+            }
+        }
+
+        if failures.is_empty() {
+            ValidationCheck::pass(
+                id,
+                category,
+                description,
+                &format!("All {checked} {pass_template}"),
+            )
+        } else {
+            ValidationCheck::fail(id, category, description, &failures.join("; "))
         }
     }
 
@@ -205,61 +263,29 @@ impl<'a> AprValidator<'a> {
             "encoder_attn_layer_norm.weight",
             "final_layer_norm.weight",
         ];
-        let mut failures = Vec::new();
-        let mut checked = 0;
-
-        for tensor in &self.reader.tensors {
-            for pattern in &patterns {
-                if tensor.name.contains(pattern) {
-                    if let Ok(data) = self.reader.load_tensor(&tensor.name) {
-                        let stats = TensorStats::compute(&tensor.name, &data);
-                        checked += 1;
-                        if stats.mean < 0.5 || stats.mean > 3.0 {
-                            failures.push(format!("{}: mean={:.4}", tensor.name, stats.mean));
-                        }
-                    }
-                }
-            }
-        }
-
-        if failures.is_empty() {
-            ValidationCheck::pass(
-                8,
-                'B',
-                "Block LN weight means",
-                &format!("All {checked} block LN means in [0.5, 3.0]"),
-            )
-        } else {
-            ValidationCheck::fail(8, 'B', "Block LN weight means", &failures.join("; "))
-        }
+        self.check_tensor_stats(
+            8,
+            'B',
+            "Block LN weight means",
+            |name| patterns.iter().any(|p| name.contains(p)),
+            |stats| {
+                (stats.mean < 0.5 || stats.mean > 3.0).then(|| format!("mean={:.4}", stats.mean))
+            },
+            "block LN means in [0.5, 3.0]",
+        )
     }
 
     fn check_ln_biases(&self) -> ValidationCheck {
-        let mut failures = Vec::new();
-        let mut checked = 0;
-
-        for tensor in &self.reader.tensors {
-            if tensor.name.contains("layer_norm.bias") {
-                if let Ok(data) = self.reader.load_tensor(&tensor.name) {
-                    let stats = TensorStats::compute(&tensor.name, &data);
-                    checked += 1;
-                    if stats.mean < -0.5 || stats.mean > 0.5 {
-                        failures.push(format!("{}: mean={:.4}", tensor.name, stats.mean));
-                    }
-                }
-            }
-        }
-
-        if failures.is_empty() {
-            ValidationCheck::pass(
-                9,
-                'B',
-                "LN bias means",
-                &format!("All {checked} LN bias means in [-0.5, 0.5]"),
-            )
-        } else {
-            ValidationCheck::fail(9, 'B', "LN bias means", &failures.join("; "))
-        }
+        self.check_tensor_stats(
+            9,
+            'B',
+            "LN bias means",
+            |name| name.contains("layer_norm.bias"),
+            |stats| {
+                (stats.mean < -0.5 || stats.mean > 0.5).then(|| format!("mean={:.4}", stats.mean))
+            },
+            "LN bias means in [-0.5, 0.5]",
+        )
     }
 
     fn check_ln_nan_inf(&self) -> ValidationCheck {
@@ -295,65 +321,36 @@ impl<'a> AprValidator<'a> {
     }
 
     fn check_qkv_proj_means(&self) -> ValidationCheck {
-        let patterns = ["q_proj.weight", "k_proj.weight", "v_proj.weight", "out_proj.weight"];
-        let mut failures = Vec::new();
-        let mut checked = 0;
-
-        for tensor in &self.reader.tensors {
-            for pattern in &patterns {
-                if tensor.name.ends_with(pattern) {
-                    if let Ok(data) = self.reader.load_tensor(&tensor.name) {
-                        let stats = TensorStats::compute(&tensor.name, &data);
-                        checked += 1;
-                        if stats.mean < -0.1 || stats.mean > 0.1 {
-                            failures.push(format!("{}: mean={:.4}", tensor.name, stats.mean));
-                        }
-                    }
-                }
-            }
-        }
-
-        if failures.is_empty() {
-            ValidationCheck::pass(
-                11,
-                'C',
-                "Q/K/V proj means",
-                &format!("All {checked} proj means in [-0.1, 0.1]"),
-            )
-        } else {
-            ValidationCheck::fail(11, 'C', "Q/K/V proj means", &failures.join("; "))
-        }
+        let patterns = [
+            "q_proj.weight",
+            "k_proj.weight",
+            "v_proj.weight",
+            "out_proj.weight",
+        ];
+        self.check_tensor_stats(
+            11,
+            'C',
+            "Q/K/V proj means",
+            |name| patterns.iter().any(|p| name.ends_with(p)),
+            |stats| {
+                (stats.mean < -0.1 || stats.mean > 0.1).then(|| format!("mean={:.4}", stats.mean))
+            },
+            "proj means in [-0.1, 0.1]",
+        )
     }
 
     fn check_ffn_weight_means(&self) -> ValidationCheck {
         let patterns = ["fc1.weight", "fc2.weight"];
-        let mut failures = Vec::new();
-        let mut checked = 0;
-
-        for tensor in &self.reader.tensors {
-            for pattern in &patterns {
-                if tensor.name.ends_with(pattern) {
-                    if let Ok(data) = self.reader.load_tensor(&tensor.name) {
-                        let stats = TensorStats::compute(&tensor.name, &data);
-                        checked += 1;
-                        if stats.mean < -0.1 || stats.mean > 0.1 {
-                            failures.push(format!("{}: mean={:.4}", tensor.name, stats.mean));
-                        }
-                    }
-                }
-            }
-        }
-
-        if failures.is_empty() {
-            ValidationCheck::pass(
-                12,
-                'C',
-                "FFN weight means",
-                &format!("All {checked} FFN means in [-0.1, 0.1]"),
-            )
-        } else {
-            ValidationCheck::fail(12, 'C', "FFN weight means", &failures.join("; "))
-        }
+        self.check_tensor_stats(
+            12,
+            'C',
+            "FFN weight means",
+            |name| patterns.iter().any(|p| name.ends_with(p)),
+            |stats| {
+                (stats.mean < -0.1 || stats.mean > 0.1).then(|| format!("mean={:.4}", stats.mean))
+            },
+            "FFN means in [-0.1, 0.1]",
+        )
     }
 
     fn check_weight_std(&self) -> ValidationCheck {
@@ -411,37 +408,27 @@ impl<'a> AprValidator<'a> {
         if zero_tensors.is_empty() {
             ValidationCheck::pass(14, 'C', "No zero tensors", "No all-zero tensors found")
         } else {
-            ValidationCheck::fail(14, 'C', "No zero tensors", &format!("Zero tensors: {zero_tensors:?}"))
+            ValidationCheck::fail(
+                14,
+                'C',
+                "No zero tensors",
+                &format!("Zero tensors: {zero_tensors:?}"),
+            )
         }
     }
 
     #[allow(clippy::case_sensitive_file_extension_comparisons)]
     fn check_bias_vectors(&self) -> ValidationCheck {
-        let mut failures = Vec::new();
-        let mut checked = 0;
-
-        for tensor in &self.reader.tensors {
-            if tensor.name.ends_with(".bias") && !tensor.name.contains("layer_norm") {
-                if let Ok(data) = self.reader.load_tensor(&tensor.name) {
-                    let stats = TensorStats::compute(&tensor.name, &data);
-                    checked += 1;
-                    if stats.mean < -1.0 || stats.mean > 1.0 {
-                        failures.push(format!("{}: mean={:.4}", tensor.name, stats.mean));
-                    }
-                }
-            }
-        }
-
-        if failures.is_empty() {
-            ValidationCheck::pass(
-                15,
-                'C',
-                "Bias vectors valid",
-                &format!("All {checked} bias means in [-1.0, 1.0]"),
-            )
-        } else {
-            ValidationCheck::fail(15, 'C', "Bias vectors valid", &failures.join("; "))
-        }
+        self.check_tensor_stats(
+            15,
+            'C',
+            "Bias vectors valid",
+            |name| name.ends_with(".bias") && !name.contains("layer_norm"),
+            |stats| {
+                (stats.mean < -1.0 || stats.mean > 1.0).then(|| format!("mean={:.4}", stats.mean))
+            },
+            "bias means in [-1.0, 1.0]",
+        )
     }
 
     #[allow(clippy::option_if_let_else)]
@@ -468,7 +455,12 @@ impl<'a> AprValidator<'a> {
                     )
                 }
             }
-            None => ValidationCheck::fail(16, 'D', "Token embedding shape", "Token embedding not found"),
+            None => ValidationCheck::fail(
+                16,
+                'D',
+                "Token embedding shape",
+                "Token embedding not found",
+            ),
         }
     }
 
@@ -499,7 +491,12 @@ impl<'a> AprValidator<'a> {
                     )
                 }
             }
-            Err(_) => ValidationCheck::fail(17, 'D', "Token embedding stats", "Token embedding not found"),
+            Err(_) => ValidationCheck::fail(
+                17,
+                'D',
+                "Token embedding stats",
+                "Token embedding not found",
+            ),
         }
     }
 
@@ -511,19 +508,28 @@ impl<'a> AprValidator<'a> {
         if let Some(tensor) = self.reader.find_tensor("encoder.positional_embedding") {
             let shape = tensor.shape();
             if shape.len() != 2 || shape[0] != 1500 || shape[1] != d_model_enc {
-                failures.push(format!("encoder pos: {shape:?}, expected [1500, {d_model_enc}]"));
+                failures.push(format!(
+                    "encoder pos: {shape:?}, expected [1500, {d_model_enc}]"
+                ));
             }
         }
 
         if let Some(tensor) = self.reader.find_tensor("decoder.positional_embedding") {
             let shape = tensor.shape();
             if shape.len() != 2 || shape[0] != 448 || shape[1] != d_model_dec {
-                failures.push(format!("decoder pos: {shape:?}, expected [448, {d_model_dec}]"));
+                failures.push(format!(
+                    "decoder pos: {shape:?}, expected [448, {d_model_dec}]"
+                ));
             }
         }
 
         if failures.is_empty() {
-            ValidationCheck::pass(18, 'D', "Positional embedding shape", "Encoder [1500, d], Decoder [448, d]")
+            ValidationCheck::pass(
+                18,
+                'D',
+                "Positional embedding shape",
+                "Encoder [1500, d], Decoder [448, d]",
+            )
         } else {
             ValidationCheck::fail(18, 'D', "Positional embedding shape", &failures.join("; "))
         }
@@ -532,17 +538,28 @@ impl<'a> AprValidator<'a> {
     fn check_positional_embedding_stats(&self) -> ValidationCheck {
         let mut failures = Vec::new();
 
-        for name in ["encoder.positional_embedding", "decoder.positional_embedding"] {
+        for name in [
+            "encoder.positional_embedding",
+            "decoder.positional_embedding",
+        ] {
             if let Ok(data) = self.reader.load_tensor(name) {
                 let stats = TensorStats::compute(name, &data);
                 if stats.mean.abs() > 0.5 || stats.std < 0.005 || stats.std > 0.1 {
-                    failures.push(format!("{}: mean={:.4}, std={:.4}", name, stats.mean, stats.std));
+                    failures.push(format!(
+                        "{}: mean={:.4}, std={:.4}",
+                        name, stats.mean, stats.std
+                    ));
                 }
             }
         }
 
         if failures.is_empty() {
-            ValidationCheck::pass(19, 'D', "Positional embedding stats", "Stats within expected ranges")
+            ValidationCheck::pass(
+                19,
+                'D',
+                "Positional embedding stats",
+                "Stats within expected ranges",
+            )
         } else {
             ValidationCheck::fail(19, 'D', "Positional embedding stats", &failures.join("; "))
         }
@@ -567,11 +584,17 @@ impl<'a> AprValidator<'a> {
                         20,
                         'D',
                         "Vocab size matches",
-                        &format!("Header vocab={}, tensor dim={}", header_vocab, shape.first().unwrap_or(&0)),
+                        &format!(
+                            "Header vocab={}, tensor dim={}",
+                            header_vocab,
+                            shape.first().unwrap_or(&0)
+                        ),
                     )
                 }
             }
-            None => ValidationCheck::fail(20, 'D', "Vocab size matches", "Token embedding not found"),
+            None => {
+                ValidationCheck::fail(20, 'D', "Vocab size matches", "Token embedding not found")
+            }
         }
     }
 

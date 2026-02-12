@@ -244,7 +244,10 @@ fn test_verify_safetensors_valid_header() {
 
     let report = verify_safetensors(file.path()).unwrap();
     // Should pass basic checks
-    assert!(report.checks.iter().any(|c| c.name == "A1_file_exists" && c.passed));
+    assert!(report
+        .checks
+        .iter()
+        .any(|c| c.name == "A1_file_exists" && c.passed));
 }
 
 #[test]
@@ -258,7 +261,10 @@ fn test_verify_safetensors_header_too_large() {
 
     let report = verify_safetensors(file.path()).unwrap();
     // Should have header limit check fail
-    let has_limit_fail = report.checks.iter().any(|c| c.name == "C11_header_limit" && !c.passed);
+    let has_limit_fail = report
+        .checks
+        .iter()
+        .any(|c| c.name == "C11_header_limit" && !c.passed);
     assert!(has_limit_fail);
 }
 
@@ -270,7 +276,10 @@ fn test_verify_apr_small_file() {
 
     let report = verify_apr(file.path()).unwrap();
     // File exists but is too small
-    assert!(report.checks.iter().any(|c| c.name == "A1_file_exists" && c.passed));
+    assert!(report
+        .checks
+        .iter()
+        .any(|c| c.name == "A1_file_exists" && c.passed));
 }
 
 #[test]
@@ -283,7 +292,10 @@ fn test_verify_apr_wrong_magic() {
 
     let report = verify_apr(file.path()).unwrap();
     // Magic check should fail
-    let has_magic_fail = report.checks.iter().any(|c| c.name.contains("magic") && !c.passed);
+    let has_magic_fail = report
+        .checks
+        .iter()
+        .any(|c| c.name.contains("magic") && !c.passed);
     assert!(has_magic_fail);
 }
 
@@ -297,7 +309,10 @@ fn test_verify_apr_correct_magic() {
 
     let report = verify_apr(file.path()).unwrap();
     // Magic check should pass
-    let has_magic_pass = report.checks.iter().any(|c| c.name.contains("magic") && c.passed);
+    let has_magic_pass = report
+        .checks
+        .iter()
+        .any(|c| c.name.contains("magic") && c.passed);
     assert!(has_magic_pass);
 }
 
@@ -337,7 +352,10 @@ fn test_verify_apr_secret_patterns() {
     file.write_all(b"PASSWORD=hunter2").unwrap();
     file.flush().unwrap();
     let report = verify_apr(file.path()).unwrap();
-    let has_fail = report.checks.iter().any(|c| c.name.contains("secret") && !c.passed);
+    let has_fail = report
+        .checks
+        .iter()
+        .any(|c| c.name.contains("secret") && !c.passed);
     assert!(has_fail);
 }
 
@@ -349,7 +367,10 @@ fn test_verify_apr_secret_sk_pattern() {
     file.write_all(b"sk-abc123def456").unwrap();
     file.flush().unwrap();
     let report = verify_apr(file.path()).unwrap();
-    let has_fail = report.checks.iter().any(|c| c.name.contains("secret") && !c.passed);
+    let has_fail = report
+        .checks
+        .iter()
+        .any(|c| c.name.contains("secret") && !c.passed);
     assert!(has_fail);
 }
 
@@ -361,7 +382,10 @@ fn test_verify_apr_secret_private_key() {
     file.write_all(b"-----BEGIN PRIVATE KEY-----").unwrap();
     file.flush().unwrap();
     let report = verify_apr(file.path()).unwrap();
-    let has_fail = report.checks.iter().any(|c| c.name.contains("secret") && !c.passed);
+    let has_fail = report
+        .checks
+        .iter()
+        .any(|c| c.name.contains("secret") && !c.passed);
     assert!(has_fail);
 }
 
@@ -373,7 +397,10 @@ fn test_verify_apr_secret_token() {
     file.write_all(b"auth_token=xyz").unwrap();
     file.flush().unwrap();
     let report = verify_apr(file.path()).unwrap();
-    let has_fail = report.checks.iter().any(|c| c.name.contains("secret") && !c.passed);
+    let has_fail = report
+        .checks
+        .iter()
+        .any(|c| c.name.contains("secret") && !c.passed);
     assert!(has_fail);
 }
 
@@ -384,7 +411,10 @@ fn test_verify_apr_no_secrets_clean_file() {
     file.write_all(&[0u8; 100]).unwrap();
     file.flush().unwrap();
     let report = verify_apr(file.path()).unwrap();
-    let has_pass = report.checks.iter().any(|c| c.name.contains("secret") && c.passed);
+    let has_pass = report
+        .checks
+        .iter()
+        .any(|c| c.name.contains("secret") && c.passed);
     assert!(has_pass);
 }
 
@@ -395,11 +425,15 @@ fn test_verify_safetensors_invalid_utf8() {
     let header_len = 10u64.to_le_bytes();
     file.write_all(&header_len).unwrap();
     // Invalid UTF-8 bytes
-    file.write_all(&[0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89]).unwrap();
+    file.write_all(&[0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89])
+        .unwrap();
     file.flush().unwrap();
 
     let report = verify_safetensors(file.path()).unwrap();
-    let has_utf8_fail = report.checks.iter().any(|c| c.name.contains("json") && !c.passed);
+    let has_utf8_fail = report
+        .checks
+        .iter()
+        .any(|c| c.name.contains("json") && !c.passed);
     assert!(has_utf8_fail);
 }
 
@@ -412,7 +446,10 @@ fn test_verify_safetensors_truncated() {
     file.flush().unwrap();
 
     let report = verify_safetensors(file.path()).unwrap();
-    let has_truncated_fail = report.checks.iter().any(|c| c.message.contains("truncated"));
+    let has_truncated_fail = report
+        .checks
+        .iter()
+        .any(|c| c.message.contains("truncated"));
     assert!(has_truncated_fail);
 }
 
@@ -427,7 +464,10 @@ fn test_verify_safetensors_invalid_json_structure() {
     file.flush().unwrap();
 
     let report = verify_safetensors(file.path()).unwrap();
-    let has_json_fail = report.checks.iter().any(|c| c.name.contains("json") && !c.passed);
+    let has_json_fail = report
+        .checks
+        .iter()
+        .any(|c| c.name.contains("json") && !c.passed);
     assert!(has_json_fail);
 }
 
@@ -489,10 +529,7 @@ fn test_tensor_empty_collection() {
 fn test_tensor_single_element() {
     let verifier = Verifier::new();
     let mut tensors = BTreeMap::new();
-    tensors.insert(
-        "single".to_string(),
-        TensorData::new(vec![42.0], vec![1]),
-    );
+    tensors.insert("single".to_string(), TensorData::new(vec![42.0], vec![1]));
     let report = verifier.verify_tensors(&tensors).unwrap();
     assert!(report.passed);
 }
@@ -524,10 +561,7 @@ fn test_tensor_multiple_issues() {
         TensorData::new(vec![f32::INFINITY], vec![1]),
     );
     // One tensor with shape mismatch
-    tensors.insert(
-        "bad_shape".to_string(),
-        TensorData::new(vec![1.0], vec![2]),
-    );
+    tensors.insert("bad_shape".to_string(), TensorData::new(vec![1.0], vec![2]));
 
     let report = verifier.verify_tensors(&tensors).unwrap();
     assert!(!report.passed);

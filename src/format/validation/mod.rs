@@ -606,7 +606,11 @@ mod tests {
         let report = validator.validate_all();
         // Check 14: no zero tensors - should fail because embedding is all zeros
         let check_14 = report.checks.iter().find(|c| c.id == 14).unwrap();
-        assert!(!check_14.passed, "Should detect zero tensor: {}", check_14.message);
+        assert!(
+            !check_14.passed,
+            "Should detect zero tensor: {}",
+            check_14.message
+        );
     }
 
     #[test]
@@ -631,10 +635,18 @@ mod tests {
         let report = validator.validate_all();
         // Check 13: weight std - should fail (all-same values = ~0 std)
         let check_13 = report.checks.iter().find(|c| c.id == 13).unwrap();
-        assert!(!check_13.passed, "Should detect bad std: {}", check_13.message);
+        assert!(
+            !check_13.passed,
+            "Should detect bad std: {}",
+            check_13.message
+        );
         // Check 15: bias vectors - mean=5.0 is out of [-1, 1]
         let check_15 = report.checks.iter().find(|c| c.id == 15).unwrap();
-        assert!(!check_15.passed, "Should detect bad bias: {}", check_15.message);
+        assert!(
+            !check_15.passed,
+            "Should detect bad bias: {}",
+            check_15.message
+        );
     }
 
     #[test]
@@ -645,10 +657,18 @@ mod tests {
         let report = validator.validate_all();
         // Check 11: QKV proj means - 0.5 is out of [-0.1, 0.1]
         let check_11 = report.checks.iter().find(|c| c.id == 11).unwrap();
-        assert!(!check_11.passed, "Should detect bad proj means: {}", check_11.message);
+        assert!(
+            !check_11.passed,
+            "Should detect bad proj means: {}",
+            check_11.message
+        );
         // Check 12: FFN means - 0.5 is out of [-0.1, 0.1]
         let check_12 = report.checks.iter().find(|c| c.id == 12).unwrap();
-        assert!(!check_12.passed, "Should detect bad FFN means: {}", check_12.message);
+        assert!(
+            !check_12.passed,
+            "Should detect bad FFN means: {}",
+            check_12.message
+        );
     }
 
     #[test]
@@ -674,9 +694,17 @@ mod tests {
     fn test_validator_tensor_shapes_bad() {
         let mut writer = AprWriter::tiny();
         // Wrong-shaped token embedding (shape[1] != d_model)
-        writer.add("decoder.token_embedding", vec![51865, 128], vec![0.02; 51865 * 128]);
+        writer.add(
+            "decoder.token_embedding",
+            vec![51865, 128],
+            vec![0.02; 51865 * 128],
+        );
         // Wrong-shaped conv1 (shape[0] != d_model)
-        writer.add("encoder.conv1.weight", vec![128, 80, 3], vec![0.05; 128 * 80 * 3]);
+        writer.add(
+            "encoder.conv1.weight",
+            vec![128, 80, 3],
+            vec![0.05; 128 * 80 * 3],
+        );
         writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
         writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
         let data = writer.to_bytes().expect("should serialize");
@@ -685,14 +713,22 @@ mod tests {
         let validator = AprValidator::new(&reader);
         let report = validator.validate_all();
         let check_4 = report.checks.iter().find(|c| c.id == 4).unwrap();
-        assert!(!check_4.passed, "Should detect bad shapes: {}", check_4.message);
+        assert!(
+            !check_4.passed,
+            "Should detect bad shapes: {}",
+            check_4.message
+        );
     }
 
     #[test]
     fn test_validator_vocab_size_mismatch() {
         let mut writer = AprWriter::tiny();
         // Wrong vocab size in embedding (384 != 51865)
-        writer.add("decoder.token_embedding", vec![384, 384], vec![0.02; 384 * 384]);
+        writer.add(
+            "decoder.token_embedding",
+            vec![384, 384],
+            vec![0.02; 384 * 384],
+        );
         writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
         writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
         let data = writer.to_bytes().expect("should serialize");
@@ -701,7 +737,11 @@ mod tests {
         let validator = AprValidator::new(&reader);
         let report = validator.validate_all();
         let check_20 = report.checks.iter().find(|c| c.id == 20).unwrap();
-        assert!(!check_20.passed, "Should detect vocab mismatch: {}", check_20.message);
+        assert!(
+            !check_20.passed,
+            "Should detect vocab mismatch: {}",
+            check_20.message
+        );
     }
 
     #[test]
@@ -740,13 +780,25 @@ mod tests {
         let report = validator.validate_all();
         // Check 10: NaN/Inf in LN - should detect both
         let check_10 = report.checks.iter().find(|c| c.id == 10).unwrap();
-        assert!(!check_10.passed, "Should detect NaN/Inf: {}", check_10.message);
+        assert!(
+            !check_10.passed,
+            "Should detect NaN/Inf: {}",
+            check_10.message
+        );
         // Check 8: Block LN means - should detect bad mean
         let check_8 = report.checks.iter().find(|c| c.id == 8).unwrap();
-        assert!(!check_8.passed, "Should detect bad block LN: {}", check_8.message);
+        assert!(
+            !check_8.passed,
+            "Should detect bad block LN: {}",
+            check_8.message
+        );
         // Check 9: LN biases - encoder bias mean=5.0 out of [-0.5, 0.5]
         let check_9 = report.checks.iter().find(|c| c.id == 9).unwrap();
-        assert!(!check_9.passed, "Should detect bad bias: {}", check_9.message);
+        assert!(
+            !check_9.passed,
+            "Should detect bad bias: {}",
+            check_9.message
+        );
     }
 
     #[test]
@@ -788,15 +840,23 @@ mod tests {
         writer.add(
             "encoder.layers.0.fc1.weight",
             vec![1536, 384],
-            (0..1536 * 384).map(|i| ((i % 100) as f32 - 50.0) * 0.001).collect(),
+            (0..1536 * 384)
+                .map(|i| ((i % 100) as f32 - 50.0) * 0.001)
+                .collect(),
         );
         writer.add(
             "encoder.layers.0.fc2.weight",
             vec![384, 1536],
-            (0..384 * 1536).map(|i| ((i % 100) as f32 - 50.0) * 0.001).collect(),
+            (0..384 * 1536)
+                .map(|i| ((i % 100) as f32 - 50.0) * 0.001)
+                .collect(),
         );
         // One weight with bad std (all same = ~0 std) as minor outlier
-        writer.add("encoder.conv1.weight", vec![384, 80, 3], vec![0.05; 384 * 80 * 3]);
+        writer.add(
+            "encoder.conv1.weight",
+            vec![384, 80, 3],
+            vec![0.05; 384 * 80 * 3],
+        );
         let data = writer.to_bytes().expect("should serialize");
 
         let reader = AprReader::new(data).expect("should parse");
@@ -804,7 +864,11 @@ mod tests {
         let report = validator.validate_all();
         // Check 13: 1 outlier in 9 weights = ~11% < 25%, so passes with "minor outliers"
         let check_13 = report.checks.iter().find(|c| c.id == 13).unwrap();
-        assert!(check_13.passed, "Minor outlier should pass: {}", check_13.message);
+        assert!(
+            check_13.passed,
+            "Minor outlier should pass: {}",
+            check_13.message
+        );
         assert!(
             check_13.message.contains("minor outlier") || check_13.message.contains("outlier"),
             "Message should mention outliers: {}",
@@ -828,7 +892,11 @@ mod tests {
         assert!(!check_16.passed, "Missing embedding: {}", check_16.message);
         // Check 17: token embedding stats - not found
         let check_17 = report.checks.iter().find(|c| c.id == 17).unwrap();
-        assert!(!check_17.passed, "Missing embedding stats: {}", check_17.message);
+        assert!(
+            !check_17.passed,
+            "Missing embedding stats: {}",
+            check_17.message
+        );
         // Check 20: vocab size - not found
         let check_20 = report.checks.iter().find(|c| c.id == 20).unwrap();
         assert!(!check_20.passed, "Missing vocab: {}", check_20.message);
@@ -846,6 +914,10 @@ mod tests {
         let validator = AprValidator::new(&reader);
         let report = validator.validate_all();
         let check_3 = report.checks.iter().find(|c| c.id == 3).unwrap();
-        assert!(!check_3.passed, "Should detect insufficient tensors: {}", check_3.message);
+        assert!(
+            !check_3.passed,
+            "Should detect insufficient tensors: {}",
+            check_3.message
+        );
     }
 }

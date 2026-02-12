@@ -1,7 +1,6 @@
 #![allow(clippy::unwrap_used)]
 //! Encoder timing benchmark (WAPR-PERF-010)
 
-
 #[cfg(feature = "realizar-gpu")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load audio first (need it for mel computation)

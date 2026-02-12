@@ -341,25 +341,21 @@ impl VocabularyTrie {
     #[must_use]
     pub fn all_entries(&self) -> Vec<(Vec<u32>, String, f32)> {
         let mut entries = Vec::new();
-        Self::collect_entries(&self.root, Vec::new(), &mut entries);
+        Self::collect_entries(&self.root, &[], &mut entries);
         entries
     }
 
-    fn collect_entries(
-        node: &TrieNode,
-        path: Vec<u32>,
-        entries: &mut Vec<(Vec<u32>, String, f32)>,
-    ) {
+    fn collect_entries(node: &TrieNode, path: &[u32], entries: &mut Vec<(Vec<u32>, String, f32)>) {
         if node.is_terminal() {
             if let Some(text) = node.text() {
-                entries.push((path.clone(), text.to_string(), node.boost()));
+                entries.push((path.to_vec(), text.to_string(), node.boost()));
             }
         }
 
         for (&token, child) in &node.children {
-            let mut new_path = path.clone();
+            let mut new_path = path.to_vec();
             new_path.push(token);
-            Self::collect_entries(child, new_path, entries);
+            Self::collect_entries(child, &new_path, entries);
         }
     }
 

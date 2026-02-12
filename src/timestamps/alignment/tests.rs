@@ -271,8 +271,8 @@ fn test_group_tokens_into_words_empty() {
 
 #[test]
 fn test_token_alignment_with_attention_weights_coverage() {
-    let alignment = TokenAlignment::new(0, 100, 50, 0.9)
-        .with_attention_weights(vec![0.1, 0.2, 0.3]);
+    let alignment =
+        TokenAlignment::new(0, 100, 50, 0.9).with_attention_weights(vec![0.1, 0.2, 0.3]);
     assert_eq!(alignment.attention_weights.len(), 3);
 }
 
@@ -308,11 +308,7 @@ fn test_extract_word_alignments_basic() {
 
     let weights = vec![vec![vec![attn_0, attn_1, attn_2]]];
     let token_ids = vec![100u32, 101, 102];
-    let token_texts = vec![
-        "hello".to_string(),
-        " world".to_string(),
-        "!".to_string(),
-    ];
+    let token_texts = vec!["hello".to_string(), " world".to_string(), "!".to_string()];
 
     let words = extractor
         .extract_word_alignments(&weights, &token_ids, &token_texts, 10)

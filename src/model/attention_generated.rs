@@ -1,3 +1,4 @@
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 //! Multi-head attention implementation
 //!
 //! Implements scaled dot-product attention and multi-head attention

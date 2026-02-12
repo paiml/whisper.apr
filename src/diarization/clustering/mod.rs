@@ -583,4 +583,3 @@ impl SpectralClustering {
         &self.config
     }
 }
-

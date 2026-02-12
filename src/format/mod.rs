@@ -74,6 +74,7 @@ pub use validation::{
 
 // Implementation and types
 #[path = "impl_generated.rs"]
+#[allow(clippy::all)]
 mod impl_;
 
 pub use impl_::*;

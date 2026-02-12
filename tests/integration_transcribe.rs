@@ -1413,7 +1413,11 @@ fn test_decoder_hidden_state_trace() {
             .map(|(_, l)| *l)
             .unwrap_or(1.0);
 
-    println!("  layer_3 total L2 growth: {:.4}x (expected ~{:.4}x for sqrt(5/4))", layer_growth, (5.0_f32 / 4.0).sqrt());
+    println!(
+        "  layer_3 total L2 growth: {:.4}x (expected ~{:.4}x for sqrt(5/4))",
+        layer_growth,
+        (5.0_f32 / 4.0).sqrt()
+    );
 
     assert!(
         layer_growth < 1.5,

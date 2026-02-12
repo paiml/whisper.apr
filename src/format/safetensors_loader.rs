@@ -753,4 +753,50 @@ mod tests {
         let neg_one = bf16_to_f32(0xBF80);
         assert!((neg_one + 1.0).abs() < 1e-6);
     }
+
+    // =========================================================================
+    // ConversionStats Tests (WAPR-QA-003)
+    // =========================================================================
+
+    #[test]
+    fn test_conversion_stats_with_compression() {
+        let stats = ConversionStats {
+            n_tensors: 10,
+            n_params: 1000,
+            input_bytes: 4000,
+            output_bytes: 2000,
+            compression_ratio: 0.0,
+        };
+        let stats = stats.with_compression();
+        assert!((stats.compression_ratio - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_conversion_stats_with_compression_zero_input() {
+        let stats = ConversionStats {
+            n_tensors: 0,
+            n_params: 0,
+            input_bytes: 0,
+            output_bytes: 0,
+            compression_ratio: 0.0,
+        };
+        let stats = stats.with_compression();
+        // Should not divide by zero
+        assert!((stats.compression_ratio - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_conversion_stats_display_with_compression() {
+        let stats = ConversionStats {
+            n_tensors: 5,
+            n_params: 500,
+            input_bytes: 1024 * 1024,
+            output_bytes: 512 * 1024,
+            compression_ratio: 0.5,
+        };
+        let display = format!("{stats}");
+        assert!(display.contains("5 tensors"));
+        assert!(display.contains("500 params"));
+        assert!(display.contains("compression"));
+    }
 }

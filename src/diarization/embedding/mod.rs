@@ -585,4 +585,3 @@ impl EmbeddingExtractor {
         &self.config
     }
 }
-

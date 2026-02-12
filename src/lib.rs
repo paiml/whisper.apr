@@ -70,6 +70,7 @@ pub mod publish;
 pub mod verify;
 
 /// Benchmark infrastructure for multi-backend comparison
+#[allow(clippy::all)]
 pub mod benchmark_generated;
 
 /// CUDA GPU acceleration via trueno-gpu/realizar
@@ -129,5 +130,6 @@ pub mod tui;
 pub use error::{WhisperError, WhisperResult};
 
 /// Core types and implementations
+#[allow(clippy::all)]
 mod core_generated;
 pub use core_generated::*;

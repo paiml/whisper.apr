@@ -28,8 +28,7 @@ fn test_publish_config_default() {
 
 #[test]
 fn test_publish_config_with_model_card() {
-    let config = PublishConfig::new("test/repo")
-        .with_model_card("# My Model Card");
+    let config = PublishConfig::new("test/repo").with_model_card("# My Model Card");
     assert_eq!(config.model_card.as_deref(), Some("# My Model Card"));
 }
 
@@ -183,7 +182,9 @@ fn test_prepare_safetensors_only() {
         .unwrap();
 
     assert_eq!(prepared.files.len(), 1);
-    assert!(prepared.files[0].to_string_lossy().contains("model.safetensors"));
+    assert!(prepared.files[0]
+        .to_string_lossy()
+        .contains("model.safetensors"));
     assert!(output_dir.join("model.safetensors").exists());
 }
 

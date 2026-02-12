@@ -56,7 +56,10 @@ pub struct ValidationReport {
 
 impl ValidationReport {
     /// Create new report from checks
-    pub(crate) fn from_checks(checks: Vec<ValidationCheck>, critical_failures: Vec<String>) -> Self {
+    pub(crate) fn from_checks(
+        checks: Vec<ValidationCheck>,
+        critical_failures: Vec<String>,
+    ) -> Self {
         let score = checks.iter().filter(|c| c.passed).count() as u8;
         let max_score = checks.len() as u8;
         let passed = score >= 23 && critical_failures.is_empty();

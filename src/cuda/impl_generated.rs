@@ -1228,7 +1228,8 @@ impl WhisperCuda {
         if let Some(enc_out) = encoder_output {
             let normed2 = block.ln2.forward(&residual)?;
             let cross_out = block.cross_attn.forward_cross_dispatch(
-                &normed2, enc_out, None, // Cross-attention K/V caching tracked in WAPR-PERF-007
+                &normed2, enc_out,
+                None, // Cross-attention K/V caching tracked in WAPR-PERF-007
             )?;
             for (r, c) in residual.iter_mut().zip(cross_out.iter()) {
                 *r += c;
@@ -4244,5 +4245,3 @@ impl WhisperCuda {
         Ok(hidden)
     }
 }
-
-

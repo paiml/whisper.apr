@@ -40,7 +40,9 @@ fn test_vad_frame_energy() {
 #[test]
 fn test_vad_zero_crossing_rate() {
     // Alternating signal
-    let frame: Vec<f32> = (0..100).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
+    let frame: Vec<f32> = (0..100)
+        .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+        .collect();
     let zcr = VoiceActivityDetector::zero_crossing_rate(&frame);
     assert!(zcr > 0.9);
 }
