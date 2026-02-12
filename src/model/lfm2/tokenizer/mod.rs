@@ -660,6 +660,32 @@ fn update_special_token(special: &mut SpecialTokens, content: &str, id: u32) {
     }
 }
 
+/// Process a single character in the special tokens JSON parser.
+fn process_special_token_char(
+    c: char,
+    state: &mut JsonParseState,
+    special: &mut SpecialTokens,
+    vocab: &mut HashMap<String, u32>,
+    id_to_token: &mut HashMap<u32, String>,
+) {
+    match c {
+        '\\' if state.in_string => state.escape_next = true,
+        '"' => state.handle_quote(),
+        ':' if !state.in_string => {} // Key complete, ready for value
+        ',' if !state.in_string => state.handle_pair_end(),
+        '}' if !state.in_string => {
+            if let Some((id, content)) = state.handle_close_brace() {
+                update_special_token(special, &content, id);
+                vocab.insert(content.clone(), id);
+                id_to_token.insert(id, content);
+            }
+        }
+        _ if state.in_string => state.handle_string_char(c),
+        _ if !state.in_string && c.is_ascii_digit() => state.handle_digit(c),
+        _ => {}
+    }
+}
+
 /// Parse special tokens from added_tokens array
 fn parse_special_tokens(
     json: &str,
@@ -674,23 +700,7 @@ fn parse_special_tokens(
             state.handle_escape(c);
             continue;
         }
-
-        match c {
-            '\\' if state.in_string => state.escape_next = true,
-            '"' => state.handle_quote(),
-            ':' if !state.in_string => {} // Key complete, ready for value
-            ',' if !state.in_string => state.handle_pair_end(),
-            '}' if !state.in_string => {
-                if let Some((id, content)) = state.handle_close_brace() {
-                    update_special_token(special, &content, id);
-                    vocab.insert(content.clone(), id);
-                    id_to_token.insert(id, content);
-                }
-            }
-            _ if state.in_string => state.handle_string_char(c),
-            _ if !state.in_string && c.is_ascii_digit() => state.handle_digit(c),
-            _ => {}
-        }
+        process_special_token_char(c, &mut state, special, vocab, id_to_token);
     }
 }
 

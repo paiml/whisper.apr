@@ -1062,6 +1062,24 @@ fn has_folder_audio_extension(path: &Path) -> bool {
         })
 }
 
+/// Classify a single directory entry as audio file, subdirectory, or ignored.
+fn classify_dir_entry(
+    path: &Path,
+    base: &Path,
+    recursive: bool,
+    pattern: Option<&str>,
+    files: &mut Vec<(std::path::PathBuf, Option<std::path::PathBuf>)>,
+) {
+    if is_hidden_path(path) {
+        return;
+    }
+    if path.is_file() && matches_audio_pattern(path, pattern) {
+        files.push((path.to_path_buf(), Some(base.to_path_buf())));
+    } else if path.is_dir() && recursive && !is_symlink_via_metadata(path) {
+        discover_in_directory(base, path, recursive, pattern, files);
+    }
+}
+
 /// Recursively discover audio files in a directory.
 fn discover_in_directory(
     base: &Path,
@@ -1076,17 +1094,7 @@ fn discover_in_directory(
     };
 
     for entry in entries.flatten() {
-        let path = entry.path();
-
-        if is_hidden_path(&path) {
-            continue;
-        }
-
-        if path.is_file() && matches_audio_pattern(&path, pattern) {
-            files.push((path, Some(base.to_path_buf())));
-        } else if path.is_dir() && recursive && !is_symlink_via_metadata(&path) {
-            discover_in_directory(base, &path, recursive, pattern, files);
-        }
+        classify_dir_entry(&entry.path(), base, recursive, pattern, files);
     }
 }
 
@@ -1771,6 +1779,18 @@ fn discover_folder_audio_files(input_dir: &Path, recursive: bool) -> Vec<std::pa
     files
 }
 
+/// Classify a single entry for folder discovery.
+fn classify_folder_entry(path: &Path, recursive: bool, files: &mut Vec<std::path::PathBuf>) {
+    if is_hidden_path(path) {
+        return;
+    }
+    if path.is_file() && has_folder_audio_extension(path) {
+        files.push(path.to_path_buf());
+    } else if path.is_dir() && recursive && !path.is_symlink() {
+        discover_folder_recursive(path, recursive, files);
+    }
+}
+
 /// Recursively discover audio files
 fn discover_folder_recursive(dir: &Path, recursive: bool, files: &mut Vec<std::path::PathBuf>) {
     let entries = match fs::read_dir(dir) {
@@ -1779,17 +1799,7 @@ fn discover_folder_recursive(dir: &Path, recursive: bool, files: &mut Vec<std::p
     };
 
     for entry in entries.flatten() {
-        let path = entry.path();
-
-        if is_hidden_path(&path) {
-            continue;
-        }
-
-        if path.is_file() && has_folder_audio_extension(&path) {
-            files.push(path);
-        } else if path.is_dir() && recursive && !path.is_symlink() {
-            discover_folder_recursive(&path, recursive, files);
-        }
+        classify_folder_entry(&entry.path(), recursive, files);
     }
 }
 

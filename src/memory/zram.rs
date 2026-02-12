@@ -201,30 +201,30 @@ pub fn optimal_buffer_size_for_path(path: &Path) -> usize {
     }
 }
 
-/// Check if trueno-ublk with GPU acceleration is available
+/// Scan sysfs ublk-control for a device with GPU attribute enabled.
 #[cfg(feature = "std")]
-fn is_gpu_zram_available() -> bool {
-    // Check for trueno-ublk with GPU flag
-    let trueno_gpu = Path::new("/run/trueno-ublk/gpu");
-    if trueno_gpu.exists() {
-        return true;
-    }
-
-    // Check /sys for ublk device with GPU attribute
-    if let Ok(entries) = fs::read_dir("/sys/class/ublk-control") {
-        for entry in entries.flatten() {
-            let gpu_path = entry.path().join("gpu");
-            if gpu_path.exists() {
-                if let Ok(content) = fs::read_to_string(&gpu_path) {
-                    if content.trim() == "1" {
-                        return true;
-                    }
+fn scan_ublk_gpu_devices() -> bool {
+    let entries = match fs::read_dir("/sys/class/ublk-control") {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    for entry in entries.flatten() {
+        let gpu_path = entry.path().join("gpu");
+        if gpu_path.exists() {
+            if let Ok(content) = fs::read_to_string(&gpu_path) {
+                if content.trim() == "1" {
+                    return true;
                 }
             }
         }
     }
-
     false
+}
+
+/// Check if trueno-ublk with GPU acceleration is available
+#[cfg(feature = "std")]
+fn is_gpu_zram_available() -> bool {
+    Path::new("/run/trueno-ublk/gpu").exists() || scan_ublk_gpu_devices()
 }
 
 /// Check if generic ZRAM is available

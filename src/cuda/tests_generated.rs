@@ -213,6 +213,137 @@ fn benchmark_graph_vs_direct(
     eprintln!("\n✓ WAPR-PERF-018: CUDA Graph with cross-attention verified!");
 }
 
+/// Extract a single head's slice from interleaved Q/K/V data
+#[cfg(feature = "cuda")]
+fn extract_head_slice(
+    data: &[f32],
+    head: usize,
+    seq_len: usize,
+    d_model: usize,
+    head_dim: usize,
+) -> Vec<f32> {
+    (0..seq_len)
+        .flat_map(|pos| {
+            let start = pos * d_model + head * head_dim;
+            data[start..start + head_dim].iter().copied()
+        })
+        .collect()
+}
+
+/// Compute scaled dot-product attention for a single head:
+/// scores = softmax(Q @ K^T / sqrt(d)) @ V
+#[cfg(feature = "cuda")]
+fn single_head_sdpa(
+    q_head: &[f32],
+    k_head: &[f32],
+    v_head: &[f32],
+    seq_len: usize,
+    head_dim: usize,
+    scale: f32,
+) -> Vec<f32> {
+    // Q @ K^T
+    let mut scores = vec![0.0f32; seq_len * seq_len];
+    for i in 0..seq_len {
+        for j in 0..seq_len {
+            let mut sum = 0.0f32;
+            for d in 0..head_dim {
+                sum += q_head[i * head_dim + d] * k_head[j * head_dim + d];
+            }
+            scores[i * seq_len + j] = sum * scale;
+        }
+    }
+
+    // Softmax per row
+    for i in 0..seq_len {
+        let row = &mut scores[i * seq_len..(i + 1) * seq_len];
+        let max_val = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let mut sum = 0.0f32;
+        for s in row.iter_mut() {
+            *s = (*s - max_val).exp();
+            sum += *s;
+        }
+        for s in row.iter_mut() {
+            *s /= sum;
+        }
+    }
+
+    // scores @ V
+    let mut out = vec![0.0f32; seq_len * head_dim];
+    for i in 0..seq_len {
+        for d in 0..head_dim {
+            let mut sum = 0.0f32;
+            for j in 0..seq_len {
+                sum += scores[i * seq_len + j] * v_head[j * head_dim + d];
+            }
+            out[i * head_dim + d] = sum;
+        }
+    }
+    out
+}
+
+/// CPU multi-head self-attention: Q @ K^T → softmax → @ V
+#[cfg(feature = "cuda")]
+fn cpu_multihead_attention(
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    seq_len: usize,
+    d_model: usize,
+    n_heads: usize,
+    head_dim: usize,
+) -> Vec<f32> {
+    let scale = 1.0 / (head_dim as f32).sqrt();
+    let mut output = vec![0.0f32; seq_len * d_model];
+
+    for h in 0..n_heads {
+        let q_head = extract_head_slice(q, h, seq_len, d_model, head_dim);
+        let k_head = extract_head_slice(k, h, seq_len, d_model, head_dim);
+        let v_head = extract_head_slice(v, h, seq_len, d_model, head_dim);
+
+        let head_out = single_head_sdpa(&q_head, &k_head, &v_head, seq_len, head_dim, scale);
+
+        // Write back to interleaved output
+        for pos in 0..seq_len {
+            for d in 0..head_dim {
+                output[pos * d_model + h * head_dim + d] = head_out[pos * head_dim + d];
+            }
+        }
+    }
+
+    output
+}
+
+/// CPU encoder layer forward pass: LN1 → self-attn → residual → LN2 → FFN → residual
+#[cfg(feature = "cuda")]
+fn cpu_encoder_layer_forward(
+    block: &crate::model::encoder::EncoderBlock,
+    input: &[f32],
+    seq_len: usize,
+    d_model: usize,
+    n_heads: usize,
+    head_dim: usize,
+) -> Vec<f32> {
+    let ln1_out = block.ln1.forward(input).expect("CPU LN1");
+
+    let q = block.self_attn.w_q().forward(&ln1_out, seq_len).expect("CPU Q");
+    let k = block.self_attn.w_k().forward(&ln1_out, seq_len).expect("CPU K");
+    let v = block.self_attn.w_v().forward(&ln1_out, seq_len).expect("CPU V");
+
+    let attn_output = cpu_multihead_attention(&q, &k, &v, seq_len, d_model, n_heads, head_dim);
+
+    let attn_proj = block.self_attn.w_o().forward(&attn_output, seq_len).expect("CPU O");
+
+    let mut residual: Vec<f32> = input.iter().zip(attn_proj.iter()).map(|(a, b)| a + b).collect();
+
+    let ln2_out = block.ln2.forward(&residual).expect("CPU LN2");
+    let ffn_out = block.ffn.forward(&ln2_out).expect("CPU FFN");
+
+    for (r, f) in residual.iter_mut().zip(ffn_out.iter()) {
+        *r += f;
+    }
+    residual
+}
+
 #[test]
 fn test_cuda_availability_check() {
     // This test verifies the API compiles correctly
@@ -1808,6 +1939,52 @@ fn test_gpu_decoder_step_diagnostic() {
     eprintln!("  Block diff: {:.2e}", cross_block_diff);
 }
 
+/// Print per-head max divergence between CPU and GPU attention outputs.
+fn print_per_head_divergence(
+    cpu: &[f32],
+    gpu: &[f32],
+    n_heads: usize,
+    head_dim: usize,
+    seq_len: usize,
+    d_model: usize,
+) {
+    eprintln!("  Per-head max_diff:");
+    for h in 0..n_heads {
+        let head_start = h * head_dim;
+        let mut head_max_diff = 0.0f32;
+        for pos in 0..seq_len {
+            for d in 0..head_dim {
+                let idx = pos * d_model + head_start + d;
+                let diff = (cpu[idx] - gpu[idx]).abs();
+                head_max_diff = head_max_diff.max(diff);
+            }
+        }
+        eprintln!("    head {}: max_diff = {:.6}", h, head_max_diff);
+    }
+}
+
+/// Print per-token timing statistics (average, min, max, first 5).
+fn print_token_timing_stats(token_times: &[u128]) {
+    if token_times.is_empty() {
+        return;
+    }
+    let avg_token_us = token_times.iter().sum::<u128>() / token_times.len() as u128;
+    let min_token_us = *token_times.iter().min().unwrap_or(&0);
+    let max_token_us = *token_times.iter().max().unwrap_or(&0);
+    eprintln!("[Per-Token]");
+    eprintln!("  Average: {:.2}ms", avg_token_us as f64 / 1000.0);
+    eprintln!("  Min:     {:.2}ms", min_token_us as f64 / 1000.0);
+    eprintln!("  Max:     {:.2}ms", max_token_us as f64 / 1000.0);
+    eprintln!(
+        "  First 5: {:?}",
+        token_times
+            .iter()
+            .take(5)
+            .map(|t| format!("{:.1}ms", *t as f64 / 1000.0))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// WAPR-PERF-014 Point 157: Full system integration benchmark
 ///
 /// Tests the complete GPU decoder pipeline and measures against the
@@ -2028,23 +2205,7 @@ fn test_full_system_integration_benchmark() {
     eprintln!("  TOTAL:         {:?}", total_time);
     eprintln!();
 
-    if !token_times.is_empty() {
-        let avg_token_us = token_times.iter().sum::<u128>() / token_times.len() as u128;
-        let min_token_us = *token_times.iter().min().unwrap_or(&0);
-        let max_token_us = *token_times.iter().max().unwrap_or(&0);
-        eprintln!("[Per-Token]");
-        eprintln!("  Average: {:.2}ms", avg_token_us as f64 / 1000.0);
-        eprintln!("  Min:     {:.2}ms", min_token_us as f64 / 1000.0);
-        eprintln!("  Max:     {:.2}ms", max_token_us as f64 / 1000.0);
-        eprintln!(
-            "  First 5: {:?}",
-            token_times
-                .iter()
-                .take(5)
-                .map(|t| format!("{:.1}ms", *t as f64 / 1000.0))
-                .collect::<Vec<_>>()
-        );
-    }
+    print_token_timing_stats(&token_times);
 
     eprintln!();
     eprintln!("[Point 157 Falsification]");
@@ -2634,6 +2795,75 @@ fn test_gpu_stream_decoder_multi_iteration() {
     eprintln!("\n✓ WAPR-PERF-017: Multi-iteration benchmark complete");
 }
 
+/// Instantiate and benchmark a captured CUDA graph vs direct execution.
+fn benchmark_captured_graph(
+    graph: &trueno_gpu::driver::CudaGraph,
+    stream: &trueno_gpu::driver::CudaStream,
+    cuda_model: &mut CudaWhisperApr,
+    x_gpu: &GpuResidentTensor,
+) {
+    match graph.instantiate() {
+        Ok(exec) => {
+            eprintln!("  ✓ Graph instantiated!");
+
+            cuda_model.reset_gpu_decoder_kv_cache();
+            cuda_model
+                .init_gpu_decoder_kv_cache_head_first()
+                .expect("Re-init KV cache");
+
+            const NUM_REPLAYS: usize = 100;
+            let mut graph_times = Vec::with_capacity(NUM_REPLAYS);
+            let mut direct_times = Vec::with_capacity(NUM_REPLAYS);
+
+            for _ in 0..NUM_REPLAYS {
+                let start = std::time::Instant::now();
+                stream.launch_graph(&exec).expect("Graph launch");
+                stream.synchronize().expect("Sync");
+                graph_times.push(start.elapsed());
+            }
+
+            cuda_model.reset_gpu_decoder_kv_cache();
+            cuda_model
+                .init_gpu_decoder_kv_cache_head_first()
+                .expect("Re-init KV cache");
+
+            for i in 0..NUM_REPLAYS {
+                let pos = i % 10;
+                if i % 10 == 0 {
+                    cuda_model.reset_gpu_decoder_kv_cache();
+                    cuda_model
+                        .init_gpu_decoder_kv_cache_head_first()
+                        .expect("Re-init");
+                }
+                let start = std::time::Instant::now();
+                let _ = cuda_model
+                    .forward_decoder_block_gpu_stream(0, x_gpu, pos, stream, None)
+                    .expect("Direct");
+                stream.synchronize().expect("Sync");
+                direct_times.push(start.elapsed());
+            }
+
+            let graph_avg: std::time::Duration =
+                graph_times.iter().sum::<std::time::Duration>() / NUM_REPLAYS as u32;
+            let direct_avg: std::time::Duration =
+                direct_times.iter().sum::<std::time::Duration>() / NUM_REPLAYS as u32;
+
+            eprintln!("\n[Results]");
+            eprintln!("  Graph replay avg:  {:?}", graph_avg);
+            eprintln!("  Direct exec avg:   {:?}", direct_avg);
+            eprintln!(
+                "  Graph speedup:     {:.2}x",
+                direct_avg.as_micros() as f64 / graph_avg.as_micros() as f64
+            );
+
+            eprintln!("\n✓ WAPR-PERF-017: CUDA Graph capture successful!");
+        }
+        Err(e) => {
+            eprintln!("  ✗ Graph instantiation failed: {}", e);
+        }
+    }
+}
+
 /// WAPR-PERF-017: CUDA Graph capture test
 ///
 /// Attempts to capture the decoder block execution into a CUDA graph
@@ -2720,73 +2950,7 @@ fn test_cuda_graph_capture_decoder() {
     match (&capture_result, &graph_result) {
         (Ok(_), Ok(graph)) => {
             eprintln!("  ✓ Capture successful!");
-
-            // Instantiate graph
-            match graph.instantiate() {
-                Ok(exec) => {
-                    eprintln!("  ✓ Graph instantiated!");
-
-                    // Reset KV cache for graph replay
-                    cuda_model.reset_gpu_decoder_kv_cache();
-                    cuda_model
-                        .init_gpu_decoder_kv_cache_head_first()
-                        .expect("Re-init KV cache");
-
-                    // Benchmark graph replay vs direct execution
-                    const NUM_REPLAYS: usize = 100;
-                    let mut graph_times = Vec::with_capacity(NUM_REPLAYS);
-                    let mut direct_times = Vec::with_capacity(NUM_REPLAYS);
-
-                    // Graph replay benchmark
-                    for _ in 0..NUM_REPLAYS {
-                        let start = std::time::Instant::now();
-                        stream.launch_graph(&exec).expect("Graph launch");
-                        stream.synchronize().expect("Sync");
-                        graph_times.push(start.elapsed());
-                    }
-
-                    // Reset for direct comparison
-                    cuda_model.reset_gpu_decoder_kv_cache();
-                    cuda_model
-                        .init_gpu_decoder_kv_cache_head_first()
-                        .expect("Re-init KV cache");
-
-                    // Direct execution benchmark
-                    for i in 0..NUM_REPLAYS {
-                        let pos = i % 10;
-                        if i % 10 == 0 {
-                            cuda_model.reset_gpu_decoder_kv_cache();
-                            cuda_model
-                                .init_gpu_decoder_kv_cache_head_first()
-                                .expect("Re-init");
-                        }
-                        let start = std::time::Instant::now();
-                        let _ = cuda_model
-                            .forward_decoder_block_gpu_stream(0, &x_gpu, pos, &stream, None)
-                            .expect("Direct");
-                        stream.synchronize().expect("Sync");
-                        direct_times.push(start.elapsed());
-                    }
-
-                    let graph_avg: std::time::Duration =
-                        graph_times.iter().sum::<std::time::Duration>() / NUM_REPLAYS as u32;
-                    let direct_avg: std::time::Duration =
-                        direct_times.iter().sum::<std::time::Duration>() / NUM_REPLAYS as u32;
-
-                    eprintln!("\n[Results]");
-                    eprintln!("  Graph replay avg:  {:?}", graph_avg);
-                    eprintln!("  Direct exec avg:   {:?}", direct_avg);
-                    eprintln!(
-                        "  Graph speedup:     {:.2}x",
-                        direct_avg.as_micros() as f64 / graph_avg.as_micros() as f64
-                    );
-
-                    eprintln!("\n✓ WAPR-PERF-017: CUDA Graph capture successful!");
-                }
-                Err(e) => {
-                    eprintln!("  ✗ Graph instantiation failed: {}", e);
-                }
-            }
+            benchmark_captured_graph(graph, &stream, &mut cuda_model, &x_gpu);
         }
         (Err(e), _) => {
             eprintln!("  ✗ Decoder block failed during capture: {}", e);
@@ -4034,122 +4198,9 @@ fn test_encoder_layer_by_layer_divergence() {
     // Run CPU layers independently (not using attention_via_gemm which has borrow issues)
     let mut cpu_x = cpu_with_pos.clone();
     for layer_idx in 0..n_layers {
-        // CPU layer forward - use the encoder's forward method
         let block = &cuda_model.encoder.blocks()[layer_idx];
-
-        // Pre-norm
-        let ln1_out = block.ln1.forward(&cpu_x).expect("CPU LN1");
-
-        // Self-attention Q/K/V projections
-        let q = block
-            .self_attn
-            .w_q()
-            .forward(&ln1_out, seq_len)
-            .expect("CPU Q");
-        let k = block
-            .self_attn
-            .w_k()
-            .forward(&ln1_out, seq_len)
-            .expect("CPU K");
-        let v = block
-            .self_attn
-            .w_v()
-            .forward(&ln1_out, seq_len)
-            .expect("CPU V");
-
-        // Self-attention (use scaled dot product)
-        let scale = 1.0 / (head_dim as f32).sqrt();
-        let mut attn_output = vec![0.0f32; seq_len * d_model];
-
-        for h in 0..n_heads {
-            // Extract Q, K, V for this head
-            let q_head: Vec<f32> = (0..seq_len)
-                .flat_map(|pos| {
-                    let start = pos * d_model + h * head_dim;
-                    q[start..start + head_dim].iter().copied()
-                })
-                .collect();
-            let k_head: Vec<f32> = (0..seq_len)
-                .flat_map(|pos| {
-                    let start = pos * d_model + h * head_dim;
-                    k[start..start + head_dim].iter().copied()
-                })
-                .collect();
-            let v_head: Vec<f32> = (0..seq_len)
-                .flat_map(|pos| {
-                    let start = pos * d_model + h * head_dim;
-                    v[start..start + head_dim].iter().copied()
-                })
-                .collect();
-
-            // Compute attention scores: Q @ K^T
-            let mut scores = vec![0.0f32; seq_len * seq_len];
-            for i in 0..seq_len {
-                for j in 0..seq_len {
-                    let mut sum = 0.0f32;
-                    for d in 0..head_dim {
-                        sum += q_head[i * head_dim + d] * k_head[j * head_dim + d];
-                    }
-                    scores[i * seq_len + j] = sum * scale;
-                }
-            }
-
-            // Softmax
-            for i in 0..seq_len {
-                let row_start = i * seq_len;
-                let max_val = scores[row_start..row_start + seq_len]
-                    .iter()
-                    .cloned()
-                    .fold(f32::NEG_INFINITY, f32::max);
-                let mut sum = 0.0f32;
-                for j in 0..seq_len {
-                    scores[row_start + j] = (scores[row_start + j] - max_val).exp();
-                    sum += scores[row_start + j];
-                }
-                for j in 0..seq_len {
-                    scores[row_start + j] /= sum;
-                }
-            }
-
-            // Apply attention to V: scores @ V
-            for i in 0..seq_len {
-                for d in 0..head_dim {
-                    let mut sum = 0.0f32;
-                    for j in 0..seq_len {
-                        sum += scores[i * seq_len + j] * v_head[j * head_dim + d];
-                    }
-                    attn_output[i * d_model + h * head_dim + d] = sum;
-                }
-            }
-        }
-
-        // Output projection
-        let attn_proj = block
-            .self_attn
-            .w_o()
-            .forward(&attn_output, seq_len)
-            .expect("CPU O");
-
-        // First residual
-        let mut residual1: Vec<f32> = cpu_x
-            .iter()
-            .zip(attn_proj.iter())
-            .map(|(a, b)| a + b)
-            .collect();
-
-        // FFN
-        let ln2_out = block.ln2.forward(&residual1).expect("CPU LN2");
-        let ffn_out = block.ffn.forward(&ln2_out).expect("CPU FFN");
-
-        // Second residual
-        for (r, f) in residual1.iter_mut().zip(ffn_out.iter()) {
-            *r += f;
-        }
-        cpu_x = residual1.clone();
-
-        // Store this layer's output for comparison
-        cpu_layer_outputs.push(residual1);
-
+        cpu_x = cpu_encoder_layer_forward(block, &cpu_x, seq_len, d_model, n_heads, head_dim);
+        cpu_layer_outputs.push(cpu_x.clone());
         eprintln!(
             "[CPU Layer {}] mean={:.6}",
             layer_idx,
@@ -4528,69 +4579,8 @@ fn test_encoder_single_layer_step_by_step() {
     );
 
     eprintln!("\n=== STEP 3: Self-Attention ===");
-    // CPU attention (use the CPU Q/K/V)
-    let scale = 1.0 / (head_dim as f32).sqrt();
-    let mut cpu_attn_output = vec![0.0f32; seq_len * d_model];
-    for h in 0..n_heads {
-        let q_head: Vec<f32> = (0..seq_len)
-            .flat_map(|pos| {
-                cpu_q[pos * d_model + h * head_dim..pos * d_model + (h + 1) * head_dim]
-                    .iter()
-                    .copied()
-            })
-            .collect();
-        let k_head: Vec<f32> = (0..seq_len)
-            .flat_map(|pos| {
-                cpu_k[pos * d_model + h * head_dim..pos * d_model + (h + 1) * head_dim]
-                    .iter()
-                    .copied()
-            })
-            .collect();
-        let v_head: Vec<f32> = (0..seq_len)
-            .flat_map(|pos| {
-                cpu_v[pos * d_model + h * head_dim..pos * d_model + (h + 1) * head_dim]
-                    .iter()
-                    .copied()
-            })
-            .collect();
-
-        let mut scores = vec![0.0f32; seq_len * seq_len];
-        for i in 0..seq_len {
-            for j in 0..seq_len {
-                let mut sum = 0.0f32;
-                for d in 0..head_dim {
-                    sum += q_head[i * head_dim + d] * k_head[j * head_dim + d];
-                }
-                scores[i * seq_len + j] = sum * scale;
-            }
-        }
-
-        for i in 0..seq_len {
-            let row_start = i * seq_len;
-            let max_val = scores[row_start..row_start + seq_len]
-                .iter()
-                .cloned()
-                .fold(f32::NEG_INFINITY, f32::max);
-            let mut sum = 0.0f32;
-            for j in 0..seq_len {
-                scores[row_start + j] = (scores[row_start + j] - max_val).exp();
-                sum += scores[row_start + j];
-            }
-            for j in 0..seq_len {
-                scores[row_start + j] /= sum;
-            }
-        }
-
-        for i in 0..seq_len {
-            for d in 0..head_dim {
-                let mut sum = 0.0f32;
-                for j in 0..seq_len {
-                    sum += scores[i * seq_len + j] * v_head[j * head_dim + d];
-                }
-                cpu_attn_output[i * d_model + h * head_dim + d] = sum;
-            }
-        }
-    }
+    let cpu_attn_output =
+        cpu_multihead_attention(&cpu_q, &cpu_k, &cpu_v, seq_len, d_model, n_heads, head_dim);
     eprintln!(
         "[CPU Attn] mean={:.6}",
         cpu_attn_output.iter().sum::<f32>() / cpu_attn_output.len() as f32
@@ -4628,19 +4618,14 @@ fn test_encoder_single_layer_step_by_step() {
     );
 
     // Per-head divergence tracking (WAPR-PERF-014 Brick tracing)
-    eprintln!("  Per-head max_diff:");
-    for h in 0..n_heads {
-        let head_start = h * head_dim;
-        let mut head_max_diff = 0.0f32;
-        for pos in 0..seq_len {
-            for d in 0..head_dim {
-                let idx = pos * d_model + head_start + d;
-                let diff = (cpu_attn_output[idx] - gpu_attn_output[idx]).abs();
-                head_max_diff = head_max_diff.max(diff);
-            }
-        }
-        eprintln!("    head {}: max_diff = {:.6}", h, head_max_diff);
-    }
+    print_per_head_divergence(
+        &cpu_attn_output,
+        &gpu_attn_output,
+        n_heads,
+        head_dim,
+        seq_len,
+        d_model,
+    );
 
     eprintln!("\n=== STEP 4: Output Projection ===");
     let cpu_attn_proj = block
