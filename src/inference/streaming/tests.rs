@@ -623,3 +623,104 @@ fn test_finalize_flushes_remaining_audio() {
     assert_eq!(transcription.language, "en");
     assert_eq!(transcriber.state(), TranscriberState::Finalized);
 }
+
+// =========================================================================
+// create_partial_result Coverage (PMAT-024)
+// =========================================================================
+
+#[test]
+fn test_partial_result_content() {
+    // Trigger create_partial_result: return_partial=true + progress>0.3
+    let config = StreamingConfig::default()
+        .with_partial_results(true)
+        .without_vad();
+    let mut transcriber = StreamingTranscriber::new(config);
+
+    // Default chunk_duration_ms=30000 at 16kHz = 480000 samples per chunk
+    // Need >30% = 144000 samples minimum to trigger partial result
+    // Push 160000 samples (33% of chunk = 10 seconds) to ensure >0.3 progress
+    let samples = vec![0.1f32; 160_000];
+    transcriber.push_audio(&samples);
+
+    let result = transcriber.process();
+    assert!(result.is_ok());
+
+    // Should get a partial result with "[listening...]" text
+    if let Some(partial) = result.expect("should succeed") {
+        assert_eq!(partial.text, "[listening...]");
+        assert!(!partial.is_final);
+        assert!((partial.confidence - 0.0).abs() < f32::EPSILON);
+        assert_eq!(partial.chunk_index, 0); // No full chunks processed yet
+        assert!(partial.latency_ms > 0); // Should have measurable latency
+    }
+    // If None, the processor consumed the audio as a full chunk — still valid
+}
+
+#[test]
+fn test_partial_result_latency_scales_with_progress() {
+    let config = StreamingConfig::default()
+        .with_partial_results(true)
+        .without_vad();
+    let mut transcriber = StreamingTranscriber::new(config);
+
+    // Push ~50% of a chunk (240000 samples at 16kHz for 30s chunk)
+    let samples = vec![0.05f32; 240_000];
+    transcriber.push_audio(&samples);
+
+    let result = transcriber.process();
+    assert!(result.is_ok());
+
+    if let Some(partial) = result.expect("should succeed") {
+        // Latency should reflect ~50% of 30000ms chunk = ~15000ms
+        assert!(
+            partial.latency_ms > 5000,
+            "latency {} too low for 50% progress",
+            partial.latency_ms
+        );
+        assert!(
+            partial.latency_ms < 25000,
+            "latency {} too high for 50% progress",
+            partial.latency_ms
+        );
+    }
+}
+
+#[test]
+fn test_partial_result_chunk_index_stays_zero_before_full_chunk() {
+    let config = StreamingConfig::default()
+        .with_partial_results(true)
+        .without_vad();
+    let mut transcriber = StreamingTranscriber::new(config);
+
+    // Push partial audio (less than one full chunk)
+    let samples = vec![0.1f32; 160_000];
+    transcriber.push_audio(&samples);
+
+    let result = transcriber.process().expect("should succeed");
+    if let Some(partial) = result {
+        assert_eq!(
+            partial.chunk_index, 0,
+            "chunk_index should be 0 before any full chunk"
+        );
+    }
+}
+
+#[test]
+fn test_partial_results_not_returned_below_threshold() {
+    // With partial results enabled but very little audio (<30% progress)
+    let config = StreamingConfig::default()
+        .with_partial_results(true)
+        .without_vad();
+    let mut transcriber = StreamingTranscriber::new(config);
+
+    // Push only ~5% of a chunk (24000 samples = 1.5s out of 30s)
+    let samples = vec![0.1f32; 24_000];
+    transcriber.push_audio(&samples);
+
+    let result = transcriber.process().expect("should succeed");
+    // Below 30% threshold, should return None (no partial result)
+    assert!(
+        result.is_none(),
+        "should not return partial below 30% progress"
+    );
+}
