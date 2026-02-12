@@ -2,6 +2,11 @@
 
 use trueno::{Matrix, Vector};
 
+/// Extract result matrix to Vec, falling back to zeros on error
+fn result_to_vec(result: Result<Matrix<f32>, trueno::TruenoError>, fallback_size: usize) -> Vec<f32> {
+    result.map_or_else(|_| vec![0.0; fallback_size], |m| m.as_slice().to_vec())
+}
+
 /// SIMD-accelerated matrix multiplication
 ///
 /// Computes C = A @ B where A is (rows x inner) and B is (inner x cols)
@@ -19,8 +24,7 @@ pub fn matmul(a: &[f32], b: &[f32], rows: usize, inner: usize, cols: usize) -> V
     let Ok(mb) = Matrix::from_vec(inner, cols, b.to_vec()) else {
         return vec![0.0; rows * cols];
     };
-    ma.matmul(&mb)
-        .map_or_else(|_| vec![0.0; rows * cols], |mc| mc.as_slice().to_vec())
+    result_to_vec(ma.matmul(&mb), rows * cols)
 }
 
 /// SIMD-accelerated matrix multiplication (zero-copy variant)
@@ -41,8 +45,7 @@ pub fn matmul_owned(a: Vec<f32>, b: Vec<f32>, rows: usize, inner: usize, cols: u
     let Ok(mb) = Matrix::from_vec(inner, cols, b) else {
         return vec![0.0; rows * cols];
     };
-    ma.matmul(&mb)
-        .map_or_else(|_| vec![0.0; rows * cols], |mc| mc.as_slice().to_vec())
+    result_to_vec(ma.matmul(&mb), rows * cols)
 }
 
 /// SIMD-accelerated matrix multiplication with pre-constructed Matrix
@@ -58,8 +61,7 @@ pub fn matmul_with_matrix(a: &[f32], b: &Matrix<f32>, rows: usize, inner: usize)
     let Ok(ma) = Matrix::from_vec(rows, inner, a.to_vec()) else {
         return vec![0.0; rows * b.cols()];
     };
-    ma.matmul(b)
-        .map_or_else(|_| vec![0.0; rows * b.cols()], |mc| mc.as_slice().to_vec())
+    result_to_vec(ma.matmul(b), rows * b.cols())
 }
 
 /// SIMD-accelerated matrix-vector multiplication
