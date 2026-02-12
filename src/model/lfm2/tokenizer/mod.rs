@@ -407,10 +407,9 @@ impl Lfm2Tokenizer {
 /// Find a balanced JSON section by key, matching open/close delimiters.
 /// Returns the substring from the opening delimiter to the matching close.
 fn find_json_section<'a>(json_str: &'a str, key: &str, open: char, close: char) -> Option<&'a str> {
-    let key_pos = json_str.find(key)?;
-    let after_key = &json_str[key_pos..];
-    let delim_offset = after_key.find(open)?;
-    let section_start = key_pos + delim_offset;
+    let section_start = json_str
+        .find(key)
+        .and_then(|kp| json_str[kp..].find(open).map(|d| kp + d))?;
 
     let mut depth = 0;
     for (i, c) in json_str[section_start..].char_indices() {
