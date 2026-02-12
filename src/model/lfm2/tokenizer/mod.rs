@@ -321,9 +321,11 @@ impl Lfm2Tokenizer {
             if let Some(token) = self.id_to_token.get(&id) {
                 // Handle byte tokens
                 if token.starts_with("<0x") && token.ends_with('>') {
-                    if let Ok(byte) = u8::from_str_radix(&token[3..5], 16) {
-                        result.push(byte as char);
-                        continue;
+                    if let Some(hex) = token.get(3..5) {
+                        if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                            result.push(byte as char);
+                            continue;
+                        }
                     }
                 }
                 result.push_str(token);
@@ -380,82 +382,30 @@ impl Lfm2Tokenizer {
     /// Returns error if JSON is invalid or missing required fields
     pub fn from_huggingface_json(json_str: &str) -> WhisperResult<Self> {
         // Minimal JSON parsing without serde dependency
-        // HuggingFace tokenizer.json structure:
-        // {
-        //   "model": {
-        //     "vocab": { "token": id, ... },
-        //     "merges": [ "a b", "c d", ... ]
-        //   },
-        //   "added_tokens": [ { "id": N, "content": "...", "special": true }, ... ]
-        // }
-
         let mut vocab = HashMap::new();
         let mut id_to_token = HashMap::new();
         let mut merges = Vec::new();
         let mut special = SpecialTokens::default();
 
         // Parse vocab section
-        if let Some(vocab_start) = json_str.find("\"vocab\"") {
-            if let Some(brace_start) = json_str[vocab_start..].find('{') {
-                let vocab_section_start = vocab_start + brace_start;
-                let mut depth = 0;
-                let mut vocab_end = vocab_section_start;
-
-                for (i, c) in json_str[vocab_section_start..].char_indices() {
-                    match c {
-                        '{' => depth += 1,
-                        '}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                vocab_end = vocab_section_start + i + 1;
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                let vocab_json = &json_str[vocab_section_start..vocab_end];
-                parse_vocab_entries(vocab_json, &mut vocab, &mut id_to_token);
-            }
+        if let Some(section) = find_json_section(json_str, "\"vocab\"", '{', '}') {
+            parse_vocab_entries(section, &mut vocab, &mut id_to_token);
         }
 
-        // Parse merges section
+        // Parse merges section (simple bracket find — no nesting)
         if let Some(merges_start) = json_str.find("\"merges\"") {
             if let Some(bracket_start) = json_str[merges_start..].find('[') {
-                let merges_section_start = merges_start + bracket_start;
-                if let Some(bracket_end) = json_str[merges_section_start..].find(']') {
-                    let merges_json =
-                        &json_str[merges_section_start..=merges_section_start + bracket_end];
-                    parse_merge_entries(merges_json, &mut merges);
+                let start = merges_start + bracket_start;
+                if let Some(bracket_end) = json_str[start..].find(']') {
+                    let section = &json_str[start..=start + bracket_end];
+                    parse_merge_entries(section, &mut merges);
                 }
             }
         }
 
         // Parse added_tokens for special token IDs
-        if let Some(added_start) = json_str.find("\"added_tokens\"") {
-            if let Some(bracket_start) = json_str[added_start..].find('[') {
-                let added_section_start = added_start + bracket_start;
-                let mut depth = 0;
-                let mut added_end = added_section_start;
-
-                for (i, c) in json_str[added_section_start..].char_indices() {
-                    match c {
-                        '[' => depth += 1,
-                        ']' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                added_end = added_section_start + i + 1;
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                let added_json = &json_str[added_section_start..added_end];
-                parse_special_tokens(added_json, &mut special, &mut vocab, &mut id_to_token);
-            }
+        if let Some(section) = find_json_section(json_str, "\"added_tokens\"", '[', ']') {
+            parse_special_tokens(section, &mut special, &mut vocab, &mut id_to_token);
         }
 
         Ok(Self {
@@ -484,7 +434,28 @@ impl Lfm2Tokenizer {
 // JSON Parsing Helpers (no serde dependency)
 // =============================================================================
 
-/// Parse vocab entries from JSON object string
+/// Find a balanced JSON section by key, matching open/close delimiters.
+/// Returns the substring from the opening delimiter to the matching close.
+fn find_json_section<'a>(json_str: &'a str, key: &str, open: char, close: char) -> Option<&'a str> {
+    let key_pos = json_str.find(key)?;
+    let after_key = &json_str[key_pos..];
+    let delim_offset = after_key.find(open)?;
+    let section_start = key_pos + delim_offset;
+
+    let mut depth = 0;
+    for (i, c) in json_str[section_start..].char_indices() {
+        if c == open {
+            depth += 1;
+        } else if c == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(&json_str[section_start..section_start + i + 1]);
+            }
+        }
+    }
+    None
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn parse_vocab_entries(
     json: &str,
