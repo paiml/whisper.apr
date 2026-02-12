@@ -365,14 +365,12 @@ impl Lfm2Tokenizer {
         }
 
         // Parse merges section (simple bracket find — no nesting)
-        if let Some(merges_start) = json_str.find("\"merges\"") {
-            if let Some(bracket_start) = json_str[merges_start..].find('[') {
-                let start = merges_start + bracket_start;
-                if let Some(bracket_end) = json_str[start..].find(']') {
-                    let section = &json_str[start..=start + bracket_end];
-                    parse_merge_entries(section, &mut merges);
-                }
-            }
+        if let Some(section) = json_str
+            .find("\"merges\"")
+            .and_then(|ms| json_str[ms..].find('[').map(|bs| ms + bs))
+            .and_then(|start| json_str[start..].find(']').map(|end| &json_str[start..=start + end]))
+        {
+            parse_merge_entries(section, &mut merges);
         }
 
         // Parse added_tokens for special token IDs
@@ -558,23 +556,24 @@ impl JsonParseState {
 
     /// Handle quote character - toggle string state
     fn handle_quote(&mut self) {
-        if self.in_string {
-            self.in_key = false;
-            self.in_value = false;
-        } else if self.current_key.is_empty() && self.current_value.is_empty() {
-            self.in_key = true;
-        } else if !self.current_key.is_empty() {
-            self.in_value = true;
+        match (self.in_string, self.current_key.is_empty()) {
+            (true, _) => {
+                self.in_key = false;
+                self.in_value = false;
+            }
+            (false, true) if self.current_value.is_empty() => self.in_key = true,
+            (false, false) => self.in_value = true,
+            _ => {}
         }
         self.in_string = !self.in_string;
     }
 
     /// Handle end of key-value pair (comma or close brace)
     fn handle_pair_end(&mut self) {
-        if self.current_key == "id" {
-            self.current_id = self.current_value.parse().ok();
-        } else if self.current_key == "content" {
-            self.current_content = Some(unescape_json_string(&self.current_value));
+        match self.current_key.as_str() {
+            "id" => self.current_id = self.current_value.parse().ok(),
+            "content" => self.current_content = Some(unescape_json_string(&self.current_value)),
+            _ => {}
         }
         self.current_key.clear();
         self.current_value.clear();
@@ -582,10 +581,13 @@ impl JsonParseState {
 
     /// Handle character inside a string
     fn handle_string_char(&mut self, c: char) {
-        if self.in_key {
-            self.current_key.push(c);
-        } else if self.in_value {
-            self.current_value.push(c);
+        let target = match (self.in_key, self.in_value) {
+            (true, _) => Some(&mut self.current_key),
+            (_, true) => Some(&mut self.current_value),
+            _ => None,
+        };
+        if let Some(s) = target {
+            s.push(c);
         }
     }
 
