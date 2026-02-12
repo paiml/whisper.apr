@@ -9,12 +9,9 @@ use std::time::Duration;
 const BASE_URL: &str = "http://localhost:8080";
 const TEST_AUDIO_PATH: &str = "/home/noah/src/whisper.apr/demos/test-audio/test-speech-1.5s.wav";
 
-/// Helper to check if server is running
+/// Helper to check if server is running via TCP probe
 async fn is_server_running() -> bool {
-    #[cfg(feature = "reqwest")]
-    return reqwest::get(BASE_URL).await.is_ok();
-    #[cfg(not(feature = "reqwest"))]
-    true
+    std::net::TcpStream::connect("127.0.0.1:8080").is_ok()
 }
 
 /// Skip test if server not running

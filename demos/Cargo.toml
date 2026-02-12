@@ -28,7 +28,7 @@ tracing-subscriber = { version = "0.3", features = ["json"] }
 tracing-wasm = "0.2"
 
 # Testing with Probar (Playwright-compatible, pure Rust)
-probar = { package = "jugar-probar", version = "0.4", default-features = false, features = ["browser", "tui"] }
+probar = { package = "jugar-probar", version = "1.0", default-features = false, features = ["browser", "tui", "media"] }
 
 # Async runtime for browser tests
 tokio = { version = "1", features = ["full"] }

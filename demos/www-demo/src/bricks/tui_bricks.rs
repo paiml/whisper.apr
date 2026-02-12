@@ -499,7 +499,7 @@ impl WhisperTuiApp {
             'j' | '\t' => self.panel_state.focus_next(),
             'k' => self.panel_state.focus_prev(),
             'z' | '\n' => self.panel_state.toggle_explode(),
-            _ => {}
+            _unhandled => {} // Intentional: unknown keys are silently ignored
         }
     }
 }

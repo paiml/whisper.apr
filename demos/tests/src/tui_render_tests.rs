@@ -441,8 +441,20 @@ fn capture_app_frame(app: &TestApp, width: u16, height: u16) -> TuiFrame {
         .draw(|f| render_ui(f, app))
         .expect("Failed to draw");
 
-    // Convert TestBackend buffer to TuiFrame
-    TuiFrame::from_buffer(terminal.backend().buffer(), 0)
+    // Convert ratatui TestBackend buffer to probar TuiFrame via text lines
+    let buffer = terminal.backend().buffer();
+    let area = buffer.area;
+    let mut lines: Vec<String> = Vec::new();
+    for y in area.y..area.y + area.height {
+        let mut line = String::new();
+        for x in area.x..area.x + area.width {
+            let cell = &buffer[(x, y)];
+            line.push_str(cell.symbol());
+        }
+        lines.push(line);
+    }
+    let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    TuiFrame::from_lines(&line_refs)
 }
 
 // =============================================================================

@@ -147,7 +147,7 @@ symphonia = { version = "0.5", optional = true, default-features = false, featur
 proptest = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
 # WASM testing with Probar (Playwright-compatible testing framework)
-jugar-probar = { version = "0.2", default-features = false }
+jugar-probar = { version = "1.0", default-features = false }
 # Tempfile for CLI tests
 tempfile = "3"
 

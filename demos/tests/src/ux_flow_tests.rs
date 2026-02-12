@@ -8,13 +8,9 @@ use std::time::Duration;
 
 const BASE_URL: &str = "http://localhost:8080";
 
-/// Helper to check if server is running
+/// Helper to check if server is running via TCP probe
 async fn is_server_running() -> bool {
-    // Try to connect via reqwest if available, otherwise assume running
-    #[cfg(feature = "reqwest")]
-    return reqwest::get(BASE_URL).await.is_ok();
-    #[cfg(not(feature = "reqwest"))]
-    true // Assume server is running for browser tests
+    std::net::TcpStream::connect("127.0.0.1:8080").is_ok()
 }
 
 /// Skip test if server not running
