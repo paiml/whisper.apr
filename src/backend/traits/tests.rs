@@ -305,3 +305,41 @@ fn test_compute_op_execute_cpu_backend() {
     let result = op.execute(BackendType::Cpu).expect("Should execute");
     assert_eq!(result.len(), 64);
 }
+
+// =========================================================================
+// cpu_fallback Tests (impact 29.1, 0% coverage)
+// =========================================================================
+
+#[test]
+fn test_cpu_fallback_creates_valid_backend() {
+    let caps = BackendCapabilities::cpu_fallback();
+    assert_eq!(caps.backend_type, BackendType::Cpu);
+    assert!(caps.available);
+    assert!(caps.max_parallelism >= 1);
+    assert_eq!(caps.max_buffer_size, usize::MAX as u64);
+    assert!(!caps.supports_f16);
+}
+
+#[test]
+fn test_cpu_fallback_performance_scales_with_cpus() {
+    let caps = BackendCapabilities::cpu_fallback();
+    // Performance score should be proportional to CPU count
+    assert!(caps.performance_score >= 1.0);
+    assert!((caps.performance_score - caps.max_parallelism as f32).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_cpu_fallback_can_handle_any_size() {
+    let caps = BackendCapabilities::cpu_fallback();
+    // CPU can handle any buffer size (up to usize::MAX)
+    assert!(caps.can_handle(0));
+    assert!(caps.can_handle(1024 * 1024 * 1024));
+    assert!(caps.can_handle(usize::MAX as u64));
+}
+
+#[test]
+fn test_cpu_fallback_throughput() {
+    let caps = BackendCapabilities::cpu_fallback();
+    assert!(caps.estimated_throughput(1024) > 0.0);
+    assert!(caps.estimated_throughput(0) >= 0.0);
+}

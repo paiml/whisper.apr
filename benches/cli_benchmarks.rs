@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Benchmarks for whisper-apr-cli components
 //!
 //! Run with: `cargo bench --bench cli_benchmarks`

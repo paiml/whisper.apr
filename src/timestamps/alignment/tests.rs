@@ -287,3 +287,119 @@ fn test_alignment_config_with_min_attention_coverage() {
     let config = AlignmentConfig::default().with_min_attention(0.2);
     assert!((config.min_attention - 0.2).abs() < 0.001);
 }
+
+// =========================================================================
+// extract_word_alignments Tests (impact 29.1)
+// =========================================================================
+
+#[test]
+fn test_extract_word_alignments_basic() {
+    let config = AlignmentConfig::default().with_layers(vec![0]);
+    let extractor = WordTimestampExtractor::new(config);
+
+    // Create attention weights: 1 layer, 1 head, 3 tokens, 10 frames
+    // Token 0 peaks at frame 0, token 1 at frame 3, token 2 at frame 7
+    let mut attn_0 = vec![0.1f32; 10];
+    attn_0[0] = 0.9;
+    let mut attn_1 = vec![0.1f32; 10];
+    attn_1[3] = 0.9;
+    let mut attn_2 = vec![0.1f32; 10];
+    attn_2[7] = 0.9;
+
+    let weights = vec![vec![vec![attn_0, attn_1, attn_2]]];
+    let token_ids = vec![100u32, 101, 102];
+    let token_texts = vec![
+        "hello".to_string(),
+        " world".to_string(),
+        "!".to_string(),
+    ];
+
+    let words = extractor
+        .extract_word_alignments(&weights, &token_ids, &token_texts, 10)
+        .expect("should extract word alignments");
+
+    assert_eq!(words.len(), 2);
+    assert_eq!(words[0].word, "hello");
+    assert_eq!(words[1].word, "world!");
+    assert!(words[0].confidence > 0.0);
+    assert!(words[1].confidence > 0.0);
+}
+
+#[test]
+fn test_extract_word_alignments_single_word() {
+    let config = AlignmentConfig::default().with_layers(vec![0]);
+    let extractor = WordTimestampExtractor::new(config);
+
+    let mut attn = vec![0.1f32; 10];
+    attn[5] = 0.9;
+
+    let weights = vec![vec![vec![attn]]];
+    let token_ids = vec![100u32];
+    let token_texts = vec!["hello".to_string()];
+
+    let words = extractor
+        .extract_word_alignments(&weights, &token_ids, &token_texts, 10)
+        .expect("should succeed");
+
+    assert_eq!(words.len(), 1);
+    assert_eq!(words[0].word, "hello");
+}
+
+#[test]
+fn test_extract_word_alignments_empty_tokens() {
+    let config = AlignmentConfig::default().with_layers(vec![0]);
+    let extractor = WordTimestampExtractor::new(config);
+
+    let weights = vec![vec![vec![vec![0.1f32; 10]]]];
+    let token_ids: Vec<u32> = vec![];
+    let token_texts: Vec<String> = vec![];
+
+    let words = extractor
+        .extract_word_alignments(&weights, &token_ids, &token_texts, 10)
+        .expect("should succeed");
+
+    assert!(words.is_empty());
+}
+
+// =========================================================================
+// average_attention Tests (impact 1.2, partial coverage)
+// =========================================================================
+
+#[test]
+fn test_average_attention_layer_filtering() {
+    // Config only uses layer 0
+    let config = AlignmentConfig::default().with_layers(vec![0]);
+    let alignment = CrossAttentionAlignment::new(config);
+
+    // 2 layers, 1 head each, 2 tokens, 4 frames
+    let layer0_attn = vec![vec![vec![1.0f32; 4]; 2]]; // all 1.0
+    let layer1_attn = vec![vec![vec![0.0f32; 4]; 2]]; // all 0.0
+
+    let weights = vec![layer0_attn, layer1_attn];
+    let result = alignment
+        .average_attention(&weights, 4, 2)
+        .expect("should succeed");
+
+    // Should only include layer 0 (1.0), layer 1 should be ignored
+    assert_eq!(result.len(), 2);
+    assert!((result[0][0] - 1.0).abs() < 0.01);
+}
+
+#[test]
+fn test_average_attention_head_filtering() {
+    let mut config = AlignmentConfig::default().with_layers(vec![0]);
+    config.heads = Some(vec![0]); // Only head 0
+    let alignment = CrossAttentionAlignment::new(config);
+
+    // 1 layer, 2 heads, 1 token, 4 frames
+    let head0_attn = vec![vec![1.0f32; 4]]; // all 1.0
+    let head1_attn = vec![vec![0.0f32; 4]]; // all 0.0
+
+    let weights = vec![vec![head0_attn, head1_attn]];
+    let result = alignment
+        .average_attention(&weights, 4, 1)
+        .expect("should succeed");
+
+    assert_eq!(result.len(), 1);
+    assert!((result[0][0] - 1.0).abs() < 0.01);
+}

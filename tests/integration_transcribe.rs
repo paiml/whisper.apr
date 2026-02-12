@@ -1358,7 +1358,7 @@ fn test_decoder_hidden_state_trace() {
     indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("test assertion"));
     println!("  top-3 logits: {:?}", &indexed[..3]);
 
-    // Compare L2 norms
+    // Compare L2 norms (diagnostic only - total L2 naturally grows with more positions)
     println!("\n=== L2 NORM GROWTH (5 tok / 4 tok) ===");
     for (t4, t5) in trace_4.iter().zip(trace_5.iter()) {
         if t4.1 > 0.0 {
@@ -1367,25 +1367,58 @@ fn test_decoder_hidden_state_trace() {
         }
     }
 
-    // The growth should be bounded - if it's massive (>2x), something is wrong
-    let logits_growth = trace_5
+    // Causal invariance check: positions 0-3 must produce identical logits
+    // regardless of whether position 4 exists. This is the correct test for
+    // accumulation bugs — causal masking guarantees earlier positions are
+    // unaffected by later tokens.
+    let shared_logits_4 = &logits_4[..4 * n_vocab]; // positions 0-3 from 4-token run
+    let shared_logits_5 = &logits_5[..4 * n_vocab]; // positions 0-3 from 5-token run
+
+    let max_diff = shared_logits_4
         .iter()
-        .find(|(n, _)| n == "logits")
+        .zip(shared_logits_5.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f32, f32::max);
+
+    let rmse = (shared_logits_4
+        .iter()
+        .zip(shared_logits_5.iter())
+        .map(|(a, b)| (a - b).powi(2))
+        .sum::<f32>()
+        / shared_logits_4.len() as f32)
+        .sqrt();
+
+    println!("\n=== CAUSAL INVARIANCE (positions 0-3) ===");
+    println!("  max abs diff: {:.6}", max_diff);
+    println!("  RMSE: {:.6}", rmse);
+
+    // With causal masking, positions 0-3 should be numerically identical
+    // (within floating point tolerance) between 4-token and 5-token runs
+    assert!(
+        max_diff < 1e-4,
+        "Causal invariance violated: positions 0-3 differ by {:.6} max between 4-token and 5-token runs - indicates accumulation bug",
+        max_diff
+    );
+
+    // Per-position layer stability: transformer block outputs should grow
+    // sublinearly with sequence length (sqrt(n/m) expected for n vs m tokens)
+    let layer_growth = trace_5
+        .iter()
+        .find(|(n, _)| n == "layer_3")
         .map(|(_, l)| *l)
         .unwrap_or(0.0)
         / trace_4
             .iter()
-            .find(|(n, _)| n == "logits")
+            .find(|(n, _)| n == "layer_3")
             .map(|(_, l)| *l)
             .unwrap_or(1.0);
 
-    println!("\nLogits L2 growth: {:.4}x", logits_growth);
+    println!("  layer_3 total L2 growth: {:.4}x (expected ~{:.4}x for sqrt(5/4))", layer_growth, (5.0_f32 / 4.0).sqrt());
 
-    // Assert growth is reasonable
     assert!(
-        logits_growth < 2.0,
-        "Logits L2 norm grew by {:.4}x when adding one token - indicates accumulation bug",
-        logits_growth
+        layer_growth < 1.5,
+        "Layer output L2 grew by {:.4}x - expected sublinear growth",
+        layer_growth
     );
 }
 

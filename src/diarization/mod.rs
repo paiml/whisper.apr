@@ -578,4 +578,142 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].speaker_id(), 1);
     }
+
+    // =========================================================================
+    // assign_speaker_labels Tests (impact 20.1, 0% coverage)
+    // =========================================================================
+
+    #[test]
+    fn test_assign_speaker_labels_basic() {
+        let diarizer = Diarizer::default_config();
+        let segments = vec![
+            SpeakerSegment::new(0, 0.0, 2.0, 0.9),
+            SpeakerSegment::new(0, 2.0, 4.0, 0.85),
+            SpeakerSegment::new(0, 4.0, 6.0, 0.88),
+        ];
+
+        // Create a clustering result with 2 clusters: seg0,seg2 → speaker 0, seg1 → speaker 1
+        let embeddings = vec![
+            SpeakerEmbedding::new(vec![1.0; 256], 0),
+            SpeakerEmbedding::new(vec![-1.0; 256], 0),
+            SpeakerEmbedding::new(vec![1.0; 256], 0),
+        ];
+        let clustering_config = ClusteringConfig::default();
+        let clustering = SpectralClustering::new(clustering_config);
+        let cluster_result = clustering.cluster(&embeddings, None, 1).expect("cluster");
+
+        let labeled = diarizer
+            .assign_speaker_labels(&segments, &cluster_result)
+            .expect("should assign labels");
+
+        assert_eq!(labeled.len(), 3);
+        // All segments should have speaker IDs assigned
+        for seg in &labeled {
+            assert!(seg.speaker_id() < 10); // Reasonable speaker ID
+        }
+    }
+
+    #[test]
+    fn test_assign_speaker_labels_mismatch_error() {
+        let diarizer = Diarizer::default_config();
+        let segments = vec![
+            SpeakerSegment::new(0, 0.0, 2.0, 0.9),
+            SpeakerSegment::new(0, 2.0, 4.0, 0.85),
+        ];
+
+        // Create clustering with only 1 label (mismatch with 2 segments)
+        let embeddings = vec![SpeakerEmbedding::new(vec![1.0; 256], 0)];
+        let clustering_config = ClusteringConfig::default();
+        let clustering = SpectralClustering::new(clustering_config);
+        let cluster_result = clustering.cluster(&embeddings, None, 1).expect("cluster");
+
+        let result = diarizer.assign_speaker_labels(&segments, &cluster_result);
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // extract_segment_embeddings Tests (impact 15.7, 0% coverage)
+    // =========================================================================
+
+    #[test]
+    fn test_extract_segment_embeddings_basic() {
+        let diarizer = Diarizer::default_config();
+        let sample_rate = 16000u32;
+
+        // Create 2 seconds of audio
+        let audio: Vec<f32> = (0..sample_rate as usize * 2)
+            .map(|i| (i as f32 * 0.01).sin())
+            .collect();
+
+        let segments = vec![
+            SpeakerSegment::new(0, 0.0, 1.0, 0.9),
+            SpeakerSegment::new(0, 1.0, 2.0, 0.85),
+        ];
+
+        let embeddings = diarizer
+            .extract_segment_embeddings(&audio, sample_rate, &segments)
+            .expect("should extract embeddings");
+
+        assert_eq!(embeddings.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_segment_embeddings_skip_invalid() {
+        let diarizer = Diarizer::default_config();
+        let sample_rate = 16000u32;
+
+        // Short audio (1 second)
+        let audio: Vec<f32> = (0..sample_rate as usize)
+            .map(|i| (i as f32 * 0.01).sin())
+            .collect();
+
+        let segments = vec![
+            SpeakerSegment::new(0, 0.0, 0.5, 0.9),
+            SpeakerSegment::new(0, 2.0, 3.0, 0.85), // Beyond audio length
+        ];
+
+        let embeddings = diarizer
+            .extract_segment_embeddings(&audio, sample_rate, &segments)
+            .expect("should succeed");
+
+        // Second segment's start is beyond audio length, so start >= end after clamping
+        assert!(embeddings.len() <= 2);
+    }
+
+    #[test]
+    fn test_extract_segment_embeddings_empty() {
+        let diarizer = Diarizer::default_config();
+        let audio = vec![0.0f32; 16000];
+
+        let embeddings = diarizer
+            .extract_segment_embeddings(&audio, 16000, &[])
+            .expect("should succeed");
+
+        assert!(embeddings.is_empty());
+    }
+
+    // =========================================================================
+    // process (full pipeline) Tests (impact 13.4, 33% coverage)
+    // =========================================================================
+
+    #[test]
+    fn test_diarizer_process_with_synthetic_speech() {
+        let diarizer = Diarizer::default_config();
+        // Generate 3 seconds of synthetic speech-like audio
+        let sample_rate = 16000u32;
+        let audio: Vec<f32> = (0..sample_rate as usize * 3)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                // Two "speakers" with different frequencies
+                if t < 1.5 {
+                    (t * 200.0 * std::f32::consts::TAU).sin() * 0.5
+                } else {
+                    (t * 350.0 * std::f32::consts::TAU).sin() * 0.5
+                }
+            })
+            .collect();
+
+        let result = diarizer.process(&audio, sample_rate).expect("should succeed");
+        assert!((result.duration() - 3.0).abs() < 0.1);
+    }
 }

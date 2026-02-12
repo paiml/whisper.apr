@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Benchmarks for WASM SIMD operations
 //!
 //! This benchmark suite compares scalar vs WASM SIMD 128-bit performance

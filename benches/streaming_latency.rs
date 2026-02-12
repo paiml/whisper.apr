@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Streaming Latency Benchmarks (WAPR-112)
 //!
 //! Measures latency characteristics of the streaming inference pipeline:

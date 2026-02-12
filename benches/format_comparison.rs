@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Benchmarks comparing model format efficiency
 //!
 //! Compares GGML, APR (f32/int8), and SafeTensors formats for:
@@ -13,7 +14,6 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use std::fs;
 use std::hint::black_box;
 use std::path::Path;
-use std::time::Instant;
 
 /// Model format metadata
 #[derive(Debug, Clone)]
@@ -222,34 +222,6 @@ fn bench_first_token(c: &mut Criterion) {
     group.finish();
 }
 
-/// Print format comparison summary
-fn print_format_summary() {
-    println!("\n=== Model Format Comparison ===\n");
-
-    let formats = get_format_infos();
-    let safetensors_size = formats
-        .iter()
-        .find(|f| f.name == "SafeTensors")
-        .map(|f| f.file_size)
-        .unwrap_or(1);
-
-    println!("{:<15} {:>12} {:>12}", "Format", "Size", "Ratio");
-    println!("{:-<15} {:-<12} {:-<12}", "", "", "");
-
-    for format in &formats {
-        let ratio = format.file_size as f64 / safetensors_size as f64;
-        let size_mb = format.file_size as f64 / 1_000_000.0;
-        println!(
-            "{:<15} {:>10.1} MB {:>11.1}%",
-            format.name,
-            size_mb,
-            ratio * 100.0
-        );
-    }
-
-    println!();
-}
-
 criterion_group!(
     benches,
     bench_file_read,
@@ -267,6 +239,29 @@ mod tests {
 
     #[test]
     fn test_print_summary() {
-        print_format_summary();
+        println!("\n=== Model Format Comparison ===\n");
+
+        let formats = get_format_infos();
+        let safetensors_size = formats
+            .iter()
+            .find(|f| f.name == "SafeTensors")
+            .map(|f| f.file_size)
+            .unwrap_or(1);
+
+        println!("{:<15} {:>12} {:>12}", "Format", "Size", "Ratio");
+        println!("{:-<15} {:-<12} {:-<12}", "", "", "");
+
+        for format in &formats {
+            let ratio = format.file_size as f64 / safetensors_size as f64;
+            let size_mb = format.file_size as f64 / 1_000_000.0;
+            println!(
+                "{:<15} {:>10.1} MB {:>11.1}%",
+                format.name,
+                size_mb,
+                ratio * 100.0
+            );
+        }
+
+        println!();
     }
 }

@@ -14,11 +14,15 @@ use whisper_apr::format::export::{SafeTensorsExporter, TensorData};
 use whisper_apr::publish::{generate_model_card, PublishConfig, PublishFormat, Publisher};
 use whisper_apr::verify::{verify_safetensors, CheckResult, VerificationReport, Verifier};
 
-/// Test fixture: create a temporary directory for test files
+/// Test fixture: create a unique temporary directory per call
 fn temp_dir() -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "whisper_apr_publish_test_{}",
-        std::process::id()
+        "whisper_apr_publish_test_{}_{}",
+        std::process::id(),
+        id
     ));
     let _ = fs::create_dir_all(&dir);
     dir
