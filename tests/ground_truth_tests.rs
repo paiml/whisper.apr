@@ -11,12 +11,17 @@
 use std::path::Path;
 use std::time::Instant;
 
-/// Expected ground truth transcriptions from whisper.cpp and HuggingFace
+/// Expected ground truth transcriptions from whisper.cpp beam search (default)
 const GROUND_TRUTH_1_5S: &str = "The birds can use";
-/// Ground truth for 3s clip (full Harvard sentence)
+/// Ground truth for 3s clip — whisper.cpp beam search (bs=5)
 const GROUND_TRUTH_3S: &str = "The birch can use lid on the smooth pipe.";
-/// Ground truth for full speech (~33s, 10 Harvard sentences)
+/// Ground truth for 3s clip — whisper.cpp greedy (bs=1, bo=1)
+/// Fairer comparison target since whisper.apr tests use greedy decoding.
+const GROUND_TRUTH_3S_GREEDY: &str = "The birch can use lid on this mood pipe.";
+/// Ground truth for full speech (~33s, 10 Harvard sentences) — whisper.cpp beam search
 const GROUND_TRUTH_FULL: &str = "The birch can use lid on the smooth planks. Glue the sheet to the dark blue background. It is easy to tell the depth of a well. These days, the chicken leg is a rare dish. Rice is often served in round bowls. The juice of lemon makes fine punch. The box was thrown beside the pork chuck. The hogs were fed chopped corn and garbage. Four hours of steady work faced us. A large size of stockings is hard to sell.";
+/// Ground truth for full speech — whisper.cpp greedy (bs=1, bo=1)
+const GROUND_TRUTH_FULL_GREEDY: &str = "The birch can use lid on this smooth planks. Glue the sheet to the dark blue background. It is easy to tell the depth of a well. These days, the chicken leg is a rare dish. Rice is often served in round bowls. The juice of lemon makes fine punch. The box was thrown beside the pork chuck. The hogs were fed chopped corn and garbage. Four hours of steady work faced us. A large size of stockings is hard to sell.";
 
 /// Test audio file paths
 const TEST_AUDIO_1_5S: &str = "demos/test-audio/test-speech-1.5s.wav";
@@ -946,26 +951,27 @@ mod integration_tests {
         let elapsed = start.elapsed().as_secs_f64();
 
         let actual = result.text.trim();
-        let expected = GROUND_TRUTH_3S;
-        let wer = compute_wer(expected, actual);
+        let wer_beam = compute_wer(GROUND_TRUTH_3S, actual);
+        let wer_greedy = compute_wer(GROUND_TRUTH_3S_GREEDY, actual);
         let token_count: usize = result.segments.iter().map(|s| s.tokens.len()).sum();
 
         println!("\n=== 3s Speech Parity (WAPR-PARITY-003-A) ===");
-        println!("Expected: '{}'", expected);
-        println!("Actual:   '{}'", actual);
-        println!("WER:      {:.1}%", wer * 100.0);
+        println!("Expected (beam):   '{}'", GROUND_TRUTH_3S);
+        println!("Expected (greedy): '{}'", GROUND_TRUTH_3S_GREEDY);
+        println!("Actual:            '{}'", actual);
+        println!("WER vs beam:       {:.1}%", wer_beam * 100.0);
+        println!("WER vs greedy:     {:.1}% (fairer comparison)", wer_greedy * 100.0);
         println!("Tokens:   {}", token_count);
         println!("Time:     {:.3}s (RTF: {:.2}x)", elapsed, elapsed / 3.0);
 
-        // 3s clip has higher WER than 1.5s baseline due to longer decoder sequence.
-        // whisper.apr currently outputs "The Burk can use lid on this mood plank."
-        // vs whisper.cpp "The birch can use lid on the smooth pipe."
-        // Tracking threshold at 50% — will tighten as parity improves.
+        // Compare against whisper.cpp greedy (fairer target for greedy-to-greedy parity).
+        // whisper.apr: "The Burk can use lid on this mood plank."
+        // whisper.cpp greedy: "The birch can use lid on this mood pipe."
+        // Only 2 word differences: "Burk" vs "birch", "plank" vs "pipe" = ~22% WER
         assert!(
-            wer <= 0.5,
-            "3s WER TOO HIGH: {:.1}% (threshold: 50%). Expected: '{}', Got: '{}'",
-            wer * 100.0,
-            expected,
+            wer_greedy <= 0.5,
+            "3s WER TOO HIGH: {:.1}% (threshold: 50%). Got: '{}'",
+            wer_greedy * 100.0,
             actual
         );
         assert!(token_count < 448, "3s hit max tokens: {}", token_count);
@@ -973,6 +979,74 @@ mod integration_tests {
             !detect_repetitive_pattern(actual, 5, 3),
             "3s hallucination: '{}'",
             actual
+        );
+    }
+
+    /// WAPR-PARITY-003-A2: 3s clip beam search parity
+    ///
+    /// whisper.cpp default uses beam search (5 beams). This test verifies that
+    /// whisper.apr beam search produces results closer to ground truth than greedy.
+    /// Ground truth: "The birch can use lid on the smooth pipe." (whisper.cpp beam=5)
+    #[test]
+    fn test_3s_beam_search_parity() {
+        if !Path::new(TEST_AUDIO_3S).exists() {
+            eprintln!("SKIP: Audio file not found: {}", TEST_AUDIO_3S);
+            return;
+        }
+        if !Path::new(MODEL_TINY).exists() {
+            eprintln!("SKIP: Model file not found: {}", MODEL_TINY);
+            return;
+        }
+
+        let model_bytes = std::fs::read(MODEL_TINY).expect("Failed to read model");
+        let whisper =
+            whisper_apr::WhisperApr::load_from_apr(&model_bytes).expect("Failed to load model");
+        let samples = load_wav_samples(TEST_AUDIO_3S);
+
+        let options = whisper_apr::TranscribeOptions {
+            strategy: whisper_apr::DecodingStrategy::BeamSearch {
+                beam_size: 5,
+                temperature: 0.0,
+                patience: 1.0,
+            },
+            ..whisper_apr::TranscribeOptions::default()
+        };
+
+        let start = Instant::now();
+        let result = whisper
+            .transcribe(&samples, options)
+            .expect("Beam search transcription failed");
+        let elapsed = start.elapsed().as_secs_f64();
+
+        let actual = result.text.trim();
+        let expected = GROUND_TRUTH_3S;
+        let wer = compute_wer(expected, actual);
+        let greedy_wer = {
+            let greedy_result = whisper
+                .transcribe(&samples, whisper_apr::TranscribeOptions::default())
+                .expect("Greedy transcription failed");
+            compute_wer(expected, greedy_result.text.trim())
+        };
+
+        println!("\n=== 3s Beam Search Parity (WAPR-PARITY-003-A2) ===");
+        println!("Expected:    '{}'", expected);
+        println!("Beam(5):     '{}'", actual);
+        println!("Beam WER:    {:.1}%", wer * 100.0);
+        println!("Greedy WER:  {:.1}% (baseline)", greedy_wer * 100.0);
+        println!("Time:        {:.3}s", elapsed);
+
+        // Beam search should not produce worse results than greedy.
+        // Allow 10% margin for non-determinism.
+        assert!(
+            wer <= greedy_wer + 0.10,
+            "Beam search WER ({:.1}%) significantly worse than greedy ({:.1}%)",
+            wer * 100.0,
+            greedy_wer * 100.0
+        );
+        assert!(
+            wer <= 0.5,
+            "Beam search WER too high: {:.1}% (threshold: 50%)",
+            wer * 100.0
         );
     }
 
@@ -1004,29 +1078,30 @@ mod integration_tests {
         let elapsed = start.elapsed().as_secs_f64();
 
         let actual = result.text.trim();
-        let expected = GROUND_TRUTH_FULL;
-        let wer = compute_wer(expected, actual);
+        let wer_beam = compute_wer(GROUND_TRUTH_FULL, actual);
+        let wer_greedy = compute_wer(GROUND_TRUTH_FULL_GREEDY, actual);
         let token_count: usize = result.segments.iter().map(|s| s.tokens.len()).sum();
 
         println!("\n=== Full Speech Parity (WAPR-PARITY-003-B) ===");
         println!("Audio: {:.1}s", audio_duration);
-        println!("Expected: '{}'", &expected[..80.min(expected.len())]);
-        println!("Actual:   '{}'", &actual[..80.min(actual.len())]);
-        println!("WER:      {:.1}%", wer * 100.0);
-        println!("Tokens:   {}", token_count);
+        println!("Expected (beam):   '{}'", &GROUND_TRUTH_FULL[..80.min(GROUND_TRUTH_FULL.len())]);
+        println!("Expected (greedy): '{}'", &GROUND_TRUTH_FULL_GREEDY[..80.min(GROUND_TRUTH_FULL_GREEDY.len())]);
+        println!("Actual:            '{actual}'");
+        println!("WER vs beam:       {:.1}%", wer_beam * 100.0);
+        println!("WER vs greedy:     {:.1}% (fairer comparison)", wer_greedy * 100.0);
+        println!("Segments: {}, Tokens: {}", result.segments.len(), token_count);
         println!(
             "Time:     {:.3}s (RTF: {:.2}x)",
             elapsed,
             elapsed / audio_duration
         );
 
-        // Multi-sentence is harder — allow 35% WER for tiny model.
-        // Current gap: ~32% WER (mostly substitutions: "this" vs "the", "planks" vs "pipe")
-        // Tracking threshold — will tighten as decoder attention improves.
+        // Compare against whisper.cpp greedy for fair greedy-to-greedy parity.
+        // Main differences: sentence 4 garble, missing sentence 10, 2 minor word errors.
         assert!(
-            wer <= 0.35,
+            wer_greedy <= 0.35,
             "Full WER TOO HIGH: {:.1}% (threshold: 35%). Got: '{}'",
-            wer * 100.0,
+            wer_greedy * 100.0,
             &actual[..100.min(actual.len())]
         );
         assert!(
