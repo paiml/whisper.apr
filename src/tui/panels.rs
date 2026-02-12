@@ -12,6 +12,18 @@ use ratatui::{
     Frame,
 };
 
+/// Render an empty-state placeholder if the data slice is empty.
+/// Returns `true` (and renders placeholder) if empty, `false` otherwise.
+fn render_empty_placeholder<T>(f: &mut Frame, area: Rect, data: &[T], message: &str) -> bool {
+    if data.is_empty() {
+        let text = Paragraph::new(message).style(Style::default().fg(Color::DarkGray));
+        f.render_widget(text, area);
+        true
+    } else {
+        false
+    }
+}
+
 /// Render the main whisper dashboard
 pub fn render_whisper_dashboard(f: &mut Frame, app: &WhisperApp) {
     let chunks = Layout::default()
@@ -75,10 +87,7 @@ fn render_waveform_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if app.audio_data.is_empty() {
-        let text = Paragraph::new("No audio loaded. Load audio to visualize waveform.")
-            .style(Style::default().fg(Color::DarkGray));
-        f.render_widget(text, inner);
+    if render_empty_placeholder(f, inner, &app.audio_data, "No audio loaded. Load audio to visualize waveform.") {
         return;
     }
 
@@ -105,10 +114,7 @@ fn render_mel_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if app.mel_data.is_empty() {
-        let text = Paragraph::new("No mel spectrogram computed. Compute mel to visualize.")
-            .style(Style::default().fg(Color::DarkGray));
-        f.render_widget(text, inner);
+    if render_empty_placeholder(f, inner, &app.mel_data, "No mel spectrogram computed. Compute mel to visualize.") {
         return;
     }
 
@@ -136,10 +142,7 @@ fn render_encoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if app.encoder_metrics.is_empty() {
-        let text = Paragraph::new("No encoder data. Start encoding to see layer activations.")
-            .style(Style::default().fg(Color::DarkGray));
-        f.render_widget(text, inner);
+    if render_empty_placeholder(f, inner, &app.encoder_metrics, "No encoder data. Start encoding to see layer activations.") {
         return;
     }
 
@@ -185,10 +188,7 @@ fn render_decoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if app.decoder_tokens.is_empty() {
-        let text = Paragraph::new("No tokens generated. Start decoding to see tokens.")
-            .style(Style::default().fg(Color::DarkGray));
-        f.render_widget(text, inner);
+    if render_empty_placeholder(f, inner, &app.decoder_tokens, "No tokens generated. Start decoding to see tokens.") {
         return;
     }
 
@@ -235,10 +235,7 @@ fn render_attention_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if app.attention_weights.is_empty() {
-        let text = Paragraph::new("No attention data. Decode to see cross-attention.")
-            .style(Style::default().fg(Color::DarkGray));
-        f.render_widget(text, inner);
+    if render_empty_placeholder(f, inner, &app.attention_weights, "No attention data. Decode to see cross-attention.") {
         return;
     }
 

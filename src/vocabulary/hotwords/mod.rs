@@ -153,10 +153,6 @@ impl Hotword {
     /// Returns the number of matching tokens (0 if no match)
     #[must_use]
     pub fn prefix_match_len(&self, context: &[u32]) -> usize {
-        if self.tokens.is_empty() || context.is_empty() {
-            return 0;
-        }
-
         // Check each possible prefix length
         for prefix_len in (1..=self.tokens.len().min(context.len())).rev() {
             let hotword_prefix = &self.tokens[..prefix_len];
@@ -324,10 +320,6 @@ impl HotwordBooster {
 
     /// Check if context recently matched a hotword
     fn has_recent_hotword_match(&self, context: &[u32]) -> bool {
-        if context.is_empty() {
-            return false;
-        }
-
         for hotword in &self.hotwords {
             if hotword.prefix_match_len(context) > 0 {
                 return true;
