@@ -159,6 +159,40 @@ fn download_model(size: ModelSize, verbose: bool) -> ModelLoaderResult<PathBuf> 
     Ok(cache_path)
 }
 
+/// Convert a safetensors tensor view to f32 data, returning None for unsupported dtypes
+fn convert_tensor_to_f32(tensor: &safetensors::tensor::TensorView<'_>) -> Option<Vec<f32>> {
+    match tensor.dtype() {
+        safetensors::Dtype::F32 => Some(
+            tensor
+                .data()
+                .chunks(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect(),
+        ),
+        safetensors::Dtype::F16 => Some(
+            tensor
+                .data()
+                .chunks(2)
+                .map(|b| {
+                    let bits = u16::from_le_bytes([b[0], b[1]]);
+                    half::f16::from_bits(bits).to_f32()
+                })
+                .collect(),
+        ),
+        safetensors::Dtype::BF16 => Some(
+            tensor
+                .data()
+                .chunks(2)
+                .map(|b| {
+                    let bits = u16::from_le_bytes([b[0], b[1]]);
+                    half::bf16::from_bits(bits).to_f32()
+                })
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
 /// Convert safetensors to .apr format
 fn convert_safetensors_to_apr(
     safetensors_path: &std::path::Path,
@@ -218,44 +252,15 @@ fn convert_safetensors_to_apr(
 
     // Map tensor names from HuggingFace format to our format and write
     for (name, tensor) in tensors.tensors() {
-        // Convert tensor data to f32
-        let f32_data: Vec<f32> = match tensor.dtype() {
-            safetensors::Dtype::F32 => tensor
-                .data()
-                .chunks(4)
-                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                .collect(),
-            safetensors::Dtype::F16 => tensor
-                .data()
-                .chunks(2)
-                .map(|b| {
-                    let bits = u16::from_le_bytes([b[0], b[1]]);
-                    half::f16::from_bits(bits).to_f32()
-                })
-                .collect(),
-            safetensors::Dtype::BF16 => tensor
-                .data()
-                .chunks(2)
-                .map(|b| {
-                    let bits = u16::from_le_bytes([b[0], b[1]]);
-                    half::bf16::from_bits(bits).to_f32()
-                })
-                .collect(),
-            _ => {
-                if verbose {
-                    eprintln!("[WARN] Skipping tensor {name} with unsupported dtype");
-                }
-                continue;
+        let Some(f32_data) = convert_tensor_to_f32(&tensor) else {
+            if verbose {
+                eprintln!("[WARN] Skipping tensor {name} with unsupported dtype");
             }
+            continue;
         };
 
-        // Map HuggingFace tensor name to our format
         let our_name = map_tensor_name(&name);
-
-        // Get shape
         let shape: Vec<usize> = tensor.shape().to_vec();
-
-        // Use the add() method which takes name, shape, data
         writer.add(our_name, shape, f32_data);
     }
 

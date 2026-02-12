@@ -130,16 +130,7 @@ pub fn render_waveform(samples: &[f32], width: usize, height: usize) -> String {
 
         // Draw vertical line from center
         for row in (mid_row.saturating_sub(row_offset))..=(mid_row + row_offset).min(height - 1) {
-            let char = if row == mid_row {
-                '─'
-            } else if chunk.iter().any(|&s| s > 0.0) && row < mid_row {
-                '│'
-            } else if chunk.iter().any(|&s| s < 0.0) && row > mid_row {
-                '│'
-            } else {
-                '│'
-            };
-            grid[row][col] = char;
+            grid[row][col] = if row == mid_row { '─' } else { '│' };
         }
     }
 
@@ -153,6 +144,66 @@ pub fn render_waveform(samples: &[f32], width: usize, height: usize) -> String {
     output.push_str(&format!("-{:.2}\n", scale));
 
     output
+}
+
+/// Compute average value for a rectangular region of the mel spectrogram
+fn mel_cell_average(
+    mel_data: &[f32],
+    n_mels: usize,
+    mel_start: usize,
+    mel_end: usize,
+    frame_start: usize,
+    frame_end: usize,
+) -> f32 {
+    let mut sum = 0.0;
+    let mut count = 0;
+    for frame in frame_start..frame_end {
+        for mel in mel_start..=mel_end.min(n_mels - 1) {
+            let idx = frame * n_mels + mel;
+            if idx < mel_data.len() {
+                sum += mel_data[idx];
+                count += 1;
+            }
+        }
+    }
+    if count > 0 {
+        sum / count as f32
+    } else {
+        0.0
+    }
+}
+
+/// Compute average attention value for a rectangular cell
+fn attention_cell_average(
+    attention_weights: &[Vec<f32>],
+    token_start: usize,
+    token_end: usize,
+    frame_start: usize,
+    frame_end: usize,
+) -> f32 {
+    let mut sum = 0.0;
+    let mut count = 0;
+    for token_idx in token_start..token_end {
+        if token_idx < attention_weights.len() {
+            for frame_idx in frame_start..frame_end {
+                if frame_idx < attention_weights[token_idx].len() {
+                    sum += attention_weights[token_idx][frame_idx];
+                    count += 1;
+                }
+            }
+        }
+    }
+    if count > 0 {
+        sum / count as f32
+    } else {
+        0.0
+    }
+}
+
+/// Map a normalized value [0, 1] to a heatmap character
+fn heatmap_char(chars: &[char], normalized: f32) -> char {
+    let idx = (normalized * (chars.len() - 1) as f32) as usize;
+    chars[idx.min(chars.len() - 1)]
 }
 
 /// Render mel spectrogram as ASCII heatmap
@@ -192,29 +243,11 @@ pub fn render_mel_spectrogram(
             let frame_start = col * frames_per_col;
             let frame_end = ((col + 1) * frames_per_col).min(n_frames);
 
-            // Average value in this cell
-            let mut sum = 0.0;
-            let mut count = 0;
-
-            for frame in frame_start..frame_end {
-                for mel in mel_start..=mel_end.min(n_mels - 1) {
-                    let idx = frame * n_mels + mel;
-                    if idx < mel_data.len() {
-                        sum += mel_data[idx];
-                        count += 1;
-                    }
-                }
-            }
-
-            let avg = if count > 0 {
-                sum / count as f32
-            } else {
-                min_val
-            };
+            let avg =
+                mel_cell_average(mel_data, n_mels, mel_start, mel_end, frame_start, frame_end);
+            let avg = if avg == 0.0 { min_val } else { avg };
             let normalized = ((avg - min_val) / range).clamp(0.0, 1.0);
-            let char_idx = (normalized * (HEATMAP_CHARS.len() - 1) as f32) as usize;
-
-            output.push(HEATMAP_CHARS[char_idx.min(HEATMAP_CHARS.len() - 1)]);
+            output.push(heatmap_char(&HEATMAP_CHARS, normalized));
         }
         output.push('\n');
     }
@@ -280,26 +313,15 @@ pub fn render_attention_heatmap(
             let frame_start = col * frames_per_col;
             let frame_end = ((col + 1) * frames_per_col).min(n_frames);
 
-            // Average attention in this cell
-            let mut sum = 0.0;
-            let mut count = 0;
-
-            for token_idx in token_start..token_end {
-                if token_idx < attention_weights.len() {
-                    for frame_idx in frame_start..frame_end {
-                        if frame_idx < attention_weights[token_idx].len() {
-                            sum += attention_weights[token_idx][frame_idx];
-                            count += 1;
-                        }
-                    }
-                }
-            }
-
-            let avg = if count > 0 { sum / count as f32 } else { 0.0 };
+            let avg = attention_cell_average(
+                attention_weights,
+                token_start,
+                token_end,
+                frame_start,
+                frame_end,
+            );
             let normalized = (avg / scale).clamp(0.0, 1.0);
-            let char_idx = (normalized * (HEATMAP_CHARS.len() - 1) as f32) as usize;
-
-            output.push(HEATMAP_CHARS[char_idx.min(HEATMAP_CHARS.len() - 1)]);
+            output.push(heatmap_char(&HEATMAP_CHARS, normalized));
         }
         output.push('\n');
     }
