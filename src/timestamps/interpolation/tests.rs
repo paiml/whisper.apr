@@ -131,8 +131,7 @@ fn test_interpolate_linear() {
 
 #[test]
 fn test_interpolate_character_proportional() {
-    let interpolator =
-        TimestampInterpolator::new(InterpolationConfig::character_proportional());
+    let interpolator = TimestampInterpolator::new(InterpolationConfig::character_proportional());
     let tokens = vec!["a".to_string(), "abc".to_string()]; // 1 char + 3 chars = 4 total
     let result = interpolator
         .interpolate_word_tokens(0.0, 1.0, &tokens, 0)
@@ -190,8 +189,7 @@ fn test_interpolate_correct_indices() {
 
 #[test]
 fn test_smooth_timestamps_no_smoothing() {
-    let interpolator =
-        TimestampInterpolator::new(InterpolationConfig::default().with_smoothing(0));
+    let interpolator = TimestampInterpolator::new(InterpolationConfig::default().with_smoothing(0));
 
     let mut timestamps = vec![
         TokenTimestamp::interpolated(0, "a".to_string(), 0.0, 0.3, 0.5),
@@ -206,8 +204,7 @@ fn test_smooth_timestamps_no_smoothing() {
 
 #[test]
 fn test_smooth_timestamps_fixes_overlap() {
-    let interpolator =
-        TimestampInterpolator::new(InterpolationConfig::default().with_smoothing(3));
+    let interpolator = TimestampInterpolator::new(InterpolationConfig::default().with_smoothing(3));
 
     let mut timestamps = vec![
         TokenTimestamp::interpolated(0, "a".to_string(), 0.0, 0.6, 0.5),

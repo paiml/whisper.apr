@@ -26,11 +26,10 @@ use aprender::format::{apr_export, ExportFormat, ExportOptions};
 use super::apr_args::{
     AprAction, AprArgs, AprCanaryArgs, AprCompareArgs, AprContractArgs, AprDecryptArgs,
     AprDiffArgs, AprEncryptArgs, AprExportArgs, AprF16AuditArgs, AprFlowArgs, AprGoldenArgs,
-    AprHeInspectArgs, AprHexArgs, AprImportArgs, AprImportShardedArgs, AprInspectArgs,
-    AprLintArgs, AprMergeArgs, AprQuantizeArgs, AprSignArgs, AprTensorsArgs, AprTreeArgs,
-    AprValidateArgs, AprVerifySigArgs, FamilyAction, RosettaAction, RosettaArgs,
-    RosettaConvertArgs, RosettaDiffArgs, RosettaFingerprintArgs, RosettaInspectArgs,
-    RosettaVerifyArgs,
+    AprHeInspectArgs, AprHexArgs, AprImportArgs, AprImportShardedArgs, AprInspectArgs, AprLintArgs,
+    AprMergeArgs, AprQuantizeArgs, AprSignArgs, AprTensorsArgs, AprTreeArgs, AprValidateArgs,
+    AprVerifySigArgs, FamilyAction, RosettaAction, RosettaArgs, RosettaConvertArgs,
+    RosettaDiffArgs, RosettaFingerprintArgs, RosettaInspectArgs, RosettaVerifyArgs,
 };
 use super::commands::{CliError, CliResult, CommandResult};
 
@@ -160,8 +159,8 @@ fn run_tensors(args: &AprTensorsArgs, global: &super::args::Args) -> CliResult<C
         limit: args.limit,
     };
 
-    let result = list_tensors(&args.file, options)
-        .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
+    let result =
+        list_tensors(&args.file, options).map_err(|e| CliError::InvalidArgument(e.to_string()))?;
 
     if global.json {
         let tensors: Vec<serde_json::Value> = result
@@ -1096,16 +1095,17 @@ fn run_golden(args: &AprGoldenArgs, global: &super::args::Args) -> CliResult<Com
     )))
 }
 
-fn validate_tensor_shapes(
-    tensors: &[aprender::format::TensorInfo],
-) -> (Vec<String>, usize) {
+fn validate_tensor_shapes(tensors: &[aprender::format::TensorInfo]) -> (Vec<String>, usize) {
     let mut issues = Vec::new();
     let mut total_elements = 0usize;
     for tensor in tensors {
         let elements: usize = tensor.shape.iter().product();
         total_elements += elements;
         if tensor.shape.contains(&0) {
-            issues.push(format!("{}: zero dimension in shape {:?}", tensor.name, tensor.shape));
+            issues.push(format!(
+                "{}: zero dimension in shape {:?}",
+                tensor.name, tensor.shape
+            ));
         }
     }
     (issues, total_elements)
@@ -1208,8 +1208,7 @@ fn run_contract(args: &AprContractArgs, global: &super::args::Args) -> CliResult
         .inspect(&args.file)
         .map_err(|e| format_model_error(&e, &args.file))?;
 
-    let (checked, passed, errors) =
-        check_layout_contracts(&report.tensors, args.tensor.as_deref());
+    let (checked, passed, errors) = check_layout_contracts(&report.tensors, args.tensor.as_deref());
 
     if global.json {
         let json = serde_json::json!({
@@ -1292,21 +1291,23 @@ fn run_family_identify(
         println!("Model Family Detection: {}", args.file.display());
         if let Some(family) = detected {
             let config = family.config();
-            println!("  Family: {} ({})", family.family_name(), family.display_name());
+            println!(
+                "  Family: {} ({})",
+                family.family_name(),
+                family.display_name()
+            );
             println!("  Vendor: {}", config.vendor);
             println!("  Attention: {}", config.constraints.attention_type);
             println!("  Activation: {}", config.constraints.activation);
             println!("  Normalization: {}", config.constraints.norm_type);
             println!("  MLP: {}", config.constraints.mlp_type);
-            println!("  Position encoding: {}", config.constraints.positional_encoding);
+            println!(
+                "  Position encoding: {}",
+                config.constraints.positional_encoding
+            );
         } else {
             println!("  Family: unknown (no match found)");
-            println!(
-                "  Known families: {}",
-                registry
-                    .family_names()
-                    .join(", ")
-            );
+            println!("  Known families: {}", registry.family_names().join(", "));
         }
     }
 
@@ -1370,7 +1371,11 @@ fn run_family_check(
             serde_json::to_string_pretty(&json).unwrap_or_default()
         );
     } else {
-        println!("Family Check: {} against {}", args.file.display(), args.family);
+        println!(
+            "Family Check: {} against {}",
+            args.file.display(),
+            args.family
+        );
         if passed {
             println!("  Result: PASS");
         } else if let Err(e) = &check_result {
@@ -1493,14 +1498,8 @@ fn run_export(args: &AprExportArgs, global: &super::args::Args) -> CliResult<Com
     } else {
         println!("Export complete: {}", args.output.display());
         println!("  Format: {}", args.format);
-        println!(
-            "  Original: {}",
-            format_size(report.original_size as u64)
-        );
-        println!(
-            "  Exported: {}",
-            format_size(report.exported_size as u64)
-        );
+        println!("  Original: {}", format_size(report.original_size as u64));
+        println!("  Exported: {}", format_size(report.exported_size as u64));
         println!("  Tensors: {}", report.tensor_count);
     }
 
@@ -1554,7 +1553,10 @@ fn run_f16_audit(args: &AprF16AuditArgs, global: &super::args::Args) -> CliResul
             "f16_min_normal": F16_MIN_NORMAL,
             "tensor_details": tensor_issues,
         });
-        println!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json).unwrap_or_default()
+        );
     } else {
         println!("F16 Scale Factor Audit: {}", args.file.display());
         println!("  Estimated scale blocks: {total_scales}");
@@ -1618,11 +1620,7 @@ fn insert_tensor_path(
     if parts.len() == 1 {
         // Leaf node — the tensor itself
         let label = if show_sizes {
-            format!(
-                "{} ({})",
-                parts[0],
-                format_size(tensor.size_bytes as u64)
-            )
+            format!("{} ({})", parts[0], format_size(tensor.size_bytes as u64))
         } else {
             parts[0].to_string()
         };
@@ -1754,9 +1752,8 @@ fn run_sign(args: &AprSignArgs, global: &super::args::Args) -> CliResult<Command
     #[cfg(feature = "format-signing")]
     {
         // Read the signing key file (raw 32-byte seed)
-        let key_bytes = fs::read(&args.key).map_err(|e| {
-            CliError::InvalidArgument(format!("Failed to read key file: {e}"))
-        })?;
+        let key_bytes = fs::read(&args.key)
+            .map_err(|e| CliError::InvalidArgument(format!("Failed to read key file: {e}")))?;
 
         if key_bytes.len() < 32 {
             return Err(CliError::InvalidArgument(format!(
@@ -1765,16 +1762,15 @@ fn run_sign(args: &AprSignArgs, global: &super::args::Args) -> CliResult<Command
             )));
         }
 
-        let seed: [u8; 32] = key_bytes[..32].try_into().map_err(|_| {
-            CliError::InvalidArgument("Invalid key data".to_string())
-        })?;
+        let seed: [u8; 32] = key_bytes[..32]
+            .try_into()
+            .map_err(|_| CliError::InvalidArgument("Invalid key data".to_string()))?;
 
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
 
         // Read source model, sign, and write output
-        let model_data = fs::read(&args.file).map_err(|e| {
-            CliError::InvalidArgument(format!("Failed to read model: {e}"))
-        })?;
+        let model_data = fs::read(&args.file)
+            .map_err(|e| CliError::InvalidArgument(format!("Failed to read model: {e}")))?;
 
         // Compute Ed25519 signature over model content
         use ed25519_dalek::Signer;
@@ -1786,9 +1782,8 @@ fn run_sign(args: &AprSignArgs, global: &super::args::Args) -> CliResult<Command
         output.extend_from_slice(&signature.to_bytes());
         output.extend_from_slice(verifying_key.as_bytes());
 
-        fs::write(&args.output, &output).map_err(|e| {
-            CliError::InvalidArgument(format!("Failed to write signed model: {e}"))
-        })?;
+        fs::write(&args.output, &output)
+            .map_err(|e| CliError::InvalidArgument(format!("Failed to write signed model: {e}")))?;
 
         if global.json {
             println!(
@@ -1798,10 +1793,7 @@ fn run_sign(args: &AprSignArgs, global: &super::args::Args) -> CliResult<Command
             );
         } else if !global.quiet {
             println!("Signed: {}", args.output.display());
-            println!(
-                "Public key: {}",
-                hex::encode(verifying_key.as_bytes())
-            );
+            println!("Public key: {}", hex::encode(verifying_key.as_bytes()));
         }
 
         Ok(CommandResult::success("Model signed"))
@@ -1813,11 +1805,12 @@ fn run_sign(args: &AprSignArgs, global: &super::args::Args) -> CliResult<Command
 fn load_verifying_key_from_file(
     pk_path: &std::path::Path,
 ) -> CliResult<ed25519_dalek::VerifyingKey> {
-    let pk_bytes = fs::read(pk_path).map_err(|e| {
-        CliError::InvalidArgument(format!("Failed to read pubkey: {e}"))
-    })?;
+    let pk_bytes = fs::read(pk_path)
+        .map_err(|e| CliError::InvalidArgument(format!("Failed to read pubkey: {e}")))?;
     if pk_bytes.len() < 32 {
-        return Err(CliError::InvalidArgument("Pubkey file too small".to_string()));
+        return Err(CliError::InvalidArgument(
+            "Pubkey file too small".to_string(),
+        ));
     }
     let bytes: [u8; 32] = pk_bytes[..32].try_into().unwrap();
     ed25519_dalek::VerifyingKey::from_bytes(&bytes)
@@ -1826,17 +1819,17 @@ fn load_verifying_key_from_file(
 
 /// Load a verifying key from embedded bytes in model content
 #[cfg(feature = "format-signing")]
-fn load_verifying_key_embedded(content: &[u8], pubkey_start: usize) -> CliResult<ed25519_dalek::VerifyingKey> {
+fn load_verifying_key_embedded(
+    content: &[u8],
+    pubkey_start: usize,
+) -> CliResult<ed25519_dalek::VerifyingKey> {
     let bytes: [u8; 32] = content[pubkey_start..].try_into().unwrap();
     ed25519_dalek::VerifyingKey::from_bytes(&bytes)
         .map_err(|e| CliError::InvalidArgument(format!("Invalid embedded public key: {e}")))
 }
 
 /// Verify Ed25519 signature on a model file (feature: `format-signing`)
-fn run_verify_sig(
-    args: &AprVerifySigArgs,
-    global: &super::args::Args,
-) -> CliResult<CommandResult> {
+fn run_verify_sig(args: &AprVerifySigArgs, global: &super::args::Args) -> CliResult<CommandResult> {
     #[cfg(not(feature = "format-signing"))]
     {
         let _ = (args, global);
@@ -1847,9 +1840,8 @@ fn run_verify_sig(
 
     #[cfg(feature = "format-signing")]
     {
-        let content = fs::read(&args.file).map_err(|e| {
-            CliError::InvalidArgument(format!("Failed to read file: {e}"))
-        })?;
+        let content = fs::read(&args.file)
+            .map_err(|e| CliError::InvalidArgument(format!("Failed to read file: {e}")))?;
 
         // File layout: [model_data | signature(64) | pubkey(32)]
         if content.len() < 96 {
@@ -1910,12 +1902,14 @@ fn run_encrypt(args: &AprEncryptArgs, global: &super::args::Args) -> CliResult<C
             ));
         }
 
-        let model_data = fs::read(&args.file).map_err(|e| {
-            CliError::InvalidArgument(format!("Failed to read model: {e}"))
-        })?;
+        let model_data = fs::read(&args.file)
+            .map_err(|e| CliError::InvalidArgument(format!("Failed to read model: {e}")))?;
 
         // Encrypt using AES-256-GCM with Argon2id KDF
-        use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Nonce};
+        use aes_gcm::{
+            aead::{Aead, KeyInit},
+            Aes256Gcm, Nonce,
+        };
         use argon2::Argon2;
 
         let mut salt = [0u8; 16];
@@ -1994,7 +1988,10 @@ fn run_decrypt(args: &AprDecryptArgs, global: &super::args::Args) -> CliResult<C
         let nonce_bytes: [u8; 12] = content[16..28].try_into().unwrap();
         let ciphertext = &content[28..];
 
-        use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Nonce};
+        use aes_gcm::{
+            aead::{Aead, KeyInit},
+            Aes256Gcm, Nonce,
+        };
         use argon2::Argon2;
 
         let mut key = [0u8; 32];
@@ -2005,13 +2002,11 @@ fn run_decrypt(args: &AprDecryptArgs, global: &super::args::Args) -> CliResult<C
         let cipher = Aes256Gcm::new_from_slice(&key)
             .map_err(|e| CliError::InvalidArgument(format!("Cipher init failed: {e}")))?;
         let nonce = Nonce::from_slice(&nonce_bytes);
-        let plaintext = cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|_| {
-                CliError::InvalidArgument(
-                    "Decryption failed (wrong password or corrupted data)".to_string(),
-                )
-            })?;
+        let plaintext = cipher.decrypt(nonce, ciphertext).map_err(|_| {
+            CliError::InvalidArgument(
+                "Decryption failed (wrong password or corrupted data)".to_string(),
+            )
+        })?;
 
         fs::write(&args.output, &plaintext).map_err(|e| {
             CliError::InvalidArgument(format!("Failed to write decrypted model: {e}"))
@@ -2143,9 +2138,7 @@ fn run_import_sharded(
     args: &AprImportShardedArgs,
     global: &super::args::Args,
 ) -> CliResult<CommandResult> {
-    use aprender::format::sharded::{
-        is_sharded_model, ShardedImportConfig, ShardedImporter,
-    };
+    use aprender::format::sharded::{is_sharded_model, ShardedImportConfig, ShardedImporter};
 
     if !args.source.exists() {
         return Err(CliError::InvalidArgument(format!(
@@ -2203,10 +2196,7 @@ fn run_import_sharded(
         println!("  Tensors: {}", report.tensor_count);
         println!("  Shards: {}", report.shard_count);
         println!("  Bytes written: {}", format_size(report.bytes_written));
-        println!(
-            "  Peak memory: {}",
-            format_size(report.peak_memory_bytes)
-        );
+        println!("  Peak memory: {}", format_size(report.peak_memory_bytes));
         println!("  Cache hit rate: {:.0}%", report.cache_hit_rate * 100.0);
         println!("  Duration: {}ms", report.duration_ms);
         if !report.warnings.is_empty() {
@@ -2221,10 +2211,7 @@ fn run_import_sharded(
 }
 
 /// Inspect homomorphic encryption metadata (feature: `format-homomorphic`)
-fn run_he_inspect(
-    args: &AprHeInspectArgs,
-    global: &super::args::Args,
-) -> CliResult<CommandResult> {
+fn run_he_inspect(args: &AprHeInspectArgs, global: &super::args::Args) -> CliResult<CommandResult> {
     #[cfg(not(feature = "format-homomorphic"))]
     {
         let _ = (args, global);
@@ -2702,8 +2689,7 @@ mod tests {
         let st_path = build_fixture_safetensors(dir.path());
 
         let options = DiffOptions::default();
-        let report =
-            diff_models(&st_path, &st_path, options).expect("self-diff should not error");
+        let report = diff_models(&st_path, &st_path, options).expect("self-diff should not error");
 
         assert!(
             report.is_identical(),
@@ -3108,10 +3094,7 @@ mod tests {
         let args = super::super::apr_args::RosettaInspectArgs { file: st_path };
         let global = make_test_global(false, false);
         let result = run_rosetta_inspect(&args, &global);
-        assert!(
-            result.is_ok(),
-            "rosetta inspect should succeed: {result:?}"
-        );
+        assert!(result.is_ok(), "rosetta inspect should succeed: {result:?}");
     }
 
     // ========================================================================
@@ -3132,10 +3115,7 @@ mod tests {
         };
         let global = make_test_global(true, false);
         let result = run_rosetta_convert(&args, &global);
-        assert!(
-            result.is_ok(),
-            "rosetta convert should succeed: {result:?}"
-        );
+        assert!(result.is_ok(), "rosetta convert should succeed: {result:?}");
     }
 
     // ========================================================================
@@ -3231,10 +3211,7 @@ mod tests {
         };
         let global = make_test_global(false, true);
         let result = run_validate(&args, &global);
-        assert!(
-            result.is_ok(),
-            "validate --json should succeed: {result:?}"
-        );
+        assert!(result.is_ok(), "validate --json should succeed: {result:?}");
     }
 
     #[test]
@@ -3262,10 +3239,7 @@ mod tests {
         };
         let global = make_test_global(false, true);
         let result = run_contract(&args, &global);
-        assert!(
-            result.is_ok(),
-            "contract --json should succeed: {result:?}"
-        );
+        assert!(result.is_ok(), "contract --json should succeed: {result:?}");
     }
 
     #[test]
@@ -3276,10 +3250,7 @@ mod tests {
         let args = super::super::apr_args::AprFamilyIdentifyArgs { file: st_path };
         let global = make_test_global(false, false);
         let result = run_family_identify(&args, &global);
-        assert!(
-            result.is_ok(),
-            "family identify should succeed: {result:?}"
-        );
+        assert!(result.is_ok(), "family identify should succeed: {result:?}");
     }
 
     #[test]
@@ -3327,7 +3298,10 @@ mod tests {
         };
         let global = make_test_global(false, false);
         let result = run_family_check(&args, &global);
-        assert!(result.is_err(), "family check with unknown family should fail");
+        assert!(
+            result.is_err(),
+            "family check with unknown family should fail"
+        );
     }
 
     #[test]
@@ -3359,10 +3333,7 @@ mod tests {
         };
         let global = make_test_global(false, true);
         let result = run_compare(&args, &global);
-        assert!(
-            result.is_ok(),
-            "compare --json should succeed: {result:?}"
-        );
+        assert!(result.is_ok(), "compare --json should succeed: {result:?}");
     }
 
     #[test]
@@ -3471,10 +3442,7 @@ mod tests {
         };
         let global = make_test_global(false, true);
         let result = run_golden(&args, &global);
-        assert!(
-            result.is_ok(),
-            "golden --json should succeed: {result:?}"
-        );
+        assert!(result.is_ok(), "golden --json should succeed: {result:?}");
     }
 
     // ========================================================================
@@ -3520,9 +3488,7 @@ mod tests {
         let export_path = dir.path().join("exported.safetensors");
 
         let rosetta = RosettaStone::new();
-        let report_before = rosetta
-            .inspect(&st_path)
-            .expect("inspect should succeed");
+        let report_before = rosetta.inspect(&st_path).expect("inspect should succeed");
 
         let options = ExportOptions {
             format: ExportFormat::SafeTensors,
@@ -3530,8 +3496,8 @@ mod tests {
             include_tokenizer: false,
             include_config: false,
         };
-        let export_report = apr_export(&st_path, &export_path, options)
-            .expect("export should succeed");
+        let export_report =
+            apr_export(&st_path, &export_path, options).expect("export should succeed");
 
         assert_eq!(
             export_report.tensor_count,
@@ -3564,15 +3530,9 @@ mod tests {
         let st_path = build_fixture_safetensors(dir.path());
 
         let rosetta = RosettaStone::new();
-        let report = rosetta
-            .inspect(&st_path)
-            .expect("inspect should succeed");
+        let report = rosetta.inspect(&st_path).expect("inspect should succeed");
 
-        let tensor_names: Vec<&str> = report
-            .tensors
-            .iter()
-            .map(|t| t.name.as_str())
-            .collect();
+        let tensor_names: Vec<&str> = report.tensors.iter().map(|t| t.name.as_str()).collect();
 
         let registry = build_default_registry();
         let detected = registry.detect_family(&tensor_names);
@@ -3651,16 +3611,14 @@ mod tests {
         let expected = vec![0.1_f32, 0.2, 0.3, 0.4, 0.5];
         let actual = vec![0.10001_f32, 0.20001, 0.29999, 0.40001, 0.49999];
 
-        let result =
-            aprender::format::verify_logits("test", &actual, &expected, 1e-3);
+        let result = aprender::format::verify_logits("test", &actual, &expected, 1e-3);
         assert!(
             result.passed,
             "F10 FALSIFIED: verify_logits should pass for near-identical logits"
         );
 
         // Verify it fails with tight tolerance
-        let result_strict =
-            aprender::format::verify_logits("test", &actual, &expected, 1e-6);
+        let result_strict = aprender::format::verify_logits("test", &actual, &expected, 1e-6);
         assert!(
             !result_strict.passed,
             "F10 FALSIFIED: verify_logits should fail with strict tolerance"
@@ -3687,7 +3645,10 @@ mod tests {
             let result = run_sign(&args, &global);
             assert!(result.is_err());
             let msg = result.unwrap_err().to_string();
-            assert!(msg.contains("format-signing"), "Should mention feature: {msg}");
+            assert!(
+                msg.contains("format-signing"),
+                "Should mention feature: {msg}"
+            );
         }
     }
 
@@ -3703,7 +3664,10 @@ mod tests {
             let result = run_verify_sig(&args, &global);
             assert!(result.is_err());
             let msg = result.unwrap_err().to_string();
-            assert!(msg.contains("format-signing"), "Should mention feature: {msg}");
+            assert!(
+                msg.contains("format-signing"),
+                "Should mention feature: {msg}"
+            );
         }
     }
 
@@ -3720,7 +3684,10 @@ mod tests {
             let result = run_encrypt(&args, &global);
             assert!(result.is_err());
             let msg = result.unwrap_err().to_string();
-            assert!(msg.contains("format-encryption"), "Should mention feature: {msg}");
+            assert!(
+                msg.contains("format-encryption"),
+                "Should mention feature: {msg}"
+            );
         }
     }
 
@@ -3737,7 +3704,10 @@ mod tests {
             let result = run_decrypt(&args, &global);
             assert!(result.is_err());
             let msg = result.unwrap_err().to_string();
-            assert!(msg.contains("format-encryption"), "Should mention feature: {msg}");
+            assert!(
+                msg.contains("format-encryption"),
+                "Should mention feature: {msg}"
+            );
         }
     }
 
@@ -3755,7 +3725,10 @@ mod tests {
             let result = run_quantize(&args, &global);
             assert!(result.is_err());
             let msg = result.unwrap_err().to_string();
-            assert!(msg.contains("format-quantize"), "Should mention feature: {msg}");
+            assert!(
+                msg.contains("format-quantize"),
+                "Should mention feature: {msg}"
+            );
         }
     }
 
@@ -3770,7 +3743,10 @@ mod tests {
             let result = run_he_inspect(&args, &global);
             assert!(result.is_err());
             let msg = result.unwrap_err().to_string();
-            assert!(msg.contains("format-homomorphic"), "Should mention feature: {msg}");
+            assert!(
+                msg.contains("format-homomorphic"),
+                "Should mention feature: {msg}"
+            );
         }
     }
 
@@ -3821,11 +3797,8 @@ mod tests {
                 "layer.1.weight": "model-00002-of-00002.safetensors"
             }
         }"#;
-        std::fs::write(
-            dir.path().join("model.safetensors.index.json"),
-            index_json,
-        )
-        .expect("write index");
+        std::fs::write(dir.path().join("model.safetensors.index.json"), index_json)
+            .expect("write index");
 
         let args = AprImportShardedArgs {
             source: dir.path().to_path_buf(),
@@ -3847,11 +3820,8 @@ mod tests {
                 "embed": "shard-001.safetensors"
             }
         }"#;
-        std::fs::write(
-            dir.path().join("model.safetensors.index.json"),
-            index_json,
-        )
-        .expect("write index");
+        std::fs::write(dir.path().join("model.safetensors.index.json"), index_json)
+            .expect("write index");
 
         let args = AprImportShardedArgs {
             source: dir.path().to_path_buf(),
@@ -3884,11 +3854,8 @@ mod tests {
                 "output": "shard-003.safetensors"
             }
         }"#;
-        std::fs::write(
-            dir.path().join("model.safetensors.index.json"),
-            index_json,
-        )
-        .expect("write index");
+        std::fs::write(dir.path().join("model.safetensors.index.json"), index_json)
+            .expect("write index");
 
         use aprender::format::sharded::{ShardedImportConfig, ShardedImporter};
 
@@ -3976,12 +3943,7 @@ mod tests {
 
         #[cfg(not(feature = "format-homomorphic"))]
         {
-            let result = run_he_inspect(
-                &AprHeInspectArgs {
-                    file: "x".into(),
-                },
-                &global,
-            );
+            let result = run_he_inspect(&AprHeInspectArgs { file: "x".into() }, &global);
             assert!(result.is_err());
             assert!(
                 result.unwrap_err().to_string().contains("--features"),

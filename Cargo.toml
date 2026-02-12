@@ -229,13 +229,28 @@ complexity = { level = "warn", priority = -1 }
 style = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 
-# Allow these pedantic lints (too noisy)
+# Allow these pedantic lints (too noisy or inappropriate for numerical ASR code)
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 module_name_repetitions = "allow"
 too_many_lines = "allow"
 similar_names = "allow"
 must_use_candidate = "allow"
+doc_markdown = "allow"
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"
+redundant_closure_for_method_calls = "allow"
+uninlined_format_args = "allow"
+needless_raw_string_hashes = "allow"
+cloned_instead_of_copied = "allow"
+unused_async = "allow"
+trivially_copy_pass_by_ref = "allow"
+unnecessary_wraps = "allow"
+unreadable_literal = "allow"
+used_underscore_binding = "allow"
 
 # Local development: patch crates.io deps to use local versions with WASM fixes
 [patch.crates-io]

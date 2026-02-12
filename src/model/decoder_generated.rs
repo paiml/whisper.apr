@@ -22,9 +22,9 @@
 //!
 //! - Radford et al. (2023): "Robust Speech Recognition via Large-Scale Weak Supervision"
 
+use crate::error::{WhisperError, WhisperResult};
 use crate::model::encoder::{FeedForward, LayerNorm};
 use crate::model::{ModelConfig, MultiHeadAttention};
-use crate::error::{WhisperError, WhisperResult};
 use trueno::Matrix;
 
 #[cfg(feature = "realizar-inference")]

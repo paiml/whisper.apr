@@ -368,28 +368,26 @@ mod fused {
 
                 // FC1: fused_weight (d_ff x d_model) @ x (d_model) + fc1_bias -> hidden (d_ff)
                 let mut hidden = vec![0.0f32; self.d_ff];
-                for i in 0..self.d_ff {
+                for (i, h) in hidden.iter_mut().enumerate() {
                     let mut sum = self.fc1_bias[i];
-                    for j in 0..self.d_model {
-                        sum += self.fused_weight[i * self.d_model + j] * x[j];
+                    for (j, &xj) in x.iter().enumerate() {
+                        sum += self.fused_weight[i * self.d_model + j] * xj;
                     }
                     // GELU activation: x * 0.5 * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
-                    let g = sum * 0.5
-                        * (1.0
-                            + (0.7978845608_f32
-                                * (sum + 0.044715 * sum * sum * sum))
-                                .tanh());
-                    hidden[i] = g;
+                    let g = sum
+                        * 0.5
+                        * (1.0 + (0.797_884_6_f32 * (sum + 0.044715 * sum * sum * sum)).tanh());
+                    *h = g;
                 }
 
                 // FC2: fc2_weight (d_model x d_ff) @ hidden (d_ff) + fc2_bias -> out (d_model)
                 let out = &mut output[s * self.d_model..(s + 1) * self.d_model];
-                for i in 0..self.d_model {
+                for (i, o) in out.iter_mut().enumerate() {
                     let mut sum = self.fc2_bias[i];
-                    for j in 0..self.d_ff {
-                        sum += self.fc2_weight[i * self.d_ff + j] * hidden[j];
+                    for (j, &hj) in hidden.iter().enumerate() {
+                        sum += self.fc2_weight[i * self.d_ff + j] * hj;
                     }
-                    out[i] = sum;
+                    *o = sum;
                 }
             }
 
@@ -397,7 +395,12 @@ mod fused {
         }
 
         /// Set fused weights combining layer norm and FC1
-        pub fn set_fused_weights(&mut self, ln_weight: &[f32], ln_bias: &[f32], fc1_weight: &[f32]) {
+        pub fn set_fused_weights(
+            &mut self,
+            ln_weight: &[f32],
+            ln_bias: &[f32],
+            fc1_weight: &[f32],
+        ) {
             for i in 0..self.d_ff {
                 for j in 0..self.d_model {
                     self.fused_weight[i * self.d_model + j] =

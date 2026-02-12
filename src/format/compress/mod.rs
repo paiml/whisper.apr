@@ -405,4 +405,3 @@ impl Compressor {
         self.buffer.push(extra as u8);
     }
 }
-

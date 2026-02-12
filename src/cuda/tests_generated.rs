@@ -139,8 +139,7 @@ fn test_inference_tracing() {
 
     // Load audio via wav parser
     let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio file");
-    let wav_data =
-        crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+    let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
     let audio = wav_data.samples;
 
     // Run transcription with tracing
@@ -224,8 +223,7 @@ fn test_gpu_encoder_performance() {
 
     // Load audio via wav parser
     let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio file");
-    let wav_data =
-        crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+    let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
     let audio = wav_data.samples;
 
     // Precompute mel spectrogram for fair comparison
@@ -742,8 +740,7 @@ fn test_gpu_vs_cpu_decoder_parity() {
 
     // Load audio and compute mel BEFORE into_cuda()
     let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio");
-    let wav_data =
-        crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+    let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
     let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
 
     // Now convert to CUDA
@@ -893,8 +890,7 @@ fn test_gpu_vs_executor_decode_benchmark() {
     let bytes = std::fs::read(model_path).expect("Failed to read model");
     let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
     let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio");
-    let wav_data =
-        crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+    let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
     let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
 
     // Create CUDA model
@@ -1095,8 +1091,7 @@ fn test_executor_timing_breakdown() {
     let bytes = std::fs::read(model_path).expect("Failed to read model");
     let apr = crate::WhisperApr::load_from_apr(&bytes).expect("Failed to load model");
     let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio");
-    let wav_data =
-        crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+    let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
     let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
 
     let mut cuda_model = apr.into_cuda(0).expect("Failed to create CUDA model");
@@ -2594,8 +2589,7 @@ fn test_cuda_graph_capture_decoder() {
     }
 
     // Run decoder block during capture
-    let capture_result =
-        cuda_model.forward_decoder_block_gpu_stream(0, &x_gpu, 0, &stream, None);
+    let capture_result = cuda_model.forward_decoder_block_gpu_stream(0, &x_gpu, 0, &stream, None);
 
     // End capture
     let graph_result = stream.end_capture();
@@ -3044,8 +3038,7 @@ fn test_gpu_cross_attention_pipeline() {
         }
     }
 
-    let avg: std::time::Duration =
-        times.iter().sum::<std::time::Duration>() / NUM_TOKENS as u32;
+    let avg: std::time::Duration = times.iter().sum::<std::time::Duration>() / NUM_TOKENS as u32;
 
     eprintln!("\n[Results]");
     eprintln!("  Encoder:         {:?}", enc_time);
@@ -3681,8 +3674,7 @@ fn test_encode_gpu_vs_total_offload() {
 
     // Load audio and compute mel BEFORE converting to CUDA
     let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio file");
-    let wav_data =
-        crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+    let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
     let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
 
     // Now convert to CUDA
@@ -3816,8 +3808,7 @@ fn test_encoder_layer_by_layer_divergence() {
 
     // Compute mel BEFORE converting to CUDA
     let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio file");
-    let wav_data =
-        crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+    let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
     let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
 
     // Convert to CUDA
@@ -3940,8 +3931,7 @@ fn test_encoder_layer_by_layer_divergence() {
     eprintln!(
         "[CPU+PosEmb] mean={:.6}, std={:.6}",
         cpu_with_pos.iter().sum::<f32>() / cpu_with_pos.len() as f32,
-        (cpu_with_pos.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_with_pos.len() as f32)
-            .sqrt()
+        (cpu_with_pos.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_with_pos.len() as f32).sqrt()
     );
 
     // GPU: add positional embedding (done on CPU, re-upload)
@@ -3954,8 +3944,7 @@ fn test_encoder_layer_by_layer_divergence() {
     eprintln!(
         "[GPU+PosEmb] mean={:.6}, std={:.6}",
         gpu_with_pos.iter().sum::<f32>() / gpu_with_pos.len() as f32,
-        (gpu_with_pos.iter().map(|x| x.powi(2)).sum::<f32>() / gpu_with_pos.len() as f32)
-            .sqrt()
+        (gpu_with_pos.iter().map(|x| x.powi(2)).sum::<f32>() / gpu_with_pos.len() as f32).sqrt()
     );
 
     // Compare after pos emb
@@ -4121,8 +4110,7 @@ fn test_encoder_layer_by_layer_divergence() {
             .expect("Encoder config");
 
         // Start from CPU input (not GPU conv output) for fair layer-by-layer comparison
-        let mut gpu_x_tensor =
-            GpuResidentTensor::from_host(ctx, &cpu_with_pos).expect("Upload");
+        let mut gpu_x_tensor = GpuResidentTensor::from_host(ctx, &cpu_with_pos).expect("Upload");
 
         for layer_idx in 0..n_layers {
             // GPU layer forward
@@ -4204,8 +4192,7 @@ fn test_encoder_single_layer_step_by_step() {
 
     // Compute mel BEFORE converting to CUDA
     let audio_bytes = std::fs::read(audio_path).expect("Failed to read audio file");
-    let wav_data =
-        crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
+    let wav_data = crate::audio::wav::parse_wav_file(&audio_bytes).expect("Failed to parse WAV");
     let mel = apr.compute_mel(&wav_data.samples).expect("Mel failed");
 
     // Convert to CUDA
@@ -4609,8 +4596,7 @@ fn test_encoder_single_layer_step_by_step() {
     let gpu_attn_proj = {
         let ctx = cuda_model.executor.context();
         let weights = &cuda_model.gpu_encoder_weights.as_ref().expect("Weights")[0];
-        let attn_gpu =
-            GpuResidentTensor::from_host(ctx, &cpu_attn_output).expect("Upload attn");
+        let attn_gpu = GpuResidentTensor::from_host(ctx, &cpu_attn_output).expect("Upload attn");
         attn_gpu
             .linear(
                 ctx,

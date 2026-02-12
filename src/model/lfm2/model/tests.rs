@@ -360,8 +360,7 @@ fn test_wasm_memory_estimate_low_memory_config() {
     let estimate = WasmMemoryEstimate::calculate(&model_config, &wasm_config);
 
     // Low memory config should use less KV cache
-    let default_estimate =
-        WasmMemoryEstimate::calculate(&model_config, &Lfm2WasmConfig::default());
+    let default_estimate = WasmMemoryEstimate::calculate(&model_config, &Lfm2WasmConfig::default());
 
     assert!(estimate.kv_cache_bytes < default_estimate.kv_cache_bytes);
     assert!(estimate.total_bytes < default_estimate.total_bytes);

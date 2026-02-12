@@ -88,7 +88,10 @@ fn test_safetensors_format_compliance() {
     let path = dir.join("format_test.safetensors");
 
     let mut tensors = BTreeMap::new();
-    tensors.insert("weight".to_string(), TensorData::new(vec![1.0, 2.0], vec![2]));
+    tensors.insert(
+        "weight".to_string(),
+        TensorData::new(vec![1.0, 2.0], vec![2]),
+    );
 
     SafeTensorsExporter::save(&path, &tensors).expect("Export should succeed");
 
@@ -104,13 +107,28 @@ fn test_safetensors_format_compliance() {
     let header_str = std::str::from_utf8(&data[8..8 + header_len])
         .expect("Header should be UTF-8")
         .trim();
-    assert!(header_str.starts_with('{'), "Header should start with open brace");
-    assert!(header_str.ends_with('}'), "Header should end with close brace");
+    assert!(
+        header_str.starts_with('{'),
+        "Header should start with open brace"
+    );
+    assert!(
+        header_str.ends_with('}'),
+        "Header should end with close brace"
+    );
 
     // Check required fields
-    assert!(header_str.contains(r#""dtype":"F32""#), "Should have F32 dtype");
-    assert!(header_str.contains(r#""shape":[2]"#), "Should have correct shape");
-    assert!(header_str.contains(r#""data_offsets""#), "Should have data_offsets");
+    assert!(
+        header_str.contains(r#""dtype":"F32""#),
+        "Should have F32 dtype"
+    );
+    assert!(
+        header_str.contains(r#""shape":[2]"#),
+        "Should have correct shape"
+    );
+    assert!(
+        header_str.contains(r#""data_offsets""#),
+        "Should have data_offsets"
+    );
 
     // Check tensor data follows header
     let data_start = 8 + header_len;
@@ -121,7 +139,10 @@ fn test_safetensors_format_compliance() {
 
     // Verify first tensor value (1.0f32 in LE)
     let first_value = f32::from_le_bytes(data[data_start..data_start + 4].try_into().unwrap());
-    assert!((first_value - 1.0).abs() < 0.0001, "First value should be 1.0");
+    assert!(
+        (first_value - 1.0).abs() < 0.0001,
+        "First value should be 1.0"
+    );
 
     cleanup(&dir);
 }
@@ -219,7 +240,10 @@ fn test_model_card_generation() {
     assert!(card.contains("library_name: whisper-apr"));
 
     // Check content
-    assert!(card.contains("whisper-apr-tiny"), "Should contain model name");
+    assert!(
+        card.contains("whisper-apr-tiny"),
+        "Should contain model name"
+    );
     assert!(card.contains("tiny"), "Should contain model size");
     assert!(card.contains("Rust"), "Should mention Rust");
     assert!(card.contains("WASM") || card.contains("WebAssembly"));
@@ -298,7 +322,10 @@ fn test_safetensors_metadata() {
     let header_len = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
     let header = std::str::from_utf8(&data[8..8 + header_len]).unwrap();
 
-    assert!(header.contains("__metadata__"), "Should have metadata block");
+    assert!(
+        header.contains("__metadata__"),
+        "Should have metadata block"
+    );
     assert!(header.contains("whisper.apr"), "Should have format");
     assert!(header.contains("0.2.0"), "Should have version");
     assert!(header.contains("whisper"), "Should have architecture");

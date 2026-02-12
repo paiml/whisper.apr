@@ -1,3 +1,4 @@
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 //! APR Format - LLM Architecture Support
 //!
 //! This module provides LLM-specific model configuration for architectures

@@ -539,7 +539,7 @@ fn test_from_bytes_truncated_token_len() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&1u32.to_le_bytes()); // n_tokens = 1
     bytes.extend_from_slice(&0u32.to_le_bytes()); // n_merges = 0
-    // Only 1 byte for token len instead of 2
+                                                  // Only 1 byte for token len instead of 2
     bytes.push(5u8);
 
     assert!(Vocabulary::from_bytes(&bytes).is_none());
@@ -550,7 +550,7 @@ fn test_from_bytes_truncated_merge_first_len() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&0u32.to_le_bytes()); // n_tokens = 0
     bytes.extend_from_slice(&1u32.to_le_bytes()); // n_merges = 1
-    // Only 1 byte for first_len instead of 2
+                                                  // Only 1 byte for first_len instead of 2
     bytes.push(3u8);
 
     assert!(Vocabulary::from_bytes(&bytes).is_none());
@@ -574,7 +574,7 @@ fn test_from_bytes_truncated_merge_second_len() {
     bytes.extend_from_slice(&1u32.to_le_bytes()); // n_merges = 1
     bytes.extend_from_slice(&2u16.to_le_bytes()); // first_len = 2
     bytes.extend_from_slice(&[104, 105]); // first data "hi"
-    // Only 1 byte for second_len instead of 2
+                                          // Only 1 byte for second_len instead of 2
     bytes.push(3u8);
 
     assert!(Vocabulary::from_bytes(&bytes).is_none());
@@ -641,12 +641,20 @@ fn test_decode_only_special_tokens() {
 #[test]
 fn test_timestamp_boundary_values() {
     // Test boundary at TIMESTAMP_BASE - 1
-    assert!(!special_tokens::is_timestamp(special_tokens::TIMESTAMP_BASE - 1));
+    assert!(!special_tokens::is_timestamp(
+        special_tokens::TIMESTAMP_BASE - 1
+    ));
     assert!(special_tokens::is_timestamp(special_tokens::TIMESTAMP_BASE));
 
     // Test timestamp conversion for boundary
-    assert_eq!(special_tokens::timestamp_to_seconds(special_tokens::TIMESTAMP_BASE - 1), None);
-    assert_eq!(special_tokens::timestamp_to_seconds(special_tokens::TIMESTAMP_BASE), Some(0.0));
+    assert_eq!(
+        special_tokens::timestamp_to_seconds(special_tokens::TIMESTAMP_BASE - 1),
+        None
+    );
+    assert_eq!(
+        special_tokens::timestamp_to_seconds(special_tokens::TIMESTAMP_BASE),
+        Some(0.0)
+    );
 }
 
 #[test]

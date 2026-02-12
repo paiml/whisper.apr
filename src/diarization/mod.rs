@@ -713,7 +713,118 @@ mod tests {
             })
             .collect();
 
-        let result = diarizer.process(&audio, sample_rate).expect("should succeed");
+        let result = diarizer
+            .process(&audio, sample_rate)
+            .expect("should succeed");
         assert!((result.duration() - 3.0).abs() < 0.1);
+    }
+
+    // =========================================================================
+    // cluster_speakers / process deeper path Tests (WAPR-QA-003)
+    // =========================================================================
+
+    #[test]
+    fn test_diarizer_cluster_speakers_kmeans_config() {
+        // Test with KMeans algorithm (dispatches to SpectralClustering internally)
+        let mut config = DiarizationConfig::default();
+        config.clustering.algorithm = ClusteringAlgorithm::KMeans;
+        let diarizer = Diarizer::new(config);
+
+        let sample_rate = 16000u32;
+        let audio: Vec<f32> = (0..sample_rate as usize * 2)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                (t * 300.0 * std::f32::consts::TAU).sin() * 0.5
+            })
+            .collect();
+
+        let result = diarizer
+            .process(&audio, sample_rate)
+            .expect("should succeed");
+        assert!((result.duration() - 2.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_diarizer_cluster_speakers_agglomerative_config() {
+        // Test with Agglomerative algorithm
+        let mut config = DiarizationConfig::default();
+        config.clustering.algorithm = ClusteringAlgorithm::Agglomerative;
+        let diarizer = Diarizer::new(config);
+
+        let sample_rate = 16000u32;
+        let audio: Vec<f32> = (0..sample_rate as usize * 2)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                (t * 250.0 * std::f32::consts::TAU).sin() * 0.5
+            })
+            .collect();
+
+        let result = diarizer
+            .process(&audio, sample_rate)
+            .expect("should succeed");
+        assert!((result.duration() - 2.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_diarizer_process_with_max_speakers() {
+        let config = DiarizationConfig::default().with_max_speakers(2);
+        let diarizer = Diarizer::new(config);
+
+        let sample_rate = 16000u32;
+        let audio: Vec<f32> = (0..sample_rate as usize * 3)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                if t < 1.0 {
+                    (t * 200.0 * std::f32::consts::TAU).sin() * 0.5
+                } else if t < 2.0 {
+                    (t * 400.0 * std::f32::consts::TAU).sin() * 0.5
+                } else {
+                    (t * 200.0 * std::f32::consts::TAU).sin() * 0.5
+                }
+            })
+            .collect();
+
+        let result = diarizer
+            .process(&audio, sample_rate)
+            .expect("should succeed");
+        assert!(result.num_speakers() <= 2);
+    }
+
+    #[test]
+    fn test_diarizer_process_realtime_config() {
+        let config = DiarizationConfig::for_realtime();
+        let diarizer = Diarizer::new(config);
+
+        let sample_rate = 16000u32;
+        let audio: Vec<f32> = (0..sample_rate as usize * 2)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                (t * 300.0 * std::f32::consts::TAU).sin() * 0.5
+            })
+            .collect();
+
+        let result = diarizer
+            .process(&audio, sample_rate)
+            .expect("should succeed");
+        assert!((result.duration() - 2.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_diarizer_process_accuracy_config() {
+        let config = DiarizationConfig::for_accuracy();
+        let diarizer = Diarizer::new(config);
+
+        let sample_rate = 16000u32;
+        let audio: Vec<f32> = (0..sample_rate as usize * 2)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                (t * 300.0 * std::f32::consts::TAU).sin() * 0.5
+            })
+            .collect();
+
+        let result = diarizer
+            .process(&audio, sample_rate)
+            .expect("should succeed");
+        assert!((result.duration() - 2.0).abs() < 0.1);
     }
 }

@@ -177,7 +177,7 @@ impl SafeTensorsExporter {
             .map_err(WhisperError::Io)?;
 
         // Write tensor data (F32 LE)
-        for (_name, tensor) in tensors {
+        for tensor in tensors.values() {
             for &value in &tensor.data {
                 writer
                     .write_all(&value.to_le_bytes())
@@ -202,7 +202,8 @@ fn escape_json(s: &str) -> String {
             '\r' => result.push_str("\\r"),
             '\t' => result.push_str("\\t"),
             c if c.is_control() => {
-                result.push_str(&format!("\\u{:04x}", c as u32));
+                use std::fmt::Write;
+                let _ = write!(result, "\\u{:04x}", c as u32);
             }
             c => result.push(c),
         }
@@ -390,7 +391,9 @@ mod tests {
 
         let data = fs::read(&path).expect("read");
         let header_len = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
-        let header_str = std::str::from_utf8(&data[8..8 + header_len]).unwrap().trim();
+        let header_str = std::str::from_utf8(&data[8..8 + header_len])
+            .unwrap()
+            .trim();
         // Empty metadata should not add __metadata__ key
         assert!(!header_str.contains("__metadata__"));
 
@@ -404,7 +407,10 @@ mod tests {
 
         let mut tensors = BTreeMap::new();
         tensors.insert("a".to_string(), TensorData::new(vec![1.0, 2.0], vec![2]));
-        tensors.insert("b".to_string(), TensorData::new(vec![3.0, 4.0, 5.0], vec![3]));
+        tensors.insert(
+            "b".to_string(),
+            TensorData::new(vec![3.0, 4.0, 5.0], vec![3]),
+        );
 
         SafeTensorsExporter::save(&path, &tensors).expect("save");
 

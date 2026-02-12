@@ -120,10 +120,7 @@ fn parse_fmt_chunk(data: &[u8], pos: usize, chunk_size: usize) -> Result<FmtChun
 }
 
 /// Convert audio data to f32 samples based on format
-fn convert_audio_samples(
-    audio_data: &[u8],
-    fmt: &FmtChunk,
-) -> Result<Vec<f32>, WavError> {
+fn convert_audio_samples(audio_data: &[u8], fmt: &FmtChunk) -> Result<Vec<f32>, WavError> {
     let effective_format = if fmt.audio_format == WAVE_FORMAT_EXTENSIBLE {
         fmt.sub_format
     } else {
@@ -199,12 +196,9 @@ pub fn parse_wav(data: &[u8]) -> Result<WavData, WavError> {
 
     while pos + 8 <= data.len() {
         let chunk_id = &data[pos..pos + 4];
-        let chunk_size = u32::from_le_bytes([
-            data[pos + 4],
-            data[pos + 5],
-            data[pos + 6],
-            data[pos + 7],
-        ]) as usize;
+        let chunk_size =
+            u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
+                as usize;
 
         if chunk_id == b"fmt " {
             fmt_chunk = Some(parse_fmt_chunk(data, pos, chunk_size)?);

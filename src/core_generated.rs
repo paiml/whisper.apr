@@ -1,9 +1,12 @@
 //! Core whisper types and implementations
+#![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
 // Re-import crate modules for use in this module
-use crate::{audio, detection, error, format, inference, model, progress, timestamps, tokenizer, vad};
 #[cfg(feature = "realizar-gpu")]
 use crate::cuda;
+use crate::{
+    audio, detection, error, format, inference, model, progress, timestamps, tokenizer, vad,
+};
 pub use error::{WhisperError, WhisperResult};
 
 /// Whisper model configuration
@@ -821,11 +824,7 @@ impl WhisperApr {
             // ---- N-gram repetition suppression ----
             // Collect text-only tokens (skip special/timestamp tokens)
             let eot_id = tokenizer::special_tokens::EOT;
-            let text_tokens: Vec<u32> = tokens
-                .iter()
-                .copied()
-                .filter(|&t| t < eot_id)
-                .collect();
+            let text_tokens: Vec<u32> = tokens.iter().copied().filter(|&t| t < eot_id).collect();
 
             // (1) Token-level penalty: penalize recently-seen tokens
             let window_start = if text_tokens.len() > 50 {
@@ -855,12 +854,9 @@ impl WhisperApr {
 
             // (3) Degenerate loop kill: force EOT if any 4-gram repeats 3+ times
             if text_tokens.len() >= 12 {
-                let mut fourgram_counts =
-                    std::collections::HashMap::<[u32; 4], u32>::new();
+                let mut fourgram_counts = std::collections::HashMap::<[u32; 4], u32>::new();
                 for w in text_tokens.windows(4) {
-                    *fourgram_counts
-                        .entry([w[0], w[1], w[2], w[3]])
-                        .or_insert(0) += 1;
+                    *fourgram_counts.entry([w[0], w[1], w[2], w[3]]).or_insert(0) += 1;
                 }
                 if fourgram_counts.values().any(|&c| c >= 3) {
                     if (eot_id as usize) < n_vocab {
@@ -874,8 +870,7 @@ impl WhisperApr {
             // In real speech these appear at ~5-7%
             if text_tokens.len() >= 80 {
                 let window = &text_tokens[text_tokens.len() - 80..];
-                let mut freq =
-                    std::collections::HashMap::<u32, u32>::new();
+                let mut freq = std::collections::HashMap::<u32, u32>::new();
                 for &t in window {
                     *freq.entry(t).or_insert(0) += 1;
                 }

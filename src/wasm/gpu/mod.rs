@@ -27,9 +27,7 @@ mod detection;
 mod limits;
 mod selector;
 
-pub use backend::{
-    BackendSelectionWasm, BackendTypeWasm, GpuBackendWasm, SelectionStrategyWasm,
-};
+pub use backend::{BackendSelectionWasm, BackendTypeWasm, GpuBackendWasm, SelectionStrategyWasm};
 pub use capabilities::GpuCapabilitiesWasm;
 pub use detection::{DetectionOptionsWasm, GpuDetectionWasm};
 pub use limits::GpuLimitsWasm;

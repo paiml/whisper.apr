@@ -400,9 +400,7 @@ mod tests {
         let mut detector = SilenceDetector::default();
 
         // Speech followed by silence
-        let speech: Vec<f32> = (0..8000)
-            .map(|i| (i as f32 * 0.1).sin() * 0.5)
-            .collect();
+        let speech: Vec<f32> = (0..8000).map(|i| (i as f32 * 0.1).sin() * 0.5).collect();
         let silence = vec![0.0; 8000];
 
         let mut audio = speech;

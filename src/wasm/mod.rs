@@ -78,6 +78,7 @@ pub use worker::{ProgressPhase, WorkerConfig, WorkerMessageType, WorkerProgress,
 
 // Implementation and types
 #[path = "impl_generated.rs"]
+#[allow(clippy::all)]
 mod impl_;
 
 pub use impl_::*;

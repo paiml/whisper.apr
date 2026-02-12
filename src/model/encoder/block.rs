@@ -2,8 +2,8 @@
 //!
 //! Self-attention with residual connections and feed-forward network.
 
-use super::layers::{FeedForward, LayerNorm};
 use super::super::MultiHeadAttention;
+use super::layers::{FeedForward, LayerNorm};
 use crate::error::WhisperResult;
 
 #[cfg(feature = "realizar-inference")]

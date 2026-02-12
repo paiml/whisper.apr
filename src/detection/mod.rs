@@ -375,4 +375,3 @@ pub fn is_supported(code: &str) -> bool {
 pub fn language_index(code: &str) -> Option<usize> {
     SUPPORTED_LANGUAGES.iter().position(|&l| l == code)
 }
-

@@ -278,9 +278,7 @@ fn test_selector_config_with_all_builders() {
 #[test]
 fn test_backend_selector_select_batch_large() {
     let selector = BackendSelector::default_config();
-    let ops: Vec<MatMulOp> = (0..10)
-        .map(|_| MatMulOp::new(128, 256, 128))
-        .collect();
+    let ops: Vec<MatMulOp> = (0..10).map(|_| MatMulOp::new(128, 256, 128)).collect();
     let selection = selector.select_batch(&ops);
     assert!(!selection.reason.is_empty());
 }
@@ -374,4 +372,71 @@ fn test_selector_summary_with_different_strategies() {
         let summary = selector.summary();
         assert!(summary.contains("SIMD"));
     }
+}
+
+// =========================================================================
+// Additional Coverage Tests (WAPR-QA-003)
+// =========================================================================
+
+#[test]
+fn test_selector_automatic_gpu_memory_exceeded() {
+    // Automatic strategy with very low GPU memory limit
+    let config = SelectorConfig::default()
+        .with_strategy(SelectionStrategy::Automatic)
+        .with_max_gpu_memory(1);
+    let selector = BackendSelector::new(config);
+    let op = MatMulOp::new(256, 256, 256);
+    let selection = selector.select(&op);
+
+    // Should fall back to SIMD due to memory
+    assert!(selection.is_simd());
+}
+
+#[test]
+fn test_selector_prefer_gpu_without_gpu() {
+    // PreferGpu strategy but GPU not available (simulated)
+    let config = SelectorConfig::prefer_gpu();
+    let selector = BackendSelector::new(config);
+
+    // In test environment, GPU is typically not available
+    if !selector.gpu_available() {
+        let op = MatMulOp::new(64, 64, 64);
+        let selection = selector.select(&op);
+        assert!(selection.is_simd());
+        assert!(selection.reason.contains("not available") || selection.reason.contains("SIMD"));
+    }
+}
+
+#[test]
+fn test_selector_threshold_high_flops() {
+    // Threshold strategy with very low threshold - should suggest GPU if available
+    let config = SelectorConfig::default().with_strategy(SelectionStrategy::threshold(1));
+    let selector = BackendSelector::new(config);
+    let op = MatMulOp::new(128, 128, 128);
+    let selection = selector.select(&op);
+
+    // Should use GPU if available, SIMD otherwise
+    assert!(!selection.reason.is_empty());
+}
+
+#[test]
+fn test_selector_for_inference_config() {
+    let config = SelectorConfig::for_inference();
+    let selector = BackendSelector::new(config);
+    let op = MatMulOp::new(8, 8, 8);
+    let selection = selector.select(&op);
+    assert!(!selection.reason.is_empty());
+}
+
+#[test]
+fn test_backend_selection_reason_non_empty() {
+    let sel_gpu = BackendSelection::gpu("test reason");
+    assert_eq!(sel_gpu.reason, "test reason");
+    assert!(sel_gpu.is_gpu());
+    assert!(!sel_gpu.is_simd());
+
+    let sel_simd = BackendSelection::simd("simd reason");
+    assert_eq!(sel_simd.reason, "simd reason");
+    assert!(sel_simd.is_simd());
+    assert!(!sel_simd.is_gpu());
 }

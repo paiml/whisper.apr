@@ -167,6 +167,7 @@ impl SwiGluFfn {
     }
 
     /// Linear projection helper
+    #[allow(clippy::unused_self)]
     fn linear(
         &self,
         input: &[f32],

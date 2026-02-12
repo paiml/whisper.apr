@@ -325,7 +325,10 @@ mod tests {
         broadcast_add_inplace(&mut matrix, &vec, 2, 3);
         // Row 0: [1+10, 2+20, 3+30] = [11, 22, 33]
         // Row 1: [4+10, 5+20, 6+30] = [14, 25, 36]
-        assert!(vec_approx_eq(&matrix, &[11.0, 22.0, 33.0, 14.0, 25.0, 36.0]));
+        assert!(vec_approx_eq(
+            &matrix,
+            &[11.0, 22.0, 33.0, 14.0, 25.0, 36.0]
+        ));
     }
 
     #[test]

@@ -108,6 +108,7 @@ pub enum PublishFormat {
     Both,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for PublishFormat {
     fn default() -> Self {
         Self::Both
@@ -208,10 +209,7 @@ impl Publisher {
 
             // Add metadata
             metadata.insert("format".to_string(), "whisper.apr".to_string());
-            metadata.insert(
-                "source".to_string(),
-                apr_path.to_string_lossy().to_string(),
-            );
+            metadata.insert("source".to_string(), apr_path.to_string_lossy().to_string());
 
             // Placeholder tensor (in production, extract from APR)
             tensors.insert(
@@ -268,7 +266,7 @@ impl Publisher {
             files_uploaded: _prepared
                 .files
                 .iter()
-                .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+                .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
                 .collect(),
             total_bytes: _prepared.total_bytes,
         })

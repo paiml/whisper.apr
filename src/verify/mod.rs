@@ -123,7 +123,9 @@ impl Verifier {
     /// Create a new verifier with default settings.
     #[must_use]
     pub fn new() -> Self {
-        Self { min_pass_rate: 88.0 } // Per spec: ≥88/100 to publish
+        Self {
+            min_pass_rate: 88.0,
+        } // Per spec: ≥88/100 to publish
     }
 
     /// Set minimum pass rate.
@@ -216,7 +218,10 @@ impl Verifier {
             }
         }
         if !found_secrets {
-            report.add(CheckResult::pass("C6_no_secrets", "No obvious secrets found"));
+            report.add(CheckResult::pass(
+                "C6_no_secrets",
+                "No obvious secrets found",
+            ));
         }
 
         Ok(report)
@@ -248,10 +253,16 @@ impl Verifier {
             ));
             return Ok(report);
         }
-        report.add(CheckResult::pass("A4_header_size", "Header size field present"));
+        report.add(CheckResult::pass(
+            "A4_header_size",
+            "Header size field present",
+        ));
 
         // A5: Parse header length
-        let header_len = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
+        let header_bytes: [u8; 8] = data[0..8]
+            .try_into()
+            .map_err(|_| WhisperError::Format("Header bytes too short".to_string()))?;
+        let header_len = u64::from_le_bytes(header_bytes) as usize;
         if header_len > 100_000_000 {
             // 100MB max per spec
             report.add(CheckResult::fail(
