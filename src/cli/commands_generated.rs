@@ -313,26 +313,31 @@ fn write_transcription_output(
     Ok(())
 }
 
-/// Run transcribe command
-pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandResult> {
-    let start = Instant::now();
-    let mut timings = Timings::default();
-    let use_gpu = resolve_gpu_backend(args.gpu, global)?;
+/// Loaded audio data with timing and duration metadata.
+struct LoadedAudio {
+    /// Resampled audio samples at 16kHz
+    samples: Vec<f32>,
+    /// Audio duration in seconds
+    duration_secs: f64,
+    /// Time spent loading audio in milliseconds
+    load_ms: f64,
+}
 
-    // Configure thread pool for parallel inference (§11.3.6 P.6)
-    let thread_count = configure_thread_pool(args.threads)
+/// Configure thread pool and log thread count if verbose (section 11.3.6 P.6).
+fn setup_thread_pool(threads: Option<u32>, use_gpu: bool, global: &Args) -> CliResult<()> {
+    let thread_count = configure_thread_pool(threads)
         .map_err(|e| CliError::InvalidArgument(format!("Failed to configure threads: {e}")))?;
 
     if global.verbose && !use_gpu {
         eprintln!("[INFO] Using {thread_count} thread(s) for inference");
     }
+    Ok(())
+}
 
-    // Validate input file exists
-    if !args.input.exists() {
-        return Err(CliError::FileNotFound(args.input.display().to_string()));
-    }
-
-    // Load model
+/// Load the Whisper model, logging progress if verbose.
+///
+/// Returns the loaded model and the time spent loading in milliseconds.
+fn load_model_with_timing(args: &TranscribeArgs, global: &Args) -> CliResult<(WhisperApr, f64)> {
     if global.verbose {
         if let Some(path) = &args.model_path {
             eprintln!("[INFO] Loading model from: {}", path.display());
@@ -349,81 +354,89 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
     )
     .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
 
-    timings.model_load_ms = model_start.elapsed().as_secs_f64() * 1000.0;
+    let model_load_ms = model_start.elapsed().as_secs_f64() * 1000.0;
+    Ok((whisper, model_load_ms))
+}
 
-    // Load and parse audio
+/// Load and parse audio from the input file, logging progress if verbose.
+fn load_audio_with_timing(args: &TranscribeArgs, global: &Args) -> CliResult<LoadedAudio> {
     if global.verbose {
         eprintln!("[INFO] Loading audio: {}", args.input.display());
     }
     let audio_start = Instant::now();
     let audio_data = fs::read(&args.input)?;
 
-    // Detect format from extension
     let samples = load_audio_samples(&args.input, &audio_data)?;
-    timings.audio_load_ms = audio_start.elapsed().as_secs_f64() * 1000.0;
+    let load_ms = audio_start.elapsed().as_secs_f64() * 1000.0;
 
-    let audio_duration_secs = samples.len() as f64 / 16000.0;
+    let duration_secs = samples.len() as f64 / 16000.0;
 
     if global.verbose {
         eprintln!(
             "[INFO] Audio: {:.2}s, {} samples",
-            audio_duration_secs,
+            duration_secs,
             samples.len()
         );
     }
 
-    // Transcribe
-    let transcribe_start = Instant::now();
-    let options = build_transcribe_options(&args, global.verbose);
+    Ok(LoadedAudio {
+        samples,
+        duration_secs,
+        load_ms,
+    })
+}
 
-    // Run transcription on GPU or CPU based on --gpu flag
-    #[cfg(feature = "realizar-gpu")]
-    let result = if use_gpu {
-        // Convert to CUDA model and transcribe
-        let mut cuda_model = whisper
-            .into_cuda(0)
-            .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
+/// Run GPU-accelerated transcription via CUDA backend.
+#[cfg(feature = "realizar-gpu")]
+fn run_gpu_transcription(
+    whisper: WhisperApr,
+    samples: &[f32],
+    options: TranscribeOptions,
+    global: &Args,
+) -> CliResult<crate::TranscriptionResult> {
+    let mut cuda_model = whisper
+        .into_cuda(0)
+        .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
 
+    if global.verbose {
+        eprintln!("[INFO] Running on GPU: {}", cuda_model.device_name());
+        let (free, total) = cuda_model.memory_info();
+        eprintln!(
+            "[INFO] GPU memory: {:.1}GB free / {:.1}GB total",
+            free as f64 / 1e9,
+            total as f64 / 1e9
+        );
+    }
+
+    // WAPR-PERF-020: Pre-compile GPU kernels for predictable latency
+    // This moves ~2s compilation overhead from first transcription to model init
+    let warmup_start = std::time::Instant::now();
+    if let Err(e) = cuda_model.warmup() {
         if global.verbose {
-            eprintln!("[INFO] Running on GPU: {}", cuda_model.device_name());
-            let (free, total) = cuda_model.memory_info();
-            eprintln!(
-                "[INFO] GPU memory: {:.1}GB free / {:.1}GB total",
-                free as f64 / 1e9,
-                total as f64 / 1e9
-            );
+            eprintln!("[WARN] GPU warmup failed: {}", e);
         }
+    } else if global.verbose {
+        eprintln!(
+            "[INFO] GPU warmup: {:.1}ms",
+            warmup_start.elapsed().as_millis()
+        );
+    }
 
-        // WAPR-PERF-020: Pre-compile GPU kernels for predictable latency
-        // This moves ~2s compilation overhead from first transcription to model init
-        let warmup_start = std::time::Instant::now();
-        if let Err(e) = cuda_model.warmup() {
-            if global.verbose {
-                eprintln!("[WARN] GPU warmup failed: {}", e);
-            }
-        } else if global.verbose {
-            eprintln!(
-                "[INFO] GPU warmup: {:.1}ms",
-                warmup_start.elapsed().as_millis()
-            );
-        }
+    // WAPR-PERF-004: Use GPU-accelerated transcription path
+    // This uses gemv_cached for output projection (the decoder bottleneck)
+    cuda_model
+        .transcribe_gpu(samples, options)
+        .map_err(|e| CliError::InvalidArgument(e.to_string()))
+}
 
-        // WAPR-PERF-004: Use GPU-accelerated transcription path
-        // This uses gemv_cached for output projection (the decoder bottleneck)
-        cuda_model
-            .transcribe_gpu(&samples, options)
-            .map_err(|e| CliError::InvalidArgument(e.to_string()))?
-    } else {
-        whisper.transcribe(&samples, options)?
-    };
-
-    #[cfg(not(feature = "realizar-gpu"))]
-    let result = whisper.transcribe(&samples, options)?;
-
-    timings.decode_ms = transcribe_start.elapsed().as_secs_f64() * 1000.0;
-    timings.total_ms = start.elapsed().as_secs_f64() * 1000.0;
-
-    // Calculate RTF
+/// Finalize transcription: compute RTF, emit profile, write output, and run summarization.
+fn finalize_transcription(
+    result: &crate::TranscriptionResult,
+    args: &TranscribeArgs,
+    global: &Args,
+    timings: &Timings,
+    audio_duration_secs: f64,
+) -> CliResult<f64> {
     let rtf = (timings.total_ms / 1000.0) / audio_duration_secs;
 
     if global.verbose {
@@ -433,20 +446,63 @@ pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandR
 
     // WAPR-PERF-004: Component profiling output (apr-cli style)
     if args.profile {
-        print_component_profile(&result, &timings, audio_duration_secs, rtf);
+        print_component_profile(result, timings, audio_duration_secs, rtf);
     }
 
     // Format and write output
     let format = convert_format_arg(args.format);
-    write_transcription_output(&result, format, args.output.as_deref(), global)?;
+    write_transcription_output(result, format, args.output.as_deref(), global)?;
 
     // Phase 2: Post-transcription summarization (Section 18.5)
     if args.summarize {
-        let summary_result = run_post_transcription_summary(&result.text, &args, global)?;
+        let summary_result = run_post_transcription_summary(&result.text, args, global)?;
         if global.verbose {
             eprintln!("[INFO] Summary generated: {} chars", summary_result.len());
         }
     }
+
+    Ok(rtf)
+}
+
+/// Run transcribe command
+pub fn run_transcribe(args: TranscribeArgs, global: &Args) -> CliResult<CommandResult> {
+    let start = Instant::now();
+    let mut timings = Timings::default();
+    let use_gpu = resolve_gpu_backend(args.gpu, global)?;
+
+    setup_thread_pool(args.threads, use_gpu, global)?;
+
+    // Validate input file exists
+    if !args.input.exists() {
+        return Err(CliError::FileNotFound(args.input.display().to_string()));
+    }
+
+    // Load model
+    let (whisper, model_load_ms) = load_model_with_timing(&args, global)?;
+    timings.model_load_ms = model_load_ms;
+
+    // Load and parse audio
+    let audio = load_audio_with_timing(&args, global)?;
+    timings.audio_load_ms = audio.load_ms;
+
+    // Transcribe
+    let transcribe_start = Instant::now();
+    let options = build_transcribe_options(&args, global.verbose);
+
+    #[cfg(feature = "realizar-gpu")]
+    let result = if use_gpu {
+        run_gpu_transcription(whisper, &audio.samples, options, global)?
+    } else {
+        whisper.transcribe(&audio.samples, options)?
+    };
+
+    #[cfg(not(feature = "realizar-gpu"))]
+    let result = whisper.transcribe(&audio.samples, options)?;
+
+    timings.decode_ms = transcribe_start.elapsed().as_secs_f64() * 1000.0;
+    timings.total_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    let rtf = finalize_transcription(&result, &args, global, &timings, audio.duration_secs)?;
 
     Ok(CommandResult::success(result.text)
         .with_timings(timings)
@@ -624,36 +680,10 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
     let start = Instant::now();
 
     // Read input text (from file or stdin)
-    let input_text = if let Some(path) = &args.input {
-        if !path.exists() {
-            return Err(CliError::FileNotFound(path.display().to_string()));
-        }
-        fs::read_to_string(path)?
-    } else {
-        // Read from stdin
-        let mut buffer = String::new();
-        io::stdin().read_line(&mut buffer)?;
-        buffer
-    };
+    let input_text = read_summarize_input(&args)?;
+    log_summarize_params(&args, &input_text, global);
 
-    if input_text.trim().is_empty() {
-        return Err(CliError::InvalidArgument(
-            "No input text provided for summarization".to_string(),
-        ));
-    }
-
-    if global.verbose {
-        eprintln!("[INFO] Input text length: {} characters", input_text.len());
-        if let Some(model_path) = &args.model_path {
-            eprintln!("[INFO] Model path: {}", model_path.display());
-        } else {
-            eprintln!("[INFO] Using default LFM2-2.6B-Transcript model");
-        }
-        eprintln!("[INFO] Max tokens: {}", args.max_tokens);
-        eprintln!("[INFO] Temperature: {:.2}", args.temperature);
-    }
-
-    // Check if model path provided
+    // Load model and tokenizer
     let model_path = args.model_path.as_ref().ok_or_else(|| {
         CliError::InvalidArgument(
             "LFM2 summarization requires --model-path to be specified. \
@@ -666,7 +696,6 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
         return Err(CliError::FileNotFound(model_path.display().to_string()));
     }
 
-    // Load model from APR2 file
     if !global.quiet {
         println!("Loading LFM2 model from {}...", model_path.display());
     }
@@ -675,8 +704,8 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
     let model_data = fs::read(model_path)?;
     let model = crate::model::lfm2::Lfm2::from_apr2_bytes(model_data)
         .map_err(|e| CliError::InvalidArgument(format!("Failed to load model: {e}")))?;
-
     let load_time = load_start.elapsed();
+
     if global.verbose {
         eprintln!(
             "[INFO] Model loaded in {:.2}s ({} params, {:.2} MB)",
@@ -686,35 +715,19 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
         );
     }
 
-    // Load tokenizer
-    let tokenizer = if let Some(tokenizer_path) = &args.tokenizer_path {
-        if !tokenizer_path.exists() {
-            return Err(CliError::FileNotFound(tokenizer_path.display().to_string()));
-        }
-        if global.verbose {
-            eprintln!("[INFO] Loading tokenizer from {}", tokenizer_path.display());
-        }
-        crate::model::lfm2::Lfm2Tokenizer::from_file(tokenizer_path)
-            .map_err(|e| CliError::InvalidArgument(format!("Failed to load tokenizer: {e}")))?
-    } else {
-        if global.verbose {
-            eprintln!("[INFO] Using default byte-level tokenizer");
-        }
-        crate::model::lfm2::Lfm2Tokenizer::new()
-    };
+    let tokenizer = load_summarize_tokenizer(&args, global)?;
 
-    // Build prompt
+    // Tokenize and truncate
     let prompt = format!(
         "Summarize the following transcript:\n\n{}\n\nSummary:",
         input_text.trim()
     );
-
-    // Tokenize input using the BPE tokenizer
-    let input_ids = tokenizer.encode_without_special(&prompt);
-
-    // Truncate to max context
     let max_ctx = args.max_context.min(4096) as usize;
-    let input_ids: Vec<u32> = input_ids.into_iter().take(max_ctx).collect();
+    let input_ids: Vec<u32> = tokenizer
+        .encode_without_special(&prompt)
+        .into_iter()
+        .take(max_ctx)
+        .collect();
 
     if global.verbose {
         eprintln!("[INFO] Input tokens: {}", input_ids.len());
@@ -729,48 +742,13 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
         }
     }
 
-    let gen_start = Instant::now();
-    let (output_ids, gen_stats) = if args.stream {
-        // Streaming generation - print tokens as they're generated
-        use std::io::Write;
-        let tokenizer_ref = &tokenizer;
-        let quiet = global.quiet;
-
-        model
-            .generate_with_stats(
-                &input_ids,
-                args.max_tokens as usize,
-                args.temperature,
-                Some(|token: u32, _idx: usize| {
-                    if !quiet {
-                        // Decode and print single token
-                        let text = tokenizer_ref.decode(&[token]);
-                        print!("{text}");
-                        let _ = io::stdout().flush();
-                    }
-                    true // continue generating
-                }),
-            )
-            .map_err(|e| CliError::InvalidArgument(format!("Generation failed: {e}")))?
-    } else {
-        // Non-streaming generation
-        model
-            .generate_with_stats::<fn(u32, usize) -> bool>(
-                &input_ids,
-                args.max_tokens as usize,
-                args.temperature,
-                None,
-            )
-            .map_err(|e| CliError::InvalidArgument(format!("Generation failed: {e}")))?
-    };
-
-    let gen_time = gen_start.elapsed();
+    let (output_ids, gen_stats) = generate_summary(&model, &tokenizer, &input_ids, &args, global)?;
 
     if args.stream && !global.quiet {
-        println!("\n"); // Newline after streaming output
+        println!("\n");
     }
 
-    // Decode output using the tokenizer
+    // Decode and format output
     let summary_ids = &output_ids[input_ids.len()..];
     let summary = tokenizer.decode(summary_ids);
 
@@ -785,42 +763,17 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
     }
 
     let total_time = start.elapsed();
-    let _ = gen_time; // Use gen_time to avoid unused variable warning
+    let output = format_summary_output(
+        &args,
+        &summary,
+        &input_text,
+        &input_ids,
+        &gen_stats,
+        load_time,
+        total_time,
+    );
 
-    // Format output based on format arg
-    let output = match args.format {
-        crate::cli::args::SummarizeFormat::Json => serde_json::json!({
-            "summary": summary.trim(),
-            "stats": {
-                "input_chars": input_text.len(),
-                "input_tokens": input_ids.len(),
-                "output_tokens": gen_stats.tokens_generated,
-                "load_time_s": load_time.as_secs_f64(),
-                "gen_time_ms": gen_stats.total_ms,
-                "total_time_s": total_time.as_secs_f64(),
-                "tokens_per_sec": gen_stats.tokens_per_sec,
-                "ms_per_token": gen_stats.ms_per_token,
-                "streaming": args.stream,
-                "hit_eos": gen_stats.hit_eos
-            }
-        })
-        .to_string(),
-        crate::cli::args::SummarizeFormat::Text => summary.trim().to_string(),
-        crate::cli::args::SummarizeFormat::Markdown => {
-            format!("## Summary\n\n{}", summary.trim())
-        }
-        crate::cli::args::SummarizeFormat::Bullets => {
-            // Split into bullet points
-            summary
-                .trim()
-                .lines()
-                .map(|line| format!("- {}", line.trim()))
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
-    };
-
-    // Output result
+    // Write result
     if let Some(output_path) = args.output {
         fs::write(&output_path, &output)?;
         if !global.quiet {
@@ -845,6 +798,143 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
         gen_stats.tokens_generated,
         if args.stream { " (streamed)" } else { "" }
     )))
+}
+
+/// Read input text for summarization from file or stdin
+fn read_summarize_input(args: &SummarizeArgs) -> CliResult<String> {
+    let text = if let Some(path) = &args.input {
+        if !path.exists() {
+            return Err(CliError::FileNotFound(path.display().to_string()));
+        }
+        fs::read_to_string(path)?
+    } else {
+        let mut buffer = String::new();
+        io::stdin().read_line(&mut buffer)?;
+        buffer
+    };
+
+    if text.trim().is_empty() {
+        return Err(CliError::InvalidArgument(
+            "No input text provided for summarization".to_string(),
+        ));
+    }
+    Ok(text)
+}
+
+/// Log summarization parameters when verbose
+fn log_summarize_params(args: &SummarizeArgs, input_text: &str, global: &Args) {
+    if global.verbose {
+        eprintln!("[INFO] Input text length: {} characters", input_text.len());
+        if let Some(model_path) = &args.model_path {
+            eprintln!("[INFO] Model path: {}", model_path.display());
+        } else {
+            eprintln!("[INFO] Using default LFM2-2.6B-Transcript model");
+        }
+        eprintln!("[INFO] Max tokens: {}", args.max_tokens);
+        eprintln!("[INFO] Temperature: {:.2}", args.temperature);
+    }
+}
+
+/// Load tokenizer for summarization
+fn load_summarize_tokenizer(
+    args: &SummarizeArgs,
+    global: &Args,
+) -> CliResult<crate::model::lfm2::Lfm2Tokenizer> {
+    if let Some(tokenizer_path) = &args.tokenizer_path {
+        if !tokenizer_path.exists() {
+            return Err(CliError::FileNotFound(tokenizer_path.display().to_string()));
+        }
+        if global.verbose {
+            eprintln!("[INFO] Loading tokenizer from {}", tokenizer_path.display());
+        }
+        crate::model::lfm2::Lfm2Tokenizer::from_file(tokenizer_path)
+            .map_err(|e| CliError::InvalidArgument(format!("Failed to load tokenizer: {e}")))
+    } else {
+        if global.verbose {
+            eprintln!("[INFO] Using default byte-level tokenizer");
+        }
+        Ok(crate::model::lfm2::Lfm2Tokenizer::new())
+    }
+}
+
+/// Run generation with streaming or non-streaming mode
+fn generate_summary(
+    model: &crate::model::lfm2::Lfm2,
+    tokenizer: &crate::model::lfm2::Lfm2Tokenizer,
+    input_ids: &[u32],
+    args: &SummarizeArgs,
+    global: &Args,
+) -> CliResult<(Vec<u32>, crate::model::lfm2::GenerationStats)> {
+    if args.stream {
+        use std::io::Write;
+        let tokenizer_ref = tokenizer;
+        let quiet = global.quiet;
+
+        model
+            .generate_with_stats(
+                input_ids,
+                args.max_tokens as usize,
+                args.temperature,
+                Some(|token: u32, _idx: usize| {
+                    if !quiet {
+                        let text = tokenizer_ref.decode(&[token]);
+                        print!("{text}");
+                        let _ = io::stdout().flush();
+                    }
+                    true
+                }),
+            )
+            .map_err(|e| CliError::InvalidArgument(format!("Generation failed: {e}")))
+    } else {
+        model
+            .generate_with_stats::<fn(u32, usize) -> bool>(
+                input_ids,
+                args.max_tokens as usize,
+                args.temperature,
+                None,
+            )
+            .map_err(|e| CliError::InvalidArgument(format!("Generation failed: {e}")))
+    }
+}
+
+/// Format summary output based on format argument
+fn format_summary_output(
+    args: &SummarizeArgs,
+    summary: &str,
+    input_text: &str,
+    input_ids: &[u32],
+    gen_stats: &crate::model::lfm2::GenerationStats,
+    load_time: std::time::Duration,
+    total_time: std::time::Duration,
+) -> String {
+    match args.format {
+        crate::cli::args::SummarizeFormat::Json => serde_json::json!({
+            "summary": summary.trim(),
+            "stats": {
+                "input_chars": input_text.len(),
+                "input_tokens": input_ids.len(),
+                "output_tokens": gen_stats.tokens_generated,
+                "load_time_s": load_time.as_secs_f64(),
+                "gen_time_ms": gen_stats.total_ms,
+                "total_time_s": total_time.as_secs_f64(),
+                "tokens_per_sec": gen_stats.tokens_per_sec,
+                "ms_per_token": gen_stats.ms_per_token,
+                "streaming": args.stream,
+                "hit_eos": gen_stats.hit_eos
+            }
+        })
+        .to_string(),
+        crate::cli::args::SummarizeFormat::Text => summary.trim().to_string(),
+        crate::cli::args::SummarizeFormat::Markdown => {
+            format!("## Summary\n\n{}", summary.trim())
+        }
+        crate::cli::args::SummarizeFormat::Bullets => summary
+            .trim()
+            .lines()
+            .map(|line| format!("- {}", line.trim()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
 }
 
 /// Run record command (audio capture to file)
@@ -913,6 +1003,41 @@ fn discover_audio_files(
     files
 }
 
+/// Check if a path refers to a hidden file or directory (name starts with '.').
+///
+/// Per spec section H point 108: hidden files are skipped during discovery.
+fn is_hidden_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map_or(false, |name| name.starts_with('.'))
+}
+
+/// Check if a directory path is a symlink (for loop prevention).
+///
+/// Per spec section H point 109: symlinks to directories are skipped to prevent loops.
+/// Uses `symlink_metadata` to detect symlinks without following them.
+fn is_symlink_via_metadata(path: &Path) -> bool {
+    path.symlink_metadata()
+        .map(|m| m.is_symlink())
+        .unwrap_or(false)
+}
+
+/// Check if a path has a recognized audio file extension for folder discovery.
+///
+/// This is the extension list used by `discover_folder_recursive`. It intentionally
+/// matches the inline list from the original implementation (without `mkv`).
+fn has_folder_audio_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .map_or(false, |ext| {
+            matches!(
+                ext.as_str(),
+                "wav" | "mp3" | "flac" | "ogg" | "m4a" | "mp4" | "webm" | "aac"
+            )
+        })
+}
+
 /// Recursively discover audio files in a directory.
 fn discover_in_directory(
     base: &Path,
@@ -929,24 +1054,13 @@ fn discover_in_directory(
     for entry in entries.flatten() {
         let path = entry.path();
 
-        // Skip hidden files (spec §H point 108)
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with('.') {
-                continue;
-            }
+        if is_hidden_path(&path) {
+            continue;
         }
 
         if path.is_file() && matches_audio_pattern(&path, pattern) {
             files.push((path, Some(base.to_path_buf())));
-        } else if path.is_dir() && recursive {
-            // Handle symlink loops (spec §H point 109) - skip symlinks to directories
-            if path
-                .symlink_metadata()
-                .map(|m| m.is_symlink())
-                .unwrap_or(false)
-            {
-                continue;
-            }
+        } else if path.is_dir() && recursive && !is_symlink_via_metadata(&path) {
             discover_in_directory(base, &path, recursive, pattern, files);
         }
     }
@@ -978,33 +1092,14 @@ fn matches_audio_pattern(path: &Path, pattern: Option<&str>) -> bool {
     true
 }
 
-/// Simple glob pattern matching (supports * and ?).
+/// Simple glob pattern matching (supports `*` and `?`).
 fn glob_match(pattern: &str, text: &str) -> bool {
     let mut p_chars = pattern.chars().peekable();
     let mut t_chars = text.chars().peekable();
 
     while let Some(p) = p_chars.next() {
         match p {
-            '*' => {
-                // Skip consecutive stars
-                while p_chars.peek() == Some(&'*') {
-                    p_chars.next();
-                }
-                // If * is at end, match everything
-                if p_chars.peek().is_none() {
-                    return true;
-                }
-                // Try matching rest of pattern at each position
-                let rest_pattern: String = p_chars.collect();
-                while t_chars.peek().is_some() {
-                    let rest_text: String = t_chars.clone().collect();
-                    if glob_match(&rest_pattern, &rest_text) {
-                        return true;
-                    }
-                    t_chars.next();
-                }
-                return glob_match(&rest_pattern, "");
-            }
+            '*' => return glob_match_star(p_chars, t_chars),
             '?' => {
                 if t_chars.next().is_none() {
                     return false;
@@ -1019,6 +1114,38 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     }
 
     t_chars.peek().is_none()
+}
+
+/// Handle the `*` wildcard portion of glob matching.
+///
+/// Consumes consecutive `*` characters, then attempts to match the remaining
+/// pattern against every suffix of the remaining text.
+fn glob_match_star(
+    mut p_chars: std::iter::Peekable<std::str::Chars<'_>>,
+    mut t_chars: std::iter::Peekable<std::str::Chars<'_>>,
+) -> bool {
+    // Skip consecutive stars (**, ***, etc. are equivalent to *)
+    while p_chars.peek() == Some(&'*') {
+        p_chars.next();
+    }
+
+    // If * is at end of pattern, it matches everything remaining
+    if p_chars.peek().is_none() {
+        return true;
+    }
+
+    // Try matching rest of pattern starting at each text position
+    let rest_pattern: String = p_chars.collect();
+    while t_chars.peek().is_some() {
+        let rest_text: String = t_chars.clone().collect();
+        if glob_match(&rest_pattern, &rest_text) {
+            return true;
+        }
+        t_chars.next();
+    }
+
+    // Also try matching with empty remaining text (e.g., pattern "a*b" vs "ab")
+    glob_match(&rest_pattern, "")
 }
 
 /// Compute output path with structure mirroring.
@@ -1070,6 +1197,110 @@ fn atomic_write_transcription(output_path: &Path, content: &str) -> Result<(), C
     fs::rename(&temp_path, output_path)?;
 
     Ok(())
+}
+
+/// Result of processing a single batch file
+enum BatchFileResult {
+    Processed,
+    Failed,
+}
+
+/// Build TranscribeArgs for batch processing a single file
+fn build_batch_transcribe_args(input_path: &Path, args: &BatchArgs) -> TranscribeArgs {
+    TranscribeArgs {
+        input: input_path.to_path_buf(),
+        model: args.model,
+        output: None,
+        format: args.format,
+        model_path: None,
+        language: "auto".to_string(),
+        detect_language: false,
+        offset_t: 0,
+        offset_n: 0,
+        duration: 0,
+        max_context: -1,
+        max_len: 0,
+        audio_ctx: 0,
+        best_of: 2,
+        beam_size: -1,
+        temperature: 0.0,
+        temperature_inc: 0.2,
+        no_fallback: false,
+        split_on_word: false,
+        word_thold: 0.01,
+        word_timestamps: false,
+        timestamps: false,
+        no_timestamps: false,
+        entropy_thold: 2.40,
+        logprob_thold: -1.0,
+        no_speech_thold: 0.6,
+        prompt: String::new(),
+        suppress_regex: String::new(),
+        grammar: String::new(),
+        grammar_rule: String::new(),
+        grammar_penalty: 100.0,
+        vad: false,
+        vad_model: None,
+        vad_threshold: 0.5,
+        vad_min_speech_ms: 250,
+        vad_min_silence_ms: 100,
+        vad_max_speech_s: None,
+        vad_pad_ms: 30,
+        vad_overlap: 0.1,
+        threads: None,
+        processors: 1,
+        gpu: false,
+        no_gpu: false,
+        flash_attn: false,
+        no_flash_attn: false,
+        no_prints: true,
+        print_special: false,
+        colors: false,
+        confidence: false,
+        progress: false,
+        print_memory: false,
+        profile: false,
+        translate: false,
+        hallucination_filter: false,
+        speed: 1.0,
+        cache_dir: args.cache_dir.clone(),
+        zram_optimized: args.zram_optimized,
+        summarize: false,
+        lfm2_model: None,
+        summary_output: None,
+        summary_format: SummarizeFormat::Json,
+        action_items: false,
+        key_points: false,
+    }
+}
+
+/// Process a single file in batch mode: transcribe, format, and write atomically
+fn process_batch_file(
+    transcribe_args: &TranscribeArgs,
+    output_path: &Path,
+    format: OutputFormatArg,
+    global: &Args,
+) -> BatchFileResult {
+    match run_transcribe_internal(transcribe_args, global) {
+        Ok(result) => {
+            let content = format_batch_output(&result, format);
+            match atomic_write_transcription(output_path, &content) {
+                Ok(()) => BatchFileResult::Processed,
+                Err(e) => {
+                    if global.verbose {
+                        eprintln!("[ERROR] Write failed {}: {}", output_path.display(), e);
+                    }
+                    BatchFileResult::Failed
+                }
+            }
+        }
+        Err(e) => {
+            if global.verbose {
+                eprintln!("[ERROR] {}: {}", transcribe_args.input.display(), e);
+            }
+            BatchFileResult::Failed
+        }
+    }
 }
 
 /// Run batch command (transcribe-folder)
@@ -1130,95 +1361,11 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
             );
         }
 
-        // Transcribe - construct minimal args
-        let transcribe_args = TranscribeArgs {
-            input: input_path.clone(),
-            model: args.model,
-            output: None, // We'll handle output ourselves for atomic writes
-            format: args.format,
-            model_path: None,
-            language: "auto".to_string(),
-            detect_language: false,
-            offset_t: 0,
-            offset_n: 0,
-            duration: 0,
-            max_context: -1,
-            max_len: 0,
-            audio_ctx: 0,
-            best_of: 2,
-            beam_size: -1,
-            temperature: 0.0,
-            temperature_inc: 0.2,
-            no_fallback: false,
-            split_on_word: false,
-            word_thold: 0.01,
-            word_timestamps: false,
-            timestamps: false,
-            no_timestamps: false,
-            entropy_thold: 2.40,
-            logprob_thold: -1.0,
-            no_speech_thold: 0.6,
-            prompt: String::new(),
-            suppress_regex: String::new(),
-            grammar: String::new(),
-            grammar_rule: String::new(),
-            grammar_penalty: 100.0,
-            vad: false,
-            vad_model: None,
-            vad_threshold: 0.5,
-            vad_min_speech_ms: 250,
-            vad_min_silence_ms: 100,
-            vad_max_speech_s: None,
-            vad_pad_ms: 30,
-            vad_overlap: 0.1,
-            threads: None,
-            processors: 1,
-            gpu: false,
-            no_gpu: false,
-            flash_attn: false,
-            no_flash_attn: false,
-            no_prints: true, // Suppress per-file output in batch mode
-            print_special: false,
-            colors: false,
-            confidence: false,
-            progress: false,
-            print_memory: false,
-            profile: false, // Batch mode has its own profiling
-            translate: false,
-            hallucination_filter: false,
-            speed: 1.0,
-            cache_dir: args.cache_dir.clone(),
-            zram_optimized: args.zram_optimized,
-            summarize: false,
-            lfm2_model: None,
-            summary_output: None,
-            summary_format: SummarizeFormat::Json,
-            action_items: false,
-            key_points: false,
-        };
+        let transcribe_args = build_batch_transcribe_args(input_path, &args);
 
-        match run_transcribe_internal(&transcribe_args, global) {
-            Ok(result) => {
-                // Format output according to requested format
-                let content = format_batch_output(&result, args.format);
-
-                // Save using atomic operation (crash-safe)
-                match atomic_write_transcription(&output_path, &content) {
-                    Ok(()) => processed += 1,
-                    Err(e) => {
-                        if global.verbose {
-                            eprintln!("[ERROR] Write failed {}: {}", output_path.display(), e);
-                        }
-                        failed += 1;
-                    }
-                }
-            }
-            Err(e) => {
-                if global.verbose {
-                    eprintln!("[ERROR] {}: {}", input_path.display(), e);
-                }
-                failed += 1;
-            }
+        match process_batch_file(&transcribe_args, &output_path, args.format, global) {
+            BatchFileResult::Processed => processed += 1,
+            BatchFileResult::Failed => failed += 1,
         }
     }
 
@@ -1233,6 +1380,72 @@ pub fn run_batch(args: BatchArgs, global: &Args) -> CliResult<CommandResult> {
 
 /// Run transcribe-folder command (WAPR-PERF-004)
 ///
+/// Outcome of processing a single folder file
+enum FolderFileOutcome {
+    Processed,
+    Skipped,
+    Failed,
+}
+
+/// Process a single file in folder transcription mode
+fn process_folder_file(
+    input_path: &Path,
+    output_path: &Path,
+    whisper: &WhisperApr,
+    args: &TranscribeFolderArgs,
+    global: &Args,
+    budget_violations: &mut usize,
+    profile_entries: &mut Vec<FolderProfileEntry>,
+) -> FolderFileOutcome {
+    // Skip if exists and --skip-existing (resumable per spec §1.3)
+    if args.skip_existing && output_path.exists() {
+        if global.verbose {
+            eprintln!("[SKIP] {}", output_path.display());
+        }
+        return FolderFileOutcome::Skipped;
+    }
+
+    if global.verbose {
+        eprintln!(
+            "[PROC] {} → {}",
+            input_path.display(),
+            output_path.display()
+        );
+    }
+
+    let file_start = Instant::now();
+
+    let result = match transcribe_single_file(input_path, whisper, args, global) {
+        Ok(r) => r,
+        Err(e) => {
+            if global.verbose {
+                eprintln!("[ERROR] {}: {}", input_path.display(), e);
+            }
+            return FolderFileOutcome::Failed;
+        }
+    };
+
+    let transcribe_ms = file_start.elapsed().as_secs_f64() * 1000.0;
+    match process_folder_transcription(
+        input_path,
+        output_path,
+        result,
+        transcribe_ms,
+        args,
+        global,
+        budget_violations,
+        profile_entries,
+    ) {
+        Ok(()) => FolderFileOutcome::Processed,
+        Err(e) => {
+            if global.verbose {
+                eprintln!("[ERROR] Write failed {}: {}", output_path.display(), e);
+            }
+            FolderFileOutcome::Failed
+        }
+    }
+}
+
 /// Structure-preserving batch transcription with brick profiling integration.
 /// Per spec (docs/specifications/transcribe-folder-spec.md):
 /// - §1.3: Structure mirroring, atomicity, determinism
@@ -1303,117 +1516,21 @@ pub fn run_transcribe_folder(
 
     // Process each file
     for input_path in &files {
-        // Compute mirrored output path (spec §1.3 Structure Mirroring)
         let output_path =
             compute_folder_output_path(input_path, &args.input_dir, &args.output_dir, &format_ext);
 
-        // Skip if exists and --skip-existing (resumable per spec §1.3)
-        if args.skip_existing && output_path.exists() {
-            if global.verbose {
-                eprintln!("[SKIP] {}", output_path.display());
-            }
-            skipped += 1;
-            continue;
-        }
-
-        if global.verbose {
-            eprintln!(
-                "[PROC] {} → {}",
-                input_path.display(),
-                output_path.display()
-            );
-        }
-
-        let file_start = Instant::now();
-
-        // Transcribe file
-        match transcribe_single_file(input_path, &whisper, &args, global) {
-            Ok(result) => {
-                let transcribe_ms = file_start.elapsed().as_secs_f64() * 1000.0;
-                let audio_duration_secs = result.audio_duration_secs;
-                let tokens_generated = result.tokens_generated;
-
-                // Calculate throughput
-                let tokens_per_sec = if transcribe_ms > 0.0 {
-                    (tokens_generated as f64 / transcribe_ms) * 1000.0
-                } else {
-                    0.0
-                };
-
-                // Budget check: 130 µs/token = 7,692 tok/s target (spec §2.3.1)
-                let budget_target_tok_s = 7692.0;
-                let budget_met = tokens_per_sec >= budget_target_tok_s;
-
-                if !budget_met && args.strict_budget {
-                    budget_violations += 1;
-                    if global.verbose {
-                        eprintln!(
-                            "[JIDOKA] Budget exceeded for {}: {:.0} tok/s < {} tok/s",
-                            input_path.display(),
-                            tokens_per_sec,
-                            budget_target_tok_s
-                        );
-                    }
-                }
-
-                // Format output with optional profiling
-                let content = if args.profile {
-                    format_folder_output_with_profile(
-                        &result,
-                        args.format,
-                        transcribe_ms,
-                        tokens_per_sec,
-                        budget_met,
-                    )
-                } else {
-                    format_folder_output(&result, args.format)
-                };
-
-                // Atomic write (spec §1.3 #2)
-                match atomic_write_transcription(&output_path, &content) {
-                    Ok(()) => {
-                        processed += 1;
-
-                        // Collect profile data for report
-                        if args.profile || args.report.is_some() {
-                            let (audio_ms, encoder_ms, decoder_ms) =
-                                if let Some(stats) = &result.profiling {
-                                    (
-                                        stats.breakdown.get("audio_ms").copied(),
-                                        stats.breakdown.get("encoder_ms").copied(),
-                                        stats.breakdown.get("decoder_ms").copied(),
-                                    )
-                                } else {
-                                    (None, None, None)
-                                };
-
-                            profile_entries.push(FolderProfileEntry {
-                                file: input_path.display().to_string(),
-                                audio_duration_secs,
-                                transcribe_ms,
-                                tokens_generated,
-                                tokens_per_sec,
-                                budget_met,
-                                audio_ms,
-                                encoder_ms,
-                                decoder_ms,
-                            });
-                        }
-                    }
-                    Err(e) => {
-                        if global.verbose {
-                            eprintln!("[ERROR] Write failed {}: {}", output_path.display(), e);
-                        }
-                        failed += 1;
-                    }
-                }
-            }
-            Err(e) => {
-                if global.verbose {
-                    eprintln!("[ERROR] {}: {}", input_path.display(), e);
-                }
-                failed += 1;
-            }
+        match process_folder_file(
+            input_path,
+            &output_path,
+            &whisper,
+            &args,
+            global,
+            &mut budget_violations,
+            &mut profile_entries,
+        ) {
+            FolderFileOutcome::Processed => processed += 1,
+            FolderFileOutcome::Skipped => skipped += 1,
+            FolderFileOutcome::Failed => failed += 1,
         }
     }
 
@@ -1464,6 +1581,81 @@ struct FolderProfileEntry {
     audio_ms: Option<f64>,
     encoder_ms: Option<f64>,
     decoder_ms: Option<f64>,
+}
+
+/// Process a successful folder transcription result: format, write, and collect profiling data
+fn process_folder_transcription(
+    input_path: &Path,
+    output_path: &Path,
+    result: FolderTranscribeResult,
+    transcribe_ms: f64,
+    args: &TranscribeFolderArgs,
+    global: &Args,
+    budget_violations: &mut usize,
+    profile_entries: &mut Vec<FolderProfileEntry>,
+) -> CliResult<()> {
+    let tokens_per_sec = if transcribe_ms > 0.0 {
+        (result.tokens_generated as f64 / transcribe_ms) * 1000.0
+    } else {
+        0.0
+    };
+
+    // Budget check: 130 µs/token = 7,692 tok/s target (spec §2.3.1)
+    let budget_target_tok_s = 7692.0;
+    let budget_met = tokens_per_sec >= budget_target_tok_s;
+
+    if !budget_met && args.strict_budget {
+        *budget_violations += 1;
+        if global.verbose {
+            eprintln!(
+                "[JIDOKA] Budget exceeded for {}: {:.0} tok/s < {} tok/s",
+                input_path.display(),
+                tokens_per_sec,
+                budget_target_tok_s
+            );
+        }
+    }
+
+    let content = if args.profile {
+        format_folder_output_with_profile(
+            &result,
+            args.format,
+            transcribe_ms,
+            tokens_per_sec,
+            budget_met,
+        )
+    } else {
+        format_folder_output(&result, args.format)
+    };
+
+    atomic_write_transcription(output_path, &content)?;
+
+    // Collect profile data for report
+    if args.profile || args.report.is_some() {
+        let (audio_ms, encoder_ms, decoder_ms) = if let Some(stats) = &result.profiling {
+            (
+                stats.breakdown.get("audio_ms").copied(),
+                stats.breakdown.get("encoder_ms").copied(),
+                stats.breakdown.get("decoder_ms").copied(),
+            )
+        } else {
+            (None, None, None)
+        };
+
+        profile_entries.push(FolderProfileEntry {
+            file: input_path.display().to_string(),
+            audio_duration_secs: result.audio_duration_secs,
+            transcribe_ms,
+            tokens_generated: result.tokens_generated,
+            tokens_per_sec,
+            budget_met,
+            audio_ms,
+            encoder_ms,
+            decoder_ms,
+        });
+    }
+
+    Ok(())
 }
 
 /// Result from transcribing a single file
@@ -1546,29 +1738,13 @@ fn discover_folder_recursive(dir: &Path, recursive: bool, files: &mut Vec<std::p
     for entry in entries.flatten() {
         let path = entry.path();
 
-        // Skip hidden files (spec §H point 108)
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with('.') {
-                continue;
-            }
+        if is_hidden_path(&path) {
+            continue;
         }
 
-        if path.is_file() {
-            // Check if it's an audio file
-            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                let ext_lower = ext.to_lowercase();
-                if matches!(
-                    ext_lower.as_str(),
-                    "wav" | "mp3" | "flac" | "ogg" | "m4a" | "mp4" | "webm" | "aac"
-                ) {
-                    files.push(path);
-                }
-            }
-        } else if path.is_dir() && recursive {
-            // Handle symlink loops (spec §H point 109) - skip symlinks to directories
-            if path.is_symlink() {
-                continue;
-            }
+        if path.is_file() && has_folder_audio_extension(&path) {
+            files.push(path);
+        } else if path.is_dir() && recursive && !path.is_symlink() {
             discover_folder_recursive(&path, recursive, files);
         }
     }
@@ -1890,6 +2066,42 @@ fn format_batch_output(result: &BatchTranscribeResult, format: OutputFormatArg) 
 /// - Space: Pause/resume
 /// - r: Reset
 /// - q: Quit
+/// Handle a single TUI keypress, returning Some(result) if the app should exit
+#[cfg(feature = "tui")]
+fn handle_tui_key(
+    code: crossterm::event::KeyCode,
+    app: &mut crate::tui::WhisperApp,
+) -> Option<CommandResult> {
+    use crossterm::event::KeyCode;
+    const HANDLED_CHARS: &[char] = &['1', '2', '3', '4', '5', '6', '7', '?', ' ', 'r'];
+    match code {
+        KeyCode::Char('q') => Some(CommandResult::success("TUI closed")),
+        KeyCode::Char(c) if HANDLED_CHARS.contains(&c) => {
+            app.handle_key(c);
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Poll for a TUI event and handle it, returning Some if app should exit
+#[cfg(feature = "tui")]
+fn poll_tui_event(app: &mut crate::tui::WhisperApp) -> CliResult<Option<CommandResult>> {
+    use crossterm::event::{self, Event, KeyEventKind};
+    use std::time::Duration;
+
+    if !event::poll(Duration::from_millis(100)).map_err(|e| CliError::Io(io::Error::other(e)))? {
+        return Ok(None);
+    }
+    let event = event::read().map_err(|e| CliError::Io(io::Error::other(e)))?;
+    if let Event::Key(key) = event {
+        if key.kind == KeyEventKind::Press {
+            return Ok(handle_tui_key(key.code, app));
+        }
+    }
+    Ok(None)
+}
+
 #[cfg(feature = "tui")]
 pub fn run_tui(global: &Args) -> CliResult<CommandResult> {
     use crossterm::{
@@ -1923,26 +2135,8 @@ pub fn run_tui(global: &Args) -> CliResult<CommandResult> {
             .map_err(|e| CliError::Io(io::Error::other(e)))?;
 
         // Poll for events with timeout
-        if event::poll(Duration::from_millis(100)).map_err(|e| CliError::Io(io::Error::other(e)))? {
-            if let Event::Key(key) = event::read().map_err(|e| CliError::Io(io::Error::other(e)))? {
-                // Only handle key press events (not release)
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') => break Ok(CommandResult::success("TUI closed")),
-                        KeyCode::Char('1') => app.handle_key('1'),
-                        KeyCode::Char('2') => app.handle_key('2'),
-                        KeyCode::Char('3') => app.handle_key('3'),
-                        KeyCode::Char('4') => app.handle_key('4'),
-                        KeyCode::Char('5') => app.handle_key('5'),
-                        KeyCode::Char('6') => app.handle_key('6'),
-                        KeyCode::Char('7') => app.handle_key('7'),
-                        KeyCode::Char('?') => app.handle_key('?'),
-                        KeyCode::Char(' ') => app.handle_key(' '),
-                        KeyCode::Char('r') => app.handle_key('r'),
-                        _ => {}
-                    }
-                }
-            }
+        if let Some(result) = poll_tui_event(&mut app)? {
+            break Ok(result);
         }
 
         // Check if we should quit
@@ -2045,327 +2239,343 @@ fn test_backend(backend: BackendArg, _global: &Args) -> CliResult<()> {
 
 /// Run model command
 pub fn run_model(args: ModelArgs, global: &Args) -> CliResult<CommandResult> {
-    use crate::model::download::{find_model, list_models, ModelFamily};
-
     match args.action {
-        ModelAction::List => {
-            if !global.quiet {
-                println!("═══════════════════════════════════════════════════════════════════");
-                println!("                    Available Models                               ");
-                println!("═══════════════════════════════════════════════════════════════════\n");
-            }
-
-            // Group by family
-            println!("WHISPER (ASR - Automatic Speech Recognition)");
-            println!("───────────────────────────────────────────────────────────────────");
-            for model in list_models() {
-                if model.family == ModelFamily::Whisper {
-                    println!(
-                        "  {:<20} {:>6} params  {}",
-                        model.name, model.params, model.description
-                    );
-                    if global.verbose {
-                        println!(
-                            "                       fp16: {}  int4: {}  WASM: {}",
-                            model.size_fp16, model.size_int4, model.wasm_quant
-                        );
-                    }
-                }
-            }
-
-            println!("\nLFM2 (Post-Transcription Summarization)");
-            println!("───────────────────────────────────────────────────────────────────");
-            for model in list_models() {
-                if model.family == ModelFamily::Lfm2 {
-                    println!(
-                        "  {:<20} {:>6} params  {}",
-                        model.name, model.params, model.description
-                    );
-                    if global.verbose {
-                        println!(
-                            "                       fp16: {}  int4: {}  WASM: {}",
-                            model.size_fp16, model.size_int4, model.wasm_quant
-                        );
-                    }
-                }
-            }
-
-            if !global.quiet {
-                println!("\n───────────────────────────────────────────────────────────────────");
-                println!("Use 'whisper-apr model download <name>' to download a model.");
-                println!("Use -v/--verbose for size details.");
-            }
-
-            Ok(CommandResult::success("Listed models"))
-        }
-        ModelAction::Download { model } => {
-            // Map ModelSize to model name
-            let model_name = match model {
-                crate::cli::args::ModelSize::Tiny => "whisper-tiny",
-                crate::cli::args::ModelSize::Base => "whisper-base",
-                crate::cli::args::ModelSize::Small => "whisper-small",
-                crate::cli::args::ModelSize::Medium => "whisper-medium",
-                crate::cli::args::ModelSize::Large => "whisper-large",
-            };
-
-            let model_info = find_model(model_name)
-                .ok_or_else(|| CliError::InvalidArgument(format!("Unknown model: {model_name}")))?;
-
-            if !global.quiet {
-                println!("Downloading {} from HuggingFace...", model_info.name);
-                println!("  Repository: {}", model_info.repo_id);
-                println!("  Parameters: {}", model_info.params);
-                println!("  Size (fp16): {}", model_info.size_fp16);
-            }
-
-            // Create downloader and download
-            let downloader = crate::model::download::ModelDownloader::new().map_err(|e| {
-                CliError::InvalidArgument(format!("Failed to initialize downloader: {e}"))
-            })?;
-
-            let paths = downloader
-                .download_safetensors(model_info)
-                .map_err(|e| CliError::InvalidArgument(format!("Download failed: {e}")))?;
-
-            if !global.quiet {
-                println!("\nDownloaded {} file(s):", paths.len());
-                for path in &paths {
-                    println!("  {}", path.display());
-                }
-                println!("\nCache directory: {}", downloader.cache_dir().display());
-            }
-
-            Ok(CommandResult::success(format!(
-                "Downloaded {} ({} files)",
-                model_info.name,
-                paths.len()
-            )))
-        }
-        ModelAction::Convert { input, output } => {
-            if !global.quiet {
-                println!("Converting {} to {}...", input.display(), output.display());
-            }
-
-            // Use the convert command logic
-            if !input.exists() {
-                return Err(CliError::FileNotFound(input.display().to_string()));
-            }
-
-            // Check if it's a safetensors file
-            let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if ext != "safetensors" {
-                return Err(CliError::UnsupportedFormat(format!(
-                    "Expected .safetensors file, got .{ext}"
-                )));
-            }
-
-            // Use safetensors loader
-            let loader = crate::format::SafeTensorsLoader::load(&input)
-                .map_err(|e| CliError::InvalidArgument(format!("Failed to load: {e}")))?;
-
-            let config = crate::format::apr2::Lfm2Config::lfm2_2_6b();
-            let quant = crate::format::apr2::QuantConfig::default();
-
-            let writer = loader
-                .to_apr2(config, quant, false)
-                .map_err(|e| CliError::InvalidArgument(format!("Conversion failed: {e}")))?;
-
-            let bytes = writer
-                .to_bytes()
-                .map_err(|e| CliError::InvalidArgument(format!("Serialization failed: {e}")))?;
-
-            std::fs::write(&output, &bytes)
-                .map_err(|e| CliError::WriteError(format!("Failed to write: {e}")))?;
-
-            if !global.quiet {
-                println!(
-                    "Converted {} tensors to {}",
-                    loader.tensor_names().len(),
-                    output.display()
-                );
-            }
-
-            Ok(CommandResult::success(format!(
-                "Converted to {}",
-                output.display()
-            )))
-        }
-        ModelAction::Info { file } => {
-            if !file.exists() {
-                return Err(CliError::FileNotFound(file.display().to_string()));
-            }
-
-            let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
-
-            match ext {
-                "apr2" => {
-                    // Parse APR2 file
-                    let data = std::fs::read(&file)
-                        .map_err(|e| CliError::InvalidArgument(format!("Failed to read: {e}")))?;
-                    let reader = crate::format::Apr2Reader::new(data)
-                        .map_err(|e| CliError::InvalidArgument(format!("Invalid APR2: {e}")))?;
-
-                    println!("═══════════════════════════════════════════════════════════════════");
-                    println!("                    APR2 Model Information                         ");
-                    println!(
-                        "═══════════════════════════════════════════════════════════════════\n"
-                    );
-                    println!("File: {}", file.display());
-                    println!("Size: {} bytes", reader.file_size());
-                    println!("Tensors: {}", reader.n_tensors());
-                    println!("Family: {:?}", reader.header.family);
-                    println!("Version: {}", reader.header.version);
-
-                    if let Ok(config) = reader.lfm2_config() {
-                        println!("\nLFM2 Configuration:");
-                        println!("  Hidden size: {}", config.hidden_size);
-                        println!("  Layers: {}", config.num_layers);
-                        println!("  Q heads: {}", config.num_q_heads);
-                        println!("  KV heads: {}", config.num_kv_heads);
-                        println!("  Intermediate: {}", config.intermediate_size);
-                        println!("  Vocab size: {}", config.vocab_size);
-                    }
-
-                    if global.verbose {
-                        println!("\nTensors:");
-                        for tensor in &reader.tensors {
-                            println!("  {} {:?} {:?}", tensor.name, tensor.shape(), tensor.dtype);
-                        }
-                    }
-                }
-                "safetensors" => {
-                    // Parse safetensors file
-                    let loader = crate::format::SafeTensorsLoader::load(&file)
-                        .map_err(|e| CliError::InvalidArgument(format!("Failed to load: {e}")))?;
-
-                    println!("═══════════════════════════════════════════════════════════════════");
-                    println!("                    SafeTensors Model Information                  ");
-                    println!(
-                        "═══════════════════════════════════════════════════════════════════\n"
-                    );
-                    println!("File: {}", file.display());
-                    println!("Tensors: {}", loader.tensor_names().len());
-
-                    if global.verbose {
-                        println!("\nTensors:");
-                        for name in loader.tensor_names() {
-                            let internal = crate::format::map_tensor_name(name);
-                            println!("  {} → {}", name, internal);
-                        }
-                    }
-                }
-                "apr" => {
-                    // Parse APR v1 file
-                    println!("APR v1 file: {}", file.display());
-                    let metadata = std::fs::metadata(&file)
-                        .map_err(|e| CliError::InvalidArgument(format!("Failed to read: {e}")))?;
-                    println!("Size: {} bytes", metadata.len());
-                }
-                _ => {
-                    return Err(CliError::UnsupportedFormat(format!(
-                        "Unknown file type: .{ext}"
-                    )));
-                }
-            }
-
-            Ok(CommandResult::success("Showed model info"))
-        }
+        ModelAction::List => run_model_list(global),
+        ModelAction::Download { model } => run_model_download(model, global),
+        ModelAction::Convert { input, output } => run_model_convert(&input, &output, global),
+        ModelAction::Info { file } => run_model_info(&file, global),
         ModelAction::WasmCheck {
             family,
             quantization,
             context,
             sliding_window,
-        } => {
-            use crate::format::apr2::Lfm2Config;
-            use crate::model::lfm2::{Lfm2WasmConfig, WasmMemoryEstimate, WasmQuantization};
+        } => run_model_wasm_check(&family, &quantization, context, sliding_window, global),
+    }
+}
 
-            // Parse quantization type
-            let quant = match quantization.to_lowercase().as_str() {
-                "fp16" => WasmQuantization::Fp16,
-                "int8" => WasmQuantization::Int8,
-                "int4-awq" | "int4awq" | "awq" => WasmQuantization::Int4Awq,
-                "int4-gptq" | "int4gptq" | "gptq" => WasmQuantization::Int4Gptq,
-                other => {
-                    return Err(CliError::InvalidArgument(format!(
-                        "Unknown quantization: {other}. Use: fp16, int8, int4-awq, int4-gptq"
-                    )));
-                }
-            };
+/// List available models grouped by family
+fn run_model_list(global: &Args) -> CliResult<CommandResult> {
+    use crate::model::download::{list_models, ModelFamily};
 
-            // Get model config based on family
-            let model_config = match family.to_lowercase().as_str() {
-                "lfm2" | "lfm2-2.6b" => Lfm2Config::lfm2_2_6b(),
-                "llama" | "llama-7b" => Lfm2Config::llama_7b(),
-                "llama2" | "llama2-7b" => Lfm2Config::llama2_7b(),
-                "whisper-tiny" | "tiny" => Lfm2Config::whisper_tiny(),
-                "whisper-base" | "base" => Lfm2Config::whisper_base(),
-                "whisper-small" | "small" => Lfm2Config::whisper_small(),
-                other => {
-                    return Err(CliError::InvalidArgument(format!(
-                        "Unknown model family: {other}. Use: lfm2, llama, llama2, whisper-tiny, whisper-base, whisper-small"
-                    )));
-                }
-            };
+    if !global.quiet {
+        println!("═══════════════════════════════════════════════════════════════════");
+        println!("                    Available Models                               ");
+        println!("═══════════════════════════════════════════════════════════════════\n");
+    }
 
-            // Create WASM config
-            let wasm_config = Lfm2WasmConfig {
-                quantization: quant,
-                max_context: context,
-                sliding_window: if sliding_window == 0 {
-                    None
-                } else {
-                    Some(sliding_window)
-                },
-                use_webgpu: true,
-                streaming: true,
-            };
-
-            // Calculate memory estimate
-            let estimate = WasmMemoryEstimate::calculate(&model_config, &wasm_config);
-
-            if !global.quiet {
-                println!("═══════════════════════════════════════════════════════════════════");
-                println!("                    WASM Viability Check                           ");
-                println!("═══════════════════════════════════════════════════════════════════\n");
-
-                println!("Model Family: {}", family);
-                println!("Quantization: {}", quant);
-                println!("Max Context:  {}", context);
+    println!("WHISPER (ASR - Automatic Speech Recognition)");
+    println!("───────────────────────────────────────────────────────────────────");
+    for model in list_models() {
+        if model.family == ModelFamily::Whisper {
+            println!(
+                "  {:<20} {:>6} params  {}",
+                model.name, model.params, model.description
+            );
+            if global.verbose {
                 println!(
-                    "Sliding Win:  {}",
-                    if sliding_window == 0 {
-                        "None (full attention)".to_string()
-                    } else {
-                        format!("{sliding_window} tokens")
-                    }
+                    "                       fp16: {}  int4: {}  WASM: {}",
+                    model.size_fp16, model.size_int4, model.wasm_quant
                 );
-                println!();
-
-                println!("Memory Breakdown:");
-                println!("───────────────────────────────────────────────────────────────────");
-                print!("{}", estimate);
-
-                println!("───────────────────────────────────────────────────────────────────");
-                if estimate.is_viable {
-                    println!("✅ This configuration IS viable for WASM deployment");
-                } else {
-                    println!("❌ This configuration is NOT viable for WASM deployment");
-                    println!("\nRecommendations:");
-                    println!("  • Use int4-awq or int4-gptq quantization");
-                    println!("  • Reduce max_context to 4096 or less");
-                    println!("  • Enable sliding window attention (e.g., --sliding-window 2048)");
-                }
             }
-
-            let status = if estimate.is_viable {
-                "WASM viable"
-            } else {
-                "WASM not viable"
-            };
-
-            Ok(CommandResult::success(status))
         }
     }
+
+    println!("\nLFM2 (Post-Transcription Summarization)");
+    println!("───────────────────────────────────────────────────────────────────");
+    for model in list_models() {
+        if model.family == ModelFamily::Lfm2 {
+            println!(
+                "  {:<20} {:>6} params  {}",
+                model.name, model.params, model.description
+            );
+            if global.verbose {
+                println!(
+                    "                       fp16: {}  int4: {}  WASM: {}",
+                    model.size_fp16, model.size_int4, model.wasm_quant
+                );
+            }
+        }
+    }
+
+    if !global.quiet {
+        println!("\n───────────────────────────────────────────────────────────────────");
+        println!("Use 'whisper-apr model download <name>' to download a model.");
+        println!("Use -v/--verbose for size details.");
+    }
+
+    Ok(CommandResult::success("Listed models"))
+}
+
+/// Download a model from HuggingFace
+fn run_model_download(
+    model: crate::cli::args::ModelSize,
+    global: &Args,
+) -> CliResult<CommandResult> {
+    use crate::model::download::find_model;
+
+    let model_name = match model {
+        crate::cli::args::ModelSize::Tiny => "whisper-tiny",
+        crate::cli::args::ModelSize::Base => "whisper-base",
+        crate::cli::args::ModelSize::Small => "whisper-small",
+        crate::cli::args::ModelSize::Medium => "whisper-medium",
+        crate::cli::args::ModelSize::Large => "whisper-large",
+    };
+
+    let model_info = find_model(model_name)
+        .ok_or_else(|| CliError::InvalidArgument(format!("Unknown model: {model_name}")))?;
+
+    if !global.quiet {
+        println!("Downloading {} from HuggingFace...", model_info.name);
+        println!("  Repository: {}", model_info.repo_id);
+        println!("  Parameters: {}", model_info.params);
+        println!("  Size (fp16): {}", model_info.size_fp16);
+    }
+
+    let downloader = crate::model::download::ModelDownloader::new()
+        .map_err(|e| CliError::InvalidArgument(format!("Failed to initialize downloader: {e}")))?;
+
+    let paths = downloader
+        .download_safetensors(model_info)
+        .map_err(|e| CliError::InvalidArgument(format!("Download failed: {e}")))?;
+
+    if !global.quiet {
+        println!("\nDownloaded {} file(s):", paths.len());
+        for path in &paths {
+            println!("  {}", path.display());
+        }
+        println!("\nCache directory: {}", downloader.cache_dir().display());
+    }
+
+    Ok(CommandResult::success(format!(
+        "Downloaded {} ({} files)",
+        model_info.name,
+        paths.len()
+    )))
+}
+
+/// Convert safetensors to APR2 format
+fn run_model_convert(input: &Path, output: &Path, global: &Args) -> CliResult<CommandResult> {
+    if !global.quiet {
+        println!("Converting {} to {}...", input.display(), output.display());
+    }
+
+    if !input.exists() {
+        return Err(CliError::FileNotFound(input.display().to_string()));
+    }
+
+    let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext != "safetensors" {
+        return Err(CliError::UnsupportedFormat(format!(
+            "Expected .safetensors file, got .{ext}"
+        )));
+    }
+
+    let loader = crate::format::SafeTensorsLoader::load(input)
+        .map_err(|e| CliError::InvalidArgument(format!("Failed to load: {e}")))?;
+
+    let config = crate::format::apr2::Lfm2Config::lfm2_2_6b();
+    let quant = crate::format::apr2::QuantConfig::default();
+
+    let writer = loader
+        .to_apr2(config, quant, false)
+        .map_err(|e| CliError::InvalidArgument(format!("Conversion failed: {e}")))?;
+
+    let bytes = writer
+        .to_bytes()
+        .map_err(|e| CliError::InvalidArgument(format!("Serialization failed: {e}")))?;
+
+    std::fs::write(output, &bytes)
+        .map_err(|e| CliError::WriteError(format!("Failed to write: {e}")))?;
+
+    if !global.quiet {
+        println!(
+            "Converted {} tensors to {}",
+            loader.tensor_names().len(),
+            output.display()
+        );
+    }
+
+    Ok(CommandResult::success(format!(
+        "Converted to {}",
+        output.display()
+    )))
+}
+
+/// Show model file information
+fn run_model_info(file: &Path, global: &Args) -> CliResult<CommandResult> {
+    if !file.exists() {
+        return Err(CliError::FileNotFound(file.display().to_string()));
+    }
+
+    let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+    match ext {
+        "apr2" => print_apr2_info(file, global)?,
+        "safetensors" => print_safetensors_info(file, global)?,
+        "apr" => {
+            println!("APR v1 file: {}", file.display());
+            let metadata = std::fs::metadata(file)
+                .map_err(|e| CliError::InvalidArgument(format!("Failed to read: {e}")))?;
+            println!("Size: {} bytes", metadata.len());
+        }
+        _ => {
+            return Err(CliError::UnsupportedFormat(format!(
+                "Unknown file type: .{ext}"
+            )));
+        }
+    }
+
+    Ok(CommandResult::success("Showed model info"))
+}
+
+/// Print APR2 file details
+fn print_apr2_info(file: &Path, global: &Args) -> CliResult<()> {
+    let data = std::fs::read(file)
+        .map_err(|e| CliError::InvalidArgument(format!("Failed to read: {e}")))?;
+    let reader = crate::format::Apr2Reader::new(data)
+        .map_err(|e| CliError::InvalidArgument(format!("Invalid APR2: {e}")))?;
+
+    println!("═══════════════════════════════════════════════════════════════════");
+    println!("                    APR2 Model Information                         ");
+    println!("═══════════════════════════════════════════════════════════════════\n");
+    println!("File: {}", file.display());
+    println!("Size: {} bytes", reader.file_size());
+    println!("Tensors: {}", reader.n_tensors());
+    println!("Family: {:?}", reader.header.family);
+    println!("Version: {}", reader.header.version);
+
+    if let Ok(config) = reader.lfm2_config() {
+        println!("\nLFM2 Configuration:");
+        println!("  Hidden size: {}", config.hidden_size);
+        println!("  Layers: {}", config.num_layers);
+        println!("  Q heads: {}", config.num_q_heads);
+        println!("  KV heads: {}", config.num_kv_heads);
+        println!("  Intermediate: {}", config.intermediate_size);
+        println!("  Vocab size: {}", config.vocab_size);
+    }
+
+    if global.verbose {
+        println!("\nTensors:");
+        for tensor in &reader.tensors {
+            println!("  {} {:?} {:?}", tensor.name, tensor.shape(), tensor.dtype);
+        }
+    }
+    Ok(())
+}
+
+/// Print SafeTensors file details
+fn print_safetensors_info(file: &Path, global: &Args) -> CliResult<()> {
+    let loader = crate::format::SafeTensorsLoader::load(file)
+        .map_err(|e| CliError::InvalidArgument(format!("Failed to load: {e}")))?;
+
+    println!("═══════════════════════════════════════════════════════════════════");
+    println!("                    SafeTensors Model Information                  ");
+    println!("═══════════════════════════════════════════════════════════════════\n");
+    println!("File: {}", file.display());
+    println!("Tensors: {}", loader.tensor_names().len());
+
+    if global.verbose {
+        println!("\nTensors:");
+        for name in loader.tensor_names() {
+            let internal = crate::format::map_tensor_name(name);
+            println!("  {} → {}", name, internal);
+        }
+    }
+    Ok(())
+}
+
+/// Check WASM viability for a model configuration
+fn run_model_wasm_check(
+    family: &str,
+    quantization: &str,
+    context: usize,
+    sliding_window: usize,
+    global: &Args,
+) -> CliResult<CommandResult> {
+    use crate::format::apr2::Lfm2Config;
+    use crate::model::lfm2::{Lfm2WasmConfig, WasmMemoryEstimate, WasmQuantization};
+
+    let quant = match quantization.to_lowercase().as_str() {
+        "fp16" => WasmQuantization::Fp16,
+        "int8" => WasmQuantization::Int8,
+        "int4-awq" | "int4awq" | "awq" => WasmQuantization::Int4Awq,
+        "int4-gptq" | "int4gptq" | "gptq" => WasmQuantization::Int4Gptq,
+        other => {
+            return Err(CliError::InvalidArgument(format!(
+                "Unknown quantization: {other}. Use: fp16, int8, int4-awq, int4-gptq"
+            )));
+        }
+    };
+
+    let model_config = match family.to_lowercase().as_str() {
+        "lfm2" | "lfm2-2.6b" => Lfm2Config::lfm2_2_6b(),
+        "llama" | "llama-7b" => Lfm2Config::llama_7b(),
+        "llama2" | "llama2-7b" => Lfm2Config::llama2_7b(),
+        "whisper-tiny" | "tiny" => Lfm2Config::whisper_tiny(),
+        "whisper-base" | "base" => Lfm2Config::whisper_base(),
+        "whisper-small" | "small" => Lfm2Config::whisper_small(),
+        other => {
+            return Err(CliError::InvalidArgument(format!(
+                "Unknown model family: {other}. Use: lfm2, llama, llama2, whisper-tiny, whisper-base, whisper-small"
+            )));
+        }
+    };
+
+    let wasm_config = Lfm2WasmConfig {
+        quantization: quant,
+        max_context: context as usize,
+        sliding_window: if sliding_window == 0 {
+            None
+        } else {
+            Some(sliding_window as usize)
+        },
+        use_webgpu: true,
+        streaming: true,
+    };
+
+    let estimate = WasmMemoryEstimate::calculate(&model_config, &wasm_config);
+
+    if !global.quiet {
+        println!("═══════════════════════════════════════════════════════════════════");
+        println!("                    WASM Viability Check                           ");
+        println!("═══════════════════════════════════════════════════════════════════\n");
+
+        println!("Model Family: {}", family);
+        println!("Quantization: {}", quant);
+        println!("Max Context:  {}", context);
+        println!(
+            "Sliding Win:  {}",
+            if sliding_window == 0 {
+                "None (full attention)".to_string()
+            } else {
+                format!("{sliding_window} tokens")
+            }
+        );
+        println!();
+
+        println!("Memory Breakdown:");
+        println!("───────────────────────────────────────────────────────────────────");
+        print!("{}", estimate);
+
+        println!("───────────────────────────────────────────────────────────────────");
+        if estimate.is_viable {
+            println!("✅ This configuration IS viable for WASM deployment");
+        } else {
+            println!("❌ This configuration is NOT viable for WASM deployment");
+            println!("\nRecommendations:");
+            println!("  • Use int4-awq or int4-gptq quantization");
+            println!("  • Reduce max_context to 4096 or less");
+            println!("  • Enable sliding window attention (e.g., --sliding-window 2048)");
+        }
+    }
+
+    let status = if estimate.is_viable {
+        "WASM viable"
+    } else {
+        "WASM not viable"
+    };
+
+    Ok(CommandResult::success(status))
 }
 
 /// Run benchmark command
@@ -2824,8 +3034,7 @@ pub fn run_command(_args: CommandArgs, _global: &Args) -> CliResult<CommandResul
 pub fn run_diagnose(args: DiagnoseArgs, global: &Args) -> CliResult<CommandResult> {
     use crate::tokenizer::special_tokens::{self, SpecialTokens};
 
-    let mut checks: Vec<DiagnosticCheck> = Vec::new();
-    let mut all_passed = true;
+    let mut dc = DiagnosticCollector::new(global.quiet, args.json);
 
     if !global.quiet && !args.json {
         println!("═══════════════════════════════════════════════════════════════════");
@@ -2833,202 +3042,87 @@ pub fn run_diagnose(args: DiagnoseArgs, global: &Args) -> CliResult<CommandResul
         println!("═══════════════════════════════════════════════════════════════════\n");
     }
 
-    // -------------------------------------------------------------------------
     // Section 1: Tokenizer Configuration Checks
-    // -------------------------------------------------------------------------
     if !global.quiet && !args.json {
         println!("1. Tokenizer Configuration");
         println!("───────────────────────────────────────────────────────────────────");
     }
 
-    // Check 1.1: Verify SpecialTokens struct exists and works
     let multilingual = SpecialTokens::for_vocab_size(51865);
     let english_only = SpecialTokens::for_vocab_size(51864);
 
-    // EOT token check for multilingual
-    let eot_multi_check = DiagnosticCheck {
-        id: "TOK-001".to_string(),
-        name: "EOT token (multilingual)".to_string(),
-        passed: multilingual.eot == 50257,
-        expected: "50257".to_string(),
-        actual: multilingual.eot.to_string(),
-        details: "EOT for multilingual models (vocab >= 51865)".to_string(),
-    };
-    if !eot_multi_check.passed {
-        all_passed = false;
-    }
-    checks.push(eot_multi_check.clone());
-    print_check(&eot_multi_check, global.quiet, args.json);
+    dc.add(
+        "TOK-001",
+        "EOT token (multilingual)",
+        multilingual.eot == 50257,
+        "50257",
+        &multilingual.eot.to_string(),
+        "EOT for multilingual models (vocab >= 51865)",
+    );
+    dc.add(
+        "TOK-002",
+        "EOT token (English-only)",
+        english_only.eot == 50256,
+        "50256",
+        &english_only.eot.to_string(),
+        "EOT for English-only models (vocab < 51865)",
+    );
+    dc.add(
+        "TOK-003",
+        "SOT token (multilingual)",
+        multilingual.sot == 50258,
+        "50258",
+        &multilingual.sot.to_string(),
+        "SOT for multilingual models",
+    );
+    dc.add(
+        "TOK-004",
+        "LANG_BASE token (multilingual)",
+        multilingual.lang_base == 50259,
+        "50259",
+        &multilingual.lang_base.to_string(),
+        "Language base for multilingual models",
+    );
 
-    // EOT token check for English-only
-    let eot_en_check = DiagnosticCheck {
-        id: "TOK-002".to_string(),
-        name: "EOT token (English-only)".to_string(),
-        passed: english_only.eot == 50256,
-        expected: "50256".to_string(),
-        actual: english_only.eot.to_string(),
-        details: "EOT for English-only models (vocab < 51865)".to_string(),
-    };
-    if !eot_en_check.passed {
-        all_passed = false;
-    }
-    checks.push(eot_en_check.clone());
-    print_check(&eot_en_check, global.quiet, args.json);
-
-    // SOT token check for multilingual
-    let sot_multi_check = DiagnosticCheck {
-        id: "TOK-003".to_string(),
-        name: "SOT token (multilingual)".to_string(),
-        passed: multilingual.sot == 50258,
-        expected: "50258".to_string(),
-        actual: multilingual.sot.to_string(),
-        details: "SOT for multilingual models".to_string(),
-    };
-    if !sot_multi_check.passed {
-        all_passed = false;
-    }
-    checks.push(sot_multi_check.clone());
-    print_check(&sot_multi_check, global.quiet, args.json);
-
-    // LANG_BASE check for multilingual
-    let lang_multi_check = DiagnosticCheck {
-        id: "TOK-004".to_string(),
-        name: "LANG_BASE token (multilingual)".to_string(),
-        passed: multilingual.lang_base == 50259,
-        expected: "50259".to_string(),
-        actual: multilingual.lang_base.to_string(),
-        details: "Language base for multilingual models".to_string(),
-    };
-    if !lang_multi_check.passed {
-        all_passed = false;
-    }
-    checks.push(lang_multi_check.clone());
-    print_check(&lang_multi_check, global.quiet, args.json);
-
-    // Verify language_token function
     let lang_en = special_tokens::language_token("en");
-    let lang_en_check = DiagnosticCheck {
-        id: "TOK-005".to_string(),
-        name: "English language token".to_string(),
-        passed: lang_en == Some(50259),
-        expected: "Some(50259)".to_string(),
-        actual: format!("{lang_en:?}"),
-        details: "language_token(\"en\") = LANG_BASE + 0".to_string(),
-    };
-    if !lang_en_check.passed {
-        all_passed = false;
-    }
-    checks.push(lang_en_check.clone());
-    print_check(&lang_en_check, global.quiet, args.json);
+    dc.add(
+        "TOK-005",
+        "English language token",
+        lang_en == Some(50259),
+        "Some(50259)",
+        &format!("{lang_en:?}"),
+        "language_token(\"en\") = LANG_BASE + 0",
+    );
 
-    // Verify initial_tokens returns correct sequence
     let initial = multilingual.initial_tokens();
-    let initial_check = DiagnosticCheck {
-        id: "TOK-006".to_string(),
-        name: "Initial tokens sequence".to_string(),
-        passed: initial == [50258, 50259, 50359, 50363],
-        expected: "[50258, 50259, 50359, 50363]".to_string(),
-        actual: format!("{initial:?}"),
-        details: "[SOT, LANG_EN, TRANSCRIBE, NO_TIMESTAMPS]".to_string(),
-    };
-    if !initial_check.passed {
-        all_passed = false;
-    }
-    checks.push(initial_check.clone());
-    print_check(&initial_check, global.quiet, args.json);
+    dc.add(
+        "TOK-006",
+        "Initial tokens sequence",
+        initial == [50258, 50259, 50359, 50363],
+        "[50258, 50259, 50359, 50363]",
+        &format!("{initial:?}"),
+        "[SOT, LANG_EN, TRANSCRIBE, NO_TIMESTAMPS]",
+    );
+    dc.add(
+        "TOK-007",
+        "TIMESTAMP_BASE (multilingual)",
+        multilingual.timestamp_base == 50364,
+        "50364",
+        &multilingual.timestamp_base.to_string(),
+        "First timestamp token for multilingual models",
+    );
 
-    // TIMESTAMP_BASE check
-    let ts_base_check = DiagnosticCheck {
-        id: "TOK-007".to_string(),
-        name: "TIMESTAMP_BASE (multilingual)".to_string(),
-        passed: multilingual.timestamp_base == 50364,
-        expected: "50364".to_string(),
-        actual: multilingual.timestamp_base.to_string(),
-        details: "First timestamp token for multilingual models".to_string(),
-    };
-    if !ts_base_check.passed {
-        all_passed = false;
-    }
-    checks.push(ts_base_check.clone());
-    print_check(&ts_base_check, global.quiet, args.json);
-
-    // -------------------------------------------------------------------------
     // Section 2: Model-specific checks (if model provided)
-    // -------------------------------------------------------------------------
     if let Some(model_path) = &args.model {
         if !global.quiet && !args.json {
             println!("\n2. Model Configuration");
             println!("───────────────────────────────────────────────────────────────────");
         }
 
-        if model_path.exists() {
-            let model_check = DiagnosticCheck {
-                id: "MDL-001".to_string(),
-                name: "Model file exists".to_string(),
-                passed: true,
-                expected: "File exists".to_string(),
-                actual: "File exists".to_string(),
-                details: model_path.display().to_string(),
-            };
-            checks.push(model_check.clone());
-            print_check(&model_check, global.quiet, args.json);
-
-            // Try to load and check vocabulary size
-            if args.full {
-                match fs::read(model_path) {
-                    Ok(data) => {
-                        // Check APR magic bytes
-                        let magic_check = DiagnosticCheck {
-                            id: "MDL-002".to_string(),
-                            name: "APR magic bytes".to_string(),
-                            passed: data.len() >= 4 && &data[0..4] == b"APR1",
-                            expected: "APR1".to_string(),
-                            actual: if data.len() >= 4 {
-                                String::from_utf8_lossy(&data[0..4]).to_string()
-                            } else {
-                                "too short".to_string()
-                            },
-                            details: "Model file format identifier".to_string(),
-                        };
-                        if !magic_check.passed {
-                            all_passed = false;
-                        }
-                        checks.push(magic_check.clone());
-                        print_check(&magic_check, global.quiet, args.json);
-                    }
-                    Err(e) => {
-                        let read_check = DiagnosticCheck {
-                            id: "MDL-002".to_string(),
-                            name: "Model file readable".to_string(),
-                            passed: false,
-                            expected: "Readable".to_string(),
-                            actual: format!("Error: {e}"),
-                            details: "Could not read model file".to_string(),
-                        };
-                        all_passed = false;
-                        checks.push(read_check.clone());
-                        print_check(&read_check, global.quiet, args.json);
-                    }
-                }
-            }
-        } else {
-            let model_check = DiagnosticCheck {
-                id: "MDL-001".to_string(),
-                name: "Model file exists".to_string(),
-                passed: false,
-                expected: "File exists".to_string(),
-                actual: "File not found".to_string(),
-                details: model_path.display().to_string(),
-            };
-            all_passed = false;
-            checks.push(model_check.clone());
-            print_check(&model_check, global.quiet, args.json);
-        }
+        diagnose_model_file(model_path, args.full, &mut dc)?;
     }
 
-    // -------------------------------------------------------------------------
     // Section 3: Known Issues (informational)
-    // -------------------------------------------------------------------------
     if !args.tokenizer_only && !global.quiet && !args.json {
         println!("\n3. Known Issues Status");
         println!("───────────────────────────────────────────────────────────────────");
@@ -3040,18 +3134,86 @@ pub fn run_diagnose(args: DiagnoseArgs, global: &Args) -> CliResult<CommandResul
         println!();
     }
 
-    // -------------------------------------------------------------------------
     // Summary
-    // -------------------------------------------------------------------------
-    let passed_count = checks.iter().filter(|c| c.passed).count();
-    let total_count = checks.len();
+    format_diagnose_summary(&dc, &args)
+}
+
+/// Run model file diagnostics
+fn diagnose_model_file(
+    model_path: &Path,
+    full: bool,
+    dc: &mut DiagnosticCollector,
+) -> CliResult<()> {
+    if !model_path.exists() {
+        dc.add(
+            "MDL-001",
+            "Model file exists",
+            false,
+            "File exists",
+            "File not found",
+            &model_path.display().to_string(),
+        );
+        return Ok(());
+    }
+
+    dc.add(
+        "MDL-001",
+        "Model file exists",
+        true,
+        "File exists",
+        "File exists",
+        &model_path.display().to_string(),
+    );
+
+    if !full {
+        return Ok(());
+    }
+
+    match fs::read(model_path) {
+        Ok(data) => {
+            let has_magic = data.len() >= 4 && data.get(0..4) == Some(b"APR1".as_slice());
+            let actual = if data.len() >= 4 {
+                String::from_utf8_lossy(&data[0..4]).to_string()
+            } else {
+                "too short".to_string()
+            };
+            dc.add(
+                "MDL-002",
+                "APR magic bytes",
+                has_magic,
+                "APR1",
+                &actual,
+                "Model file format identifier",
+            );
+        }
+        Err(e) => {
+            dc.add(
+                "MDL-002",
+                "Model file readable",
+                false,
+                "Readable",
+                &format!("Error: {e}"),
+                "Could not read model file",
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Format diagnose summary as JSON or text
+fn format_diagnose_summary(
+    dc: &DiagnosticCollector,
+    args: &DiagnoseArgs,
+) -> CliResult<CommandResult> {
+    let passed_count = dc.checks.iter().filter(|c| c.passed).count();
+    let total_count = dc.checks.len();
 
     if args.json {
         let json = serde_json::json!({
-            "passed": all_passed,
+            "passed": dc.all_passed,
             "checks_passed": passed_count,
             "checks_total": total_count,
-            "checks": checks.iter().map(|c| serde_json::json!({
+            "checks": dc.checks.iter().map(|c| serde_json::json!({
                 "id": c.id,
                 "name": c.name,
                 "passed": c.passed,
@@ -3068,18 +3230,18 @@ pub fn run_diagnose(args: DiagnoseArgs, global: &Args) -> CliResult<CommandResul
             "{}",
             serde_json::to_string_pretty(&json).unwrap_or_default()
         );
-    } else if !global.quiet {
+    } else if !dc.quiet {
         println!("\n═══════════════════════════════════════════════════════════════════");
         println!(
             "RESULT: {}/{} checks passed {}",
             passed_count,
             total_count,
-            if all_passed { "✓" } else { "✗" }
+            if dc.all_passed { "✓" } else { "✗" }
         );
         println!("═══════════════════════════════════════════════════════════════════");
     }
 
-    if all_passed {
+    if dc.all_passed {
         Ok(CommandResult::success(format!(
             "{passed_count}/{total_count} checks passed"
         )))
@@ -3099,6 +3261,50 @@ struct DiagnosticCheck {
     expected: String,
     actual: String,
     details: String,
+}
+
+/// Collector for diagnostic checks that handles registration and tracking
+struct DiagnosticCollector {
+    checks: Vec<DiagnosticCheck>,
+    all_passed: bool,
+    quiet: bool,
+    json: bool,
+}
+
+impl DiagnosticCollector {
+    fn new(quiet: bool, json: bool) -> Self {
+        Self {
+            checks: Vec::new(),
+            all_passed: true,
+            quiet,
+            json,
+        }
+    }
+
+    /// Add a diagnostic check, print it, and track pass/fail
+    fn add(
+        &mut self,
+        id: &str,
+        name: &str,
+        passed: bool,
+        expected: &str,
+        actual: &str,
+        details: &str,
+    ) {
+        let check = DiagnosticCheck {
+            id: id.to_string(),
+            name: name.to_string(),
+            passed,
+            expected: expected.to_string(),
+            actual: actual.to_string(),
+            details: details.to_string(),
+        };
+        if !passed {
+            self.all_passed = false;
+        }
+        print_check(&check, self.quiet, self.json);
+        self.checks.push(check);
+    }
 }
 
 fn print_check(check: &DiagnosticCheck, quiet: bool, json: bool) {
@@ -3285,31 +3491,29 @@ pub(crate) fn load_audio_samples(path: &Path, data: &[u8]) -> CliResult<Vec<f32>
 #[cfg(feature = "symphonia")]
 fn decode_with_symphonia(data: &[u8], ext: &str) -> CliResult<Vec<f32>> {
     use std::io::Cursor;
-    use symphonia::core::audio::SampleBuffer;
     use symphonia::core::codecs::DecoderOptions;
     use symphonia::core::formats::FormatOptions;
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
     use symphonia::core::probe::Hint;
 
-    // Create a media source from the data
     let cursor = Cursor::new(data.to_vec());
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
 
-    // Provide a hint about the format
     let mut hint = Hint::new();
     hint.with_extension(ext);
 
-    // Probe the format
-    let format_opts = FormatOptions::default();
-    let metadata_opts = MetadataOptions::default();
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &format_opts, &metadata_opts)
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
         .map_err(|e| CliError::InvalidArgument(format!("Failed to probe {ext} format: {e}")))?;
 
     let mut format = probed.format;
 
-    // Find the first audio track
     let track = format
         .tracks()
         .iter()
@@ -3322,13 +3526,28 @@ fn decode_with_symphonia(data: &[u8], ext: &str) -> CliResult<Vec<f32>> {
         .sample_rate
         .ok_or_else(|| CliError::InvalidArgument("Unknown sample rate".to_string()))?;
 
-    // Create decoder
-    let decoder_opts = DecoderOptions::default();
     let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &decoder_opts)
+        .make(&track.codec_params, &DecoderOptions::default())
         .map_err(|e| CliError::InvalidArgument(format!("Failed to create decoder: {e}")))?;
 
-    // Decode all packets
+    let samples = decode_all_packets(&mut format, &mut *decoder, track_id)?;
+
+    if sample_rate != 16000 {
+        Ok(resample(&samples, sample_rate, 16000))
+    } else {
+        Ok(samples)
+    }
+}
+
+/// Decode all audio packets from a symphonia format reader, mixing to mono
+#[cfg(feature = "symphonia")]
+fn decode_all_packets(
+    format: &mut Box<dyn symphonia::core::formats::FormatReader>,
+    decoder: &mut dyn symphonia::core::codecs::Decoder,
+    track_id: u32,
+) -> CliResult<Vec<f32>> {
+    use symphonia::core::audio::SampleBuffer;
+
     let mut samples: Vec<f32> = Vec::new();
 
     loop {
@@ -3337,7 +3556,7 @@ fn decode_with_symphonia(data: &[u8], ext: &str) -> CliResult<Vec<f32>> {
             Err(symphonia::core::errors::Error::IoError(ref e))
                 if e.kind() == std::io::ErrorKind::UnexpectedEof =>
             {
-                break; // End of stream
+                break;
             }
             Err(e) => {
                 return Err(CliError::InvalidArgument(format!(
@@ -3346,50 +3565,43 @@ fn decode_with_symphonia(data: &[u8], ext: &str) -> CliResult<Vec<f32>> {
             }
         };
 
-        // Skip packets from other tracks
         if packet.track_id() != track_id {
             continue;
         }
 
-        // Decode the packet
         let decoded = match decoder.decode(&packet) {
             Ok(d) => d,
-            Err(symphonia::core::errors::Error::DecodeError(_)) => continue, // Skip decode errors
+            Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
             Err(e) => {
                 return Err(CliError::InvalidArgument(format!("Decode error: {e}")));
             }
         };
 
-        // Convert to f32 samples
         let spec = *decoded.spec();
         let mut sample_buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
         sample_buf.copy_interleaved_ref(decoded);
-
-        // Mix to mono if stereo
-        let buf_samples = sample_buf.samples();
-        if spec.channels.count() == 2 {
-            for chunk in buf_samples.chunks(2) {
-                if chunk.len() == 2 {
-                    samples.push((chunk[0] + chunk[1]) / 2.0);
-                }
-            }
-        } else if spec.channels.count() == 1 {
-            samples.extend_from_slice(buf_samples);
-        } else {
-            // Multi-channel: average all channels
-            let channels = spec.channels.count();
-            for chunk in buf_samples.chunks(channels) {
-                let sum: f32 = chunk.iter().sum();
-                samples.push(sum / channels as f32);
-            }
-        }
+        mix_to_mono(sample_buf.samples(), spec.channels.count(), &mut samples);
     }
 
-    // Resample to 16kHz if needed
-    if sample_rate != 16000 {
-        Ok(resample(&samples, sample_rate, 16000))
-    } else {
-        Ok(samples)
+    Ok(samples)
+}
+
+/// Mix interleaved multi-channel audio to mono
+#[cfg(feature = "symphonia")]
+fn mix_to_mono(interleaved: &[f32], channels: usize, output: &mut Vec<f32>) {
+    match channels {
+        1 => output.extend_from_slice(interleaved),
+        2 => {
+            for chunk in interleaved.chunks_exact(2) {
+                output.push((chunk[0] + chunk[1]) / 2.0);
+            }
+        }
+        n => {
+            for chunk in interleaved.chunks(n) {
+                let sum: f32 = chunk.iter().sum();
+                output.push(sum / n as f32);
+            }
+        }
     }
 }
 
@@ -3434,7 +3646,6 @@ fn convert_format_arg(arg: OutputFormatArg) -> OutputFormat {
 /// See `docs/specifications/1.0-whisper-apr.md` Section 18.8 for full specification.
 pub fn run_convert(args: ConvertArgs, global: &Args) -> CliResult<CommandResult> {
     use crate::format::apr2::{Lfm2Config, QuantConfig};
-    use crate::format::safetensors_loader::{SafeTensorsLoader, ShardedSafeTensorsLoader};
     use crate::format::ConversionStats;
     use std::time::Instant;
 
@@ -3490,57 +3701,8 @@ pub fn run_convert(args: ConvertArgs, global: &Args) -> CliResult<CommandResult>
     );
 
     // Load safetensors - use sharded loader for directories
-    let (n_tensors, n_params, writer) = if args.input.is_dir() {
-        // Sharded safetensors (multiple files with index.json)
-        if !global.quiet {
-            println!("Loading sharded safetensors from directory...");
-        }
-        let loader = ShardedSafeTensorsLoader::load(&args.input).map_err(|e| {
-            CliError::FileNotFound(format!("Failed to load sharded safetensors: {e}"))
-        })?;
-
-        let n_tensors = loader.tensor_names().len();
-        let n_params = loader.total_params().unwrap_or(0);
-
-        if global.verbose {
-            println!("\nTensors found: {n_tensors}");
-            for name in loader.tensor_names() {
-                let internal_name = crate::format::map_tensor_name(name);
-                println!("  {name} → {internal_name}");
-            }
-        }
-
-        if !global.quiet {
-            println!("Converting {} tensors ({} params)...", n_tensors, n_params);
-        }
-
-        let writer = loader
-            .to_apr2(config, quant, quantize)
-            .map_err(|e| CliError::InvalidArgument(format!("Conversion failed: {e}")))?;
-
-        (n_tensors, n_params, writer)
-    } else {
-        // Single safetensors file
-        let loader = SafeTensorsLoader::load(&args.input)
-            .map_err(|e| CliError::FileNotFound(format!("Failed to load safetensors: {e}")))?;
-
-        let n_tensors = loader.tensor_names().len();
-        let n_params = loader.total_params().unwrap_or(0);
-
-        if global.verbose {
-            println!("\nTensors found: {n_tensors}");
-            for name in loader.tensor_names() {
-                let internal_name = crate::format::map_tensor_name(name);
-                println!("  {name} → {internal_name}");
-            }
-        }
-
-        let writer = loader
-            .to_apr2(config, quant, quantize)
-            .map_err(|e| CliError::InvalidArgument(format!("Conversion failed: {e}")))?;
-
-        (n_tensors, n_params, writer)
-    };
+    let (n_tensors, n_params, writer) =
+        load_and_convert_safetensors(&args.input, config, quant, quantize, global)?;
 
     // Write output file
     let bytes = writer
@@ -3591,6 +3753,57 @@ pub fn run_convert(args: ConvertArgs, global: &Args) -> CliResult<CommandResult>
 /// ```bash
 /// whisper-apr export models/whisper-tiny.apr -o whisper-tiny.safetensors
 /// ```
+/// Load safetensors (single or sharded) and convert to APR2
+fn load_and_convert_safetensors(
+    input: &Path,
+    config: crate::format::apr2::Lfm2Config,
+    quant: crate::format::apr2::QuantConfig,
+    quantize: bool,
+    global: &Args,
+) -> CliResult<(usize, u64, crate::format::apr2::Apr2Writer)> {
+    use crate::format::safetensors_loader::{SafeTensorsLoader, ShardedSafeTensorsLoader};
+
+    if input.is_dir() {
+        if !global.quiet {
+            println!("Loading sharded safetensors from directory...");
+        }
+        let loader = ShardedSafeTensorsLoader::load(input).map_err(|e| {
+            CliError::FileNotFound(format!("Failed to load sharded safetensors: {e}"))
+        })?;
+        let n_tensors = loader.tensor_names().len();
+        let n_params = loader.total_params().unwrap_or(0);
+        log_tensor_mapping(loader.tensor_names(), n_tensors, n_params, global);
+        let writer = loader
+            .to_apr2(config, quant, quantize)
+            .map_err(|e| CliError::InvalidArgument(format!("Conversion failed: {e}")))?;
+        Ok((n_tensors, n_params, writer))
+    } else {
+        let loader = SafeTensorsLoader::load(input)
+            .map_err(|e| CliError::FileNotFound(format!("Failed to load safetensors: {e}")))?;
+        let n_tensors = loader.tensor_names().len();
+        let n_params = loader.total_params().unwrap_or(0);
+        log_tensor_mapping(loader.tensor_names(), n_tensors, n_params, global);
+        let writer = loader
+            .to_apr2(config, quant, quantize)
+            .map_err(|e| CliError::InvalidArgument(format!("Conversion failed: {e}")))?;
+        Ok((n_tensors, n_params, writer))
+    }
+}
+
+/// Log tensor name mapping when verbose
+fn log_tensor_mapping(tensor_names: &[String], n_tensors: usize, n_params: u64, global: &Args) {
+    if global.verbose {
+        println!("\nTensors found: {n_tensors}");
+        for name in tensor_names {
+            let internal_name = crate::format::map_tensor_name(name);
+            println!("  {name} → {internal_name}");
+        }
+    }
+    if !global.quiet {
+        println!("Converting {} tensors ({} params)...", n_tensors, n_params);
+    }
+}
+
 pub fn run_export(args: ExportArgs, global: &Args) -> CliResult<CommandResult> {
     use crate::format::export::{SafeTensorsExporter, TensorData};
     use crate::format::AprReader;

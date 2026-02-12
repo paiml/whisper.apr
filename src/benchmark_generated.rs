@@ -1597,232 +1597,19 @@ pub fn benchmark_lfm2_component(
     component: Lfm2Component,
     config: &Lfm2BenchmarkConfig,
 ) -> WhisperResult<Lfm2BenchmarkResult> {
-    use std::time::Instant;
-
     let h = config.hidden_size;
-    let i = config.intermediate_size;
     let seq_len = config.seq_len;
 
-    // Create synthetic input
     let input: Vec<f32> = (0..seq_len * h)
         .map(|idx| ((idx as f32) * 0.001).sin())
         .collect();
 
-    // Measure based on component type
     let (total_time_ns, memory_bytes, flops) = match component {
-        Lfm2Component::SwiGlu => {
-            let swiglu_config = crate::model::lfm2::swiglu::SwiGluConfig {
-                hidden_size: h,
-                intermediate_size: i,
-                bias: false,
-            };
-            let mut ffn = crate::model::lfm2::SwiGluFfn::new(swiglu_config)?;
-
-            // Initialize with synthetic weights
-            for (idx, w) in ffn.w_gate.iter_mut().enumerate() {
-                *w = ((idx % 7) as f32 - 3.0) * 0.01;
-            }
-            for (idx, w) in ffn.w_up.iter_mut().enumerate() {
-                *w = ((idx % 5) as f32 - 2.0) * 0.01;
-            }
-            for (idx, w) in ffn.w_down.iter_mut().enumerate() {
-                *w = ((idx % 3) as f32 - 1.0) * 0.01;
-            }
-
-            // Warmup
-            let _ = ffn.forward(&input, seq_len)?;
-
-            // Timed iterations
-            let start = Instant::now();
-            for _ in 0..config.iterations {
-                let _ = ffn.forward(&input, seq_len)?;
-            }
-            let elapsed = start.elapsed().as_nanos();
-
-            let mem = ffn.memory_bytes();
-            // FLOPs: 3 matmuls + activation
-            // gate: seq_len * h * i, up: seq_len * h * i, down: seq_len * i * h
-            // Plus elementwise: seq_len * i (swish + multiply)
-            let flops_per_forward = 2 * seq_len * h * i * 3 + seq_len * i * 2;
-            (elapsed, mem, flops_per_forward as u64)
-        }
-
-        Lfm2Component::Gqa => {
-            let gqa_config = crate::model::lfm2::gqa::GqaConfig {
-                hidden_size: h,
-                num_q_heads: config.num_q_heads,
-                num_kv_heads: config.num_kv_heads,
-                head_dim: h / config.num_q_heads,
-                causal: true,
-                dropout: 0.0,
-            };
-            let mut attn = crate::model::lfm2::GroupedQueryAttention::new(gqa_config)?;
-
-            // Initialize with synthetic weights
-            for (idx, w) in attn.w_q.iter_mut().enumerate() {
-                *w = ((idx % 11) as f32 - 5.0) * 0.01;
-            }
-            for (idx, w) in attn.w_k.iter_mut().enumerate() {
-                *w = ((idx % 7) as f32 - 3.0) * 0.01;
-            }
-            for (idx, w) in attn.w_v.iter_mut().enumerate() {
-                *w = ((idx % 5) as f32 - 2.0) * 0.01;
-            }
-            for (idx, w) in attn.w_o.iter_mut().enumerate() {
-                *w = ((idx % 3) as f32 - 1.0) * 0.01;
-            }
-
-            // Warmup
-            let _ = attn.forward_with_rope(&input, seq_len, None)?;
-
-            // Timed iterations
-            let start = Instant::now();
-            for _ in 0..config.iterations {
-                let _ = attn.forward_with_rope(&input, seq_len, None)?;
-            }
-            let elapsed = start.elapsed().as_nanos();
-
-            // Calculate memory from weight vectors
-            let mem = (attn.w_q.len() + attn.w_k.len() + attn.w_v.len() + attn.w_o.len())
-                * std::mem::size_of::<f32>();
-            // FLOPs: Q, K, V projections + attention + output projection
-            let head_dim = h / config.num_q_heads;
-            let kv_dim = config.num_kv_heads * head_dim;
-            // Q: seq_len * h * h, K/V: seq_len * h * kv_dim each
-            // Attention: seq_len * seq_len * head_dim * num_q_heads
-            // Output: seq_len * h * h
-            let proj_flops = 2 * seq_len * h * h + 2 * seq_len * h * kv_dim * 2;
-            let attn_flops = 2 * seq_len * seq_len * head_dim * config.num_q_heads;
-            let out_flops = 2 * seq_len * h * h;
-            (elapsed, mem, (proj_flops + attn_flops + out_flops) as u64)
-        }
-
-        Lfm2Component::RoPE => {
-            let head_dim = h / config.num_q_heads;
-            let rope_config = crate::model::lfm2::rope::RopeConfig {
-                head_dim,
-                base: 1_000_000.0,
-                max_seq_len: 4096,
-            };
-            let rope = crate::model::lfm2::RotaryEmbedding::new(rope_config)?;
-
-            // Warmup
-            let _ = rope.forward(&input, seq_len, config.num_q_heads, 0)?;
-
-            // Timed iterations
-            let start = Instant::now();
-            for _ in 0..config.iterations {
-                let _ = rope.forward(&input, seq_len, config.num_q_heads, 0)?;
-            }
-            let elapsed = start.elapsed().as_nanos();
-
-            let mem = rope.memory_bytes();
-            // FLOPs: sin/cos lookup + rotation for each position
-            let flops_per_forward = seq_len * h * 4; // 2 muls + 2 adds per element
-            (elapsed, mem, flops_per_forward as u64)
-        }
-
-        Lfm2Component::Conv1d => {
-            let conv_config = crate::model::lfm2::conv::Conv1dConfig {
-                channels: h,
-                kernel_size: 4,
-                causal: true,
-                bias: false,
-            };
-            let conv = crate::model::lfm2::Conv1d::new_depthwise(conv_config)?;
-
-            // Create conv-compatible input (h channels, seq_len positions)
-            let conv_input: Vec<f32> = (0..h * seq_len)
-                .map(|idx| ((idx as f32) * 0.001).sin())
-                .collect();
-
-            // Warmup
-            let _ = conv.forward(&conv_input, seq_len, None)?;
-
-            // Timed iterations
-            let start = Instant::now();
-            for _ in 0..config.iterations {
-                let _ = conv.forward(&conv_input, seq_len, None)?;
-            }
-            let elapsed = start.elapsed().as_nanos();
-
-            let mem = conv.memory_bytes();
-            // FLOPs: kernel_size * in_channels * out_channels * seq_len
-            let kernel_size = 4;
-            let flops_per_forward = 2 * kernel_size * h * h * seq_len;
-            (elapsed, mem, flops_per_forward as u64)
-        }
-
-        Lfm2Component::FullLayer => {
-            // Benchmark a complete layer (SwiGLU is the dominant component)
-            let swiglu_config = crate::model::lfm2::swiglu::SwiGluConfig {
-                hidden_size: h,
-                intermediate_size: i,
-                bias: false,
-            };
-            let mut ffn = crate::model::lfm2::SwiGluFfn::new(swiglu_config)?;
-
-            let gqa_config = crate::model::lfm2::gqa::GqaConfig {
-                hidden_size: h,
-                num_q_heads: config.num_q_heads,
-                num_kv_heads: config.num_kv_heads,
-                head_dim: h / config.num_q_heads,
-                causal: true,
-                dropout: 0.0,
-            };
-            let mut attn = crate::model::lfm2::GroupedQueryAttention::new(gqa_config)?;
-
-            // Initialize with synthetic weights
-            for (idx, w) in ffn.w_gate.iter_mut().enumerate() {
-                *w = ((idx % 7) as f32 - 3.0) * 0.01;
-            }
-            for (idx, w) in ffn.w_up.iter_mut().enumerate() {
-                *w = ((idx % 5) as f32 - 2.0) * 0.01;
-            }
-            for (idx, w) in ffn.w_down.iter_mut().enumerate() {
-                *w = ((idx % 3) as f32 - 1.0) * 0.01;
-            }
-            for (idx, w) in attn.w_q.iter_mut().enumerate() {
-                *w = ((idx % 11) as f32 - 5.0) * 0.01;
-            }
-            for (idx, w) in attn.w_k.iter_mut().enumerate() {
-                *w = ((idx % 7) as f32 - 3.0) * 0.01;
-            }
-            for (idx, w) in attn.w_v.iter_mut().enumerate() {
-                *w = ((idx % 5) as f32 - 2.0) * 0.01;
-            }
-            for (idx, w) in attn.w_o.iter_mut().enumerate() {
-                *w = ((idx % 3) as f32 - 1.0) * 0.01;
-            }
-
-            // Warmup
-            let attn_out = attn.forward_with_rope(&input, seq_len, None)?;
-            let _ = ffn.forward(&attn_out, seq_len)?;
-
-            // Timed iterations
-            let start = Instant::now();
-            for _ in 0..config.iterations {
-                let attn_out = attn.forward_with_rope(&input, seq_len, None)?;
-                let _ = ffn.forward(&attn_out, seq_len)?;
-            }
-            let elapsed = start.elapsed().as_nanos();
-
-            // Calculate memory from weight vectors
-            let attn_mem = (attn.w_q.len() + attn.w_k.len() + attn.w_v.len() + attn.w_o.len())
-                * std::mem::size_of::<f32>();
-            let mem = ffn.memory_bytes() + attn_mem;
-
-            // Combined FLOPs
-            let head_dim = h / config.num_q_heads;
-            let kv_dim = config.num_kv_heads * head_dim;
-            let attn_flops = 2 * seq_len * h * h
-                + 2 * seq_len * h * kv_dim * 2
-                + 2 * seq_len * seq_len * head_dim * config.num_q_heads
-                + 2 * seq_len * h * h;
-            let ffn_flops = 2 * seq_len * h * i * 3 + seq_len * i * 2;
-
-            (elapsed, mem, (attn_flops + ffn_flops) as u64)
-        }
+        Lfm2Component::SwiGlu => bench_swiglu(config, &input)?,
+        Lfm2Component::Gqa => bench_gqa(config, &input)?,
+        Lfm2Component::RoPE => bench_rope(config, &input)?,
+        Lfm2Component::Conv1d => bench_conv1d(config)?,
+        Lfm2Component::FullLayer => bench_full_layer(config, &input)?,
     };
 
     let forward_us = (total_time_ns as f64) / (config.iterations as f64) / 1000.0;
@@ -1834,6 +1621,195 @@ pub fn benchmark_lfm2_component(
         memory_bytes,
         flops,
     ))
+}
+
+/// Initialize weights with synthetic pattern
+fn init_synthetic_weights(weights: &mut [f32], modulus: usize, offset: f32) {
+    for (idx, w) in weights.iter_mut().enumerate() {
+        *w = ((idx % modulus) as f32 - offset) * 0.01;
+    }
+}
+
+/// Benchmark SwiGLU FFN component
+fn bench_swiglu(config: &Lfm2BenchmarkConfig, input: &[f32]) -> WhisperResult<(u128, usize, u64)> {
+    use std::time::Instant;
+    let (h, i, seq_len) = (config.hidden_size, config.intermediate_size, config.seq_len);
+
+    let swiglu_config = crate::model::lfm2::swiglu::SwiGluConfig {
+        hidden_size: h,
+        intermediate_size: i,
+        bias: false,
+    };
+    let mut ffn = crate::model::lfm2::SwiGluFfn::new(swiglu_config)?;
+
+    init_synthetic_weights(&mut ffn.w_gate, 7, 3.0);
+    init_synthetic_weights(&mut ffn.w_up, 5, 2.0);
+    init_synthetic_weights(&mut ffn.w_down, 3, 1.0);
+
+    let _ = ffn.forward(input, seq_len)?;
+
+    let start = Instant::now();
+    for _ in 0..config.iterations {
+        let _ = ffn.forward(input, seq_len)?;
+    }
+    let elapsed = start.elapsed().as_nanos();
+
+    let mem = ffn.memory_bytes();
+    let flops_per_forward = 2 * seq_len * h * i * 3 + seq_len * i * 2;
+    Ok((elapsed, mem, flops_per_forward as u64))
+}
+
+/// Benchmark Grouped Query Attention component
+fn bench_gqa(config: &Lfm2BenchmarkConfig, input: &[f32]) -> WhisperResult<(u128, usize, u64)> {
+    use std::time::Instant;
+    let (h, seq_len) = (config.hidden_size, config.seq_len);
+
+    let gqa_config = crate::model::lfm2::gqa::GqaConfig {
+        hidden_size: h,
+        num_q_heads: config.num_q_heads,
+        num_kv_heads: config.num_kv_heads,
+        head_dim: h / config.num_q_heads,
+        causal: true,
+        dropout: 0.0,
+    };
+    let mut attn = crate::model::lfm2::GroupedQueryAttention::new(gqa_config)?;
+
+    init_synthetic_weights(&mut attn.w_q, 11, 5.0);
+    init_synthetic_weights(&mut attn.w_k, 7, 3.0);
+    init_synthetic_weights(&mut attn.w_v, 5, 2.0);
+    init_synthetic_weights(&mut attn.w_o, 3, 1.0);
+
+    let _ = attn.forward_with_rope(input, seq_len, None)?;
+
+    let start = Instant::now();
+    for _ in 0..config.iterations {
+        let _ = attn.forward_with_rope(input, seq_len, None)?;
+    }
+    let elapsed = start.elapsed().as_nanos();
+
+    let mem = (attn.w_q.len() + attn.w_k.len() + attn.w_v.len() + attn.w_o.len())
+        * std::mem::size_of::<f32>();
+    let head_dim = h / config.num_q_heads;
+    let kv_dim = config.num_kv_heads * head_dim;
+    let proj_flops = 2 * seq_len * h * h + 2 * seq_len * h * kv_dim * 2;
+    let attn_flops = 2 * seq_len * seq_len * head_dim * config.num_q_heads;
+    let out_flops = 2 * seq_len * h * h;
+    Ok((elapsed, mem, (proj_flops + attn_flops + out_flops) as u64))
+}
+
+/// Benchmark RoPE component
+fn bench_rope(config: &Lfm2BenchmarkConfig, input: &[f32]) -> WhisperResult<(u128, usize, u64)> {
+    use std::time::Instant;
+    let (h, seq_len) = (config.hidden_size, config.seq_len);
+
+    let head_dim = h / config.num_q_heads;
+    let rope_config = crate::model::lfm2::rope::RopeConfig {
+        head_dim,
+        base: 1_000_000.0,
+        max_seq_len: 4096,
+    };
+    let rope = crate::model::lfm2::RotaryEmbedding::new(rope_config)?;
+
+    let _ = rope.forward(input, seq_len, config.num_q_heads, 0)?;
+
+    let start = Instant::now();
+    for _ in 0..config.iterations {
+        let _ = rope.forward(input, seq_len, config.num_q_heads, 0)?;
+    }
+    let elapsed = start.elapsed().as_nanos();
+
+    let mem = rope.memory_bytes();
+    let flops_per_forward = seq_len * h * 4;
+    Ok((elapsed, mem, flops_per_forward as u64))
+}
+
+/// Benchmark Conv1d component
+fn bench_conv1d(config: &Lfm2BenchmarkConfig) -> WhisperResult<(u128, usize, u64)> {
+    use std::time::Instant;
+    let (h, seq_len) = (config.hidden_size, config.seq_len);
+
+    let conv_config = crate::model::lfm2::conv::Conv1dConfig {
+        channels: h,
+        kernel_size: 4,
+        causal: true,
+        bias: false,
+    };
+    let conv = crate::model::lfm2::Conv1d::new_depthwise(conv_config)?;
+
+    let conv_input: Vec<f32> = (0..h * seq_len)
+        .map(|idx| ((idx as f32) * 0.001).sin())
+        .collect();
+
+    let _ = conv.forward(&conv_input, seq_len, None)?;
+
+    let start = Instant::now();
+    for _ in 0..config.iterations {
+        let _ = conv.forward(&conv_input, seq_len, None)?;
+    }
+    let elapsed = start.elapsed().as_nanos();
+
+    let mem = conv.memory_bytes();
+    let kernel_size = 4;
+    let flops_per_forward = 2 * kernel_size * h * h * seq_len;
+    Ok((elapsed, mem, flops_per_forward as u64))
+}
+
+/// Benchmark full transformer layer (attention + FFN)
+fn bench_full_layer(
+    config: &Lfm2BenchmarkConfig,
+    input: &[f32],
+) -> WhisperResult<(u128, usize, u64)> {
+    use std::time::Instant;
+    let (h, i, seq_len) = (config.hidden_size, config.intermediate_size, config.seq_len);
+
+    let swiglu_config = crate::model::lfm2::swiglu::SwiGluConfig {
+        hidden_size: h,
+        intermediate_size: i,
+        bias: false,
+    };
+    let mut ffn = crate::model::lfm2::SwiGluFfn::new(swiglu_config)?;
+
+    let gqa_config = crate::model::lfm2::gqa::GqaConfig {
+        hidden_size: h,
+        num_q_heads: config.num_q_heads,
+        num_kv_heads: config.num_kv_heads,
+        head_dim: h / config.num_q_heads,
+        causal: true,
+        dropout: 0.0,
+    };
+    let mut attn = crate::model::lfm2::GroupedQueryAttention::new(gqa_config)?;
+
+    init_synthetic_weights(&mut ffn.w_gate, 7, 3.0);
+    init_synthetic_weights(&mut ffn.w_up, 5, 2.0);
+    init_synthetic_weights(&mut ffn.w_down, 3, 1.0);
+    init_synthetic_weights(&mut attn.w_q, 11, 5.0);
+    init_synthetic_weights(&mut attn.w_k, 7, 3.0);
+    init_synthetic_weights(&mut attn.w_v, 5, 2.0);
+    init_synthetic_weights(&mut attn.w_o, 3, 1.0);
+
+    let attn_out = attn.forward_with_rope(input, seq_len, None)?;
+    let _ = ffn.forward(&attn_out, seq_len)?;
+
+    let start = Instant::now();
+    for _ in 0..config.iterations {
+        let attn_out = attn.forward_with_rope(input, seq_len, None)?;
+        let _ = ffn.forward(&attn_out, seq_len)?;
+    }
+    let elapsed = start.elapsed().as_nanos();
+
+    let attn_mem = (attn.w_q.len() + attn.w_k.len() + attn.w_v.len() + attn.w_o.len())
+        * std::mem::size_of::<f32>();
+    let mem = ffn.memory_bytes() + attn_mem;
+
+    let head_dim = h / config.num_q_heads;
+    let kv_dim = config.num_kv_heads * head_dim;
+    let attn_flops = 2 * seq_len * h * h
+        + 2 * seq_len * h * kv_dim * 2
+        + 2 * seq_len * seq_len * head_dim * config.num_q_heads
+        + 2 * seq_len * h * h;
+    let ffn_flops = 2 * seq_len * h * i * 3 + seq_len * i * 2;
+
+    Ok((elapsed, mem, (attn_flops + ffn_flops) as u64))
 }
 
 /// Run benchmarks for all LFM2 components

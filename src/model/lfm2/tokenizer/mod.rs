@@ -456,58 +456,81 @@ fn find_json_section<'a>(json_str: &'a str, key: &str, open: char, close: char) 
     None
 }
 
+/// Scan a quoted string from `chars[start..]` where `chars[start] == '"'`.
+/// Returns (unescaped content, position after closing quote).
+fn scan_quoted_string(chars: &[char], start: usize) -> Option<(String, usize)> {
+    let mut i = start + 1; // Skip opening quote
+    while i < chars.len() && chars[i] != '"' {
+        if chars[i] == '\\' {
+            i += 1; // Skip escaped char
+        }
+        i += 1;
+    }
+    if i >= chars.len() {
+        return None;
+    }
+    let raw: String = chars[start + 1..i].iter().collect();
+    Some((unescape_json_string(&raw), i + 1))
+}
+
+/// Skip forward to `target` char, returning position after it. Returns None if not found.
+fn skip_past_char(chars: &[char], start: usize, target: char) -> Option<usize> {
+    let mut i = start;
+    while i < chars.len() && chars[i] != target {
+        i += 1;
+    }
+    if i < chars.len() {
+        Some(i + 1)
+    } else {
+        None
+    }
+}
+
+/// Parse an integer starting at `start`, returning (value, position after number).
+fn parse_u32_at(chars: &[char], start: usize) -> Option<(u32, usize)> {
+    let mut i = start;
+    // Skip whitespace
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    let num_start = i;
+    while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '-') {
+        i += 1;
+    }
+    if num_start == i {
+        return None;
+    }
+    let num_str: String = chars[num_start..i].iter().collect();
+    num_str.parse::<u32>().ok().map(|v| (v, i))
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn parse_vocab_entries(
     json: &str,
     vocab: &mut HashMap<String, u32>,
     id_to_token: &mut HashMap<u32, String>,
 ) {
-    // Simple parser for "token": id pairs
     let mut i = 0;
     let chars: Vec<char> = json.chars().collect();
 
     while i < chars.len() {
-        // Find quoted token
-        if chars[i] == '"' {
-            let token_start = i + 1;
+        if chars[i] != '"' {
             i += 1;
-            while i < chars.len() && chars[i] != '"' {
-                if chars[i] == '\\' {
-                    i += 1; // Skip escaped char
-                }
-                i += 1;
-            }
-            let token_end = i;
-            i += 1; // Skip closing quote
+            continue;
+        }
 
-            // Skip to colon
-            while i < chars.len() && chars[i] != ':' {
-                i += 1;
-            }
-            i += 1; // Skip colon
-
-            // Skip whitespace
-            while i < chars.len() && chars[i].is_whitespace() {
-                i += 1;
-            }
-
-            // Parse number
-            let num_start = i;
-            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '-') {
-                i += 1;
-            }
-
-            if num_start < i && token_start < token_end {
-                let token: String = chars[token_start..token_end].iter().collect();
-                let token = unescape_json_string(&token);
-                let num_str: String = chars[num_start..i].iter().collect();
-                if let Ok(id) = num_str.parse::<u32>() {
-                    vocab.insert(token.clone(), id);
-                    id_to_token.insert(id, token);
-                }
-            }
+        let Some((token, after_quote)) = scan_quoted_string(&chars, i) else {
+            break;
+        };
+        let Some(after_colon) = skip_past_char(&chars, after_quote, ':') else {
+            break;
+        };
+        if let Some((id, after_num)) = parse_u32_at(&chars, after_colon) {
+            vocab.insert(token.clone(), id);
+            id_to_token.insert(id, token);
+            i = after_num;
         } else {
-            i += 1;
+            i = after_colon;
         }
     }
 }
@@ -611,6 +634,19 @@ impl JsonParseState {
         self.current_id = None;
         result
     }
+
+    /// Handle close brace: finalize pair then finalize object
+    fn handle_close_brace(&mut self) -> Option<(u32, String)> {
+        self.handle_pair_end();
+        self.finalize_object()
+    }
+
+    /// Handle a non-string digit character (for numeric values outside quotes)
+    fn handle_digit(&mut self, c: char) {
+        if !self.current_key.is_empty() {
+            self.current_value.push(c);
+        }
+    }
 }
 
 /// Map token content to special token type
@@ -645,17 +681,14 @@ fn parse_special_tokens(
             ':' if !state.in_string => {} // Key complete, ready for value
             ',' if !state.in_string => state.handle_pair_end(),
             '}' if !state.in_string => {
-                state.handle_pair_end();
-                if let Some((id, content)) = state.finalize_object() {
+                if let Some((id, content)) = state.handle_close_brace() {
                     update_special_token(special, &content, id);
                     vocab.insert(content.clone(), id);
                     id_to_token.insert(id, content);
                 }
             }
             _ if state.in_string => state.handle_string_char(c),
-            _ if !state.in_string && c.is_ascii_digit() && !state.current_key.is_empty() => {
-                state.current_value.push(c);
-            }
+            _ if !state.in_string && c.is_ascii_digit() => state.handle_digit(c),
             _ => {}
         }
     }
