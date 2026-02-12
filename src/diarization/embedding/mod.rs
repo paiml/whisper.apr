@@ -164,12 +164,9 @@ impl SpeakerEmbedding {
 
         let norm_a: f32 = self.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
         let norm_b: f32 = other.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let denom = norm_a * norm_b;
 
-        if norm_a < f32::EPSILON || norm_b < f32::EPSILON {
-            return 0.0;
-        }
-
-        dot / (norm_a * norm_b)
+        if denom < f32::EPSILON { 0.0 } else { dot / denom }
     }
 
     /// Compute Euclidean distance to another embedding
@@ -178,7 +175,6 @@ impl SpeakerEmbedding {
         if self.vector.len() != other.vector.len() {
             return f32::MAX;
         }
-
         self.vector
             .iter()
             .zip(other.vector.iter())
@@ -191,13 +187,10 @@ impl SpeakerEmbedding {
     #[must_use]
     pub fn normalized(&self) -> Self {
         let norm: f32 = self.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
-
-        if norm < f32::EPSILON {
-            return self.clone();
-        }
+        let scale = if norm < f32::EPSILON { 1.0 } else { 1.0 / norm };
 
         Self {
-            vector: self.vector.iter().map(|x| x / norm).collect(),
+            vector: self.vector.iter().map(|&x| x * scale).collect(),
             speaker_id: self.speaker_id,
             confidence: self.confidence,
         }
@@ -206,11 +199,7 @@ impl SpeakerEmbedding {
     /// Compute mean of multiple embeddings
     #[must_use]
     pub fn mean(embeddings: &[Self]) -> Option<Self> {
-        if embeddings.is_empty() {
-            return None;
-        }
-
-        let dim = embeddings[0].dim();
+        let dim = embeddings.first()?.dim();
         if embeddings.iter().any(|e| e.dim() != dim) {
             return None;
         }

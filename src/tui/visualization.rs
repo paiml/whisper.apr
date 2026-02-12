@@ -183,18 +183,13 @@ fn attention_cell_average(
     frame_start: usize,
     frame_end: usize,
 ) -> f32 {
-    let mut sum = 0.0;
-    let mut count = 0;
-    for token_idx in token_start..token_end {
-        if token_idx < attention_weights.len() {
-            for frame_idx in frame_start..frame_end {
-                if frame_idx < attention_weights[token_idx].len() {
-                    sum += attention_weights[token_idx][frame_idx];
-                    count += 1;
-                }
-            }
-        }
-    }
+    let rows = attention_weights
+        .get(token_start..token_end.min(attention_weights.len()))
+        .unwrap_or_default();
+    let (sum, count) = rows
+        .iter()
+        .flat_map(|row| row.get(frame_start..frame_end.min(row.len())).unwrap_or_default())
+        .fold((0.0f32, 0usize), |(s, c), &v| (s + v, c + 1));
     safe_average(sum, count)
 }
 

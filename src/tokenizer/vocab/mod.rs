@@ -522,6 +522,21 @@ impl Vocabulary {
         bytes
     }
 
+    /// Read a length-prefixed byte sequence from data at the given offset
+    fn read_length_prefixed(data: &[u8], offset: &mut usize) -> Option<Vec<u8>> {
+        if *offset + 2 > data.len() {
+            return None;
+        }
+        let len = u16::from_le_bytes([data[*offset], data[*offset + 1]]) as usize;
+        *offset += 2;
+        if *offset + len > data.len() {
+            return None;
+        }
+        let bytes = data[*offset..*offset + len].to_vec();
+        *offset += len;
+        Some(bytes)
+    }
+
     /// Deserialize vocabulary from bytes
     ///
     /// # Errors
@@ -540,48 +555,14 @@ impl Vocabulary {
 
         // Read tokens
         for _ in 0..n_tokens {
-            if offset + 2 > data.len() {
-                return None;
-            }
-            let len = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
-            offset += 2;
-
-            if offset + len > data.len() {
-                return None;
-            }
-            let token_bytes = data[offset..offset + len].to_vec();
-            offset += len;
-
+            let token_bytes = Self::read_length_prefixed(data, &mut offset)?;
             vocab.add_token(token_bytes);
         }
 
         // Read merge rules
         for _ in 0..n_merges {
-            // Read first
-            if offset + 2 > data.len() {
-                return None;
-            }
-            let first_len = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
-            offset += 2;
-
-            if offset + first_len > data.len() {
-                return None;
-            }
-            let first = data[offset..offset + first_len].to_vec();
-            offset += first_len;
-
-            // Read second
-            if offset + 2 > data.len() {
-                return None;
-            }
-            let second_len = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
-            offset += 2;
-
-            if offset + second_len > data.len() {
-                return None;
-            }
-            let second = data[offset..offset + second_len].to_vec();
-            offset += second_len;
+            let first = Self::read_length_prefixed(data, &mut offset)?;
+            let second = Self::read_length_prefixed(data, &mut offset)?;
 
             // Add merge (this also adds the merged token if not exists)
             vocab.merge_lookup.insert(

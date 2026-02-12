@@ -72,11 +72,9 @@ impl SegmentExtractor {
             return None;
         }
 
-        let text = tokenizer_decode(&self.current_tokens)?;
-        let text = text.trim().to_string();
-        if text.is_empty() {
-            return None;
-        }
+        let text = tokenizer_decode(&self.current_tokens)
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())?;
 
         Some(Segment {
             start,
@@ -91,9 +89,7 @@ impl SegmentExtractor {
     where
         F: FnMut(&[u32]) -> Option<String>,
     {
-        if self.current_start.is_some() {
-            self.try_finalize_segment(time, tokenizer_decode);
-        }
+        self.try_finalize_segment(time, tokenizer_decode);
         self.current_start = Some(time);
     }
 
@@ -105,10 +101,6 @@ impl SegmentExtractor {
         let Some(start) = self.current_start else {
             return;
         };
-
-        if self.current_tokens.is_empty() {
-            return;
-        }
 
         // Estimate end time based on token count (~60ms per token)
         let estimated_duration = (self.current_tokens.len() as f32) * 0.06;
@@ -184,27 +176,16 @@ pub fn timestamp_to_seconds(token: u32) -> Option<f32> {
 ///
 /// Returns pairs of (start_time, end_time) for each segment.
 pub fn parse_timestamp_pairs(tokens: &[u32]) -> Vec<(f32, f32)> {
-    let mut pairs = Vec::new();
-    let mut timestamps: Vec<f32> = Vec::new();
+    let timestamps: Vec<f32> = tokens
+        .iter()
+        .filter_map(|&token| special_tokens::timestamp_to_seconds(token))
+        .collect();
 
-    for &token in tokens {
-        if special_tokens::is_timestamp(token) {
-            if let Some(time) = special_tokens::timestamp_to_seconds(token) {
-                timestamps.push(time);
-
-                // Every two timestamps form a pair
-                if timestamps.len() >= 2 {
-                    let start = timestamps[timestamps.len() - 2];
-                    let end = timestamps[timestamps.len() - 1];
-                    if end > start {
-                        pairs.push((start, end));
-                    }
-                }
-            }
-        }
-    }
-
-    pairs
+    timestamps
+        .windows(2)
+        .filter(|w| w[1] > w[0])
+        .map(|w| (w[0], w[1]))
+        .collect()
 }
 
 /// Convert seconds to timestamp token

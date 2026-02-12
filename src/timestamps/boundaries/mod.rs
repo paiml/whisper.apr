@@ -270,6 +270,14 @@ impl BoundaryDetector {
         result
     }
 
+    /// Compute valid search range around a frame
+    fn search_range(&self, energy_len: usize, approx_frame: usize, frame_rate: f32) -> Option<(usize, usize)> {
+        let search_window = (self.config.min_word_duration * frame_rate) as usize;
+        let start = approx_frame.saturating_sub(search_window);
+        let end = (approx_frame + search_window).min(energy_len);
+        (start < end && end <= energy_len).then_some((start, end))
+    }
+
     /// Find speech onset near a frame
     #[allow(clippy::needless_range_loop)]
     fn find_speech_onset(
@@ -278,13 +286,7 @@ impl BoundaryDetector {
         approx_frame: usize,
         frame_rate: f32,
     ) -> Option<f32> {
-        let search_window = (self.config.min_word_duration * frame_rate) as usize;
-        let start = approx_frame.saturating_sub(search_window);
-        let end = (approx_frame + search_window).min(energy.len());
-
-        if start >= end || start >= energy.len() {
-            return None;
-        }
+        let (start, end) = self.search_range(energy.len(), approx_frame, frame_rate)?;
 
         // Look for energy rise
         for i in start..end {
@@ -303,13 +305,7 @@ impl BoundaryDetector {
         approx_frame: usize,
         frame_rate: f32,
     ) -> Option<f32> {
-        let search_window = (self.config.min_word_duration * frame_rate) as usize;
-        let start = approx_frame.saturating_sub(search_window);
-        let end = (approx_frame + search_window).min(energy.len());
-
-        if start >= end || end > energy.len() {
-            return None;
-        }
+        let (start, end) = self.search_range(energy.len(), approx_frame, frame_rate)?;
 
         // Look for energy drop (search backwards)
         for i in (start..end).rev() {
