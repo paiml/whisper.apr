@@ -2,6 +2,217 @@ use super::*;
 #[cfg(feature = "cuda")]
 use trueno_gpu::driver::CudaStream;
 
+/// CPU reference attention computation for numerical parity tests.
+/// Returns the output vector [n_heads * head_dim].
+#[cfg(feature = "cuda")]
+fn cpu_reference_attention(
+    q: &[f32],
+    k_cache: &[f32],
+    v_cache: &[f32],
+    n_heads: u32,
+    head_dim: u32,
+    seq_len: u32,
+    max_seq_len: u32,
+) -> Vec<f32> {
+    let d_model = (n_heads * head_dim) as usize;
+    let scale = 1.0 / (head_dim as f32).sqrt();
+    let mut output = vec![0.0f32; d_model];
+
+    for h in 0..n_heads as usize {
+        let q_start = h * head_dim as usize;
+        let q_h = &q[q_start..q_start + head_dim as usize];
+        let kv_head_offset = h * (max_seq_len as usize) * (head_dim as usize);
+
+        // Attention scores
+        let mut scores = vec![0.0f32; seq_len as usize];
+        for pos in 0..seq_len as usize {
+            let k_offset = kv_head_offset + pos * (head_dim as usize);
+            let mut dot = 0.0f32;
+            for e in 0..head_dim as usize {
+                dot += q_h[e] * k_cache[k_offset + e];
+            }
+            scores[pos] = dot * scale;
+        }
+
+        // Softmax
+        let max_score = scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let mut sum_exp = 0.0f32;
+        for s in &mut scores {
+            *s = (*s - max_score).exp();
+            sum_exp += *s;
+        }
+        for s in &mut scores {
+            *s /= sum_exp;
+        }
+
+        // Weighted sum of values
+        let out_start = h * head_dim as usize;
+        for e in 0..head_dim as usize {
+            let mut weighted_sum = 0.0f32;
+            for pos in 0..seq_len as usize {
+                let v_offset = kv_head_offset + pos * (head_dim as usize) + e;
+                weighted_sum += scores[pos] * v_cache[v_offset];
+            }
+            output[out_start + e] = weighted_sum;
+        }
+    }
+
+    output
+}
+
+/// Assert numerical parity between CPU and GPU outputs within tolerance.
+/// Panics with diagnostics if max absolute difference exceeds tolerance.
+#[cfg(feature = "cuda")]
+fn assert_numerical_parity(cpu: &[f32], gpu: &[f32], tolerance: f32, label: &str) {
+    let mut max_diff = 0.0f32;
+    let mut diff_count = 0;
+
+    for (i, (cpu_val, gpu_val)) in cpu.iter().zip(gpu.iter()).enumerate() {
+        let diff = (cpu_val - gpu_val).abs();
+        if diff > max_diff {
+            max_diff = diff;
+        }
+        if diff > tolerance {
+            if diff_count < 5 {
+                eprintln!(
+                    "  [{}] CPU={:.6} GPU={:.6} diff={:.2e}",
+                    i, cpu_val, gpu_val, diff
+                );
+            }
+            diff_count += 1;
+        }
+    }
+
+    eprintln!("Max absolute difference: {:.2e}", max_diff);
+    eprintln!("Elements exceeding tolerance: {}/{}", diff_count, cpu.len());
+
+    assert!(
+        max_diff <= tolerance,
+        "{label} FAILED: max_diff={max_diff:.2e} > tolerance={tolerance:.2e}"
+    );
+
+    eprintln!("\n✓ {label} PASSED (within {tolerance:.0e})");
+}
+
+/// Backend selection for decode benchmark loops
+#[cfg(feature = "cuda")]
+enum DecodeBackend {
+    Gpu,
+    Executor,
+}
+
+/// Run a timed decode loop using the specified backend, returning tokens and elapsed time.
+#[cfg(feature = "cuda")]
+fn benchmark_decode_loop(
+    cuda_model: &mut crate::cuda::CudaWhisperApr,
+    encoder_output: &[f32],
+    initial_tokens: &[u32],
+    num_decode_tokens: usize,
+    sot: u32,
+    eot: u32,
+    backend: DecodeBackend,
+) -> (Vec<u32>, std::time::Duration) {
+    let start = std::time::Instant::now();
+    let mut tokens = initial_tokens.to_vec();
+    for _ in 0..num_decode_tokens {
+        let last_token = *tokens.last().unwrap_or(&sot);
+        let logits = match backend {
+            DecodeBackend::Gpu => cuda_model
+                .forward_one_gpu_total_offload(last_token, encoder_output)
+                .expect("Forward failed"),
+            DecodeBackend::Executor => cuda_model
+                .forward_one_executor(last_token, encoder_output)
+                .expect("Forward failed"),
+        };
+        let next_token = logits
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(idx, _)| idx as u32)
+            .unwrap_or(eot);
+        if next_token == eot {
+            break;
+        }
+        tokens.push(next_token);
+    }
+    (tokens, start.elapsed())
+}
+
+/// Benchmark CUDA graph replay vs direct execution for cross-attention decoder
+#[cfg(feature = "cuda")]
+fn benchmark_graph_vs_direct(
+    cuda_model: &mut crate::cuda::CudaWhisperApr,
+    enc_gpu: &[f32],
+    token_embedding: &[f32],
+    enc_seq_len: usize,
+    n_layers: u32,
+    stream: &CudaStream,
+    exec: &trueno_gpu::driver::CudaGraphExec,
+) {
+    const NUM_REPLAYS: usize = 100;
+    let mut graph_times = Vec::with_capacity(NUM_REPLAYS);
+    let mut direct_times = Vec::with_capacity(NUM_REPLAYS);
+
+    eprintln!("\n[Benchmark] Running {} iterations...", NUM_REPLAYS);
+
+    // Graph replay benchmark
+    for _ in 0..NUM_REPLAYS {
+        let start = std::time::Instant::now();
+        stream.launch_graph(exec).expect("Graph launch");
+        stream.synchronize().expect("Sync");
+        graph_times.push(start.elapsed());
+    }
+
+    // Direct execution benchmark
+    cuda_model.reset_gpu_decoder_kv_cache();
+    cuda_model
+        .init_gpu_decoder_kv_cache_head_first()
+        .expect("Re-init");
+    cuda_model
+        .populate_cross_kv_caches_gpu(enc_gpu, stream)
+        .expect("Re-populate");
+
+    for i in 0..NUM_REPLAYS {
+        let pos = i % 10;
+        if i % 10 == 0 && i > 0 {
+            cuda_model.reset_gpu_decoder_kv_cache();
+            cuda_model
+                .init_gpu_decoder_kv_cache_head_first()
+                .expect("Re-init");
+            cuda_model
+                .populate_cross_kv_caches_gpu(enc_gpu, stream)
+                .expect("Re-populate");
+        }
+        let start = std::time::Instant::now();
+        let _out = cuda_model
+            .forward_decoder_token_gpu_stream(token_embedding, pos, stream, Some(enc_seq_len))
+            .expect("Direct");
+        stream.synchronize().expect("Sync");
+        direct_times.push(start.elapsed());
+    }
+
+    let graph_avg: std::time::Duration =
+        graph_times.iter().sum::<std::time::Duration>() / NUM_REPLAYS as u32;
+    let direct_avg: std::time::Duration =
+        direct_times.iter().sum::<std::time::Duration>() / NUM_REPLAYS as u32;
+
+    eprintln!("\n[Results - {} layers + cross-attention]", n_layers);
+    eprintln!("  Graph replay avg:  {:?}", graph_avg);
+    eprintln!("  Direct exec avg:   {:?}", direct_avg);
+    eprintln!(
+        "  Graph speedup:     {:.1}x",
+        direct_avg.as_micros() as f64 / graph_avg.as_micros() as f64
+    );
+
+    let graph_27 = graph_avg.as_micros() as f64 * 27.0 / 1000.0;
+    let direct_27 = direct_avg.as_micros() as f64 * 27.0 / 1000.0;
+    eprintln!("\n[Projected for 27 tokens (1.5s audio)]");
+    eprintln!("  Graph:  {:.1}ms", graph_27);
+    eprintln!("  Direct: {:.1}ms", direct_27);
+
+    eprintln!("\n✓ WAPR-PERF-018: CUDA Graph with cross-attention verified!");
+}
+
 #[test]
 fn test_cuda_availability_check() {
     // This test verifies the API compiles correctly
@@ -403,51 +614,15 @@ fn test_incremental_attention_numerical_parity() {
     let k_cache: Vec<f32> = (0..cache_size).map(|i| ((i as f32) * 0.02).cos()).collect();
     let v_cache: Vec<f32> = (0..cache_size).map(|i| ((i as f32) * 0.03).sin()).collect();
 
-    // === CPU Reference Implementation ===
-    let scale = 1.0 / (head_dim as f32).sqrt();
-    let mut cpu_output = vec![0.0f32; d_model];
-
-    for h in 0..n_heads as usize {
-        // Extract Q for this head
-        let q_start = h * head_dim as usize;
-        let q_h = &q[q_start..q_start + head_dim as usize];
-
-        // KV cache offset for this head
-        let kv_head_offset = h * (max_seq_len as usize) * (head_dim as usize);
-
-        // Compute attention scores for seq_len positions
-        let mut scores = vec![0.0f32; seq_len as usize];
-        for pos in 0..seq_len as usize {
-            let k_offset = kv_head_offset + pos * (head_dim as usize);
-            let mut dot = 0.0f32;
-            for e in 0..head_dim as usize {
-                dot += q_h[e] * k_cache[k_offset + e];
-            }
-            scores[pos] = dot * scale;
-        }
-
-        // Softmax
-        let max_score = scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let mut sum_exp = 0.0f32;
-        for s in &mut scores {
-            *s = (*s - max_score).exp();
-            sum_exp += *s;
-        }
-        for s in &mut scores {
-            *s /= sum_exp;
-        }
-
-        // Weighted sum of values
-        let out_start = h * head_dim as usize;
-        for e in 0..head_dim as usize {
-            let mut weighted_sum = 0.0f32;
-            for pos in 0..seq_len as usize {
-                let v_offset = kv_head_offset + pos * (head_dim as usize) + e;
-                weighted_sum += scores[pos] * v_cache[v_offset];
-            }
-            cpu_output[out_start + e] = weighted_sum;
-        }
-    }
+    let cpu_output = cpu_reference_attention(
+        &q,
+        &k_cache,
+        &v_cache,
+        n_heads,
+        head_dim,
+        seq_len,
+        max_seq_len,
+    );
 
     // === GPU Implementation ===
     let executor = CudaExecutor::new(0).expect("Failed to create CUDA executor");
@@ -471,42 +646,12 @@ fn test_incremental_attention_numerical_parity() {
 
     let gpu_result = gpu_output.to_host().expect("D2H failed");
 
-    // === Numerical Parity Check ===
-    let tolerance = 1e-5_f32;
-    let mut max_diff = 0.0f32;
-    let mut diff_count = 0;
-
-    for (i, (cpu_val, gpu_val)) in cpu_output.iter().zip(gpu_result.iter()).enumerate() {
-        let diff = (cpu_val - gpu_val).abs();
-        if diff > max_diff {
-            max_diff = diff;
-        }
-        if diff > tolerance {
-            if diff_count < 5 {
-                eprintln!(
-                    "  [{}] CPU={:.6} GPU={:.6} diff={:.2e}",
-                    i, cpu_val, gpu_val, diff
-                );
-            }
-            diff_count += 1;
-        }
-    }
-
-    eprintln!("Max absolute difference: {:.2e}", max_diff);
-    eprintln!("Elements exceeding tolerance: {}/{}", diff_count, d_model);
-
-    if max_diff > tolerance {
-        eprintln!("\n❌ NUMERICAL PARITY FAILED");
-        eprintln!("   GPU incremental attention diverges from CPU reference.");
-        eprintln!("   This WILL cause garbage text in autoregressive decoding.");
-        panic!(
-            "Numerical parity test failed: max_diff={:.2e} > tolerance={:.2e}",
-            max_diff, tolerance
-        );
-    }
-
-    eprintln!("\n✓ WAPR-PERF-013 Point 154: Numerical Parity PASSED");
-    eprintln!("  GPU attention matches CPU within {:.0e}", tolerance);
+    assert_numerical_parity(
+        &cpu_output,
+        &gpu_result,
+        1e-5,
+        "WAPR-PERF-013 Point 154: GPU incremental attention",
+    );
 }
 
 /// WAPR-PERF-013 Point 155: GPU Decoder Block Smoke Test
@@ -947,26 +1092,15 @@ fn test_gpu_vs_executor_decode_benchmark() {
             .expect("Init tokens failed");
     }
 
-    // Benchmark GPU path
-    let gpu_start = std::time::Instant::now();
-    let mut gpu_tokens = initial_tokens.clone();
-    for _ in 0..num_decode_tokens {
-        let last_token = *gpu_tokens.last().unwrap_or(&specials.sot);
-        let logits = cuda_model
-            .forward_one_gpu_total_offload(last_token, &encoder_output)
-            .expect("GPU forward failed");
-        let next_token = logits
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(idx, _)| idx as u32)
-            .unwrap_or(specials.eot);
-        if next_token == specials.eot {
-            break;
-        }
-        gpu_tokens.push(next_token);
-    }
-    let gpu_time = gpu_start.elapsed();
+    let (gpu_tokens, gpu_time) = benchmark_decode_loop(
+        &mut cuda_model,
+        &encoder_output,
+        &initial_tokens,
+        num_decode_tokens,
+        specials.sot,
+        specials.eot,
+        DecodeBackend::Gpu,
+    );
     let gpu_tokens_generated = gpu_tokens.len() - initial_tokens.len();
 
     // === Executor Path Benchmark ===
@@ -1000,26 +1134,15 @@ fn test_gpu_vs_executor_decode_benchmark() {
             .expect("Init tokens failed");
     }
 
-    // Benchmark Executor path
-    let exec_start = std::time::Instant::now();
-    let mut exec_tokens = initial_tokens.clone();
-    for _ in 0..num_decode_tokens {
-        let last_token = *exec_tokens.last().unwrap_or(&specials.sot);
-        let logits = cuda_model
-            .forward_one_executor(last_token, &encoder_output)
-            .expect("Executor forward failed");
-        let next_token = logits
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(idx, _)| idx as u32)
-            .unwrap_or(specials.eot);
-        if next_token == specials.eot {
-            break;
-        }
-        exec_tokens.push(next_token);
-    }
-    let exec_time = exec_start.elapsed();
+    let (exec_tokens, exec_time) = benchmark_decode_loop(
+        &mut cuda_model,
+        &encoder_output,
+        &initial_tokens,
+        num_decode_tokens,
+        specials.sot,
+        specials.eot,
+        DecodeBackend::Executor,
+    );
     let exec_tokens_generated = exec_tokens.len() - initial_tokens.len();
 
     // Results
@@ -3236,80 +3359,18 @@ fn test_cuda_graph_with_cross_attention() {
     match (&capture_result, &graph_result) {
         (Ok(_), Ok(graph)) => {
             eprintln!("  ✓ Capture successful!");
-
             match graph.instantiate() {
                 Ok(exec) => {
                     eprintln!("  ✓ Graph instantiated!");
-
-                    // Step 4: Benchmark graph replay vs direct
-                    const NUM_REPLAYS: usize = 100;
-                    let mut graph_times = Vec::with_capacity(NUM_REPLAYS);
-                    let mut direct_times = Vec::with_capacity(NUM_REPLAYS);
-
-                    eprintln!("\n[Benchmark] Running {} iterations...", NUM_REPLAYS);
-
-                    // Graph replay benchmark
-                    for _ in 0..NUM_REPLAYS {
-                        let start = std::time::Instant::now();
-                        stream.launch_graph(&exec).expect("Graph launch");
-                        stream.synchronize().expect("Sync");
-                        graph_times.push(start.elapsed());
-                    }
-
-                    // Direct execution benchmark
-                    cuda_model.reset_gpu_decoder_kv_cache();
-                    cuda_model
-                        .init_gpu_decoder_kv_cache_head_first()
-                        .expect("Re-init");
-                    cuda_model
-                        .populate_cross_kv_caches_gpu(&enc_gpu, &stream)
-                        .expect("Re-populate");
-
-                    for i in 0..NUM_REPLAYS {
-                        let pos = i % 10;
-                        if i % 10 == 0 && i > 0 {
-                            cuda_model.reset_gpu_decoder_kv_cache();
-                            cuda_model
-                                .init_gpu_decoder_kv_cache_head_first()
-                                .expect("Re-init");
-                            cuda_model
-                                .populate_cross_kv_caches_gpu(&enc_gpu, &stream)
-                                .expect("Re-populate");
-                        }
-                        let start = std::time::Instant::now();
-                        let _out = cuda_model
-                            .forward_decoder_token_gpu_stream(
-                                &token_embedding,
-                                pos,
-                                &stream,
-                                Some(enc_seq_len),
-                            )
-                            .expect("Direct");
-                        stream.synchronize().expect("Sync");
-                        direct_times.push(start.elapsed());
-                    }
-
-                    let graph_avg: std::time::Duration =
-                        graph_times.iter().sum::<std::time::Duration>() / NUM_REPLAYS as u32;
-                    let direct_avg: std::time::Duration =
-                        direct_times.iter().sum::<std::time::Duration>() / NUM_REPLAYS as u32;
-
-                    eprintln!("\n[Results - {} layers + cross-attention]", n_layers);
-                    eprintln!("  Graph replay avg:  {:?}", graph_avg);
-                    eprintln!("  Direct exec avg:   {:?}", direct_avg);
-                    eprintln!(
-                        "  Graph speedup:     {:.1}x",
-                        direct_avg.as_micros() as f64 / graph_avg.as_micros() as f64
+                    benchmark_graph_vs_direct(
+                        &mut cuda_model,
+                        &enc_gpu,
+                        &token_embedding,
+                        enc_seq_len,
+                        n_layers,
+                        &stream,
+                        &exec,
                     );
-
-                    // Project for 27 tokens
-                    let graph_27 = graph_avg.as_micros() as f64 * 27.0 / 1000.0;
-                    let direct_27 = direct_avg.as_micros() as f64 * 27.0 / 1000.0;
-                    eprintln!("\n[Projected for 27 tokens (1.5s audio)]");
-                    eprintln!("  Graph:  {:.1}ms", graph_27);
-                    eprintln!("  Direct: {:.1}ms", direct_27);
-
-                    eprintln!("\n✓ WAPR-PERF-018: CUDA Graph with cross-attention verified!");
                 }
                 Err(e) => eprintln!("  ✗ Failed to instantiate graph: {}", e),
             }
