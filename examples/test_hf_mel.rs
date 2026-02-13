@@ -1,14 +1,14 @@
-#![allow(clippy::unwrap_used)]
 //! Test transcription with HF's mel spectrogram
 
 use std::fs::File;
 use std::io::Read;
+use whisper_apr::tokenizer::special_tokens;
 use whisper_apr::WhisperApr;
 
-fn load_npy_f32(path: &str) -> Vec<f32> {
-    let mut file = File::open(path).expect("open file");
+fn load_npy_f32(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let mut file = File::open(path)?;
     let mut buf = Vec::new();
-    file.read_to_end(&mut buf).expect("read file");
+    file.read_to_end(&mut buf)?;
 
     let header_len = u16::from_le_bytes([buf[8], buf[9]]) as usize;
     let data_start = 10 + header_len;
@@ -16,16 +16,17 @@ fn load_npy_f32(path: &str) -> Vec<f32> {
     println!("Loading {}: header = {}", path, header.trim());
 
     let data = &buf[data_start..];
-    data.chunks(4)
+    Ok(data
+        .chunks(4)
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect()
+        .collect())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== TEST: Transcription with HF Mel Spectrogram ===\n");
 
     // Load HF mel (80 x 3000)
-    let hf_mel_raw = load_npy_f32("/tmp/hf_mel_full.npy");
+    let hf_mel_raw = load_npy_f32("/tmp/hf_mel_full.npy")?;
     println!("HF mel: {} values", hf_mel_raw.len());
 
     // HF mel is [80, 3000] - transpose to [3000, 80]
@@ -55,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Encoder: mean={:.4}, L2={:.4}", enc_mean, enc_l2);
 
     // Compare with HF encoder output
-    let hf_enc = load_npy_f32("/tmp/hf_encoder_output.npy");
+    let hf_enc = load_npy_f32("/tmp/hf_encoder_output.npy")?;
     let hf_enc_mean: f32 = hf_enc.iter().sum::<f32>() / hf_enc.len() as f32;
     let hf_enc_l2: f32 = hf_enc.iter().map(|x| x * x).sum::<f32>().sqrt();
     println!("\nHF encoder: mean={:.4}, L2={:.4}", hf_enc_mean, hf_enc_l2);
@@ -66,7 +67,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Decode
-    use whisper_apr::tokenizer::special_tokens;
     let initial_tokens = vec![
         special_tokens::SOT,
         special_tokens::LANG_BASE,
@@ -86,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .unwrap();
+            .ok_or("empty logits")?;
 
         // Top 5
         let mut indexed: Vec<_> = last_logits.iter().enumerate().collect();

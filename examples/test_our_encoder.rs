@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used)]
 //! Test transcription with our encoder output
 
 use whisper_apr::tokenizer::special_tokens;
@@ -87,7 +86,7 @@ fn test_decode(
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .unwrap();
+            .ok_or("empty logits")?;
 
         let mut indexed: Vec<_> = last_logits.iter().enumerate().collect();
         indexed.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
