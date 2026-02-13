@@ -46,3 +46,13 @@ models/*.safetensors
 .pmat/context.idx/
 .pmat/workspace.idx/
 .pmat/deps-cache.json
+.pmat/context.db
+.pmat/workspace.db
+.pmat/coverage-cache.json
+.pmat/dead-code-cache.json
+.pmat/bug-hunter-cache/
+.pmat/metrics/
+.pmat-work/
+
+# IDE
+.idea/
