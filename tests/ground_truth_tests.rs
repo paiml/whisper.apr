@@ -496,6 +496,132 @@ fn argmax(logits: &[f32]) -> u32 {
     max_idx as u32
 }
 
+/// Run parity decode: step through cpp tokens comparing our model's logit rankings.
+/// If `force_cpp` is true, feed cpp tokens regardless of our argmax (forced alignment).
+/// Returns number of divergences.
+#[allow(clippy::too_many_lines)]
+fn run_parity_decode(
+    whisper: &whisper_apr::WhisperApr,
+    audio_features: &[f32],
+    initial_tokens: &[u32],
+    cpp_tokens: &[(u32, &str, f32)],
+    suppressor: &whisper_apr::inference::WhisperTokenSuppressor,
+    force_cpp: bool,
+) -> usize {
+    use whisper_apr::model::DecoderKVCache;
+    use whisper_apr::tokenizer::special_tokens;
+
+    let n_vocab = whisper.config().n_vocab as usize;
+    let d_model = whisper.config().n_text_state as usize;
+    let n_layers = whisper.config().n_text_layer as usize;
+    let max_tokens = whisper.config().n_text_ctx as usize;
+    let decoder = whisper.decoder();
+    let eot = special_tokens::EOT;
+
+    let mut cache = DecoderKVCache::new(n_layers, d_model, max_tokens);
+    let mut all_tokens = initial_tokens.to_vec();
+    let mut logits = vec![0.0_f32; n_vocab];
+    for &tok in initial_tokens {
+        logits = decoder
+            .forward_one(tok, audio_features, &mut cache)
+            .expect("forward_one failed");
+    }
+
+    let label = if force_cpp {
+        "Forced Alignment"
+    } else {
+        "Auto-regressive"
+    };
+    println!("\n--- {label} ---");
+
+    let mut divergences = 0;
+    for (step, &(cpp_id, cpp_text, cpp_p)) in cpp_tokens.iter().enumerate() {
+        suppressor.apply(&mut logits);
+
+        // Apply n-gram token penalty when not forced
+        if !force_cpp {
+            let text_tokens: Vec<u32> = all_tokens.iter().copied().filter(|&t| t < eot).collect();
+            let start = text_tokens.len().saturating_sub(50);
+            for &prev in &text_tokens[start..] {
+                if (prev as usize) < n_vocab {
+                    logits[prev as usize] -= 2.0;
+                }
+            }
+        }
+
+        let (top1_id, cpp_rank) = rank_logits(&logits, cpp_id);
+
+        if top1_id != cpp_id {
+            divergences += 1;
+            let top1_text = whisper
+                .tokenizer()
+                .decode(&[top1_id])
+                .unwrap_or_else(|_| format!("[{}]", top1_id));
+            println!(
+                "  Step {}: cpp='{}' (p={:.3}) apr='{}' (cpp_rank={}) ***",
+                step,
+                cpp_text,
+                cpp_p,
+                top1_text.trim(),
+                cpp_rank + 1
+            );
+            if !force_cpp {
+                print_top5_logits(whisper, &logits, cpp_id);
+            }
+        }
+
+        let next_token = if force_cpp { cpp_id } else { top1_id };
+        all_tokens.push(next_token);
+        if next_token == eot {
+            break;
+        }
+        logits = decoder
+            .forward_one(next_token, audio_features, &mut cache)
+            .expect("forward_one failed");
+    }
+    println!("{label} divergences: {}/{}", divergences, cpp_tokens.len());
+    divergences
+}
+
+/// Get argmax token and rank of target token in logits.
+fn rank_logits(logits: &[f32], target: u32) -> (u32, usize) {
+    let mut indexed: Vec<(usize, f32)> = logits.iter().enumerate().map(|(i, &v)| (i, v)).collect();
+    indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let top1 = indexed[0].0 as u32;
+    let rank = indexed
+        .iter()
+        .position(|(id, _)| *id == target as usize)
+        .unwrap_or(logits.len());
+    (top1, rank)
+}
+
+/// Print top-5 logits for a divergent step.
+fn print_top5_logits(whisper: &whisper_apr::WhisperApr, logits: &[f32], cpp_id: u32) {
+    let mut indexed: Vec<(usize, f32)> = logits.iter().enumerate().map(|(i, &v)| (i, v)).collect();
+    indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    println!("        Top-5:");
+    for (rank, &(id, val)) in indexed.iter().take(5).enumerate() {
+        let text = whisper
+            .tokenizer()
+            .decode(&[id as u32])
+            .unwrap_or_else(|_| format!("[{}]", id));
+        let tag = if id == cpp_id as usize {
+            " <-- cpp"
+        } else {
+            ""
+        };
+        println!(
+            "          #{}: id={:>6} val={:>8.3} '{}'{}",
+            rank + 1,
+            id,
+            val,
+            text.trim(),
+            tag
+        );
+    }
+}
+
 // =============================================================================
 // Property-Based Tests (proptest)
 // =============================================================================
@@ -1220,6 +1346,96 @@ mod integration_tests {
              Cross-attention may not be attending to audio content.",
             tokens_3,
             tokens_1_5
+        );
+    }
+
+    /// WAPR-PARITY-003-E: Token-level diagnostic comparing top-K logits at each step
+    ///
+    /// Manually steps through decoding with suppression to capture per-token logit
+    /// rankings. Compares against whisper.cpp greedy token sequence to identify
+    /// divergence points and measure logit gaps.
+    #[test]
+    fn test_token_level_parity_diagnostic() {
+        use whisper_apr::inference::WhisperTokenSuppressor;
+        use whisper_apr::tokenizer::special_tokens;
+
+        if !Path::new(TEST_AUDIO_3S).exists() || !Path::new(MODEL_TINY).exists() {
+            eprintln!("SKIP: Audio or model file not found");
+            return;
+        }
+
+        let model_bytes = std::fs::read(MODEL_TINY).expect("Failed to read model");
+        let whisper =
+            whisper_apr::WhisperApr::load_from_apr(&model_bytes).expect("Failed to load model");
+        let samples = load_wav_samples(TEST_AUDIO_3S);
+
+        let mel = whisper.compute_mel(&samples).expect("mel failed");
+        let audio_features = whisper.encode(&mel).expect("encode failed");
+
+        // whisper.cpp greedy tokens (from --output-json-full -bs 1 -bo 1)
+        let cpp_tokens: Vec<(u32, &str, f32)> = vec![
+            (50364, "[_BEG_]", 0.949),
+            (440, " The", 0.680),
+            (1904, " bir", 0.134),
+            (339, "ch", 0.983),
+            (393, " can", 0.951),
+            (764, " use", 0.659),
+            (10252, " lid", 0.943),
+            (322, " on", 0.994),
+            (341, " this", 0.646),
+            (9268, " mood", 0.293),
+            (11240, " pipe", 0.402),
+            (13, ".", 0.833),
+        ];
+
+        let specials =
+            special_tokens::SpecialTokens::for_vocab_size(whisper.config().n_vocab as usize);
+        let lang_offset = special_tokens::language_offset("en").unwrap_or(0);
+        let initial_tokens = vec![
+            specials.sot,
+            specials.lang_base + lang_offset,
+            specials.transcribe,
+        ];
+
+        let n_vocab = whisper.config().n_vocab as usize;
+        let suppressor = WhisperTokenSuppressor::new()
+            .with_timestamp_suppression(false)
+            .with_vocab_size(n_vocab);
+
+        println!("\n=== Token-Level Parity Diagnostic (WAPR-PARITY-003-E) ===");
+
+        // Phase 1: auto-regressive (our argmax at each step)
+        let divergence_count = run_parity_decode(
+            &whisper,
+            &audio_features,
+            &initial_tokens,
+            &cpp_tokens,
+            &suppressor,
+            false,
+        );
+
+        // Phase 2: forced alignment (feed cpp tokens)
+        let forced_divergences = run_parity_decode(
+            &whisper,
+            &audio_features,
+            &initial_tokens,
+            &cpp_tokens,
+            &suppressor,
+            true,
+        );
+
+        println!(
+            "Auto-regressive: {}, Forced: {} divergences out of {}",
+            divergence_count,
+            forced_divergences,
+            cpp_tokens.len()
+        );
+
+        assert!(
+            divergence_count <= 6,
+            "Too many token divergences: {}/{}",
+            divergence_count,
+            cpp_tokens.len()
         );
     }
 
