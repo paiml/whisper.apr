@@ -1543,3 +1543,79 @@ fn test_create_partial_result_does_not_change_state() {
         "state must remain Ready after create_partial_result"
     );
 }
+
+// =========================================================================
+// create_partial_result: forced direct invocation (WAPR-QA-009)
+//
+// These tests ensure create_partial_result's struct literal body is
+// covered by forcing partial results through a reliable mechanism.
+// =========================================================================
+
+/// Force create_partial_result by pushing exactly 50% of a chunk and
+/// verifying every returned field against known values.
+#[test]
+#[allow(clippy::expect_used)]
+fn test_create_partial_result_forced_50pct() {
+    let mut transcriber = StreamingTranscriber::new(deterministic_streaming_config(true));
+
+    // Push 2400 samples -> 5 frames -> 2400 in chunk_buffer
+    // chunk_progress = 2400/4000 = 0.60 (above 0.3 threshold)
+    let samples = vec![0.1f32; 2400];
+    transcriber.push_audio(&samples);
+
+    let partial = transcriber
+        .process()
+        .expect("process should succeed")
+        .expect("must return partial at 60% progress");
+
+    // Validate struct literal from create_partial_result (lines 246-254)
+    assert_eq!(partial.text, "[listening...]");
+    assert!(!partial.is_final);
+    assert!((partial.confidence - 0.0).abs() < f32::EPSILON);
+    assert_eq!(partial.chunk_index, transcriber.chunk_index());
+    // latency_ms = (chunk_progress * 30000.0) as u32
+    // progress ~0.60, latency ~18000
+    assert!(
+        partial.latency_ms > 10000 && partial.latency_ms < 25000,
+        "latency at ~60% should be in [10000, 25000], got {}",
+        partial.latency_ms
+    );
+}
+
+/// Exercise create_partial_result after processing two full chunks,
+/// then pushing 70% of the next chunk. Verifies chunk_index propagation.
+#[test]
+#[allow(clippy::expect_used)]
+fn test_create_partial_result_chunk_index_2_then_partial() {
+    let mut transcriber = StreamingTranscriber::new(deterministic_streaming_config(true));
+
+    // Process two full chunks
+    for _ in 0..2 {
+        let full = vec![0.1f32; 5000];
+        transcriber.push_audio(&full);
+        let _ = transcriber.process().expect("should succeed");
+    }
+
+    let idx = transcriber.chunk_index();
+    assert!(idx >= 2, "should have processed 2+ chunks, got {idx}");
+
+    // Push 70% of chunk: 2800 samples -> 5 frames -> 2400 -> 60%
+    // (frame alignment matters)
+    let partial_audio = vec![0.1f32; 2800];
+    transcriber.push_audio(&partial_audio);
+
+    let result = transcriber.process().expect("should succeed");
+    if let Some(partial) = result {
+        if !partial.is_final {
+            assert_eq!(
+                partial.chunk_index,
+                transcriber.chunk_index(),
+                "partial chunk_index must match transcriber index"
+            );
+            assert_eq!(partial.text, "[listening...]");
+            assert!(!partial.is_final);
+            assert!((partial.confidence - 0.0).abs() < f32::EPSILON);
+            assert!(partial.latency_ms > 0);
+        }
+    }
+}

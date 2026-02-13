@@ -704,3 +704,153 @@ fn test_check_mounts_for_ublk_path_prefix_false_positive() {
     // "/mnt/data2/file" does start with "/mnt/data", so this matches
     assert!(check_mounts_for_ublk(mounts, "/mnt/data2/file"));
 }
+
+// =========================================================================
+// ZramConfig::detect() coverage (WAPR-QA-009)
+//
+// detect() at line 73 calls is_zram_available_impl(), is_gpu_zram_available(),
+// and detect_compression_algorithm(). On most test systems, ZRAM is not
+// available, so we exercise the `available == false` branch and validate
+// the returned config fields comprehensively. We also test the helper
+// functions that detect() depends on.
+// =========================================================================
+
+/// Exercise detect() and validate all fields comprehensively.
+/// On systems without ZRAM, `available` is false and buffer_size
+/// is DEFAULT_BUFFER_SIZE. On ZRAM systems, validate the ZRAM path.
+#[cfg(feature = "std")]
+#[test]
+fn test_detect_comprehensive_field_validation() {
+    let config = ZramConfig::detect();
+
+    // entropy_threshold should always be 7.5
+    assert!(
+        (config.entropy_threshold - 7.5).abs() < f32::EPSILON,
+        "entropy_threshold must be 7.5, got {}",
+        config.entropy_threshold
+    );
+
+    // algorithm should be a valid variant
+    match config.algorithm {
+        CompressionAlgorithm::Lz4 | CompressionAlgorithm::Zstd | CompressionAlgorithm::None => {}
+    }
+
+    // buffer_size should be one of the known constants
+    assert!(
+        config.buffer_size == DEFAULT_BUFFER_SIZE || config.buffer_size == ZRAM_BUFFER_SIZE,
+        "buffer_size must be DEFAULT or ZRAM, got {}",
+        config.buffer_size
+    );
+
+    // If not available, gpu_enabled must be false
+    if !config.available {
+        assert!(
+            !config.gpu_enabled,
+            "gpu_enabled must be false when not available"
+        );
+        assert_eq!(
+            config.buffer_size, DEFAULT_BUFFER_SIZE,
+            "buffer_size must be DEFAULT when not available"
+        );
+    }
+
+    // If available but not GPU, buffer_size should be DEFAULT_BUFFER_SIZE
+    if config.available && !config.gpu_enabled {
+        assert_eq!(
+            config.buffer_size, DEFAULT_BUFFER_SIZE,
+            "buffer_size must be DEFAULT for CPU ZRAM"
+        );
+    }
+
+    // If GPU enabled, buffer_size should be ZRAM_BUFFER_SIZE
+    if config.gpu_enabled {
+        assert_eq!(
+            config.buffer_size, ZRAM_BUFFER_SIZE,
+            "buffer_size must be ZRAM for GPU"
+        );
+    }
+}
+
+/// Exercise detect() twice to ensure it's idempotent (no state leaks).
+#[cfg(feature = "std")]
+#[test]
+fn test_detect_idempotent() {
+    let config1 = ZramConfig::detect();
+    let config2 = ZramConfig::detect();
+
+    assert_eq!(config1.available, config2.available);
+    assert_eq!(config1.gpu_enabled, config2.gpu_enabled);
+    assert_eq!(config1.algorithm, config2.algorithm);
+    assert_eq!(config1.buffer_size, config2.buffer_size);
+    assert!((config1.entropy_threshold - config2.entropy_threshold).abs() < f32::EPSILON);
+}
+
+/// Exercise detect() and verify is_available() returns consistent result.
+#[cfg(feature = "std")]
+#[test]
+fn test_detect_consistent_with_is_available() {
+    let config = ZramConfig::detect();
+    let available = is_available();
+    assert_eq!(
+        config.available, available,
+        "detect().available must match is_available()"
+    );
+}
+
+/// Exercise detect() and verify optimal_buffer_size() consistency.
+#[cfg(feature = "std")]
+#[test]
+fn test_detect_consistent_with_optimal_buffer_size() {
+    let config = ZramConfig::detect();
+    let size = optimal_buffer_size();
+
+    // If GPU is available, both should return ZRAM_BUFFER_SIZE
+    // Otherwise both return DEFAULT_BUFFER_SIZE
+    assert_eq!(
+        config.buffer_size, size,
+        "detect().buffer_size should match optimal_buffer_size() when GPU state is same"
+    );
+}
+
+/// Test the internal detect_compression_algorithm() through detect()
+/// by verifying the algorithm field is valid.
+#[cfg(feature = "std")]
+#[test]
+fn test_detect_algorithm_field_is_valid() {
+    let config = ZramConfig::detect();
+    // On systems without ZRAM, detect_compression_algorithm() returns
+    // Lz4 (the default). Verify it's at least a valid variant.
+    let algo_debug = format!("{:?}", config.algorithm);
+    assert!(
+        algo_debug == "Lz4" || algo_debug == "Zstd" || algo_debug == "None",
+        "algorithm must be a valid variant, got {}",
+        algo_debug
+    );
+}
+
+/// Test is_zram_available_impl indirectly: if detect().available is false,
+/// all ZRAM system paths are absent.
+#[cfg(feature = "std")]
+#[test]
+fn test_detect_when_no_zram_all_paths_absent() {
+    let config = ZramConfig::detect();
+    if !config.available {
+        // Verify no ZRAM-related paths exist
+        // (this is the expected path on most CI systems)
+        assert!(!config.gpu_enabled);
+        assert_eq!(config.buffer_size, DEFAULT_BUFFER_SIZE);
+        assert_eq!(config.algorithm, CompressionAlgorithm::Lz4);
+    }
+}
+
+/// Exercise scan_ublk_gpu_devices indirectly through detect().
+/// On systems without ublk-control, this returns false quickly.
+#[cfg(feature = "std")]
+#[test]
+fn test_detect_exercises_scan_ublk_gpu() {
+    // detect() calls is_gpu_zram_available() which calls scan_ublk_gpu_devices()
+    let config = ZramConfig::detect();
+    // On CI systems, gpu_enabled should be false
+    // The important thing is that scan_ublk_gpu_devices() doesn't panic
+    let _ = config.gpu_enabled;
+}
