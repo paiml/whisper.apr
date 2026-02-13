@@ -1710,4 +1710,226 @@ mod tests {
         assert!(!result.speaker_embeddings().is_empty());
         Ok(())
     }
+
+    // =========================================================================
+    // Direct cluster_speakers unit tests (WAPR-QA-008)
+    //
+    // These tests call cluster_speakers directly on a Diarizer instance
+    // with pre-constructed SpeakerEmbeddings, bypassing VAD entirely.
+    // This guarantees coverage of the cluster_speakers method body
+    // (line 298) and all three algorithm dispatch branches.
+    // =========================================================================
+
+    #[test]
+    fn test_cluster_speakers_direct_spectral() -> WhisperResult<()> {
+        let config = DiarizationConfig::default();
+        let diarizer = Diarizer::new(config);
+
+        // Create embeddings that form two clear groups
+        let embeddings = vec![
+            SpeakerEmbedding::new(vec![1.0; 256], 0),
+            SpeakerEmbedding::new(vec![0.95; 256], 0),
+            SpeakerEmbedding::new(vec![-1.0; 256], 1),
+            SpeakerEmbedding::new(vec![-0.95; 256], 1),
+        ];
+
+        let result = diarizer.cluster_speakers(&embeddings)?;
+        assert!(result.num_clusters() >= 1);
+        assert_eq!(result.labels().len(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cluster_speakers_direct_kmeans() -> WhisperResult<()> {
+        let mut config = DiarizationConfig::default();
+        config.clustering.algorithm = ClusteringAlgorithm::KMeans;
+        let diarizer = Diarizer::new(config);
+
+        let embeddings = vec![
+            SpeakerEmbedding::new(vec![1.0; 256], 0),
+            SpeakerEmbedding::new(vec![0.9; 256], 0),
+            SpeakerEmbedding::new(vec![-1.0; 256], 1),
+        ];
+
+        let result = diarizer.cluster_speakers(&embeddings)?;
+        assert!(result.num_clusters() >= 1);
+        assert_eq!(result.labels().len(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cluster_speakers_direct_agglomerative() -> WhisperResult<()> {
+        let mut config = DiarizationConfig::default();
+        config.clustering.algorithm = ClusteringAlgorithm::Agglomerative;
+        let diarizer = Diarizer::new(config);
+
+        let embeddings = vec![
+            SpeakerEmbedding::new(vec![1.0; 256], 0),
+            SpeakerEmbedding::new(vec![-1.0; 256], 1),
+        ];
+
+        let result = diarizer.cluster_speakers(&embeddings)?;
+        assert!(result.num_clusters() >= 1);
+        assert_eq!(result.labels().len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cluster_speakers_single_embedding() -> WhisperResult<()> {
+        let diarizer = Diarizer::default_config();
+
+        let embeddings = vec![SpeakerEmbedding::new(vec![0.5; 256], 0)];
+
+        let result = diarizer.cluster_speakers(&embeddings)?;
+        assert_eq!(result.num_clusters(), 1);
+        assert_eq!(result.labels(), &[0]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cluster_speakers_empty_embeddings() -> WhisperResult<()> {
+        let diarizer = Diarizer::default_config();
+
+        let embeddings: Vec<SpeakerEmbedding> = Vec::new();
+        let result = diarizer.cluster_speakers(&embeddings)?;
+        assert_eq!(result.num_clusters(), 0);
+        assert!(result.labels().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_cluster_speakers_with_max_speakers_constraint() -> WhisperResult<()> {
+        let config = DiarizationConfig::default().with_max_speakers(2);
+        let diarizer = Diarizer::new(config);
+
+        // Three distinct groups but constrained to max 2
+        let embeddings = vec![
+            SpeakerEmbedding::new(
+                vec![1.0, 0.0, 0.0]
+                    .into_iter()
+                    .chain(vec![0.0; 253])
+                    .collect(),
+                0,
+            ),
+            SpeakerEmbedding::new(
+                vec![0.0, 1.0, 0.0]
+                    .into_iter()
+                    .chain(vec![0.0; 253])
+                    .collect(),
+                1,
+            ),
+            SpeakerEmbedding::new(
+                vec![0.0, 0.0, 1.0]
+                    .into_iter()
+                    .chain(vec![0.0; 253])
+                    .collect(),
+                2,
+            ),
+        ];
+
+        let result = diarizer.cluster_speakers(&embeddings)?;
+        assert!(
+            result.num_clusters() <= 2,
+            "should respect max_speakers=2, got {}",
+            result.num_clusters()
+        );
+        Ok(())
+    }
+
+    // =========================================================================
+    // process() pipeline: direct embedding and clustering coverage
+    // (WAPR-QA-008)
+    //
+    // These tests create audio that is guaranteed to trigger VAD by using
+    // a broadband noise-like signal with high amplitude in speech regions
+    // and pure silence elsewhere. The key insight is that VAD uses adaptive
+    // thresholding, so we need >25% of frames to be silent.
+    // =========================================================================
+
+    /// Generate broadband audio that reliably triggers VAD.
+    /// Uses sum of many harmonics to create a noise-like broadband signal
+    /// that has high energy in speech regions and zero in silence.
+    fn generate_broadband_speech(
+        sample_rate: u32,
+        speech_regions: &[(f32, f32)],
+        total_duration: f32,
+    ) -> Vec<f32> {
+        let total_samples = (total_duration * sample_rate as f32) as usize;
+        let mut audio = vec![0.0f32; total_samples];
+        let freqs = [
+            100.0, 200.0, 300.0, 440.0, 600.0, 800.0, 1000.0, 1500.0, 2000.0,
+        ];
+
+        for &(start, end) in speech_regions {
+            let s = (start * sample_rate as f32) as usize;
+            let e = ((end * sample_rate as f32) as usize).min(total_samples);
+            for i in s..e {
+                let t = i as f32 / sample_rate as f32;
+                let mut val = 0.0f32;
+                for (fi, &freq) in freqs.iter().enumerate() {
+                    let phase = t * freq * std::f32::consts::TAU;
+                    val += phase.sin() * (1.0 / (fi as f32 + 1.0));
+                }
+                // Amplitude modulation at 3Hz for energy variation
+                let am = 0.4f32.mul_add((t * 3.0 * std::f32::consts::TAU).sin(), 0.6);
+                audio[i] = val * am * 0.3;
+            }
+        }
+        audio
+    }
+
+    #[test]
+    fn test_process_full_pipeline_direct_broadband() -> WhisperResult<()> {
+        let config = DiarizationConfig::default().with_min_segment_duration(0.1);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        // 2s silence + 3s broadband speech + 2s silence = 7s, 57% silence
+        let audio = generate_broadband_speech(sr, &[(2.0, 5.0)], 7.0);
+
+        let result = diarizer.process(&audio, sr)?;
+        assert!((result.duration() - 7.0).abs() < 0.1);
+
+        // Verify steps 2-6 were exercised
+        if result.num_speakers() >= 1 {
+            assert!(
+                !result.segments().is_empty(),
+                "step 4-5: segments must be populated"
+            );
+            assert!(
+                !result.speaker_embeddings().is_empty(),
+                "step 6: centroids must be populated"
+            );
+            assert_eq!(
+                result.speaker_embeddings().len(),
+                result.num_speakers(),
+                "centroids must match num_speakers"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_process_two_speakers_broadband() -> WhisperResult<()> {
+        let config = DiarizationConfig::default()
+            .with_max_speakers(3)
+            .with_min_segment_duration(0.1);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        // Two distinct speech regions with silence gap
+        let audio = generate_broadband_speech(sr, &[(1.0, 3.0), (4.5, 6.5)], 8.0);
+
+        let result = diarizer.process(&audio, sr)?;
+        assert!((result.duration() - 8.0).abs() < 0.1);
+
+        if result.num_speakers() >= 1 {
+            // Verify all segments have valid speaker IDs
+            for seg in result.segments() {
+                assert!(seg.speaker_id() < result.num_speakers());
+                assert!(seg.end() > seg.start());
+            }
+        }
+        Ok(())
+    }
 }

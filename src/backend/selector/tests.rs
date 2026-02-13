@@ -1711,3 +1711,143 @@ fn test_select_automatic_memory_one_over_boundary() {
     assert!(selection.is_simd());
     assert_eq!(selection.reason, "Memory exceeds GPU limit");
 }
+
+// =========================================================================
+// Coverage Gap Tests: is_gpu_worthwhile and select_automatic
+// direct invocation paths (WAPR-QA-008)
+//
+// These tests exercise is_gpu_worthwhile and select_automatic through
+// the select() method with Automatic strategy, using with_simulated_gpu
+// to ensure GPU is available. Tests are structured to guarantee that
+// each branch within is_gpu_worthwhile and select_automatic is exercised.
+// =========================================================================
+
+/// Directly exercise is_gpu_worthwhile returning true (both checks pass):
+/// flops >= threshold AND gpu_caps.can_handle(memory) == true.
+#[test]
+fn test_is_gpu_worthwhile_returns_true_all_checks_pass() {
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(500)
+        .with_max_gpu_memory(u64::MAX);
+    // Large GPU buffer so can_handle passes
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+
+    // MatMulOp 32x32x32: flops = 2*32*32*32 = 65536 >= 500
+    let op = MatMulOp::new(32, 32, 32);
+    let selection = selector.select(&op);
+
+    // select_automatic -> is_gpu_worthwhile returns true -> GPU
+    assert!(selection.is_gpu());
+    assert_eq!(selection.reason, "Large workload benefits from GPU");
+}
+
+/// Exercise is_gpu_worthwhile returning false via flops < threshold.
+#[test]
+fn test_is_gpu_worthwhile_returns_false_flops_below() {
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(1_000_000)
+        .with_max_gpu_memory(u64::MAX);
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+
+    // MatMulOp 2x2x2: flops = 16 < 1_000_000
+    let op = MatMulOp::new(2, 2, 2);
+    let selection = selector.select(&op);
+
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "Small workload better on CPU");
+}
+
+/// Exercise is_gpu_worthwhile returning false via can_handle failure.
+/// flops pass the threshold but GPU buffer is too small.
+#[test]
+fn test_is_gpu_worthwhile_returns_false_can_handle_fails() {
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(1) // Very low, so flops always pass
+        .with_max_gpu_memory(u64::MAX); // Config memory limit is high
+                                        // GPU buffer = 4 bytes - too small for any non-trivial op
+    let selector = BackendSelector::with_simulated_gpu(config, 4);
+
+    // MatMulOp 16x16x16: memory = 3072 bytes > 4
+    let op = MatMulOp::new(16, 16, 16);
+    let selection = selector.select(&op);
+
+    // flops pass threshold but can_handle(3072) fails -> false -> SIMD
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "Small workload better on CPU");
+}
+
+/// Exercise select_automatic path 1: GPU not available -> SIMD.
+#[test]
+fn test_select_automatic_path_gpu_not_available() {
+    // Standard constructor without webgpu feature -> no GPU
+    let config = SelectorConfig::default();
+    let selector = BackendSelector::new(config);
+
+    let op = MatMulOp::new(128, 128, 128);
+    let selection = selector.select(&op);
+
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "GPU not available");
+}
+
+/// Exercise select_automatic path 2: GPU available but memory exceeds limit.
+#[test]
+fn test_select_automatic_path_memory_exceeds() {
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(1)
+        .with_max_gpu_memory(8); // Very small limit
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+
+    // MatMulOp 32x32x32: memory = 12288 > 8
+    let op = MatMulOp::new(32, 32, 32);
+    let selection = selector.select(&op);
+
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "Memory exceeds GPU limit");
+}
+
+/// Exercise select_automatic path 3: worthwhile true -> GPU.
+#[test]
+fn test_select_automatic_path_gpu_worthwhile() {
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(100)
+        .with_max_gpu_memory(u64::MAX);
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+
+    let op = MatMulOp::new(64, 64, 64); // flops = 524288 >= 100
+    let selection = selector.select(&op);
+
+    assert!(selection.is_gpu());
+    assert_eq!(selection.reason, "Large workload benefits from GPU");
+}
+
+/// Exercise select_automatic path 4: worthwhile false -> SIMD.
+#[test]
+fn test_select_automatic_path_gpu_not_worthwhile() {
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(10_000_000) // High threshold
+        .with_max_gpu_memory(u64::MAX);
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+
+    let op = MatMulOp::new(4, 4, 4); // flops = 128 < 10M
+    let selection = selector.select(&op);
+
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "Small workload better on CPU");
+}
+
+/// Test select_batch exercises select_automatic when GPU is available.
+#[test]
+fn test_select_batch_exercises_select_automatic_gpu() {
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(100)
+        .with_max_gpu_memory(u64::MAX);
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+
+    let ops = vec![MatMulOp::new(32, 32, 32), MatMulOp::new(64, 64, 64)];
+    let selection = selector.select_batch(&ops);
+
+    // Total flops well above threshold
+    assert!(selection.is_gpu());
+    assert_eq!(selection.reason, "Large workload benefits from GPU");
+}

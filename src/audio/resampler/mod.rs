@@ -62,9 +62,12 @@ impl SincResampler {
     /// ```
     /// use whisper_apr::audio::SincResampler;
     ///
-    /// let resampler = SincResampler::new(44100, 16000).unwrap();
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let resampler = SincResampler::new(44100, 16000)?;
     /// assert_eq!(resampler.source_rate(), 44100);
     /// assert_eq!(resampler.target_rate(), 16000);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn new(source_rate: u32, target_rate: u32) -> WhisperResult<Self> {
         Self::with_params(
@@ -130,11 +133,14 @@ impl SincResampler {
     /// ```
     /// use whisper_apr::audio::SincResampler;
     ///
-    /// let resampler = SincResampler::new(48000, 16000).unwrap();
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let resampler = SincResampler::new(48000, 16000)?;
     /// let input: Vec<f32> = (0..4800).map(|i| (i as f32 * 0.01).sin()).collect();
-    /// let output = resampler.resample(&input).unwrap();
+    /// let output = resampler.resample(&input)?;
     /// // Output should be ~1600 samples (48000/16000 = 3x downsampling)
     /// assert!(output.len() >= 1590 && output.len() <= 1610);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn resample(&self, audio: &[f32]) -> WhisperResult<Vec<f32>> {
         if audio.is_empty() {

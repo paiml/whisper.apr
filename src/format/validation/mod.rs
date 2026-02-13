@@ -1042,4 +1042,131 @@ mod tests {
         let err = result.expect_err("expected error").to_string();
         assert!(err.contains("decoder.layer_norm.weight"));
     }
+
+    // =========================================================================
+    // quick_validate: boundary and path coverage (WAPR-QA-008)
+    // =========================================================================
+
+    #[test]
+    fn test_quick_validate_decoder_at_lower_boundary() {
+        // Decoder LN mean exactly 0.5 -> should pass (>= 0.5)
+        let mut writer = AprWriter::tiny();
+        writer.add("decoder.layer_norm.weight", vec![384], vec![0.5; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        assert!(quick_validate(&reader).is_ok());
+    }
+
+    #[test]
+    fn test_quick_validate_decoder_at_upper_boundary() {
+        // Decoder LN mean exactly 3.0 -> should pass (<= 3.0)
+        let mut writer = AprWriter::tiny();
+        writer.add("decoder.layer_norm.weight", vec![384], vec![3.0; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        assert!(quick_validate(&reader).is_ok());
+    }
+
+    #[test]
+    fn test_quick_validate_decoder_just_below_lower() {
+        // Decoder LN mean just below 0.5 -> should fail
+        let mut writer = AprWriter::tiny();
+        writer.add("decoder.layer_norm.weight", vec![384], vec![0.499; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        assert!(quick_validate(&reader).is_err());
+    }
+
+    #[test]
+    fn test_quick_validate_decoder_just_above_upper() {
+        // Decoder LN mean just above 3.0 -> should fail
+        let mut writer = AprWriter::tiny();
+        writer.add("decoder.layer_norm.weight", vec![384], vec![3.001; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        assert!(quick_validate(&reader).is_err());
+    }
+
+    #[test]
+    fn test_quick_validate_encoder_at_lower_boundary() {
+        // Decoder valid, encoder LN mean exactly 0.5 -> both pass
+        let mut writer = AprWriter::tiny();
+        writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        writer.add("encoder.layer_norm.weight", vec![384], vec![0.5; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        assert!(quick_validate(&reader).is_ok());
+    }
+
+    #[test]
+    fn test_quick_validate_encoder_at_upper_boundary() {
+        // Decoder valid, encoder LN mean exactly 3.0 -> both pass
+        let mut writer = AprWriter::tiny();
+        writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        writer.add("encoder.layer_norm.weight", vec![384], vec![3.0; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        assert!(quick_validate(&reader).is_ok());
+    }
+
+    #[test]
+    fn test_quick_validate_encoder_just_below_lower() {
+        // Decoder valid, encoder LN mean just below 0.5 -> encoder fails
+        let mut writer = AprWriter::tiny();
+        writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        writer.add("encoder.layer_norm.weight", vec![384], vec![0.499; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        let result = quick_validate(&reader);
+        assert!(result.is_err());
+        let err = result.expect_err("expected encoder error").to_string();
+        assert!(err.contains("encoder.layer_norm.weight"));
+    }
+
+    #[test]
+    fn test_quick_validate_encoder_just_above_upper() {
+        // Decoder valid, encoder LN mean just above 3.0 -> encoder fails
+        let mut writer = AprWriter::tiny();
+        writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        writer.add("encoder.layer_norm.weight", vec![384], vec![3.001; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        let result = quick_validate(&reader);
+        assert!(result.is_err());
+        let err = result.expect_err("expected encoder error").to_string();
+        assert!(err.contains("encoder.layer_norm.weight"));
+    }
+
+    #[test]
+    fn test_quick_validate_decoder_valid_encoder_missing() {
+        // Decoder valid, encoder missing -> should succeed (encoder if-let skips)
+        let mut writer = AprWriter::tiny();
+        writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        assert!(quick_validate(&reader).is_ok());
+    }
+
+    #[test]
+    fn test_quick_validate_decoder_missing_encoder_bad() {
+        // Decoder missing, encoder bad -> encoder error
+        let mut writer = AprWriter::tiny();
+        writer.add("encoder.layer_norm.weight", vec![384], vec![11.0; 384]);
+        let data = writer.to_bytes().expect("should serialize");
+
+        let reader = AprReader::new(data).expect("should parse");
+        let result = quick_validate(&reader);
+        assert!(result.is_err());
+        let err = result.expect_err("expected encoder error").to_string();
+        assert!(err.contains("encoder.layer_norm.weight"));
+    }
 }
