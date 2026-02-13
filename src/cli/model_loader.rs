@@ -53,6 +53,8 @@ fn get_hf_repo_id(size: ModelSize) -> &'static str {
         ModelSize::Small => "openai/whisper-small",
         ModelSize::Medium => "openai/whisper-medium",
         ModelSize::Large => "openai/whisper-large-v3",
+        ModelSize::MoonshineTiny => "usefulsensors/moonshine-tiny",
+        ModelSize::MoonshineBase => "usefulsensors/moonshine-base",
     }
 }
 
@@ -64,6 +66,8 @@ fn get_model_filename(size: ModelSize) -> &'static str {
         ModelSize::Small => "small.apr",
         ModelSize::Medium => "medium.apr",
         ModelSize::Large => "large.apr",
+        ModelSize::MoonshineTiny => "moonshine-tiny.apr",
+        ModelSize::MoonshineBase => "moonshine-base.apr",
     }
 }
 
@@ -97,8 +101,28 @@ pub fn is_model_cached(size: ModelSize) -> bool {
 /// Download a model from HuggingFace Hub
 ///
 /// This downloads the safetensors weights and converts them to .apr format.
+/// For Moonshine models (ONNX format), use `whisper-apr-convert moonshine-tiny` instead.
 fn download_model(size: ModelSize, verbose: bool) -> ModelLoaderResult<PathBuf> {
     use hf_hub::api::sync::Api;
+
+    // Moonshine models ship as ONNX, not safetensors — require explicit conversion
+    if size.is_moonshine() {
+        return Err(ModelLoaderError::Download(format!(
+            "Moonshine models require ONNX→APR conversion. Run:\n  \
+             whisper-apr-convert {}\n\
+             Then use: whisper-apr transcribe --model-path moonshine-{}.apr <audio>",
+            if matches!(size, ModelSize::MoonshineTiny) {
+                "moonshine-tiny"
+            } else {
+                "moonshine-base"
+            },
+            if matches!(size, ModelSize::MoonshineTiny) {
+                "tiny"
+            } else {
+                "base"
+            },
+        )));
+    }
 
     let repo_id = get_hf_repo_id(size);
     let cache_path = get_model_cache_path(size);

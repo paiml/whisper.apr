@@ -1438,16 +1438,28 @@ impl std::fmt::Display for QuantizeMethodArg {
 /// Model size options
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelSize {
-    /// Tiny model (39M params)
+    /// Whisper tiny model (39M params)
     Tiny,
-    /// Base model (74M params)
+    /// Whisper base model (74M params)
     Base,
-    /// Small model (244M params)
+    /// Whisper small model (244M params)
     Small,
-    /// Medium model (769M params)
+    /// Whisper medium model (769M params)
     Medium,
-    /// Large model (1.5B params)
+    /// Whisper large model (1.5B params)
     Large,
+    /// Moonshine tiny model (27M params, faster for short audio)
+    MoonshineTiny,
+    /// Moonshine base model (62M params, faster for short audio)
+    MoonshineBase,
+}
+
+impl ModelSize {
+    /// Returns true if this is a Moonshine model
+    #[must_use]
+    pub fn is_moonshine(&self) -> bool {
+        matches!(self, Self::MoonshineTiny | Self::MoonshineBase)
+    }
 }
 
 impl std::fmt::Display for ModelSize {
@@ -1458,6 +1470,8 @@ impl std::fmt::Display for ModelSize {
             Self::Small => write!(f, "small"),
             Self::Medium => write!(f, "medium"),
             Self::Large => write!(f, "large"),
+            Self::MoonshineTiny => write!(f, "moonshine-tiny"),
+            Self::MoonshineBase => write!(f, "moonshine-base"),
         }
     }
 }
