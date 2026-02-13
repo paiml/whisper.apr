@@ -31,7 +31,38 @@ pub use quantized::{
 };
 
 use crate::error::WhisperResult;
+use crate::format::{FfnActivation, ModelFamily};
 use crate::ModelType;
+
+/// Audio frontend type for the encoder
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioFrontend {
+    /// 80-mel filterbank with FFT (Whisper)
+    MelFilterbank,
+    /// Learned convolutional stem - 3 Conv1d layers (Moonshine)
+    LearnedConv,
+}
+
+/// Positional encoding type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PositionalEncoding {
+    /// Fixed sinusoidal positional embedding (Whisper)
+    Sinusoidal,
+    /// Rotary position embedding applied per attention layer (Moonshine, LFM2, Llama)
+    Rotary,
+}
+
+/// Attention mechanism type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttentionType {
+    /// Standard multi-head attention (Whisper)
+    Mha,
+    /// Grouped query attention with fewer KV heads (Moonshine, LFM2, Llama)
+    Gqa {
+        /// Number of key-value heads
+        kv_heads: u32,
+    },
+}
 
 /// Whisper model configuration from .apr header
 #[derive(Debug, Clone)]
@@ -56,12 +87,22 @@ pub struct ModelConfig {
     pub n_text_head: u32,
     /// Number of text decoder layers
     pub n_text_layer: u32,
-    /// Number of mel filterbank channels
+    /// Number of mel filterbank channels (0 for learned conv stem)
     pub n_mels: u32,
+    /// Audio frontend type
+    pub audio_frontend: AudioFrontend,
+    /// Positional encoding type
+    pub positional_encoding: PositionalEncoding,
+    /// FFN activation function
+    pub ffn_activation: FfnActivation,
+    /// Attention mechanism type
+    pub attention_type: AttentionType,
+    /// Model family (Whisper, Moonshine, etc.)
+    pub model_family: ModelFamily,
 }
 
 impl ModelConfig {
-    /// Create configuration for tiny model
+    /// Create configuration for Whisper tiny model
     #[must_use]
     pub const fn tiny() -> Self {
         Self {
@@ -76,10 +117,15 @@ impl ModelConfig {
             n_text_head: 6,
             n_text_layer: 4,
             n_mels: 80,
+            audio_frontend: AudioFrontend::MelFilterbank,
+            positional_encoding: PositionalEncoding::Sinusoidal,
+            ffn_activation: FfnActivation::Gelu,
+            attention_type: AttentionType::Mha,
+            model_family: ModelFamily::Whisper,
         }
     }
 
-    /// Create configuration for base model
+    /// Create configuration for Whisper base model
     #[must_use]
     pub const fn base() -> Self {
         Self {
@@ -94,10 +140,15 @@ impl ModelConfig {
             n_text_head: 8,
             n_text_layer: 6,
             n_mels: 80,
+            audio_frontend: AudioFrontend::MelFilterbank,
+            positional_encoding: PositionalEncoding::Sinusoidal,
+            ffn_activation: FfnActivation::Gelu,
+            attention_type: AttentionType::Mha,
+            model_family: ModelFamily::Whisper,
         }
     }
 
-    /// Create configuration for small model
+    /// Create configuration for Whisper small model
     #[must_use]
     pub const fn small() -> Self {
         Self {
@@ -112,10 +163,15 @@ impl ModelConfig {
             n_text_head: 12,
             n_text_layer: 12,
             n_mels: 80,
+            audio_frontend: AudioFrontend::MelFilterbank,
+            positional_encoding: PositionalEncoding::Sinusoidal,
+            ffn_activation: FfnActivation::Gelu,
+            attention_type: AttentionType::Mha,
+            model_family: ModelFamily::Whisper,
         }
     }
 
-    /// Create configuration for medium model
+    /// Create configuration for Whisper medium model
     #[must_use]
     pub const fn medium() -> Self {
         Self {
@@ -130,10 +186,15 @@ impl ModelConfig {
             n_text_head: 16,
             n_text_layer: 24,
             n_mels: 80,
+            audio_frontend: AudioFrontend::MelFilterbank,
+            positional_encoding: PositionalEncoding::Sinusoidal,
+            ffn_activation: FfnActivation::Gelu,
+            attention_type: AttentionType::Mha,
+            model_family: ModelFamily::Whisper,
         }
     }
 
-    /// Create configuration for large model
+    /// Create configuration for Whisper large model
     #[must_use]
     pub const fn large() -> Self {
         Self {
@@ -148,7 +209,74 @@ impl ModelConfig {
             n_text_head: 20,
             n_text_layer: 32,
             n_mels: 80,
+            audio_frontend: AudioFrontend::MelFilterbank,
+            positional_encoding: PositionalEncoding::Sinusoidal,
+            ffn_activation: FfnActivation::Gelu,
+            attention_type: AttentionType::Mha,
+            model_family: ModelFamily::Whisper,
         }
+    }
+
+    /// Create configuration for Moonshine tiny model (27.1M params)
+    ///
+    /// Variable-length ASR with GQA, SwiGLU, RoPE, and learned conv stem.
+    #[must_use]
+    pub const fn moonshine_tiny() -> Self {
+        Self {
+            model_type: ModelType::Tiny,
+            n_vocab: 32768,
+            n_audio_ctx: 0, // variable length
+            n_audio_state: 288,
+            n_audio_head: 8,
+            n_audio_layer: 6,
+            n_text_ctx: 448,
+            n_text_state: 288,
+            n_text_head: 8,
+            n_text_layer: 6,
+            n_mels: 0, // no mel filterbank
+            audio_frontend: AudioFrontend::LearnedConv,
+            positional_encoding: PositionalEncoding::Rotary,
+            ffn_activation: FfnActivation::Swiglu,
+            attention_type: AttentionType::Gqa { kv_heads: 2 },
+            model_family: ModelFamily::Moonshine,
+        }
+    }
+
+    /// Create configuration for Moonshine base model (61.5M params)
+    ///
+    /// Variable-length ASR with GQA, SwiGLU, RoPE, and learned conv stem.
+    #[must_use]
+    pub const fn moonshine_base() -> Self {
+        Self {
+            model_type: ModelType::Base,
+            n_vocab: 32768,
+            n_audio_ctx: 0, // variable length
+            n_audio_state: 416,
+            n_audio_head: 8,
+            n_audio_layer: 12,
+            n_text_ctx: 448,
+            n_text_state: 416,
+            n_text_head: 8,
+            n_text_layer: 6,
+            n_mels: 0, // no mel filterbank
+            audio_frontend: AudioFrontend::LearnedConv,
+            positional_encoding: PositionalEncoding::Rotary,
+            ffn_activation: FfnActivation::Swiglu,
+            attention_type: AttentionType::Gqa { kv_heads: 2 },
+            model_family: ModelFamily::Moonshine,
+        }
+    }
+
+    /// Check if this is a Moonshine model
+    #[must_use]
+    pub const fn is_moonshine(&self) -> bool {
+        matches!(self.audio_frontend, AudioFrontend::LearnedConv)
+    }
+
+    /// Check if this is a Whisper model
+    #[must_use]
+    pub const fn is_whisper(&self) -> bool {
+        matches!(self.audio_frontend, AudioFrontend::MelFilterbank)
     }
 
     // =========================================================================
@@ -657,5 +785,48 @@ mod tests {
         assert!(base.parameter_count() < small.parameter_count());
         assert!(small.parameter_count() < medium.parameter_count());
         assert!(medium.parameter_count() < large.parameter_count());
+    }
+
+    // =========================================================================
+    // Moonshine Model Config Tests
+    // =========================================================================
+
+    #[test]
+    fn test_moonshine_tiny_config() {
+        let config = ModelConfig::moonshine_tiny();
+        assert_eq!(config.n_audio_state, 288);
+        assert_eq!(config.n_audio_head, 8);
+        assert_eq!(config.n_audio_layer, 6);
+        assert_eq!(config.n_text_state, 288);
+        assert_eq!(config.n_text_head, 8);
+        assert_eq!(config.n_text_layer, 6);
+        assert_eq!(config.n_vocab, 32768);
+        assert_eq!(config.n_mels, 0);
+        assert_eq!(config.n_audio_ctx, 0);
+        assert!(config.is_moonshine());
+        assert!(!config.is_whisper());
+        assert_eq!(config.audio_frontend, AudioFrontend::LearnedConv);
+        assert_eq!(config.positional_encoding, PositionalEncoding::Rotary);
+        assert_eq!(config.ffn_activation, crate::format::FfnActivation::Swiglu);
+        assert_eq!(config.attention_type, AttentionType::Gqa { kv_heads: 2 });
+    }
+
+    #[test]
+    fn test_moonshine_base_config() {
+        let config = ModelConfig::moonshine_base();
+        assert_eq!(config.n_audio_state, 416);
+        assert_eq!(config.n_audio_head, 8);
+        assert_eq!(config.n_audio_layer, 12);
+        assert_eq!(config.n_text_layer, 6);
+        assert_eq!(config.n_vocab, 32768);
+        assert!(config.is_moonshine());
+    }
+
+    #[test]
+    fn test_whisper_configs_are_whisper() {
+        assert!(ModelConfig::tiny().is_whisper());
+        assert!(ModelConfig::base().is_whisper());
+        assert!(ModelConfig::small().is_whisper());
+        assert!(!ModelConfig::tiny().is_moonshine());
     }
 }

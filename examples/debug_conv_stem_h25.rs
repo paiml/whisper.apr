@@ -82,7 +82,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Access conv_frontend through encoder_mut (returns &mut but we only need to read)
     let encoder = model.encoder_mut();
-    let conv_output = encoder.conv_frontend().forward(&mel)?;
+    let conv_output = encoder
+        .conv_frontend()
+        .expect("Whisper conv frontend required")
+        .forward(&mel)?;
 
     let d_model = encoder.d_model();
     let conv_len = conv_output.len() / d_model;
@@ -211,8 +214,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Bonus: Check if bias is dominating
     println!("\n[BONUS: BIAS CHECK]\n");
-    let conv1_bias = &encoder.conv_frontend().conv1.bias;
-    let conv2_bias = &encoder.conv_frontend().conv2.bias;
+    let cf = encoder
+        .conv_frontend()
+        .expect("Whisper conv frontend required");
+    let conv1_bias = &cf.conv1.bias;
+    let conv2_bias = &cf.conv2.bias;
 
     let (b1_mean, b1_std, b1_min, b1_max) = stats(conv1_bias);
     let (b2_mean, b2_std, b2_min, b2_max) = stats(conv2_bias);

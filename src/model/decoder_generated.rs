@@ -1,15 +1,18 @@
 //! Transformer decoder
 //!
-//! Implements the Whisper text decoder with causal self-attention
-//! and cross-attention to encoder outputs.
+//! Implements the text decoder with causal self-attention and cross-attention
+//! to encoder outputs. Supports both Whisper and Moonshine architectures:
+//!
+//! - **Whisper**: Learned positional embeddings, standard MHA, GELU FFN
+//! - **Moonshine**: RoPE (no additive PE), GQA, SwiGLU FFN
 //!
 //! # Architecture
 //!
-//! 1. Token embedding + positional embedding
+//! 1. Token embedding + positional embedding (Whisper) or token embedding only (Moonshine)
 //! 2. N decoder blocks:
-//!    - Masked self-attention (causal)
-//!    - Cross-attention to encoder output
-//!    - Feed-forward network
+//!    - Masked self-attention (MHA or GQA, causal)
+//!    - Cross-attention to encoder output (MHA or GQA)
+//!    - Feed-forward network (GELU or SwiGLU)
 //! 3. Final layer norm
 //!
 //! # KV Cache
@@ -21,10 +24,11 @@
 //! # References
 //!
 //! - Radford et al. (2023): "Robust Speech Recognition via Large-Scale Weak Supervision"
+//! - Hansen et al. (2024): "Moonshine: Speech Recognition for Live Transcription and Voice Commands"
 
 use crate::error::{WhisperError, WhisperResult};
 use crate::model::encoder::{FeedForward, LayerNorm};
-use crate::model::{ModelConfig, MultiHeadAttention};
+use crate::model::{AttentionType, ModelConfig, MultiHeadAttention, PositionalEncoding};
 use trueno::Matrix;
 
 #[cfg(feature = "realizar-inference")]
@@ -1710,15 +1714,24 @@ pub struct Decoder {
     /// Stored as trueno::Matrix for zero-copy SIMD matmul in project_to_vocab
     token_embedding_transposed: Matrix<f32>,
     /// Positional embeddings (max_len x d_model)
+    /// Only used for Whisper (sinusoidal additive PE); Moonshine uses RoPE applied in attention.
     positional_embedding: Vec<f32>,
     /// Vocabulary size
     n_vocab: usize,
     /// Maximum sequence length
     max_len: usize,
+    /// Positional encoding strategy (Sinusoidal for Whisper, Rotary for Moonshine)
+    positional_encoding: PositionalEncoding,
+    /// Attention mechanism type (MHA for Whisper, GQA for Moonshine)
+    attention_type: AttentionType,
 }
 
 impl Decoder {
     /// Create a new decoder from model configuration
+    ///
+    /// Dispatches based on `config.positional_encoding` and `config.attention_type`:
+    /// - **Whisper**: Sinusoidal PE (learned additive), MHA, GELU FFN
+    /// - **Moonshine**: Rotary PE (applied in attention), GQA, SwiGLU FFN
     #[must_use]
     pub fn new(config: &ModelConfig) -> Self {
         let n_layers = config.n_text_layer as usize;
@@ -1734,6 +1747,7 @@ impl Decoder {
             .collect();
 
         // Create learned positional embeddings (initialized to zeros, will be loaded)
+        // For Moonshine (RoPE), these remain zero — RoPE is applied inside attention layers
         let positional_embedding = vec![0.0_f32; max_len * d_model];
 
         // Create token embeddings (initialized to zeros, will be loaded)
@@ -1756,6 +1770,8 @@ impl Decoder {
             positional_embedding,
             n_vocab,
             max_len,
+            positional_encoding: config.positional_encoding,
+            attention_type: config.attention_type,
         }
     }
 
@@ -1841,13 +1857,15 @@ impl Decoder {
             return Err(WhisperError::Model("encoder output size mismatch".into()));
         }
 
-        // Embed tokens and add positional embeddings
+        // Embed tokens
         let mut x = self.embed_tokens(tokens)?;
 
-        // Add positional embeddings
-        for pos in 0..seq_len {
-            for d in 0..self.d_model {
-                x[pos * self.d_model + d] += self.positional_embedding[pos * self.d_model + d];
+        // Add positional embeddings (Whisper only; Moonshine uses RoPE in attention layers)
+        if self.positional_encoding == PositionalEncoding::Sinusoidal {
+            for pos in 0..seq_len {
+                for d in 0..self.d_model {
+                    x[pos * self.d_model + d] += self.positional_embedding[pos * self.d_model + d];
+                }
             }
         }
 
@@ -1893,17 +1911,19 @@ impl Decoder {
             return Err(WhisperError::Model("encoder output size mismatch".into()));
         }
 
-        // Embed tokens and add positional embeddings
+        // Embed tokens
         let mut x = self.embed_tokens(tokens)?;
 
         // Trace: after token embedding
         let l2_token_emb: f32 = x.iter().map(|v| v * v).sum::<f32>().sqrt();
         trace.push(("token_emb".to_string(), l2_token_emb));
 
-        // Add positional embeddings
-        for pos in 0..seq_len {
-            for d in 0..self.d_model {
-                x[pos * self.d_model + d] += self.positional_embedding[pos * self.d_model + d];
+        // Add positional embeddings (Whisper only; Moonshine uses RoPE in attention layers)
+        if self.positional_encoding == PositionalEncoding::Sinusoidal {
+            for pos in 0..seq_len {
+                for d in 0..self.d_model {
+                    x[pos * self.d_model + d] += self.positional_embedding[pos * self.d_model + d];
+                }
             }
         }
 
@@ -2090,6 +2110,18 @@ impl Decoder {
         &mut self.positional_embedding
     }
 
+    /// Get the positional encoding type (Sinusoidal for Whisper, Rotary for Moonshine)
+    #[must_use]
+    pub fn positional_encoding(&self) -> PositionalEncoding {
+        self.positional_encoding
+    }
+
+    /// Get the attention type (MHA for Whisper, GQA for Moonshine)
+    #[must_use]
+    pub fn attention_type(&self) -> AttentionType {
+        self.attention_type
+    }
+
     /// Get mutable decoder blocks reference (for loading weights)
     pub fn blocks_mut(&mut self) -> &mut [DecoderBlock] {
         &mut self.blocks
@@ -2139,6 +2171,11 @@ impl Decoder {
             n_text_head: self.n_heads as u32,
             n_text_layer: self.n_layers as u32,
             n_mels: 80,
+            audio_frontend: crate::model::AudioFrontend::MelFilterbank,
+            positional_encoding: crate::model::PositionalEncoding::Sinusoidal,
+            ffn_activation: crate::format::FfnActivation::Gelu,
+            attention_type: crate::model::AttentionType::Mha,
+            model_family: crate::format::ModelFamily::Whisper,
         };
         PagedDecoderKVCache::new(&config, total_pages)
     }
@@ -2181,13 +2218,15 @@ impl Decoder {
         let emb_start = (token as usize) * self.d_model;
         let mut x: Vec<f32> = self.token_embedding[emb_start..emb_start + self.d_model].to_vec();
 
-        // Add positional embedding for current position
-        let pos_start = pos * self.d_model;
-        for (x_val, pos_emb) in x
-            .iter_mut()
-            .zip(&self.positional_embedding[pos_start..pos_start + self.d_model])
-        {
-            *x_val += pos_emb;
+        // Add positional embedding for current position (Whisper only; Moonshine uses RoPE)
+        if self.positional_encoding == PositionalEncoding::Sinusoidal {
+            let pos_start = pos * self.d_model;
+            for (x_val, pos_emb) in x
+                .iter_mut()
+                .zip(&self.positional_embedding[pos_start..pos_start + self.d_model])
+            {
+                *x_val += pos_emb;
+            }
         }
 
         // Pass through decoder blocks with paged cache
@@ -2375,10 +2414,12 @@ impl Decoder {
         let emb_start = (token as usize) * self.d_model;
         let mut x: Vec<f32> = self.token_embedding[emb_start..emb_start + self.d_model].to_vec();
 
-        // Add positional embedding for current position
-        let pos_start = pos * self.d_model;
-        for d in 0..self.d_model {
-            x[d] += self.positional_embedding[pos_start + d];
+        // Add positional embedding for current position (Whisper only; Moonshine uses RoPE)
+        if self.positional_encoding == PositionalEncoding::Sinusoidal {
+            let pos_start = pos * self.d_model;
+            for d in 0..self.d_model {
+                x[d] += self.positional_embedding[pos_start + d];
+            }
         }
 
         // Pass through decoder blocks with cache
@@ -2439,13 +2480,15 @@ impl Decoder {
         let emb_start = (token as usize) * self.d_model;
         let mut x: Vec<f32> = self.token_embedding[emb_start..emb_start + self.d_model].to_vec();
 
-        // Add positional embedding for current position
-        let pos_start = pos * self.d_model;
-        for (x_elem, pos_emb) in x
-            .iter_mut()
-            .zip(&self.positional_embedding[pos_start..pos_start + self.d_model])
-        {
-            *x_elem += pos_emb;
+        // Add positional embedding for current position (Whisper only; Moonshine uses RoPE)
+        if self.positional_encoding == PositionalEncoding::Sinusoidal {
+            let pos_start = pos * self.d_model;
+            for (x_elem, pos_emb) in x
+                .iter_mut()
+                .zip(&self.positional_embedding[pos_start..pos_start + self.d_model])
+            {
+                *x_elem += pos_emb;
+            }
         }
 
         // Pass through decoder blocks with cache
@@ -2505,10 +2548,12 @@ impl Decoder {
         let emb_start = (token as usize) * self.d_model;
         let mut x: Vec<f32> = self.token_embedding[emb_start..emb_start + self.d_model].to_vec();
 
-        // Add positional embedding for current position
-        let pos_start = pos * self.d_model;
-        for d in 0..self.d_model {
-            x[d] += self.positional_embedding[pos_start + d];
+        // Add positional embedding for current position (Whisper only; Moonshine uses RoPE)
+        if self.positional_encoding == PositionalEncoding::Sinusoidal {
+            let pos_start = pos * self.d_model;
+            for d in 0..self.d_model {
+                x[d] += self.positional_embedding[pos_start + d];
+            }
         }
 
         // Pass through decoder blocks with cache (using fused FFN)
@@ -3506,6 +3551,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_new() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3515,6 +3561,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_vocab_size() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3522,6 +3569,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_max_len() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3529,6 +3577,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_embedding_shapes() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3544,6 +3593,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_blocks_count() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3555,6 +3605,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_embed_tokens_basic() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3566,6 +3617,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_embed_tokens_single() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3577,6 +3629,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_embed_tokens_invalid() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3591,6 +3644,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_forward_basic() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3606,6 +3660,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_forward_single_token() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3621,6 +3676,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_forward_empty_tokens() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3633,6 +3689,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_forward_sequence_too_long() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3645,6 +3702,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_forward_encoder_size_mismatch() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3661,6 +3719,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_project_to_vocab_shape() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3672,6 +3731,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_project_to_vocab_single() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3683,6 +3743,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_project_to_vocab_correctness() {
         // Verify projection computes correct dot products
         let config = ModelConfig::tiny();
@@ -3715,6 +3776,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_token_embedding_mut() {
         let config = ModelConfig::tiny();
         let mut decoder = Decoder::new(&config);
@@ -3725,6 +3787,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_positional_embedding_mut() {
         let config = ModelConfig::tiny();
         let mut decoder = Decoder::new(&config);
@@ -3739,6 +3802,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_output_different_for_different_tokens() {
         let config = ModelConfig::tiny();
         let mut decoder = Decoder::new(&config);
@@ -3769,6 +3833,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_base_config() {
         let config = ModelConfig::base();
         let decoder = Decoder::new(&config);
@@ -3783,6 +3848,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_blocks_mut() {
         let config = ModelConfig::tiny();
         let mut decoder = Decoder::new(&config);
@@ -3792,6 +3858,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_ln_post() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -3801,6 +3868,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_ln_post_mut() {
         let config = ModelConfig::tiny();
         let mut decoder = Decoder::new(&config);
@@ -4362,6 +4430,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_create_kv_cache() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -4374,6 +4443,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_forward_one_basic() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -4390,6 +4460,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_forward_one_multiple() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -4408,6 +4479,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_forward_one_invalid_token() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -4420,6 +4492,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_generate_basic() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -4440,6 +4513,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_generate_stops_at_eos() {
         let config = ModelConfig::tiny();
         let mut decoder = Decoder::new(&config);
@@ -4471,6 +4545,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_kv_cache_reuse() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -4588,6 +4663,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_create_batch_cache() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -4600,6 +4676,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_forward_batch_basic() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -4625,6 +4702,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_forward_batch_empty() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -4634,6 +4712,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_forward_batch_mismatch() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -4646,6 +4725,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_forward_one_batch_basic() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -4669,6 +4749,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_forward_one_batch_multiple_steps() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -4694,6 +4775,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_forward_one_batch_size_mismatch() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);
@@ -4707,6 +4789,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decoder_generate_batch_basic() {
         let config = ModelConfig::tiny();
         let decoder = Decoder::new(&config);

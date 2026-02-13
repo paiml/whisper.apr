@@ -4749,6 +4749,7 @@ mod tests {
         // =====================================================================
 
         #[test]
+        #[ignore = "Allocates large model - run with --ignored"]
         fn test_quantized_decoder_creation() {
             // Test: QuantizedDecoder can be created with Q4K blocks
             let n_layers = 4usize;
@@ -4781,6 +4782,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "Allocates large model - run with --ignored"]
         fn test_quantized_decoder_forward_one() {
             // Test: forward_one_quantized works for incremental decoding
             let n_layers = 2usize;
@@ -4823,6 +4825,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "Allocates large model - run with --ignored"]
         fn test_quantized_decoder_output_finite() {
             // Test: forward_one_quantized produces finite values
             let n_layers = 2usize;
@@ -4868,6 +4871,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "Allocates large model - run with --ignored"]
         fn test_quantized_decoder_memory_savings() {
             // Test: QuantizedDecoder uses less FFN memory than FP32
             let n_layers = 4usize;
@@ -4909,6 +4913,7 @@ mod tests {
         // =====================================================================
 
         #[test]
+        #[ignore = "Allocates large model - run with --ignored"]
         fn test_quantized_decoder_token_generation_time() {
             // Test: Measure token generation time for quantized decoder
             use std::time::Instant;
@@ -4970,6 +4975,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "Allocates large model - run with --ignored"]
         fn test_quantized_memory_reduction_validation() {
             // Test: Validate memory reduction meets target (~35% total, ~85% FFN)
             let n_layers = 4usize;

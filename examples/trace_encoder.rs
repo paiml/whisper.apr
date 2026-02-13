@@ -87,10 +87,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Check conv frontend weights
-    let conv1_weight = &encoder.conv_frontend().conv1.weight;
-    let conv1_bias = &encoder.conv_frontend().conv1.bias;
-    let conv2_weight = &encoder.conv_frontend().conv2.weight;
-    let conv2_bias = &encoder.conv_frontend().conv2.bias;
+    let cf = encoder
+        .conv_frontend()
+        .expect("Whisper conv frontend required");
+    let conv1_weight = &cf.conv1.weight;
+    let conv1_bias = &cf.conv1.bias;
+    let conv2_weight = &cf.conv2.weight;
+    let conv2_bias = &cf.conv2.bias;
 
     println!("\nConv1 weights ({} values):", conv1_weight.len());
     let (w1_mean, w1_std, w1_l2, w1_max) = stats(conv1_weight);

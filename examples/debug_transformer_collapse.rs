@@ -102,7 +102,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Step 1: Conv frontend
-    let conv_output = encoder.conv_frontend().forward(&mel)?;
+    let conv_output = encoder
+        .conv_frontend()
+        .expect("Whisper conv frontend required")
+        .forward(&mel)?;
     let seq_len = conv_output.len() / d_model;
     let audio_pos_conv = audio_frames / 2; // After stride-2 conv
 

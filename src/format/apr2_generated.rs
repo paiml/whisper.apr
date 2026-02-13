@@ -38,6 +38,8 @@ pub enum ModelFamily {
     Lfm2 = 1,
     /// Meta Llama-style architecture
     Llama = 2,
+    /// Useful Sensors Moonshine (ASR, variable-length input)
+    Moonshine = 3,
     /// Generic transformer
     Generic = 255,
 }
@@ -50,6 +52,7 @@ impl TryFrom<u8> for ModelFamily {
             0 => Ok(Self::Whisper),
             1 => Ok(Self::Lfm2),
             2 => Ok(Self::Llama),
+            3 => Ok(Self::Moonshine),
             255 => Ok(Self::Generic),
             _ => Err(WhisperError::Format(format!(
                 "unknown model family: {value}"
@@ -64,6 +67,7 @@ impl core::fmt::Display for ModelFamily {
             Self::Whisper => write!(f, "whisper"),
             Self::Lfm2 => write!(f, "lfm2"),
             Self::Llama => write!(f, "llama"),
+            Self::Moonshine => write!(f, "moonshine"),
             Self::Generic => write!(f, "generic"),
         }
     }
@@ -489,6 +493,50 @@ impl Lfm2Config {
             rope_theta: 10_000.0,
             conv_dimension: 0,
             max_seq_len: 1500,
+            layer_types,
+        }
+    }
+
+    /// Moonshine tiny configuration (Useful Sensors)
+    ///
+    /// Variable-length ASR with GQA, SwiGLU, and RoPE.
+    /// 27.1M params, 288-dim, 6 encoder + 6 decoder layers.
+    #[must_use]
+    pub fn moonshine_tiny() -> Self {
+        let layer_types = vec![LayerType::Attention { use_gqa: true }; 6];
+
+        Self {
+            hidden_size: 288,
+            num_layers: 6,
+            num_q_heads: 8,
+            num_kv_heads: 2,
+            intermediate_size: 768, // ~2.67x expansion for SwiGLU
+            vocab_size: 32768,      // SentencePiece
+            rope_theta: 10_000.0,
+            conv_dimension: 0,
+            max_seq_len: 2048,
+            layer_types,
+        }
+    }
+
+    /// Moonshine base configuration (Useful Sensors)
+    ///
+    /// Variable-length ASR with GQA, SwiGLU, and RoPE.
+    /// 61.5M params, 416-dim, 12 encoder + 6 decoder layers.
+    #[must_use]
+    pub fn moonshine_base() -> Self {
+        let layer_types = vec![LayerType::Attention { use_gqa: true }; 12];
+
+        Self {
+            hidden_size: 416,
+            num_layers: 12,
+            num_q_heads: 8,
+            num_kv_heads: 2,
+            intermediate_size: 1110, // ~2.67x expansion for SwiGLU
+            vocab_size: 32768,
+            rope_theta: 10_000.0,
+            conv_dimension: 0,
+            max_seq_len: 2048,
             layer_types,
         }
     }
@@ -1436,6 +1484,7 @@ mod tests {
             ModelFamily::Whisper,
             ModelFamily::Lfm2,
             ModelFamily::Llama,
+            ModelFamily::Moonshine,
             ModelFamily::Generic,
         ] {
             let byte = family as u8;
@@ -1993,6 +2042,38 @@ mod tests {
     }
 
     #[test]
+    fn test_lfm2_config_moonshine_tiny() {
+        let config = Lfm2Config::moonshine_tiny();
+
+        assert_eq!(config.hidden_size, 288);
+        assert_eq!(config.num_layers, 6);
+        assert_eq!(config.num_q_heads, 8);
+        assert_eq!(config.num_kv_heads, 2, "Moonshine uses GQA 4:1");
+        assert_eq!(config.intermediate_size, 768);
+        assert_eq!(config.vocab_size, 32768, "SentencePiece vocab");
+        assert_eq!(config.gqa_ratio(), 4);
+        assert_eq!(config.layer_types.len(), 6);
+
+        for layer_type in &config.layer_types {
+            assert!(matches!(layer_type, LayerType::Attention { use_gqa: true }));
+        }
+    }
+
+    #[test]
+    fn test_lfm2_config_moonshine_base() {
+        let config = Lfm2Config::moonshine_base();
+
+        assert_eq!(config.hidden_size, 416);
+        assert_eq!(config.num_layers, 12);
+        assert_eq!(config.num_q_heads, 8);
+        assert_eq!(config.num_kv_heads, 2);
+        assert_eq!(config.intermediate_size, 1110);
+        assert_eq!(config.vocab_size, 32768);
+        assert_eq!(config.gqa_ratio(), 4);
+        assert_eq!(config.layer_types.len(), 12);
+    }
+
+    #[test]
     fn test_model_config_head_dim_divisible() {
         // All configs should have head_dim = hidden_size / num_q_heads be a positive integer
         let configs = [
@@ -2002,6 +2083,8 @@ mod tests {
             Lfm2Config::whisper_tiny(),
             Lfm2Config::whisper_base(),
             Lfm2Config::whisper_small(),
+            Lfm2Config::moonshine_tiny(),
+            Lfm2Config::moonshine_base(),
         ];
 
         for config in configs {
@@ -2025,6 +2108,8 @@ mod tests {
             Lfm2Config::whisper_tiny(),
             Lfm2Config::whisper_base(),
             Lfm2Config::whisper_small(),
+            Lfm2Config::moonshine_tiny(),
+            Lfm2Config::moonshine_base(),
         ];
 
         for config in configs {

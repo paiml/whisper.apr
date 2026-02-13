@@ -47,6 +47,8 @@ pub enum ModelFamily {
     Whisper,
     /// LFM2 transcript summarization
     Lfm2,
+    /// Moonshine ASR models (variable-length input)
+    Moonshine,
 }
 
 impl fmt::Display for ModelFamily {
@@ -54,12 +56,34 @@ impl fmt::Display for ModelFamily {
         match self {
             Self::Whisper => write!(f, "whisper"),
             Self::Lfm2 => write!(f, "lfm2"),
+            Self::Moonshine => write!(f, "moonshine"),
         }
     }
 }
 
 /// Available models registry
 pub const MODELS: &[ModelInfo] = &[
+    // Moonshine models (default ASR family - variable-length, efficient for short audio)
+    ModelInfo {
+        name: "moonshine-tiny",
+        repo_id: "usefulsensors/moonshine-tiny",
+        family: ModelFamily::Moonshine,
+        params: "27.1M",
+        description: "Default. Fast variable-length ASR, efficient for short audio",
+        wasm_quant: "fp16",
+        size_fp16: "54MB",
+        size_int4: "14MB",
+    },
+    ModelInfo {
+        name: "moonshine-base",
+        repo_id: "usefulsensors/moonshine-base",
+        family: ModelFamily::Moonshine,
+        params: "61.5M",
+        description: "Higher accuracy variable-length ASR",
+        wasm_quant: "fp16",
+        size_fp16: "123MB",
+        size_int4: "31MB",
+    },
     // Whisper models
     ModelInfo {
         name: "whisper-tiny",
@@ -327,7 +351,7 @@ mod tests {
     fn test_list_models() {
         let models = list_models();
         assert!(!models.is_empty());
-        assert!(models.len() >= 6); // 5 whisper + 1 lfm2
+        assert!(models.len() >= 8); // 2 moonshine + 5 whisper + 1 lfm2
     }
 
     #[test]
@@ -337,6 +361,16 @@ mod tests {
         for m in whisper_models {
             assert_eq!(m.family, ModelFamily::Whisper);
         }
+    }
+
+    #[test]
+    fn test_list_models_by_family_moonshine() {
+        let moonshine_models = list_models_by_family(ModelFamily::Moonshine);
+        assert_eq!(moonshine_models.len(), 2);
+        assert_eq!(moonshine_models[0].name, "moonshine-tiny");
+        assert_eq!(moonshine_models[0].params, "27.1M");
+        assert_eq!(moonshine_models[1].name, "moonshine-base");
+        assert_eq!(moonshine_models[1].params, "61.5M");
     }
 
     #[test]
@@ -358,9 +392,20 @@ mod tests {
     }
 
     #[test]
+    fn test_find_moonshine_model() {
+        let model = find_model("moonshine-tiny");
+        assert!(model.is_some());
+        let m = model.map(|m| m).expect("should find moonshine-tiny");
+        assert_eq!(m.name, "moonshine-tiny");
+        assert_eq!(m.family, ModelFamily::Moonshine);
+        assert_eq!(m.params, "27.1M");
+    }
+
+    #[test]
     fn test_model_family_display() {
         assert_eq!(format!("{}", ModelFamily::Whisper), "whisper");
         assert_eq!(format!("{}", ModelFamily::Lfm2), "lfm2");
+        assert_eq!(format!("{}", ModelFamily::Moonshine), "moonshine");
     }
 
     #[test]

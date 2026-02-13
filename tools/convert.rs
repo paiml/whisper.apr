@@ -1,16 +1,22 @@
-//! Whisper model converter: HuggingFace SafeTensors → .apr format
+//! Model converter: HuggingFace SafeTensors / ONNX → .apr format
 //!
-//! Downloads Whisper models from HuggingFace and converts them to the .apr format
-//! optimized for WASM deployment.
+//! Downloads Whisper or Moonshine models from HuggingFace and converts them to the
+//! .apr format optimized for WASM deployment.
 //!
 //! # Usage
 //!
 //! ```bash
-//! # Convert tiny model
+//! # Convert Whisper tiny model (SafeTensors)
 //! whisper-convert tiny --output whisper-tiny.apr
 //!
 //! # Convert with int8 quantization (4x smaller)
 //! whisper-convert tiny --quantize int8 --output whisper-tiny-int8.apr
+//!
+//! # Convert Moonshine tiny model (ONNX)
+//! whisper-convert moonshine-tiny --output moonshine-tiny.apr
+//!
+//! # Convert Moonshine base model with fp16 quantization
+//! whisper-convert moonshine-base --quantize fp16 --output moonshine-base.apr
 //!
 //! # Convert with cache directory
 //! whisper-convert base --cache ~/.cache/whisper --output whisper-base.apr
@@ -42,6 +48,8 @@ enum ModelSize {
     Small,
     Medium,
     Large,
+    MoonshineTiny,
+    MoonshineBase,
 }
 
 impl ModelSize {
@@ -52,8 +60,14 @@ impl ModelSize {
             "small" => Some(Self::Small),
             "medium" => Some(Self::Medium),
             "large" | "large-v3" => Some(Self::Large),
+            "moonshine-tiny" | "moonshine_tiny" => Some(Self::MoonshineTiny),
+            "moonshine-base" | "moonshine_base" => Some(Self::MoonshineBase),
             _ => None,
         }
+    }
+
+    fn is_moonshine(&self) -> bool {
+        matches!(self, Self::MoonshineTiny | Self::MoonshineBase)
     }
 
     fn hf_repo_name(&self) -> &'static str {
@@ -63,6 +77,15 @@ impl ModelSize {
             Self::Small => "whisper-small",
             Self::Medium => "whisper-medium",
             Self::Large => "whisper-large-v3",
+            Self::MoonshineTiny => "moonshine-tiny",
+            Self::MoonshineBase => "moonshine-base",
+        }
+    }
+
+    fn hf_org(&self) -> &'static str {
+        match self {
+            Self::MoonshineTiny | Self::MoonshineBase => "usefulsensors",
+            _ => "openai",
         }
     }
 
@@ -73,6 +96,8 @@ impl ModelSize {
             Self::Small => ModelConfig::small(),
             Self::Medium => ModelConfig::medium(),
             Self::Large => ModelConfig::large(),
+            Self::MoonshineTiny => ModelConfig::moonshine_tiny(),
+            Self::MoonshineBase => ModelConfig::moonshine_base(),
         }
     }
 }
@@ -820,20 +845,24 @@ struct CliArgs {
 /// Print usage information
 fn print_usage() {
     eprintln!(
-        r#"whisper-convert: Convert Whisper models to .apr format
+        r#"whisper-convert: Convert Whisper/Moonshine models to .apr format
 
 USAGE:
     whisper-convert <MODEL> [OPTIONS]
 
-MODELS:
+WHISPER MODELS (OpenAI, SafeTensors):
     tiny        39M parameters (fastest, lowest quality)
     base        74M parameters
     small       244M parameters
     medium      769M parameters
     large       1.5B parameters (slowest, highest quality)
 
+MOONSHINE MODELS (Useful Sensors, ONNX):
+    moonshine-tiny   27.1M parameters (default, fastest for short audio)
+    moonshine-base   61.5M parameters
+
 OPTIONS:
-    --output, -o <PATH>     Output .apr file path (default: whisper-<model>.apr)
+    --output, -o <PATH>     Output .apr file path (default: <model>.apr)
     --quantize, -q <TYPE>   Quantization type: none, int8 (default: none)
     --cache <DIR>           Cache directory for downloaded models
                             (default: ~/.cache/whisper-apr)
@@ -846,7 +875,8 @@ QUANTIZATION:
 EXAMPLES:
     whisper-convert tiny
     whisper-convert tiny --quantize int8 -o whisper-tiny-int8.apr
-    whisper-convert base --output my-model.apr
+    whisper-convert moonshine-tiny -o moonshine-tiny.apr
+    whisper-convert moonshine-base --output moonshine-base.apr
     whisper-convert small --cache /tmp/models
 "#
     );
@@ -942,8 +972,14 @@ fn parse_args() -> Result<CliArgs, Box<dyn std::error::Error>> {
             QuantizeType::None => "",
             QuantizeType::Int8 => "-int8",
         };
+        let prefix = if model_size.is_moonshine() {
+            "" // moonshine-tiny already has the right prefix
+        } else {
+            "whisper-"
+        };
         PathBuf::from(format!(
-            "whisper-{}{}.apr",
+            "{}{}{}.apr",
+            prefix,
             model_str.to_lowercase(),
             suffix
         ))
@@ -958,6 +994,59 @@ fn parse_args() -> Result<CliArgs, Box<dyn std::error::Error>> {
     })
 }
 
+/// Moonshine ONNX → APR conversion (stub)
+///
+/// Downloads Moonshine ONNX models from HuggingFace (usefulsensors/moonshine-tiny
+/// or usefulsensors/moonshine-base) and converts them to .apr format.
+///
+/// # ONNX Weight Name Mapping
+///
+/// | ONNX Node Pattern             | APR Tensor Name                          |
+/// |-------------------------------|------------------------------------------|
+/// | `preprocess/conv.{i}/weight`  | `encoder.conv_stem.{i}.weight`           |
+/// | `preprocess/conv.{i}/bias`    | `encoder.conv_stem.{i}.bias`             |
+/// | `encode/layers.{i}/...`       | `encoder.blocks.{i}/...` (same pattern)  |
+/// | `decode/layers.{i}/...`       | `decoder.blocks.{i}/...` (same pattern)  |
+/// | `decode/token_embedding/weight` | `decoder.token_embedding.weight`       |
+/// | `decode/ln_final/weight`      | `decoder.ln_final.weight`                |
+///
+/// # Status: Not Yet Implemented
+///
+/// This stub documents the conversion interface. Full ONNX parsing will be added
+/// when the ort (ONNX Runtime) dependency is integrated.
+async fn convert_moonshine(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let repo = format!(
+        "https://huggingface.co/{}/{}",
+        args.model_size.hf_org(),
+        args.model_size.hf_repo_name()
+    );
+
+    eprintln!("Moonshine ONNX → APR conversion is not yet implemented.");
+    eprintln!();
+    eprintln!("Source: {repo}");
+    eprintln!("Target: {}", args.output_path.display());
+    eprintln!();
+    eprintln!("To implement, this tool needs:");
+    eprintln!("  1. ONNX model download from HuggingFace ({repo})");
+    eprintln!("  2. ONNX graph parsing (ort or custom parser)");
+    eprintln!("  3. Weight extraction with name mapping (see doc comment above)");
+    eprintln!("  4. SentencePiece tokenizer vocabulary extraction");
+    eprintln!("  5. APR serialization with ModelFamily::Moonshine header");
+    eprintln!();
+    eprintln!("Config that will be used:");
+    let config = args.model_size.to_model_config();
+    eprintln!("  n_audio_state: {}", config.n_audio_state);
+    eprintln!("  n_audio_layer: {}", config.n_audio_layer);
+    eprintln!("  n_text_state:  {}", config.n_text_state);
+    eprintln!("  n_text_layer:  {}", config.n_text_layer);
+    eprintln!("  n_vocab:       {}", config.n_vocab);
+
+    Err(
+        "Moonshine ONNX conversion not yet implemented (see WAPR-MOONSHINE-001 spec section 8)"
+            .into(),
+    )
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args()?;
@@ -967,8 +1056,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         QuantizeType::Int8 => "int8 (quantized)",
     };
 
+    let family_str = if args.model_size.is_moonshine() {
+        "Moonshine"
+    } else {
+        "Whisper"
+    };
+
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║           Whisper Model Converter (HuggingFace → .apr)       ║");
+    println!(
+        "║        {} Model Converter (HuggingFace → .apr){}║",
+        family_str,
+        if args.model_size.is_moonshine() {
+            "     "
+        } else {
+            "      "
+        }
+    );
     println!("╠══════════════════════════════════════════════════════════════╣");
     println!("║  Model:      {:48} ║", args.model_str);
     println!("║  Quantize:   {:48} ║", quant_str);
@@ -976,6 +1079,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("║  Cache:      {:48} ║", args.cache_dir.display());
     println!("╚══════════════════════════════════════════════════════════════╝");
     println!();
+
+    if args.model_size.is_moonshine() {
+        return convert_moonshine(args).await;
+    }
 
     let client = Client::new();
 

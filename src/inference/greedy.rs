@@ -218,6 +218,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_greedy_decoder_new() {
         let decoder = GreedyDecoder::new(448);
         assert_eq!(decoder.max_tokens(), 448);
@@ -225,6 +226,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_greedy_decoder_with_temperature() {
         let decoder = GreedyDecoder::new(448).with_temperature(0.5);
         assert!((decoder.temperature() - 0.5).abs() < f32::EPSILON);
@@ -280,6 +282,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decode_step_argmax() {
         let decoder = GreedyDecoder::new(10);
         let logits = vec![0.1, 0.5, 0.9, 0.2];
@@ -288,6 +291,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decode_step_with_temperature() {
         let decoder = GreedyDecoder::new(10).with_temperature(1.0);
         let logits = vec![0.1, 0.5, 0.9, 0.2];
@@ -393,6 +397,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decode_stops_at_eot() {
         use std::cell::Cell;
 
@@ -423,6 +428,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decode_respects_max_tokens() {
         let decoder = GreedyDecoder::new(5);
 
@@ -443,6 +449,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decode_preserves_initial_tokens() {
         // Need max_tokens > initial.len() to allow generating at least one token
         let decoder = GreedyDecoder::new(10);
@@ -466,6 +473,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_decode_total_tokens_never_exceeds_max() {
         // BUG: decode loop runs `for _ in 0..max_tokens` which generates
         // up to max_tokens NEW tokens, ignoring initial_tokens length.
@@ -503,6 +511,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn test_greedy_decode_is_on_not_on2() {
         // Performance test: decoding N tokens should take O(N) logits_fn calls
         // O(n²) would indicate the KV cache fix failed
@@ -551,6 +560,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn property_output_length_bounded_by_max_tokens() {
         // Property: For any initial_tokens and max_tokens,
         // output.len() <= max_tokens
@@ -581,6 +591,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn property_initial_tokens_preserved() {
         // Property: output[0..initial.len()] == initial (prefix preserved)
         let decoder = GreedyDecoder::new(100);

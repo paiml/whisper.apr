@@ -14,8 +14,10 @@
 //! - Sennrich et al. (2016): "Neural Machine Translation of Rare Words with Subword Units"
 //! - Radford et al. (2019): GPT-2 BPE tokenization
 
+pub mod sentencepiece;
 mod vocab;
 
+pub use sentencepiece::SentencePieceTokenizer;
 pub use vocab::{special_tokens, MergeRule, Vocabulary};
 
 use crate::error::{WhisperError, WhisperResult};
@@ -212,6 +214,48 @@ impl BpeTokenizer {
 impl Default for BpeTokenizer {
     fn default() -> Self {
         Self::with_base_tokens()
+    }
+}
+
+/// Unified tokenizer for both Whisper (BPE) and Moonshine (SentencePiece)
+#[derive(Debug, Clone)]
+pub enum Tokenizer {
+    /// Whisper BPE tokenizer (51,865 tokens)
+    Bpe(BpeTokenizer),
+    /// Moonshine SentencePiece tokenizer (32,768 tokens)
+    SentencePiece(SentencePieceTokenizer),
+}
+
+impl Tokenizer {
+    /// Encode text to token IDs
+    ///
+    /// # Errors
+    /// Returns error if encoding fails
+    pub fn encode(&self, text: &str) -> WhisperResult<Vec<u32>> {
+        match self {
+            Self::Bpe(t) => t.encode(text),
+            Self::SentencePiece(t) => t.encode(text),
+        }
+    }
+
+    /// Decode token IDs to text
+    ///
+    /// # Errors
+    /// Returns error if decoding fails
+    pub fn decode(&self, tokens: &[u32]) -> WhisperResult<String> {
+        match self {
+            Self::Bpe(t) => t.decode(tokens),
+            Self::SentencePiece(t) => t.decode(tokens),
+        }
+    }
+
+    /// Get vocabulary size
+    #[must_use]
+    pub fn vocab_size(&self) -> usize {
+        match self {
+            Self::Bpe(t) => t.vocab_size(),
+            Self::SentencePiece(t) => t.vocab_size(),
+        }
     }
 }
 
