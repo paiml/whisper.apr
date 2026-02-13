@@ -114,30 +114,30 @@ impl GpuExecutor {
     pub async fn execute_matmul(
         &self,
         op: &GpuMatMul,
-        a: &[f32],
-        b: &[f32],
+        lhs: &[f32],
+        rhs: &[f32],
     ) -> GpuResult<Vec<f32>> {
         let dims = op.dimensions();
 
         // Validate input sizes
-        if a.len() != dims.a_size() {
+        if lhs.len() != dims.a_size() {
             return Err(GpuError::compute(format!(
                 "Matrix A size mismatch: expected {}, got {}",
                 dims.a_size(),
-                a.len()
+                lhs.len()
             )));
         }
-        if b.len() != dims.b_size() {
+        if rhs.len() != dims.b_size() {
             return Err(GpuError::compute(format!(
                 "Matrix B size mismatch: expected {}, got {}",
                 dims.b_size(),
-                b.len()
+                rhs.len()
             )));
         }
 
         // Create buffers
-        let a_buffer = self.create_storage_buffer_init("A", bytemuck::cast_slice(a));
-        let b_buffer = self.create_storage_buffer_init("B", bytemuck::cast_slice(b));
+        let a_buffer = self.create_storage_buffer_init("A", bytemuck::cast_slice(lhs));
+        let b_buffer = self.create_storage_buffer_init("B", bytemuck::cast_slice(rhs));
         let c_buffer = self.create_storage_buffer("C", dims.result_bytes() as u64);
         let staging_buffer = self.create_staging_buffer("staging", dims.result_bytes() as u64);
 
@@ -280,8 +280,8 @@ impl GpuExecutor {
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            let (x, y, z) = op.workgroups();
-            pass.dispatch_workgroups(x, y, z);
+            let (wg_x, wg_y, wg_z) = op.workgroups();
+            pass.dispatch_workgroups(wg_x, wg_y, wg_z);
         }
 
         // Copy result to staging buffer
@@ -422,16 +422,28 @@ impl GpuExecutorSync {
 /// Execute a simple matrix multiplication (convenience function)
 #[cfg(feature = "webgpu")]
 #[allow(dead_code)]
-pub async fn matmul_gpu(m: u32, k: u32, n: u32, a: &[f32], b: &[f32]) -> GpuResult<Vec<f32>> {
+pub async fn matmul_gpu(
+    rows: u32,
+    inner: u32,
+    cols: u32,
+    lhs: &[f32],
+    rhs: &[f32],
+) -> GpuResult<Vec<f32>> {
     let executor = GpuExecutor::new(&ExecutorConfig::default()).await?;
-    let op = GpuMatMul::simple(m, k, n)?;
-    executor.execute_matmul(&op, a, b).await
+    let op = GpuMatMul::simple(rows, inner, cols)?;
+    executor.execute_matmul(&op, lhs, rhs).await
 }
 
 /// Execute a simple matrix multiplication (stub)
 #[allow(dead_code)] // Available for future use when webgpu feature enabled
 #[cfg(not(feature = "webgpu"))]
-pub async fn matmul_gpu(_m: u32, _k: u32, _n: u32, _a: &[f32], _b: &[f32]) -> GpuResult<Vec<f32>> {
+pub async fn matmul_gpu(
+    _rows: u32,
+    _inner: u32,
+    _cols: u32,
+    _lhs: &[f32],
+    _rhs: &[f32],
+) -> GpuResult<Vec<f32>> {
     Err(GpuError::compute("WebGPU feature not enabled"))
 }
 

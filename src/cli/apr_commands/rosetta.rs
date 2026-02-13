@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use aprender::format::hexdump::{statistics_table, TensorStatistics};
-use aprender::format::{diff_models, format_size, DiffOptions, RosettaStone};
+use aprender::format::{diff_models, DiffOptions, RosettaStone};
 
 use super::super::apr_args::{
     RosettaAction, RosettaArgs, RosettaConvertArgs, RosettaDiffArgs, RosettaFingerprintArgs,
