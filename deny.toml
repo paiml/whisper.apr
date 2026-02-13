@@ -1,16 +1,15 @@
-# cargo-deny configuration
+# cargo-deny configuration (0.18.x)
 # https://embarkstudios.github.io/cargo-deny/
 
 [advisories]
-db-path = "~/.cargo/advisory-db"
-db-urls = ["https://github.com/rustsec/advisory-db"]
-vulnerability = "deny"
-unmaintained = "warn"
-yanked = "warn"
-notice = "warn"
+# Transitive unmaintained crates from wgpu — no action possible
+ignore = [
+    "RUSTSEC-2025-0141",  # bincode unmaintained (transitive via wgpu)
+    "RUSTSEC-2025-0119",  # number_prefix unmaintained (transitive via wgpu)
+    "RUSTSEC-2024-0436",  # paste unmaintained (transitive via wgpu)
+]
 
 [licenses]
-unlicensed = "deny"
 allow = [
     "MIT",
     "Apache-2.0",
@@ -21,17 +20,17 @@ allow = [
     "Zlib",
     "MPL-2.0",
     "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
 ]
-copyleft = "warn"
 
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
 highlight = "all"
 
-# Deny specific crates
 deny = [
-    # tarpaulin is banned - use llvm-cov instead
     { name = "cargo-tarpaulin", reason = "Use cargo-llvm-cov for coverage" },
     { name = "tarpaulin", reason = "Use cargo-llvm-cov for coverage" },
 ]
