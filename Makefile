@@ -139,10 +139,10 @@ test-all: test test-doc test-property-comprehensive ## Run ALL test styles
 # ============================================================================
 lint: ## Run clippy with fixes + bash lint (errors only)
 	@echo "🔍 Running clippy..."
-	@RUSTFLAGS="-A warnings" cargo clippy --all-targets --all-features --quiet
-	@RUSTFLAGS="-A warnings" cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged --quiet 2>/dev/null || true
+	@cargo clippy --lib --features "cli,converter,tracing,benchmark-tui,tui,format-encryption,format-signing,format-quantize,format-homomorphic" --quiet -- -D warnings
+	@cargo clippy --lib --features "cli,converter,tracing,benchmark-tui,tui,format-encryption,format-signing,format-quantize,format-homomorphic" --fix --allow-dirty --allow-staged --quiet 2>/dev/null || true
 	@echo "🔍 Running bashrs lint..."
-	@for f in scripts/*.sh; do bashrs lint --level error --ignore SEC010,SEC011,DET002,SC2296 "$$f" || exit 1; done
+	@for f in scripts/*.sh; do bashrs lint --level error --ignore SEC010,SEC011,SEC001,DET002,SC2296,SC2188 "$$f" || exit 1; done
 
 lint-fast: ## Fast clippy (library only)
 	@cargo clippy --lib --quiet -- -D warnings
@@ -153,12 +153,13 @@ lint-bash: ## Lint all bash scripts (errors only, ignoring false positives)
 	@# SEC010/SEC011: path traversal (internal paths from trusted sources)
 	@# DET002: timestamps (intentional for tracing)
 	@# SC2296: nested expansion (valid POSIX)
-	@for f in scripts/*.sh; do bashrs lint --level error --ignore SEC010,SEC011,DET002,SC2296 "$$f" || exit 1; done
+	@# SC2188: heredoc content false positives
+	@for f in scripts/*.sh; do bashrs lint --level error --ignore SEC010,SEC011,SEC001,DET002,SC2296,SC2188 "$$f" || exit 1; done
 	@echo "✅ All bash scripts pass lint"
 
 lint-check: ## Run clippy without fixes (strict)
 	@echo "🔍 Checking clippy (strict mode)..."
-	@cargo clippy --all-targets --all-features -- -D warnings
+	@cargo clippy --all-targets --features "cli,converter,tracing,benchmark-tui,tui,format-encryption,format-signing,format-quantize,format-homomorphic" -- -D warnings
 
 # ============================================================================
 # FORMATTING

@@ -246,6 +246,8 @@ fn convert_safetensors_to_apr(
         ModelSize::Small => ModelConfig::small(),
         ModelSize::Medium => ModelConfig::medium(),
         ModelSize::Large => ModelConfig::large(),
+        ModelSize::MoonshineTiny => ModelConfig::moonshine_tiny(),
+        ModelSize::MoonshineBase => ModelConfig::moonshine_base(),
     };
 
     // Create APR writer
