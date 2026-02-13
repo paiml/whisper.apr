@@ -3,7 +3,10 @@
 use trueno::{Matrix, Vector};
 
 /// Extract result matrix to Vec, falling back to zeros on error
-fn result_to_vec(result: Result<Matrix<f32>, trueno::TruenoError>, fallback_size: usize) -> Vec<f32> {
+fn result_to_vec(
+    result: Result<Matrix<f32>, trueno::TruenoError>,
+    fallback_size: usize,
+) -> Vec<f32> {
     result.map_or_else(|_| vec![0.0; fallback_size], |m| m.as_slice().to_vec())
 }
 

@@ -149,7 +149,11 @@ fn safe_average(sum: f32, count: usize) -> f32 {
 
 /// Return value as scale factor, defaulting to 1.0 for zero/negative values
 fn nonzero_scale(val: f32) -> f32 {
-    if val > 0.0 { val } else { 1.0 }
+    if val > 0.0 {
+        val
+    } else {
+        1.0
+    }
 }
 
 /// Compute average value for a rectangular region of the mel spectrogram
@@ -188,7 +192,10 @@ fn attention_cell_average(
         .unwrap_or_default();
     let (sum, count) = rows
         .iter()
-        .flat_map(|row| row.get(frame_start..frame_end.min(row.len())).unwrap_or_default())
+        .flat_map(|row| {
+            row.get(frame_start..frame_end.min(row.len()))
+                .unwrap_or_default()
+        })
         .fold((0.0f32, 0usize), |(s, c), &v| (s + v, c + 1));
     safe_average(sum, count)
 }

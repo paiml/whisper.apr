@@ -102,7 +102,11 @@ impl ByteLevelTokenizer {
     /// Decode tokens to text
     #[must_use]
     pub fn decode(&self, tokens: &[u32]) -> String {
-        let special = [self.special_tokens.bos, self.special_tokens.eos, self.special_tokens.pad];
+        let special = [
+            self.special_tokens.bos,
+            self.special_tokens.eos,
+            self.special_tokens.pad,
+        ];
         tokens
             .iter()
             .filter(|&&t| !special.contains(&t))
@@ -243,12 +247,10 @@ impl Lfm2Tokenizer {
         }
         text.chars()
             .flat_map(|ch| {
-                self.vocab
-                    .get(&ch.to_string())
-                    .map_or_else(
-                        || ch.to_string().bytes().map(|b| u32::from(b) + 256).collect(),
-                        |&id| vec![id],
-                    )
+                self.vocab.get(&ch.to_string()).map_or_else(
+                    || ch.to_string().bytes().map(|b| u32::from(b) + 256).collect(),
+                    |&id| vec![id],
+                )
             })
             .collect()
     }
@@ -368,7 +370,11 @@ impl Lfm2Tokenizer {
         if let Some(section) = json_str
             .find("\"merges\"")
             .and_then(|ms| json_str[ms..].find('[').map(|bs| ms + bs))
-            .and_then(|start| json_str[start..].find(']').map(|end| &json_str[start..=start + end]))
+            .and_then(|start| {
+                json_str[start..]
+                    .find(']')
+                    .map(|end| &json_str[start..=start + end])
+            })
         {
             parse_merge_entries(section, &mut merges);
         }
@@ -444,7 +450,10 @@ fn scan_quoted_string(chars: &[char], start: usize) -> Option<(String, usize)> {
 
 /// Skip forward to `target` char, returning position after it. Returns None if not found.
 fn skip_past_char(chars: &[char], start: usize, target: char) -> Option<usize> {
-    chars[start..].iter().position(|&c| c == target).map(|p| start + p + 1)
+    chars[start..]
+        .iter()
+        .position(|&c| c == target)
+        .map(|p| start + p + 1)
 }
 
 /// Parse an integer starting at `start`, returning (value, position after number).
@@ -478,8 +487,11 @@ pub(crate) fn parse_vocab_entries(
         }
 
         // Parse "token": id — chain scan→skip→parse, break if any step fails
-        let Some((token, after_quote)) = scan_quoted_string(&chars, i) else { break };
-        let entry = skip_past_char(&chars, after_quote, ':').and_then(|ac| parse_u32_at(&chars, ac));
+        let Some((token, after_quote)) = scan_quoted_string(&chars, i) else {
+            break;
+        };
+        let entry =
+            skip_past_char(&chars, after_quote, ':').and_then(|ac| parse_u32_at(&chars, ac));
         match entry {
             Some((id, after_num)) => {
                 vocab.insert(token.clone(), id);

@@ -242,10 +242,8 @@ impl CrossAttentionAlignment {
         // Find peak frame for each token
         let mut alignments = Vec::with_capacity(token_ids.len());
 
-        for (token_idx, (&token_id, token_attention)) in token_ids
-            .iter()
-            .zip(averaged.iter())
-            .enumerate()
+        for (token_idx, (&token_id, token_attention)) in
+            token_ids.iter().zip(averaged.iter()).enumerate()
         {
             let (peak_frame, peak_value) = self.find_peak(token_attention);
 
@@ -255,7 +253,8 @@ impl CrossAttentionAlignment {
                 .with_attention_weights(token_attention.clone());
 
             // Set end time based on next token or frame boundary
-            let end_frame = averaged.get(token_idx + 1)
+            let end_frame = averaged
+                .get(token_idx + 1)
                 .map_or(num_frames, |next| self.find_peak(next).0);
             alignment.set_end_time(end_frame);
 
@@ -281,9 +280,10 @@ impl CrossAttentionAlignment {
             .enumerate()
             .filter(|(li, _)| self.config.layers.contains(li))
             .flat_map(|(_, layer)| {
-                layer.iter().enumerate().filter(|(hi, _)| {
-                    self.config.heads.as_ref().map_or(true, |h| h.contains(hi))
-                })
+                layer
+                    .iter()
+                    .enumerate()
+                    .filter(|(hi, _)| self.config.heads.as_ref().map_or(true, |h| h.contains(hi)))
             })
             .map(|(_, head)| head)
             .collect();

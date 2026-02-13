@@ -3,7 +3,10 @@
 use trueno::Vector;
 
 /// Apply a SIMD vector operation, handling empty input and errors.
-fn apply_vector_op<E>(x: &[f32], op: impl FnOnce(&Vector<f32>) -> Result<Vector<f32>, E>) -> Vec<f32> {
+fn apply_vector_op<E>(
+    x: &[f32],
+    op: impl FnOnce(&Vector<f32>) -> Result<Vector<f32>, E>,
+) -> Vec<f32> {
     if x.is_empty() {
         return vec![];
     }

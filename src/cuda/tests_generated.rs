@@ -325,15 +325,35 @@ fn cpu_encoder_layer_forward(
 ) -> Vec<f32> {
     let ln1_out = block.ln1.forward(input).expect("CPU LN1");
 
-    let q = block.self_attn.w_q().forward(&ln1_out, seq_len).expect("CPU Q");
-    let k = block.self_attn.w_k().forward(&ln1_out, seq_len).expect("CPU K");
-    let v = block.self_attn.w_v().forward(&ln1_out, seq_len).expect("CPU V");
+    let q = block
+        .self_attn
+        .w_q()
+        .forward(&ln1_out, seq_len)
+        .expect("CPU Q");
+    let k = block
+        .self_attn
+        .w_k()
+        .forward(&ln1_out, seq_len)
+        .expect("CPU K");
+    let v = block
+        .self_attn
+        .w_v()
+        .forward(&ln1_out, seq_len)
+        .expect("CPU V");
 
     let attn_output = cpu_multihead_attention(&q, &k, &v, seq_len, d_model, n_heads, head_dim);
 
-    let attn_proj = block.self_attn.w_o().forward(&attn_output, seq_len).expect("CPU O");
+    let attn_proj = block
+        .self_attn
+        .w_o()
+        .forward(&attn_output, seq_len)
+        .expect("CPU O");
 
-    let mut residual: Vec<f32> = input.iter().zip(attn_proj.iter()).map(|(a, b)| a + b).collect();
+    let mut residual: Vec<f32> = input
+        .iter()
+        .zip(attn_proj.iter())
+        .map(|(a, b)| a + b)
+        .collect();
 
     let ln2_out = block.ln2.forward(&residual).expect("CPU LN2");
     let ffn_out = block.ffn.forward(&ln2_out).expect("CPU FFN");

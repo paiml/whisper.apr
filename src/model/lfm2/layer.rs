@@ -192,8 +192,18 @@ impl Lfm2Layer {
         let mut stats = LoadStats::default();
 
         // Load layer norms
-        try_load_tensor(reader, &format!("layers.{layer_idx}.ln1.weight"), &mut self.input_norm.weight, &mut stats);
-        try_load_tensor(reader, &format!("layers.{layer_idx}.ln2.weight"), &mut self.post_attn_norm.weight, &mut stats);
+        try_load_tensor(
+            reader,
+            &format!("layers.{layer_idx}.ln1.weight"),
+            &mut self.input_norm.weight,
+            &mut stats,
+        );
+        try_load_tensor(
+            reader,
+            &format!("layers.{layer_idx}.ln2.weight"),
+            &mut self.post_attn_norm.weight,
+            &mut stats,
+        );
 
         // Load attention weights (if attention layer)
         if let Some(ref mut attn) = self.attention {
@@ -210,7 +220,12 @@ impl Lfm2Layer {
 
         // Load convolution weights (if conv layer)
         if let Some(ref mut conv) = self.conv {
-            try_load_tensor(reader, &format!("layers.{layer_idx}.conv.weight"), &mut conv.weight, &mut stats);
+            try_load_tensor(
+                reader,
+                &format!("layers.{layer_idx}.conv.weight"),
+                &mut conv.weight,
+                &mut stats,
+            );
         }
 
         // Load FFN weights
@@ -220,7 +235,12 @@ impl Lfm2Layer {
             ("up.weight", &mut self.ffn.w_up),
             ("down.weight", &mut self.ffn.w_down),
         ] {
-            try_load_tensor(reader, &format!("{ffn_prefix}.{suffix}"), target, &mut stats);
+            try_load_tensor(
+                reader,
+                &format!("{ffn_prefix}.{suffix}"),
+                target,
+                &mut stats,
+            );
         }
 
         Ok(stats)

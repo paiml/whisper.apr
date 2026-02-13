@@ -100,7 +100,12 @@ fn render_waveform_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if render_empty_placeholder(f, inner, &app.audio_data, "No audio loaded. Load audio to visualize waveform.") {
+    if render_empty_placeholder(
+        f,
+        inner,
+        &app.audio_data,
+        "No audio loaded. Load audio to visualize waveform.",
+    ) {
         return;
     }
 
@@ -127,7 +132,12 @@ fn render_mel_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if render_empty_placeholder(f, inner, &app.mel_data, "No mel spectrogram computed. Compute mel to visualize.") {
+    if render_empty_placeholder(
+        f,
+        inner,
+        &app.mel_data,
+        "No mel spectrogram computed. Compute mel to visualize.",
+    ) {
         return;
     }
 
@@ -155,7 +165,12 @@ fn render_encoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if render_empty_placeholder(f, inner, &app.encoder_metrics, "No encoder data. Start encoding to see layer activations.") {
+    if render_empty_placeholder(
+        f,
+        inner,
+        &app.encoder_metrics,
+        "No encoder data. Start encoding to see layer activations.",
+    ) {
         return;
     }
 
@@ -191,7 +206,12 @@ fn render_decoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if render_empty_placeholder(f, inner, &app.decoder_tokens, "No tokens generated. Start decoding to see tokens.") {
+    if render_empty_placeholder(
+        f,
+        inner,
+        &app.decoder_tokens,
+        "No tokens generated. Start decoding to see tokens.",
+    ) {
         return;
     }
 
@@ -228,7 +248,12 @@ fn render_attention_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if render_empty_placeholder(f, inner, &app.attention_weights, "No attention data. Decode to see cross-attention.") {
+    if render_empty_placeholder(
+        f,
+        inner,
+        &app.attention_weights,
+        "No attention data. Decode to see cross-attention.",
+    ) {
         return;
     }
 
