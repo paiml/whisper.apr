@@ -854,3 +854,138 @@ fn test_detect_exercises_scan_ublk_gpu() {
     // The important thing is that scan_ublk_gpu_devices() doesn't panic
     let _ = config.gpu_enabled;
 }
+
+// =========================================================================
+// Pure function coverage: select_buffer_size (WAPR-KAIZEN-001)
+// =========================================================================
+
+#[test]
+fn test_select_buffer_size_available_with_gpu() {
+    assert_eq!(select_buffer_size(true, true), ZRAM_BUFFER_SIZE);
+}
+
+#[test]
+fn test_select_buffer_size_available_without_gpu() {
+    assert_eq!(select_buffer_size(true, false), DEFAULT_BUFFER_SIZE);
+}
+
+#[test]
+fn test_select_buffer_size_not_available() {
+    assert_eq!(select_buffer_size(false, false), DEFAULT_BUFFER_SIZE);
+}
+
+#[test]
+fn test_select_buffer_size_not_available_gpu_ignored() {
+    // If ZRAM isn't available, gpu_enabled is irrelevant
+    assert_eq!(select_buffer_size(false, true), DEFAULT_BUFFER_SIZE);
+}
+
+// =========================================================================
+// Pure function coverage: from_detected (WAPR-KAIZEN-001)
+// =========================================================================
+
+#[test]
+fn test_from_detected_no_zram() {
+    let config = ZramConfig::from_detected(false, false, CompressionAlgorithm::Lz4);
+    assert!(!config.available);
+    assert!(!config.gpu_enabled);
+    assert_eq!(config.algorithm, CompressionAlgorithm::Lz4);
+    assert_eq!(config.buffer_size, DEFAULT_BUFFER_SIZE);
+    assert!((config.entropy_threshold - 7.5).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_from_detected_cpu_zram() {
+    let config = ZramConfig::from_detected(true, false, CompressionAlgorithm::Zstd);
+    assert!(config.available);
+    assert!(!config.gpu_enabled);
+    assert_eq!(config.algorithm, CompressionAlgorithm::Zstd);
+    assert_eq!(config.buffer_size, DEFAULT_BUFFER_SIZE);
+}
+
+#[test]
+fn test_from_detected_gpu_zram() {
+    let config = ZramConfig::from_detected(true, true, CompressionAlgorithm::Lz4);
+    assert!(config.available);
+    assert!(config.gpu_enabled);
+    assert_eq!(config.algorithm, CompressionAlgorithm::Lz4);
+    assert_eq!(config.buffer_size, ZRAM_BUFFER_SIZE);
+}
+
+#[test]
+fn test_from_detected_gpu_zram_with_none_algo() {
+    let config = ZramConfig::from_detected(true, true, CompressionAlgorithm::None);
+    assert!(config.available);
+    assert!(config.gpu_enabled);
+    assert_eq!(config.algorithm, CompressionAlgorithm::None);
+    assert_eq!(config.buffer_size, ZRAM_BUFFER_SIZE);
+}
+
+// =========================================================================
+// Pure function coverage: detect_algorithm_from_content (WAPR-KAIZEN-001)
+// =========================================================================
+
+#[test]
+fn test_detect_algorithm_trueno_zstd() {
+    let algo = detect_algorithm_from_content(Some("zstd"), None);
+    assert_eq!(algo, CompressionAlgorithm::Zstd);
+}
+
+#[test]
+fn test_detect_algorithm_trueno_lz4() {
+    let algo = detect_algorithm_from_content(Some("lz4"), None);
+    assert_eq!(algo, CompressionAlgorithm::Lz4);
+}
+
+#[test]
+fn test_detect_algorithm_trueno_none() {
+    let algo = detect_algorithm_from_content(Some("none"), None);
+    assert_eq!(algo, CompressionAlgorithm::None);
+}
+
+#[test]
+fn test_detect_algorithm_trueno_with_whitespace() {
+    let algo = detect_algorithm_from_content(Some("  zstd  "), None);
+    assert_eq!(algo, CompressionAlgorithm::Zstd);
+}
+
+#[test]
+fn test_detect_algorithm_sysfs_only() {
+    let algo = detect_algorithm_from_content(Option::None, Some("[zstd] lz4"));
+    assert_eq!(algo, CompressionAlgorithm::Zstd);
+}
+
+#[test]
+fn test_detect_algorithm_sysfs_lz4_active() {
+    let algo = detect_algorithm_from_content(Option::None, Some("zstd [lz4]"));
+    assert_eq!(algo, CompressionAlgorithm::Lz4);
+}
+
+#[test]
+fn test_detect_algorithm_neither_source_defaults_lz4() {
+    let algo = detect_algorithm_from_content(Option::None, Option::None);
+    assert_eq!(algo, CompressionAlgorithm::Lz4);
+}
+
+#[test]
+fn test_detect_algorithm_trueno_takes_priority() {
+    // trueno says zstd, sysfs says lz4 — trueno wins
+    let algo = detect_algorithm_from_content(Some("zstd"), Some("[lz4]"));
+    assert_eq!(algo, CompressionAlgorithm::Zstd);
+}
+
+#[test]
+fn test_detect_algorithm_trueno_unknown_falls_to_sysfs() {
+    // "deflate" parses to Lz4 (default), but since it's not literally "lz4",
+    // the condition `parsed != Lz4 || name == "lz4"` → false || false,
+    // so we fall through to sysfs which returns zstd
+    let algo = detect_algorithm_from_content(Some("deflate"), Some("[zstd]"));
+    assert_eq!(algo, CompressionAlgorithm::Zstd);
+}
+
+#[test]
+fn test_detect_algorithm_trueno_unknown_no_sysfs_defaults_lz4() {
+    // "deflate" falls through trueno, no sysfs → default Lz4
+    let algo = detect_algorithm_from_content(Some("deflate"), Option::None);
+    assert_eq!(algo, CompressionAlgorithm::Lz4);
+}

@@ -2050,3 +2050,143 @@ fn test_detect_varying_amplitude_speech_segments() {
         );
     }
 }
+
+// =========================================================================
+// StreamingVad::process() SpeechStart coverage (WAPR-KAIZEN-001)
+//
+// These tests exercise the SpeechStart branch in StreamingVad::process()
+// (lines 299-302 in vad/mod.rs) which was previously uncovered.
+// =========================================================================
+
+/// Generate a speech-like sine wave frame with appropriate energy and ZCR.
+/// 1000 Hz at 16 kHz sample rate gives ~60 zero crossings per 480-sample
+/// frame (ZCR ≈ 0.125, within the [0.05, 0.3] speech range).
+fn generate_speech_frame(frame_size: usize, amplitude: f32) -> Vec<f32> {
+    let freq = 1000.0f32;
+    let sample_rate = 16000.0f32;
+    (0..frame_size)
+        .map(|i| amplitude * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate).sin())
+        .collect()
+}
+
+#[test]
+fn test_streaming_vad_speech_start_triggered() {
+    // Use min_speech_frames=1 so SpeechStart triggers on the first speech frame
+    let config = VadConfig::default().with_min_speech_frames(1);
+    let mut svad = StreamingVad::new(config);
+
+    // First, feed a few frames of silence to establish noise floor
+    let silence = vec![0.0f32; 480 * 5];
+    let (_, in_speech) = svad.process(&silence);
+    assert!(!in_speech, "should not be in speech during silence");
+
+    // Now feed loud speech audio (1000 Hz sine, amplitude 0.5)
+    let speech = generate_speech_frame(480 * 3, 0.5);
+    let (_, in_speech) = svad.process(&speech);
+
+    // SpeechStart should have been triggered, putting us in speech
+    assert!(in_speech, "should be in speech after speech audio");
+}
+
+#[test]
+fn test_streaming_vad_speech_start_and_end() {
+    let config = VadConfig::default()
+        .with_min_speech_frames(1)
+        .with_min_silence_frames(2);
+    let mut svad = StreamingVad::new(config);
+
+    // Silence to establish noise floor
+    let silence = vec![0.0f32; 480 * 5];
+    svad.process(&silence);
+
+    // Speech to trigger SpeechStart
+    let speech = generate_speech_frame(480 * 3, 0.5);
+    let (_, in_speech) = svad.process(&speech);
+    assert!(in_speech, "should be in speech");
+
+    // Silence to trigger SpeechEnd
+    let silence_after = vec![0.0f32; 480 * 5];
+    let (completed, in_speech) = svad.process(&silence_after);
+    assert!(!in_speech, "should have exited speech");
+    assert!(
+        !completed.is_empty(),
+        "should have returned completed speech buffer"
+    );
+}
+
+#[test]
+fn test_streaming_vad_speech_start_accumulates_buffer() {
+    let config = VadConfig::default().with_min_speech_frames(1);
+    let mut svad = StreamingVad::new(config);
+
+    // Silence
+    let silence = vec![0.0f32; 480 * 5];
+    svad.process(&silence);
+
+    // Speech — SpeechStart should set in_speech=true and extend speech_buffer
+    let speech = generate_speech_frame(480 * 2, 0.5);
+    svad.process(&speech);
+
+    assert!(svad.is_in_speech(), "should be in speech");
+    assert!(
+        !svad.speech_buffer.is_empty(),
+        "speech_buffer should contain audio after SpeechStart"
+    );
+}
+
+#[test]
+fn test_streaming_vad_speech_start_clears_previous_buffer() {
+    let config = VadConfig::default().with_min_speech_frames(1);
+    let mut svad = StreamingVad::new(config);
+
+    // Pre-populate speech_buffer to verify SpeechStart clears it
+    svad.speech_buffer = vec![0.1, 0.2, 0.3];
+
+    // Silence
+    let silence = vec![0.0f32; 480 * 5];
+    svad.process(&silence);
+
+    // Speech triggers SpeechStart which should clear() then extend
+    let speech = generate_speech_frame(480 * 2, 0.5);
+    svad.process(&speech);
+
+    // speech_buffer should NOT contain the old [0.1, 0.2, 0.3]
+    assert!(svad.is_in_speech());
+    if svad.speech_buffer.len() >= 3 {
+        let has_old = svad.speech_buffer[0..3] == [0.1f32, 0.2, 0.3];
+        assert!(!has_old, "old buffer data should have been cleared");
+    }
+}
+
+#[test]
+fn test_streaming_vad_full_cycle_start_continue_end() {
+    let config = VadConfig::default()
+        .with_min_speech_frames(1)
+        .with_min_silence_frames(2);
+    let mut svad = StreamingVad::new(config);
+
+    // 1. Silence — establishes noise floor
+    svad.process(&vec![0.0f32; 480 * 5]);
+    assert!(!svad.is_in_speech());
+
+    // 2. Speech start
+    let speech = generate_speech_frame(480, 0.5);
+    svad.process(&speech);
+    assert!(svad.is_in_speech(), "SpeechStart should activate");
+
+    // 3. Continue — more speech frames accumulate into buffer
+    let more_speech = generate_speech_frame(480 * 3, 0.5);
+    svad.process(&more_speech);
+    assert!(svad.is_in_speech(), "should still be in speech");
+    let buffer_len = svad.speech_buffer.len();
+    assert!(
+        buffer_len > 480,
+        "speech buffer should have accumulated frames, got {buffer_len}"
+    );
+
+    // 4. Speech end — silence triggers SpeechEnd
+    let silence = vec![0.0f32; 480 * 5];
+    let (completed, in_speech) = svad.process(&silence);
+    assert!(!in_speech, "should have ended speech");
+    assert!(!completed.is_empty(), "should return accumulated speech");
+}
