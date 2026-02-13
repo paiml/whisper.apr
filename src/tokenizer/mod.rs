@@ -605,4 +605,73 @@ mod tests {
             }
         }
     }
+
+    // =========================================================================
+    // Tokenizer enum and from_vocabulary coverage (WAPR-KAIZEN-001)
+    // =========================================================================
+
+    #[test]
+    fn test_from_vocabulary_alias() {
+        let vocab = Vocabulary::new();
+        let tokenizer = BpeTokenizer::from_vocabulary(vocab);
+        assert_eq!(tokenizer.vocab_size(), 0);
+    }
+
+    #[test]
+    fn test_tokenizer_enum_bpe_encode() {
+        let tokenizer = Tokenizer::Bpe(BpeTokenizer::with_base_tokens());
+        let result = tokenizer.encode("hi");
+        assert!(result.is_ok());
+        assert!(!result.expect("encode should succeed").is_empty());
+    }
+
+    #[test]
+    fn test_tokenizer_enum_bpe_decode() {
+        let tokenizer = Tokenizer::Bpe(BpeTokenizer::with_base_tokens());
+        let encoded = tokenizer.encode("ab").expect("encode should succeed");
+        let decoded = tokenizer.decode(&encoded);
+        assert!(decoded.is_ok());
+        assert_eq!(decoded.expect("decode should succeed"), "ab");
+    }
+
+    #[test]
+    fn test_tokenizer_enum_bpe_vocab_size() {
+        let tokenizer = Tokenizer::Bpe(BpeTokenizer::with_base_tokens());
+        assert_eq!(tokenizer.vocab_size(), 256);
+    }
+
+    #[test]
+    fn test_tokenizer_enum_sentencepiece_encode() {
+        let tokenizer = Tokenizer::SentencePiece(SentencePieceTokenizer::new(32768));
+        let result = tokenizer.encode("hello");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tokenizer_enum_sentencepiece_decode() {
+        let tokenizer = Tokenizer::SentencePiece(SentencePieceTokenizer::new(32768));
+        // Empty vocabulary cannot decode real tokens, just verify it dispatches
+        let result = tokenizer.decode(&[]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tokenizer_enum_sentencepiece_vocab_size() {
+        let tokenizer = Tokenizer::SentencePiece(SentencePieceTokenizer::new(32768));
+        assert!(tokenizer.vocab_size() > 0);
+    }
+
+    #[test]
+    fn test_tokenizer_enum_debug() {
+        let tokenizer = Tokenizer::Bpe(BpeTokenizer::with_base_tokens());
+        let debug = format!("{tokenizer:?}");
+        assert!(debug.contains("Bpe"));
+    }
+
+    #[test]
+    fn test_tokenizer_enum_clone() {
+        let tokenizer = Tokenizer::Bpe(BpeTokenizer::with_base_tokens());
+        let cloned = tokenizer.clone();
+        assert_eq!(tokenizer.vocab_size(), cloned.vocab_size());
+    }
 }
