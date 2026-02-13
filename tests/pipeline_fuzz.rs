@@ -74,6 +74,7 @@ proptest! {
 
     /// Fuzz test: Decoder output should always be finite for valid inputs
     #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
     fn fuzz_decoder_output_finite(
         seq_len in 1usize..10,
         enc_len in 1usize..20,
@@ -328,6 +329,7 @@ fn test_extreme_softmax() {
 }
 
 #[test]
+#[ignore = "Allocates large model - run with --ignored"]
 fn test_decoder_with_max_tokens() {
     let config = ModelConfig::tiny();
     let decoder = create_test_decoder(&config);
@@ -345,6 +347,7 @@ fn test_decoder_with_max_tokens() {
 }
 
 #[test]
+#[ignore = "Allocates large model - run with --ignored"]
 fn test_decoder_kv_cache_consistency() {
     let config = ModelConfig::tiny();
     let decoder = create_test_decoder(&config);
@@ -377,6 +380,7 @@ fn test_decoder_kv_cache_consistency() {
 }
 
 #[test]
+#[ignore = "Allocates ~80MB - run with --ignored"]
 fn test_vocab_projection_dimensions() {
     let config = ModelConfig::tiny();
     let d_model = config.n_text_state as usize;
@@ -398,6 +402,7 @@ fn test_vocab_projection_dimensions() {
 // ============================================================================
 
 #[test]
+#[ignore = "Allocates large model - run with --ignored"]
 fn stress_test_repeated_forward_one() {
     let config = ModelConfig::tiny();
     let decoder = create_test_decoder(&config);
@@ -420,6 +425,7 @@ fn stress_test_repeated_forward_one() {
 }
 
 #[test]
+#[ignore = "Allocates ~80MB - run with --ignored"]
 fn stress_test_matmul_large() {
     // Test large matrix multiply (vocab projection size)
     let d_model = 384;

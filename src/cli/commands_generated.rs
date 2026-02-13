@@ -2390,9 +2390,13 @@ pub fn run_selftest(args: SelftestArgs, global: &Args) -> CliResult<CommandResul
     }
 
     if all_passed {
-        Ok(CommandResult::success("All selftest phases passed".to_string()))
+        Ok(CommandResult::success(
+            "All selftest phases passed".to_string(),
+        ))
     } else {
-        Ok(CommandResult::failure("One or more selftest phases failed".to_string()))
+        Ok(CommandResult::failure(
+            "One or more selftest phases failed".to_string(),
+        ))
     }
 }
 

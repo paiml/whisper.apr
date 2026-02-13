@@ -49,7 +49,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Get conv output and positional embeddings (BEFORE transformer blocks)
     let (conv_output, pos_embed) = {
         let encoder = model.encoder_mut();
-        let conv_out = encoder.conv_frontend().forward(&mel)?;
+        let conv_out = encoder
+            .conv_frontend()
+            .expect("Whisper conv frontend required")
+            .forward(&mel)?;
         let pe = encoder.positional_embedding().to_vec();
         (conv_out, pe)
     };

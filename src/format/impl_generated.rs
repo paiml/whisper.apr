@@ -223,6 +223,12 @@ impl AprHeader {
             n_text_head: self.n_text_head,
             n_text_layer: self.n_text_layer,
             n_mels: self.n_mels,
+            // Default to Whisper settings for APR v1 files
+            audio_frontend: crate::model::AudioFrontend::MelFilterbank,
+            positional_encoding: crate::model::PositionalEncoding::Sinusoidal,
+            ffn_activation: crate::format::FfnActivation::Gelu,
+            attention_type: crate::model::AttentionType::Mha,
+            model_family: crate::format::ModelFamily::Whisper,
         }
     }
 

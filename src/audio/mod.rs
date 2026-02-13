@@ -3,6 +3,7 @@
 //! Handles audio loading, resampling, normalization, and mel spectrogram computation.
 
 pub mod batch;
+pub mod conv_stem;
 pub mod mel;
 /// OpenAI reference mel filterbank data for exact numerical matching
 #[path = "mel_filterbank_data_generated.rs"]
@@ -14,6 +15,7 @@ mod streaming;
 pub mod wav;
 
 pub use batch::{split_into_chunks, AudioBatch, BatchMelResult, BatchPreprocessor};
+pub use conv_stem::{ConvStem, CONV_STEM_TOTAL_STRIDE};
 pub use mel::MelFilterbank;
 pub use resampler::{Resampler, SincResampler};
 pub use ring_buffer::RingBuffer;

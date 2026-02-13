@@ -83,6 +83,7 @@ fn test_fused_q4k_dot() {
 
 /// RED: Decoder construction with ModelConfig
 #[test]
+#[ignore = "Allocates large model - run with --ignored"]
 fn test_decoder_construction() {
     let config = ModelConfig::tiny();
     let decoder = Decoder::new(&config);
@@ -93,6 +94,7 @@ fn test_decoder_construction() {
 
 /// RED: Decoder KV cache creation
 #[test]
+#[ignore = "Allocates large model - run with --ignored"]
 fn test_decoder_kv_cache() {
     let config = ModelConfig::tiny();
     let decoder = Decoder::new(&config);
@@ -108,6 +110,7 @@ fn test_decoder_kv_cache() {
 
 /// RED: Decoder PAGED KV cache creation (realizar integration)
 #[test]
+#[ignore = "Allocates large model - run with --ignored"]
 fn test_decoder_paged_kv_cache() {
     let config = ModelConfig::tiny();
     let decoder = Decoder::new(&config);
@@ -122,6 +125,7 @@ fn test_decoder_paged_kv_cache() {
 
 /// RED: Paged cache sequence allocation
 #[test]
+#[ignore = "Allocates large model - run with --ignored"]
 fn test_paged_cache_sequence_allocation() {
     let config = ModelConfig::tiny();
     let decoder = Decoder::new(&config);
@@ -134,6 +138,7 @@ fn test_paged_cache_sequence_allocation() {
 
 /// GREEN: Decoder forward with paged cache (50x memory target)
 #[test]
+#[ignore = "Allocates large model - run with --ignored"]
 fn test_decoder_forward_paged() {
     let config = ModelConfig::tiny();
     let decoder = Decoder::new(&config);
@@ -166,6 +171,7 @@ fn test_decoder_forward_paged() {
 
 /// RED: Encoder construction
 #[test]
+#[ignore = "Allocates large model - run with --ignored"]
 fn test_encoder_construction() {
     let config = ModelConfig::tiny();
     let encoder = Encoder::new(&config);

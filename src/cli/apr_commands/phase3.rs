@@ -10,11 +10,11 @@ use super::super::apr_args::{
     AprQuantizeArgs, AprSignArgs, AprVerifySigArgs,
 };
 use super::super::commands::{CliError, CliResult, CommandResult};
-use super::{rtf_tier_label, validate_sharded_source};
-#[cfg(feature = "format-encryption")]
-use super::require_password;
 #[cfg(any(feature = "format-quantize", feature = "format-homomorphic"))]
 use super::inspect_model;
+#[cfg(feature = "format-encryption")]
+use super::require_password;
+use super::{rtf_tier_label, validate_sharded_source};
 #[cfg(feature = "format-quantize")]
 use aprender::format::RosettaStone;
 
