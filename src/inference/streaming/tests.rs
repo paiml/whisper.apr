@@ -1259,3 +1259,287 @@ fn test_no_partial_result_at_29pct_progress() {
         "should not return partial at ~24% progress (below 30% threshold)"
     );
 }
+
+// =========================================================================
+// create_partial_result edge cases (WAPR-QA-007)
+// =========================================================================
+
+/// After a reset, create_partial_result should work identically to a fresh
+/// transcriber: chunk_index resets to 0 and fields are correct.
+#[test]
+#[allow(clippy::expect_used)]
+fn test_create_partial_result_after_reset() {
+    let mut transcriber = StreamingTranscriber::new(deterministic_streaming_config(true));
+
+    // Process a full chunk to advance chunk_index to 1
+    let full = vec![0.1f32; 5000];
+    transcriber.push_audio(&full);
+    let _ = transcriber.process().expect("first process should succeed");
+    assert!(
+        transcriber.chunk_index() >= 1,
+        "should have processed at least one chunk"
+    );
+
+    // Finalize and reset
+    let _ = transcriber.finalize().expect("finalize should succeed");
+    transcriber.reset();
+    assert_eq!(transcriber.state(), TranscriberState::Ready);
+    assert_eq!(transcriber.chunk_index(), 0);
+
+    // Now push partial audio and verify create_partial_result uses reset state
+    let partial_audio = vec![0.1f32; 2000];
+    transcriber.push_audio(&partial_audio);
+
+    let result = transcriber
+        .process()
+        .expect("process after reset should succeed");
+    if let Some(partial) = result {
+        assert_eq!(partial.text, "[listening...]");
+        assert!(!partial.is_final);
+        assert!((partial.confidence - 0.0).abs() < f32::EPSILON);
+        assert_eq!(partial.chunk_index, 0, "chunk_index must be 0 after reset");
+        assert!(partial.latency_ms > 0);
+    }
+}
+
+/// Calling process() multiple times with the same buffered audio should
+/// produce consistent partial results from create_partial_result.
+#[test]
+#[allow(clippy::expect_used)]
+fn test_create_partial_result_idempotent_across_calls() {
+    let mut transcriber = StreamingTranscriber::new(deterministic_streaming_config(true));
+
+    // Push ~48% of a chunk
+    let samples = vec![0.1f32; 2000];
+    transcriber.push_audio(&samples);
+
+    // First call
+    let result1 = transcriber.process().expect("first process should succeed");
+    let partial1 = result1.expect("should return partial at ~48% progress");
+
+    // Second call without pushing more audio -- progress unchanged
+    let result2 = transcriber
+        .process()
+        .expect("second process should succeed");
+
+    // The second call may return None if the processor consumed frames and
+    // progress dropped below 30%, or may return another partial. If it
+    // returns a partial, fields must be consistent.
+    if let Some(partial2) = result2 {
+        assert_eq!(partial2.text, partial1.text);
+        assert_eq!(partial2.is_final, partial1.is_final);
+        assert!((partial2.confidence - partial1.confidence).abs() < f32::EPSILON);
+        assert_eq!(partial2.chunk_index, partial1.chunk_index);
+    }
+}
+
+/// After processing two full chunks (chunk_index == 2), a partial result
+/// should carry chunk_index == 2.
+#[test]
+#[allow(clippy::expect_used)]
+fn test_create_partial_result_chunk_index_after_two_full_chunks() {
+    let mut transcriber = StreamingTranscriber::new(deterministic_streaming_config(true));
+
+    // Process two full chunks
+    for _ in 0..2 {
+        let full = vec![0.1f32; 5000];
+        transcriber.push_audio(&full);
+        let _ = transcriber.process().expect("process should succeed");
+    }
+
+    let current_index = transcriber.chunk_index();
+    assert!(
+        current_index >= 2,
+        "should have processed at least 2 chunks"
+    );
+
+    // Now push partial audio
+    let partial_audio = vec![0.1f32; 2000];
+    transcriber.push_audio(&partial_audio);
+
+    let result = transcriber.process().expect("process should succeed");
+    if let Some(partial) = result {
+        assert_eq!(
+            partial.chunk_index, current_index,
+            "partial chunk_index should match transcriber chunk_index ({})",
+            current_index
+        );
+        assert!(!partial.is_final);
+        assert_eq!(partial.text, "[listening...]");
+    }
+}
+
+/// Verify that create_partial_result with very high progress (~96%)
+/// produces latency close to 30000ms but not exceeding it.
+#[test]
+#[allow(clippy::expect_used)]
+fn test_create_partial_result_near_full_progress_latency() {
+    let mut transcriber = StreamingTranscriber::new(deterministic_streaming_config(true));
+
+    // Push 3900 samples -> 8 frames -> 3840 in chunk_buffer
+    // chunk_progress = 3840/4000 = 0.96
+    // But at 0.96 the processor might trigger ChunkReady. Push 3800 instead.
+    // 3800 -> 7 frames -> 3360 in chunk_buffer -> progress = 0.84
+    // Use 3900: 3900 -> 8 frames -> 3840 -> 0.96
+    let samples = vec![0.1f32; 3900];
+    transcriber.push_audio(&samples);
+
+    let result = transcriber.process().expect("process should succeed");
+    if let Some(partial) = result {
+        if !partial.is_final {
+            // latency = 0.96 * 30000 ~= 28800
+            assert!(
+                partial.latency_ms >= 20000,
+                "latency at ~96% should be >= 20000, got {}",
+                partial.latency_ms
+            );
+            assert!(
+                partial.latency_ms <= 30000,
+                "latency should not exceed 30000, got {}",
+                partial.latency_ms
+            );
+            assert_eq!(partial.text, "[listening...]");
+            assert!((partial.confidence - 0.0).abs() < f32::EPSILON);
+        }
+        // If is_final, the chunk was ready due to frame rounding -- valid
+    }
+}
+
+/// Verify create_partial_result with accumulated text from prior chunks.
+/// The partial result text should always be "[listening...]" regardless
+/// of what text has been accumulated from previous chunks.
+#[test]
+#[allow(clippy::expect_used)]
+fn test_create_partial_result_text_independent_of_accumulated() {
+    let mut transcriber = StreamingTranscriber::new(deterministic_streaming_config(true));
+
+    // Process a full chunk first (accumulated_text might change)
+    let full = vec![0.1f32; 5000];
+    transcriber.push_audio(&full);
+    let _ = transcriber.process().expect("first process should succeed");
+
+    // Push partial audio for create_partial_result
+    let partial_audio = vec![0.1f32; 2000];
+    transcriber.push_audio(&partial_audio);
+
+    let result = transcriber.process().expect("process should succeed");
+    if let Some(partial) = result {
+        if !partial.is_final {
+            // Partial text is always the placeholder, not accumulated text
+            assert_eq!(
+                partial.text, "[listening...]",
+                "partial text must be placeholder regardless of accumulated text"
+            );
+        }
+    }
+}
+
+/// Verify create_partial_result through process() when transcriber has
+/// empty accumulated_text (initial state, no chunks processed yet).
+#[test]
+#[allow(clippy::expect_used)]
+fn test_create_partial_result_with_empty_accumulated_text() {
+    let mut transcriber = StreamingTranscriber::new(deterministic_streaming_config(true));
+
+    // Confirm initial state
+    assert!(transcriber.text().is_empty());
+    assert_eq!(transcriber.chunk_index(), 0);
+
+    // Push ~48% of a chunk
+    let samples = vec![0.1f32; 2000];
+    transcriber.push_audio(&samples);
+
+    let partial = transcriber
+        .process()
+        .expect("process should succeed")
+        .expect("should return partial at ~48% progress");
+
+    // Verify all fields when no prior text exists
+    assert_eq!(partial.text, "[listening...]");
+    assert!(!partial.is_final);
+    assert!((partial.confidence - 0.0).abs() < f32::EPSILON);
+    assert_eq!(partial.chunk_index, 0);
+    assert!(partial.latency_ms > 0);
+
+    // Accumulated text should still be empty (partial result doesn't modify it)
+    assert!(
+        transcriber.text().is_empty(),
+        "partial result must not modify accumulated text"
+    );
+}
+
+/// Push audio incrementally in small batches, each below the 30% threshold,
+/// until the combined progress exceeds 30% and triggers create_partial_result.
+#[test]
+#[allow(clippy::expect_used)]
+fn test_create_partial_result_incremental_audio_push() {
+    let mut transcriber = StreamingTranscriber::new(deterministic_streaming_config(true));
+
+    // Push in 3 small batches of 700 samples each = 2100 total
+    // After frame processing: ~4 frames -> 1920 samples -> 48% progress
+    for _ in 0..3 {
+        let batch = vec![0.1f32; 700];
+        transcriber.push_audio(&batch);
+    }
+
+    let result = transcriber.process().expect("process should succeed");
+
+    // With 2100 samples pushed (>2000), should trigger partial at ~48%
+    if let Some(partial) = result {
+        assert_eq!(partial.text, "[listening...]");
+        assert!(!partial.is_final);
+        assert!((partial.confidence - 0.0).abs() < f32::EPSILON);
+        assert_eq!(partial.chunk_index, 0);
+        assert!(partial.latency_ms > 0);
+    }
+}
+
+/// Verify that create_partial_result does not advance the chunk_index.
+/// After getting a partial result, chunk_index should remain unchanged.
+#[test]
+#[allow(clippy::expect_used)]
+fn test_create_partial_result_does_not_advance_chunk_index() {
+    let mut transcriber = StreamingTranscriber::new(deterministic_streaming_config(true));
+
+    let index_before = transcriber.chunk_index();
+
+    // Push ~48% of a chunk
+    let samples = vec![0.1f32; 2000];
+    transcriber.push_audio(&samples);
+
+    let result = transcriber.process().expect("process should succeed");
+    if let Some(partial) = result {
+        assert!(!partial.is_final);
+    }
+
+    let index_after = transcriber.chunk_index();
+    assert_eq!(
+        index_before, index_after,
+        "create_partial_result must not advance chunk_index"
+    );
+}
+
+/// Verify that create_partial_result does not modify the transcriber state.
+/// State should remain Ready (not transition to Processing or Finalized).
+#[test]
+#[allow(clippy::expect_used)]
+fn test_create_partial_result_does_not_change_state() {
+    let mut transcriber = StreamingTranscriber::new(deterministic_streaming_config(true));
+
+    assert_eq!(transcriber.state(), TranscriberState::Ready);
+
+    // Push ~48% of a chunk
+    let samples = vec![0.1f32; 2000];
+    transcriber.push_audio(&samples);
+
+    let result = transcriber.process().expect("process should succeed");
+    if let Some(partial) = result {
+        assert!(!partial.is_final);
+    }
+
+    assert_eq!(
+        transcriber.state(),
+        TranscriberState::Ready,
+        "state must remain Ready after create_partial_result"
+    );
+}

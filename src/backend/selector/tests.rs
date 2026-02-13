@@ -1344,3 +1344,370 @@ fn test_select_prefer_simd_ignores_gpu_even_if_available() {
     assert!(selection.is_simd());
     assert!(selection.reason.contains("PreferSimd strategy"));
 }
+
+// =========================================================================
+// Coverage Gap Tests: is_gpu_worthwhile, new, select, select_automatic
+// (WAPR-QA-007)
+// =========================================================================
+
+// --- is_gpu_worthwhile: direct path coverage via simulated GPU ---
+// The function has three exit points:
+//   1. flops < gpu_threshold_flops -> return false
+//   2. gpu_caps.can_handle(memory) returns false -> return false
+//   3. falls through -> return true
+// All paths require gpu_available=true (reached only via select_automatic).
+
+/// Exercise is_gpu_worthwhile path 1: flops below threshold returns false.
+/// Verifies the early return at line 266-268.
+#[test]
+fn test_is_gpu_worthwhile_path_flops_below_threshold() {
+    // Threshold set very high so any real op fails the flops check
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(10_000_000)
+        .with_max_gpu_memory(u64::MAX);
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+
+    // MatMulOp 4x4x4 = 2*4*4*4 = 128 flops, well below 10M
+    let op = MatMulOp::new(4, 4, 4);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "Small workload better on CPU");
+}
+
+/// Exercise is_gpu_worthwhile path 2: flops pass but gpu_caps.can_handle fails.
+/// The GPU has a tiny max_buffer_size so can_handle returns false (line 272-274).
+#[test]
+fn test_is_gpu_worthwhile_path_can_handle_fails() {
+    // Low threshold so flops check passes, but GPU buffer is tiny
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(1)
+        .with_max_gpu_memory(u64::MAX); // config memory limit is high (passes select_automatic check)
+
+    // GPU buffer = 8 bytes: can_handle will fail for any non-trivial op
+    let selector = BackendSelector::with_simulated_gpu(config, 8);
+
+    // MatMulOp 16x16x16: memory = (256+256+256)*4 = 3072 bytes > 8
+    let op = MatMulOp::new(16, 16, 16);
+    let selection = selector.select(&op);
+    // flops (8192) >= 1 passes, but can_handle(3072) fails because 3072 > 8
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "Small workload better on CPU");
+}
+
+/// Exercise is_gpu_worthwhile path 3: both checks pass, returns true.
+/// Verifies the happy path at line 277.
+#[test]
+fn test_is_gpu_worthwhile_path_both_checks_pass() {
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(100)
+        .with_max_gpu_memory(u64::MAX);
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+
+    // MatMulOp 32x32x32: flops = 2*32*32*32 = 65536 >= 100, memory fits
+    let op = MatMulOp::new(32, 32, 32);
+    let selection = selector.select(&op);
+    assert!(selection.is_gpu());
+    assert_eq!(selection.reason, "Large workload benefits from GPU");
+}
+
+/// Exercise is_gpu_worthwhile when gpu_caps is None but gpu_available is true.
+/// This is a contrived state but tests the code path where the if-let at line 271
+/// does NOT enter the Some branch, falling through to return true.
+#[test]
+fn test_is_gpu_worthwhile_no_gpu_caps_but_available() {
+    // Manually construct a selector with gpu_available=true but gpu_caps=None
+    let simd_caps = BackendCapabilities::simd();
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(1)
+        .with_max_gpu_memory(u64::MAX);
+    let selector = BackendSelector {
+        config,
+        simd_caps,
+        gpu_available: true,
+        gpu_caps: None,
+    };
+
+    let op = MatMulOp::new(16, 16, 16);
+    let selection = selector.select(&op);
+    // gpu_available=true, memory check passes, flops >= 1 passes,
+    // gpu_caps is None so if-let skipped, returns true -> GPU selected
+    assert!(selection.is_gpu());
+    assert_eq!(selection.reason, "Large workload benefits from GPU");
+}
+
+// --- new: verifying constructor field assignment (no-GPU path) ---
+
+/// Verify that new() with default config produces correct field values
+/// when GPU is not available (the else branch at line 158-160).
+#[test]
+fn test_new_no_gpu_stores_none_caps() {
+    let config = SelectorConfig::default();
+    let selector = BackendSelector::new(config);
+
+    // Without webgpu feature, GPU detection returns unavailable
+    assert!(!selector.gpu_available());
+    assert!(selector.gpu_capabilities().is_none());
+
+    // SIMD caps are always populated
+    let simd = selector.simd_capabilities();
+    assert!(simd.available);
+    assert_eq!(simd.backend_type, BackendType::Simd);
+}
+
+/// Verify new() stores the provided config verbatim.
+#[test]
+fn test_new_stores_custom_config() {
+    let config = SelectorConfig::default()
+        .with_strategy(SelectionStrategy::threshold(42_000))
+        .with_gpu_threshold(77_777)
+        .with_max_gpu_memory(99_999);
+    let selector = BackendSelector::new(config);
+
+    let stored = selector.config();
+    assert!(matches!(
+        stored.strategy,
+        SelectionStrategy::Threshold { min_flops: 42_000 }
+    ));
+    assert_eq!(stored.gpu_threshold_flops, 77_777);
+    assert_eq!(stored.max_gpu_memory, 99_999);
+}
+
+/// Verify new() with prefer_gpu config still results in no GPU
+/// when webgpu feature is disabled.
+#[test]
+fn test_new_prefer_gpu_config_no_webgpu() {
+    let selector = BackendSelector::new(SelectorConfig::prefer_gpu());
+
+    // Config stored correctly
+    assert_eq!(selector.config().strategy, SelectionStrategy::PreferGpu);
+
+    // But GPU is not available
+    assert!(!selector.gpu_available());
+    assert!(selector.gpu_capabilities().is_none());
+
+    // Selecting should fall back to SIMD
+    let op = MatMulOp::new(64, 64, 64);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "GPU not available");
+}
+
+/// Verify new() with for_inference config stores all fields correctly.
+#[test]
+fn test_new_for_inference_fields() {
+    let selector = BackendSelector::new(SelectorConfig::for_inference());
+
+    let config = selector.config();
+    assert_eq!(config.strategy, SelectionStrategy::Automatic);
+    assert_eq!(config.gpu_threshold_flops, 1_000_000);
+    assert_eq!(config.max_gpu_memory, 1024 * 1024 * 1024);
+    assert_eq!(config.gpu_dispatch_overhead_us, 50);
+
+    // SIMD always available
+    assert!(selector.simd_capabilities().available);
+}
+
+// --- select: exercising all four match arms with GPU available ---
+
+/// PreferGpu with GPU available and memory fits -> GPU selected (line 208).
+#[test]
+fn test_select_prefer_gpu_arm_gpu_available_memory_ok() {
+    let config = SelectorConfig::prefer_gpu().with_max_gpu_memory(1024 * 1024 * 1024);
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let op = MatMulOp::new(16, 16, 16);
+    let selection = selector.select(&op);
+    assert!(selection.is_gpu());
+    assert_eq!(selection.reason, "PreferGpu strategy");
+}
+
+/// PreferGpu with GPU available but memory exceeds limit -> SIMD (line 210).
+#[test]
+fn test_select_prefer_gpu_arm_memory_exceeds() {
+    let config = SelectorConfig::prefer_gpu().with_max_gpu_memory(4);
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    // MatMulOp 32x32x32: memory = (1024+1024+1024)*4 = 12288 > 4
+    let op = MatMulOp::new(32, 32, 32);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "Memory exceeds GPU limit");
+}
+
+/// PreferGpu without GPU -> SIMD (line 212).
+#[test]
+fn test_select_prefer_gpu_arm_no_gpu() {
+    let selector = BackendSelector::new(SelectorConfig::prefer_gpu());
+    let op = MatMulOp::new(32, 32, 32);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "GPU not available");
+}
+
+/// PreferSimd always returns SIMD regardless (line 216).
+#[test]
+fn test_select_prefer_simd_arm_always_simd() {
+    let config = SelectorConfig::prefer_simd();
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+    let op = MatMulOp::new(512, 512, 512);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "PreferSimd strategy");
+}
+
+/// Threshold with GPU available, flops above min -> GPU (line 228).
+#[test]
+fn test_select_threshold_arm_above_min_flops() {
+    let config = SelectorConfig::default()
+        .with_strategy(SelectionStrategy::threshold(500))
+        .with_max_gpu_memory(u64::MAX);
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+    // MatMulOp 16x16x16: flops = 2*16*16*16 = 8192 >= 500
+    let op = MatMulOp::new(16, 16, 16);
+    let selection = selector.select(&op);
+    assert!(selection.is_gpu());
+    assert_eq!(selection.reason, "FLOPs exceed threshold");
+}
+
+/// Threshold with GPU available, flops below min -> SIMD (line 230).
+#[test]
+fn test_select_threshold_arm_below_min_flops() {
+    let config = SelectorConfig::default()
+        .with_strategy(SelectionStrategy::threshold(100_000))
+        .with_max_gpu_memory(u64::MAX);
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+    // MatMulOp 4x4x4: flops = 128 < 100_000
+    let op = MatMulOp::new(4, 4, 4);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "FLOPs below threshold");
+}
+
+/// Threshold without GPU -> early return SIMD (line 220).
+#[test]
+fn test_select_threshold_arm_no_gpu() {
+    let config = SelectorConfig::default().with_strategy(SelectionStrategy::threshold(1));
+    let selector = BackendSelector::new(config);
+    let op = MatMulOp::new(128, 128, 128);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "GPU not available");
+}
+
+/// Threshold with GPU but memory exceeds limit -> SIMD (line 224).
+#[test]
+fn test_select_threshold_arm_memory_exceeds() {
+    let config = SelectorConfig::default()
+        .with_strategy(SelectionStrategy::threshold(1))
+        .with_max_gpu_memory(4);
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+    let op = MatMulOp::new(64, 64, 64);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "Memory exceeds GPU limit");
+}
+
+/// Automatic strategy delegates to select_automatic (line 234).
+#[test]
+fn test_select_automatic_arm_delegates() {
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(1)
+        .with_max_gpu_memory(u64::MAX);
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+    let op = MatMulOp::new(32, 32, 32);
+    let selection = selector.select(&op);
+    // select_automatic -> is_gpu_worthwhile -> true -> GPU
+    assert!(selection.is_gpu());
+    assert_eq!(selection.reason, "Large workload benefits from GPU");
+}
+
+// --- select_automatic: all three branches ---
+
+/// select_automatic: GPU not available -> early return SIMD (line 241-243).
+#[test]
+fn test_select_automatic_no_gpu_early_return() {
+    let selector = BackendSelector::new(SelectorConfig::default());
+    // Confirm no GPU
+    assert!(!selector.gpu_available());
+
+    let op = MatMulOp::new(256, 256, 256);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "GPU not available");
+}
+
+/// select_automatic: GPU available, memory exceeds limit -> SIMD (line 246-248).
+#[test]
+fn test_select_automatic_memory_exceeds_early_return() {
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(1)
+        .with_max_gpu_memory(16); // Very small limit
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+
+    // MatMulOp 32x32x32: memory = (1024+1024+1024)*4 = 12288 > 16
+    let op = MatMulOp::new(32, 32, 32);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "Memory exceeds GPU limit");
+}
+
+/// select_automatic: GPU available, memory ok, worthwhile=true -> GPU (line 253-254).
+#[test]
+fn test_select_automatic_gpu_worthwhile_returns_gpu() {
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(50)
+        .with_max_gpu_memory(u64::MAX);
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+
+    let op = MatMulOp::new(16, 16, 16); // flops=8192 >= 50
+    let selection = selector.select(&op);
+    assert!(selection.is_gpu());
+    assert_eq!(selection.reason, "Large workload benefits from GPU");
+}
+
+/// select_automatic: GPU available, memory ok, worthwhile=false -> SIMD (line 255-256).
+#[test]
+fn test_select_automatic_gpu_not_worthwhile_returns_simd() {
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(1_000_000)
+        .with_max_gpu_memory(u64::MAX);
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+
+    let op = MatMulOp::new(4, 4, 4); // flops=128 < 1_000_000
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "Small workload better on CPU");
+}
+
+/// select_automatic: GPU available, memory exactly at boundary (equal) -> passes (line 246).
+/// The check is `memory > max_gpu_memory`, so equal should pass.
+#[test]
+fn test_select_automatic_memory_at_exact_boundary() {
+    let op = MatMulOp::new(8, 8, 8);
+    let mem = op.memory_requirement() as u64; // 768
+
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(1)
+        .with_max_gpu_memory(mem); // exactly 768
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+
+    let selection = selector.select(&op);
+    // 768 > 768 is false, so memory check passes -> proceeds to is_gpu_worthwhile
+    assert!(selection.is_gpu());
+    assert_eq!(selection.reason, "Large workload benefits from GPU");
+}
+
+/// select_automatic: GPU available, memory one byte over boundary -> fails (line 246-248).
+#[test]
+fn test_select_automatic_memory_one_over_boundary() {
+    let op = MatMulOp::new(8, 8, 8);
+    let mem = op.memory_requirement() as u64; // 768
+
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(1)
+        .with_max_gpu_memory(mem - 1); // 767
+    let selector = BackendSelector::with_simulated_gpu(config, u64::MAX);
+
+    let selection = selector.select(&op);
+    // 768 > 767 is true -> memory exceeds
+    assert!(selection.is_simd());
+    assert_eq!(selection.reason, "Memory exceeds GPU limit");
+}
