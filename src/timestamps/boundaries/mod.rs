@@ -271,7 +271,12 @@ impl BoundaryDetector {
     }
 
     /// Compute valid search range around a frame
-    fn search_range(&self, energy_len: usize, approx_frame: usize, frame_rate: f32) -> Option<(usize, usize)> {
+    fn search_range(
+        &self,
+        energy_len: usize,
+        approx_frame: usize,
+        frame_rate: f32,
+    ) -> Option<(usize, usize)> {
         let search_window = (self.config.min_word_duration * frame_rate) as usize;
         let start = approx_frame.saturating_sub(search_window);
         let end = (approx_frame + search_window).min(energy_len);
