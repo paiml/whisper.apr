@@ -200,6 +200,16 @@ impl SincResampler {
             }
         }
 
+        debug_assert_eq!(
+            output.len(),
+            output_len,
+            "resampled output length must match calculated"
+        );
+        debug_assert!(
+            output.iter().all(|x| x.is_finite()),
+            "all resampled values must be finite"
+        );
+
         Ok(output)
     }
 

@@ -49,6 +49,9 @@ fuzz_test_max_ms = 600_000        # 10min (Tier 4 fuzzing)
 wasm_build_max_ms = 180_000       # 3min (WASM compilation target)
 wasm_size_max_bytes = 100_000_000 # 100MB (spec: binary_size_max_mb = 100)
 
+# Provability (also set under [quality_gates] and root level)
+provability_min = 0.60            # Relaxed threshold for mature codebase
+
 [staleness]
 # Metrics older than this trigger warnings
 max_age_days = 7
@@ -89,8 +92,8 @@ max_duplication_pct = 5.0         # <5% Type-3 clones (spec Section 9.1)
 # Dead code (coverage-based)
 max_dead_code_pct = 35.0          # Allow up to 35% uncovered (CLI/TUI have low test coverage)
 
-# Provability
-provability_min = 0.60            # Relaxed from 0.70 for mature codebase
+# Provability (moved to [thresholds] section where pmat reads it)
+# provability_min = 0.60
 
 # Performance budgets (WASM targets from specification Section 8)
 [performance]

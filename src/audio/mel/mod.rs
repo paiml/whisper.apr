@@ -310,12 +310,23 @@ impl MelFilterbank {
             }
         }
 
+        debug_assert_eq!(
+            mel_spec.len(),
+            self.n_mels * n_frames,
+            "mel_spec dimensions must match n_mels × n_frames"
+        );
+
         // Apply Whisper normalization
         let max_val = mel_spec.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
         for x in &mut mel_spec {
             *x = (*x).max(max_val - 8.0);
             *x = (*x + 4.0) / 4.0;
         }
+
+        debug_assert!(
+            mel_spec.iter().all(|x| x.is_finite()),
+            "all mel values must be finite after normalization"
+        );
 
         Ok(mel_spec)
     }

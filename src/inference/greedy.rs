@@ -186,11 +186,27 @@ fn softmax(logits: &[f32]) -> Vec<f32> {
     let sum: f32 = exp_vals.iter().sum();
 
     // Normalize
-    if sum > 1e-10 {
+    let probs = if sum > 1e-10 {
         exp_vals.iter().map(|&x| x / sum).collect()
     } else {
         vec![1.0 / logits.len() as f32; logits.len()]
-    }
+    };
+
+    debug_assert_eq!(
+        probs.len(),
+        logits.len(),
+        "softmax output must match input length"
+    );
+    debug_assert!(
+        probs.iter().all(|&p| (0.0..=1.0).contains(&p)),
+        "all softmax probabilities must be in [0, 1]"
+    );
+    debug_assert!(
+        (probs.iter().sum::<f32>() - 1.0).abs() < 1e-4,
+        "softmax probabilities must sum to ~1.0"
+    );
+
+    probs
 }
 
 #[cfg(test)]

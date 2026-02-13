@@ -6,12 +6,22 @@ use super::vector::dot;
 #[must_use]
 pub fn hann_window(size: usize) -> Vec<f32> {
     use std::f32::consts::PI;
-    (0..size)
+    let window: Vec<f32> = (0..size)
         .map(|i| {
             let x = (PI * i as f32) / (size - 1) as f32;
             x.sin().powi(2)
         })
-        .collect()
+        .collect();
+    debug_assert_eq!(
+        window.len(),
+        size,
+        "hann window length must match requested size"
+    );
+    debug_assert!(
+        window.iter().all(|&x| (0.0..=1.0).contains(&x)),
+        "all hann window values must be in [0, 1]"
+    );
+    window
 }
 
 /// SIMD-accelerated element-wise multiply-accumulate

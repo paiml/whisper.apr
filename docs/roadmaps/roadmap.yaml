@@ -115,11 +115,11 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'New task: WAPR-QA-003'
-  status: inprogress
+  status: completed
   priority: medium
   assigned_to: null
   created: 2025-12-14T10:05:05.084937937+00:00
-  updated: 2026-02-12T12:58:07.706385351+00:00
+  updated: 2026-02-12T13:37:47.281533725+00:00
   spec: null
   acceptance_criteria: []
   phases: []
@@ -643,11 +643,11 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'New task: WAPR-QA-004'
-  status: completed
+  status: inprogress
   priority: medium
   assigned_to: null
   created: 2025-12-16T02:07:19.246090355+00:00
-  updated: 2025-12-16T02:10:13.659593391+00:00
+  updated: 2026-02-13T06:56:52.759686570+00:00
   spec: null
   acceptance_criteria: []
   phases: []
@@ -1510,4 +1510,53 @@ roadmap:
   - qa
   - coverage
   - tdg
+  notes: null
+- id: PMAT-024
+  github_issue: null
+  item_type: task
+  title: 'WAPR-QA-004: Coverage gaps + entropy reduction'
+  status: completed
+  priority: high
+  assigned_to: null
+  created: 2026-02-12T13:56:17Z
+  updated: 2026-02-12T17:03:36.413102575+00:00
+  spec: null
+  acceptance_criteria:
+  - Close top coverage gaps and reduce entropy in non-generated files
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-PARITY-002
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PARITY-002'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-02-12T15:08:17.614814868+00:00
+  updated: 2026-02-12T15:08:17.614814868+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-PARITY-003
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-PARITY-003'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-02-12T23:28:15.626543586+00:00
+  updated: 2026-02-12T23:28:15.626543586+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
   notes: null

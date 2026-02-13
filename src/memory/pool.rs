@@ -36,7 +36,13 @@ impl SizeClass {
         }
         // Round up to next power of 2
         let bits = usize::BITS - (size - 1).leading_zeros();
-        Self(1 << bits)
+        let result = Self(1 << bits);
+        debug_assert!(
+            result.0.is_power_of_two(),
+            "size class must be a power of 2"
+        );
+        debug_assert!(result.0 >= size, "size class must be >= requested size");
+        result
     }
 
     /// Get the actual allocation size for this class

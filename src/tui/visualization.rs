@@ -202,6 +202,11 @@ fn attention_cell_average(
 
 /// Map a normalized value [0, 1] to a heatmap character
 fn heatmap_char(chars: &[char], normalized: f32) -> char {
+    debug_assert!(!chars.is_empty(), "character palette must not be empty");
+    debug_assert!(
+        (0.0..=1.0).contains(&normalized),
+        "normalized value must be in [0, 1], got {normalized}"
+    );
     let idx = (normalized * (chars.len() - 1) as f32) as usize;
     chars[idx.min(chars.len() - 1)]
 }
