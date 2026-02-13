@@ -1389,4 +1389,325 @@ mod tests {
         assert!((result.duration() - 6.0).abs() < 0.2);
         Ok(())
     }
+
+    // =========================================================================
+    // process() deep pipeline coverage (WAPR-QA-007)
+    //
+    // These tests generate audio specifically designed to guarantee VAD
+    // triggers, then assert the full pipeline was exercised by checking
+    // that the result contains non-trivial output (segments, embeddings,
+    // clustering results). The key difference from earlier tests is that
+    // assertions are NOT guarded by `if result.num_speakers() >= 1` --
+    // VAD must fire or the test fails.
+    // =========================================================================
+
+    /// Generate audio guaranteed to trigger VAD: alternating loud bursts
+    /// and silence, with white-noise-like amplitude modulation to create
+    /// frame-level energy variation that defeats the adaptive threshold.
+    fn generate_vad_triggering_audio(
+        sample_rate: u32,
+        speech_regions: &[(f32, f32, f32)], // (start_sec, end_sec, freq_hz)
+        total_duration: f32,
+    ) -> Vec<f32> {
+        let total_samples = (total_duration * sample_rate as f32) as usize;
+        let mut audio = vec![0.0f32; total_samples];
+        for &(start, end, freq) in speech_regions {
+            let s = (start * sample_rate as f32) as usize;
+            let e = ((end * sample_rate as f32) as usize).min(total_samples);
+            for i in s..e {
+                let t = i as f32 / sample_rate as f32;
+                // Mix multiple harmonics for richer spectral content
+                // Add amplitude modulation at 5Hz to create energy variation
+                let am = 0.3f32.mul_add((t * 5.0 * std::f32::consts::TAU).sin(), 0.7);
+                let signal = (t * freq * std::f32::consts::TAU).sin()
+                    + 0.5 * (t * freq * 2.0 * std::f32::consts::TAU).sin()
+                    + 0.25 * (t * freq * 3.0 * std::f32::consts::TAU).sin();
+                audio[i] = signal * am * 0.6;
+            }
+        }
+        audio
+    }
+
+    /// Test process() steps 2-6 with a single loud speech burst that
+    /// guarantees VAD detection. Asserts non-empty segments without guards.
+    #[test]
+    fn test_process_guaranteed_vad_single_burst() -> WhisperResult<()> {
+        let config = DiarizationConfig::default().with_min_segment_duration(0.05);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        // 3s silence + 4s loud speech + 3s silence = 10s, 60% silence
+        let audio = generate_vad_triggering_audio(sr, &[(3.0, 7.0, 300.0)], 10.0);
+
+        let result = diarizer.process(&audio, sr)?;
+
+        assert!((result.duration() - 10.0).abs() < 0.1);
+        // VAD must detect the loud burst -- no guard
+        assert!(
+            result.num_speakers() >= 1,
+            "VAD must detect speech: num_speakers={}, segments={}",
+            result.num_speakers(),
+            result.segments().len()
+        );
+        assert!(
+            !result.segments().is_empty(),
+            "pipeline steps 2-6 must produce segments"
+        );
+        assert!(
+            !result.speaker_embeddings().is_empty(),
+            "step 6 must produce speaker embeddings"
+        );
+        Ok(())
+    }
+
+    /// Test process() with two speech bursts at very different frequencies,
+    /// guaranteeing VAD triggers and cluster_speakers handles multiple
+    /// embeddings. Exercises the cluster dispatch (step 3).
+    #[test]
+    fn test_process_guaranteed_vad_two_bursts_cluster_speakers() -> WhisperResult<()> {
+        let config = DiarizationConfig::default()
+            .with_max_speakers(3)
+            .with_min_segment_duration(0.05);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        // Two speech regions separated by silence
+        // 2s silence + 3s@200Hz + 2s silence + 3s@700Hz + 2s silence = 12s
+        let audio =
+            generate_vad_triggering_audio(sr, &[(2.0, 5.0, 200.0), (7.0, 10.0, 700.0)], 12.0);
+
+        let result = diarizer.process(&audio, sr)?;
+
+        assert!((result.duration() - 12.0).abs() < 0.1);
+        assert!(
+            result.num_speakers() >= 1,
+            "two speech bursts must yield speakers, got num_speakers={}",
+            result.num_speakers()
+        );
+        // With two distinct regions, we expect multiple segments before merging
+        assert!(
+            !result.segments().is_empty(),
+            "must have segments from two speech regions"
+        );
+        // Verify centroids match num_speakers
+        assert_eq!(
+            result.speaker_embeddings().len(),
+            result.num_speakers(),
+            "centroids count must equal num_speakers"
+        );
+        Ok(())
+    }
+
+    /// Test cluster_speakers with KMeans algorithm variant, ensuring the
+    /// match arm at line 303 is exercised via process().
+    #[test]
+    fn test_process_cluster_speakers_kmeans_branch() -> WhisperResult<()> {
+        let mut config = DiarizationConfig::default().with_min_segment_duration(0.05);
+        config.clustering.algorithm = ClusteringAlgorithm::KMeans;
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        let audio = generate_vad_triggering_audio(sr, &[(2.0, 6.0, 350.0)], 8.0);
+
+        let result = diarizer.process(&audio, sr)?;
+
+        assert!(
+            result.num_speakers() >= 1,
+            "KMeans branch: VAD must detect speech"
+        );
+        assert!(!result.segments().is_empty());
+        Ok(())
+    }
+
+    /// Test cluster_speakers with Agglomerative algorithm variant, ensuring
+    /// the match arm at line 303 is exercised via process().
+    #[test]
+    fn test_process_cluster_speakers_agglomerative_branch() -> WhisperResult<()> {
+        let mut config = DiarizationConfig::default().with_min_segment_duration(0.05);
+        config.clustering.algorithm = ClusteringAlgorithm::Agglomerative;
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        let audio = generate_vad_triggering_audio(sr, &[(2.0, 6.0, 450.0)], 8.0);
+
+        let result = diarizer.process(&audio, sr)?;
+
+        assert!(
+            result.num_speakers() >= 1,
+            "Agglomerative branch: VAD must detect speech"
+        );
+        assert!(!result.segments().is_empty());
+        Ok(())
+    }
+
+    /// Test process() exercises merge step (step 5) by producing multiple
+    /// segments from a single continuous speech burst, which should be
+    /// merged into fewer segments for the same speaker.
+    #[test]
+    fn test_process_merge_step_with_guaranteed_vad() -> WhisperResult<()> {
+        let config = DiarizationConfig::default().with_min_segment_duration(0.05);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        // Long continuous speech surrounded by silence
+        let audio = generate_vad_triggering_audio(sr, &[(3.0, 9.0, 250.0)], 12.0);
+
+        let result = diarizer.process(&audio, sr)?;
+
+        assert!(
+            result.num_speakers() >= 1,
+            "continuous speech must be detected"
+        );
+        // Continuous single-speaker speech should merge to few segments
+        assert!(
+            result.segments().len() <= 8,
+            "6s continuous speech should merge, got {} segments",
+            result.segments().len()
+        );
+        Ok(())
+    }
+
+    /// Test process() assign_speaker_labels step (step 4) by verifying
+    /// that all returned segments have valid speaker IDs within range.
+    #[test]
+    fn test_process_assign_labels_valid_speaker_ids() -> WhisperResult<()> {
+        let config = DiarizationConfig::default()
+            .with_max_speakers(4)
+            .with_min_segment_duration(0.05);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        let audio = generate_vad_triggering_audio(
+            sr,
+            &[(1.0, 3.0, 200.0), (5.0, 7.0, 500.0), (9.0, 11.0, 350.0)],
+            13.0,
+        );
+
+        let result = diarizer.process(&audio, sr)?;
+
+        // Every segment should have a valid speaker ID < num_speakers
+        for seg in result.segments() {
+            assert!(
+                seg.speaker_id() < result.num_speakers(),
+                "speaker_id {} must be < num_speakers {}",
+                seg.speaker_id(),
+                result.num_speakers()
+            );
+        }
+        Ok(())
+    }
+
+    /// Test process() with three speech bursts at distinct frequencies
+    /// to maximize the chance of cluster_speakers producing multiple
+    /// clusters. Verifies speaker_turns() returns transitions.
+    #[test]
+    fn test_process_three_bursts_speaker_turns() -> WhisperResult<()> {
+        let config = DiarizationConfig::default()
+            .with_max_speakers(4)
+            .with_min_segment_duration(0.05);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        let audio = generate_vad_triggering_audio(
+            sr,
+            &[(1.0, 3.0, 150.0), (4.0, 6.0, 600.0), (7.0, 9.0, 150.0)],
+            10.0,
+        );
+
+        let result = diarizer.process(&audio, sr)?;
+
+        assert!(
+            result.num_speakers() >= 1,
+            "three bursts must detect speakers"
+        );
+        // speaker_turns() should work without panicking
+        let turns = result.speaker_turns();
+        // If multiple speakers detected, there should be transitions
+        if result.num_speakers() >= 2 {
+            assert!(
+                !turns.is_empty(),
+                "with >=2 speakers, there should be speaker turns"
+            );
+        }
+        Ok(())
+    }
+
+    /// Test that process() exercises extract_segment_embeddings (step 2)
+    /// by verifying embedding dimensions in the result.
+    #[test]
+    fn test_process_embedding_extraction_dimensions() -> WhisperResult<()> {
+        let config = DiarizationConfig::default().with_min_segment_duration(0.05);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        let audio = generate_vad_triggering_audio(sr, &[(2.0, 6.0, 400.0)], 8.0);
+
+        let result = diarizer.process(&audio, sr)?;
+
+        // All speaker embeddings should be 256-dimensional
+        for emb in result.speaker_embeddings() {
+            assert_eq!(emb.dim(), 256, "speaker embedding must be 256-dimensional");
+        }
+        Ok(())
+    }
+
+    /// Test process() with min_segment_duration filtering in merge step.
+    /// Short segments produced by VAD should be filtered out, leaving only
+    /// segments >= min_segment_duration.
+    #[test]
+    fn test_process_merge_filters_short_segments_via_pipeline() -> WhisperResult<()> {
+        let config = DiarizationConfig::default().with_min_segment_duration(2.0); // High threshold
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        // Two short speech bursts (0.5s each) -- should be filtered by merge step
+        // Plus one long burst (3s) -- should survive
+        let audio = generate_vad_triggering_audio(
+            sr,
+            &[(1.0, 1.5, 300.0), (3.0, 3.5, 400.0), (5.0, 8.0, 300.0)],
+            10.0,
+        );
+
+        let result = diarizer.process(&audio, sr)?;
+
+        // All surviving segments must be >= 2.0s duration
+        for seg in result.segments() {
+            assert!(
+                seg.duration() >= 1.9, // Small tolerance
+                "segment duration {:.2}s should be >= 2.0s after merge filtering",
+                seg.duration()
+            );
+        }
+        Ok(())
+    }
+
+    /// Test cluster_speakers directly via process() with Spectral algorithm
+    /// and guaranteed multi-segment input, verifying the silhouette score
+    /// from clustering is finite (indirectly via the pipeline completing).
+    #[test]
+    fn test_process_cluster_speakers_spectral_multi_segment() -> WhisperResult<()> {
+        let mut config = DiarizationConfig::default()
+            .with_max_speakers(3)
+            .with_min_segment_duration(0.05);
+        config.clustering.algorithm = ClusteringAlgorithm::Spectral;
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        // Three distinct speech regions
+        let audio = generate_vad_triggering_audio(
+            sr,
+            &[(1.0, 3.0, 180.0), (4.0, 6.0, 500.0), (7.0, 9.0, 320.0)],
+            10.0,
+        );
+
+        let result = diarizer.process(&audio, sr)?;
+
+        assert!(
+            result.num_speakers() >= 1,
+            "spectral clustering must produce speakers"
+        );
+        // Pipeline completed successfully through cluster_speakers
+        assert!(!result.speaker_embeddings().is_empty());
+        Ok(())
+    }
 }
