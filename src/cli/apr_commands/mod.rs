@@ -5,7 +5,10 @@
 
 mod phase3;
 #[allow(unused_imports)]
-use phase3::{run_decrypt, run_encrypt, run_he_inspect, run_import_sharded, run_profile, run_quantize, run_sign, run_verify_sig};
+use phase3::{
+    run_decrypt, run_encrypt, run_he_inspect, run_import_sharded, run_profile, run_quantize,
+    run_sign, run_verify_sig,
+};
 
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -39,8 +42,10 @@ use super::apr_args::{
 use super::commands::{CliError, CliResult, CommandResult};
 
 mod rosetta;
-use rosetta::{run_rosetta, run_rosetta_convert, run_rosetta_diff, run_rosetta_fingerprint, run_rosetta_inspect, run_rosetta_verify};
-
+use rosetta::{
+    run_rosetta, run_rosetta_convert, run_rosetta_diff, run_rosetta_fingerprint,
+    run_rosetta_inspect, run_rosetta_verify,
+};
 
 /// Dispatch apr subcommand with timing and quiet-mode support.
 ///
@@ -1162,9 +1167,7 @@ fn run_f16_audit(args: &AprF16AuditArgs, global: &super::args::Args) -> CliResul
 
 /// Inspect a model file via RosettaStone, returning the report or a
 /// user-friendly [`CliError`].
-fn inspect_model(
-    path: &std::path::Path,
-) -> CliResult<aprender::format::InspectionReport> {
+fn inspect_model(path: &std::path::Path) -> CliResult<aprender::format::InspectionReport> {
     let rosetta = RosettaStone::new();
     rosetta
         .inspect(path)
@@ -1175,9 +1178,7 @@ fn inspect_model(
 ///
 /// Combines the directory-exists, is-sharded, and has-index checks into a single
 /// guard so callers can use one early-return instead of three.
-fn validate_sharded_source(
-    source: &std::path::Path,
-) -> CliResult<std::path::PathBuf> {
+fn validate_sharded_source(source: &std::path::Path) -> CliResult<std::path::PathBuf> {
     use aprender::format::sharded::is_sharded_model;
 
     if !source.exists() {

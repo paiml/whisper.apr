@@ -580,8 +580,7 @@ pub(super) fn run_profile(
     // Load audio
     let audio_bytes =
         fs::read(&args.audio).map_err(|e| CliError::InvalidArgument(format!("Audio: {e}")))?;
-    let samples =
-        super::super::commands::load_audio_samples(args.audio.as_path(), &audio_bytes)?;
+    let samples = super::super::commands::load_audio_samples(args.audio.as_path(), &audio_bytes)?;
     let audio_duration_s = samples.len() as f64 / 16000.0;
 
     let total_runs = args.warmup + args.runs;

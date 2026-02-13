@@ -138,6 +138,32 @@ impl PooledBuffer {
     }
 }
 
+/// Statistics counters for pool operations (Cell for zero-borrow increment)
+#[derive(Debug, Default)]
+struct PoolCounters {
+    allocations: Cell<usize>,
+    hits: Cell<usize>,
+    misses: Cell<usize>,
+    returns: Cell<usize>,
+    dropped: Cell<usize>,
+}
+
+impl PoolCounters {
+    fn inc(counter: &Cell<usize>) {
+        counter.set(counter.get() + 1);
+    }
+
+    fn to_stats(&self) -> PoolStats {
+        PoolStats {
+            allocations: self.allocations.get(),
+            hits: self.hits.get(),
+            misses: self.misses.get(),
+            returns: self.returns.get(),
+            dropped: self.dropped.get(),
+        }
+    }
+}
+
 /// Memory pool for tensor allocations
 ///
 /// Maintains pools of buffers at different size classes for efficient reuse.
@@ -145,16 +171,8 @@ impl PooledBuffer {
 pub struct MemoryPool {
     /// Pools of available buffers, keyed by size class
     pools: RefCell<BTreeMap<SizeClass, Vec<PooledBuffer>>>,
-    /// Statistics counters (Cell for zero-borrow increment)
-    stat_allocations: Cell<usize>,
-    /// Hit counter
-    stat_hits: Cell<usize>,
-    /// Miss counter
-    stat_misses: Cell<usize>,
-    /// Return counter
-    stat_returns: Cell<usize>,
-    /// Drop counter
-    stat_dropped: Cell<usize>,
+    /// Statistics counters
+    counters: PoolCounters,
     /// Maximum buffers per size class
     max_per_class: usize,
 }
@@ -196,15 +214,7 @@ impl MemoryPool {
     /// Create a new memory pool with default settings
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            pools: RefCell::new(BTreeMap::new()),
-            stat_allocations: Cell::new(0),
-            stat_hits: Cell::new(0),
-            stat_misses: Cell::new(0),
-            stat_returns: Cell::new(0),
-            stat_dropped: Cell::new(0),
-            max_per_class: 16,
-        }
+        Self::with_max_per_class(16)
     }
 
     /// Create a memory pool with custom max buffers per size class
@@ -212,33 +222,28 @@ impl MemoryPool {
     pub fn with_max_per_class(max_per_class: usize) -> Self {
         Self {
             pools: RefCell::new(BTreeMap::new()),
-            stat_allocations: Cell::new(0),
-            stat_hits: Cell::new(0),
-            stat_misses: Cell::new(0),
-            stat_returns: Cell::new(0),
-            stat_dropped: Cell::new(0),
+            counters: PoolCounters::default(),
             max_per_class,
         }
-    }
-
-    /// Increment a Cell counter by 1
-    fn inc(counter: &Cell<usize>) {
-        counter.set(counter.get() + 1);
     }
 
     /// Get a buffer of at least the requested size
     pub fn get(&self, size: usize) -> PooledBuffer {
         let size_class = SizeClass::for_size(size);
-        let cached = self.pools.borrow_mut().get_mut(&size_class).and_then(Vec::pop);
-        Self::inc(&self.stat_allocations);
+        let cached = self
+            .pools
+            .borrow_mut()
+            .get_mut(&size_class)
+            .and_then(Vec::pop);
+        PoolCounters::inc(&self.counters.allocations);
 
         if let Some(mut buffer) = cached {
-            Self::inc(&self.stat_hits);
+            PoolCounters::inc(&self.counters.hits);
             buffer.set_len(size);
             buffer.fill(0.0);
             buffer
         } else {
-            Self::inc(&self.stat_misses);
+            PoolCounters::inc(&self.counters.misses);
             let mut buffer = PooledBuffer::new(size_class);
             buffer.set_len(size);
             buffer
@@ -254,27 +259,21 @@ impl MemoryPool {
 
     /// Return a buffer to the pool for reuse
     pub fn return_buffer(&self, buffer: PooledBuffer) {
-        Self::inc(&self.stat_returns);
+        PoolCounters::inc(&self.counters.returns);
         let mut pools = self.pools.borrow_mut();
         let pool = pools.entry(buffer.size_class).or_default();
 
         if pool.len() < self.max_per_class {
             pool.push(buffer);
         } else {
-            Self::inc(&self.stat_dropped);
+            PoolCounters::inc(&self.counters.dropped);
         }
     }
 
     /// Get pool statistics
     #[must_use]
     pub fn stats(&self) -> PoolStats {
-        PoolStats {
-            allocations: self.stat_allocations.get(),
-            hits: self.stat_hits.get(),
-            misses: self.stat_misses.get(),
-            returns: self.stat_returns.get(),
-            dropped: self.stat_dropped.get(),
-        }
+        self.counters.to_stats()
     }
 
     /// Clear all pooled buffers

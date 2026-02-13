@@ -799,4 +799,53 @@ mod tests {
         assert!(display.contains("500 params"));
         assert!(display.contains("compression"));
     }
+
+    // =========================================================================
+    // ConversionStats::with_compression additional coverage (WAPR-QA-005)
+    // =========================================================================
+
+    #[test]
+    fn test_conversion_stats_with_compression_high_ratio() {
+        let stats = ConversionStats {
+            n_tensors: 50,
+            n_params: 1_000_000,
+            input_bytes: 10_000,
+            output_bytes: 1_000,
+            compression_ratio: 0.0, // unset
+        };
+        let stats = stats.with_compression();
+        assert!(
+            (stats.compression_ratio - 0.1).abs() < f32::EPSILON,
+            "expected 0.1, got {}",
+            stats.compression_ratio
+        );
+    }
+
+    #[test]
+    fn test_conversion_stats_with_compression_expansion() {
+        // Output larger than input (expansion, not compression)
+        let stats = ConversionStats {
+            n_tensors: 1,
+            n_params: 100,
+            input_bytes: 100,
+            output_bytes: 200,
+            compression_ratio: 0.0,
+        };
+        let stats = stats.with_compression();
+        assert!(
+            (stats.compression_ratio - 2.0).abs() < f32::EPSILON,
+            "expected 2.0 for expansion, got {}",
+            stats.compression_ratio
+        );
+    }
+
+    #[test]
+    fn test_conversion_stats_default_then_with_compression() {
+        let stats = ConversionStats::default().with_compression();
+        // Default has input_bytes=0, so compression_ratio stays 0
+        assert!(
+            (stats.compression_ratio - 0.0).abs() < f32::EPSILON,
+            "default with zero input should yield 0.0 ratio"
+        );
+    }
 }

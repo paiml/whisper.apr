@@ -249,3 +249,26 @@ fn test_embedding_config_with_hop_and_window() {
     assert!((config.window_size - 3.0).abs() < f32::EPSILON);
     assert!((config.hop_size - 1.5).abs() < f32::EPSILON);
 }
+
+// =========================================================================
+// with_hop_size additional coverage (WAPR-QA-005)
+// =========================================================================
+
+#[test]
+fn test_embedding_config_with_hop_size_large() {
+    let config = EmbeddingConfig::default().with_hop_size(2.0);
+    assert!((config.hop_size - 2.0).abs() < f32::EPSILON);
+    // Other fields should be unchanged
+    assert_eq!(config.embedding_dim, EMBEDDING_DIM);
+    assert!(config.normalize);
+}
+
+#[test]
+fn test_embedding_config_with_hop_size_preserves_other_fields() {
+    let config = EmbeddingConfig::for_accuracy().with_hop_size(0.3);
+    // hop_size updated
+    assert!((config.hop_size - 0.3).abs() < f32::EPSILON);
+    // window_size from for_accuracy() preserved
+    assert!((config.window_size - 2.0).abs() < f32::EPSILON);
+    assert!(config.use_mean_pooling);
+}
