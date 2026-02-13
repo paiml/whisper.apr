@@ -100,6 +100,40 @@ fn test_log_softmax_with_temperature() {
     assert!(diff_cold.abs() > diff_hot.abs());
 }
 
+#[test]
+fn test_log_softmax_all_neg_inf_returns_uniform() {
+    let decoder = BeamSearchDecoder::new(3, 10);
+    let logits = vec![f32::NEG_INFINITY; 5];
+    let log_probs = decoder.log_softmax(&logits);
+
+    // Should return uniform distribution, not NaN
+    assert_eq!(log_probs.len(), 5);
+    assert!(log_probs.iter().all(|x| x.is_finite()));
+
+    // All values equal (uniform)
+    let expected = -(5.0_f32).ln();
+    for &lp in &log_probs {
+        assert!((lp - expected).abs() < 1e-5);
+    }
+}
+
+#[test]
+fn test_log_softmax_some_neg_inf() {
+    let decoder = BeamSearchDecoder::new(3, 10);
+    // Mix of finite and -inf (common after token suppression)
+    let logits = vec![f32::NEG_INFINITY, 2.0, f32::NEG_INFINITY, 3.0];
+    let log_probs = decoder.log_softmax(&logits);
+
+    // The finite logits should have valid log-prob, suppressed ones get -inf
+    assert!(log_probs[1].is_finite());
+    assert!(log_probs[3].is_finite());
+    // Suppressed tokens get -inf log-prob (correct behavior)
+    assert_eq!(log_probs[0], f32::NEG_INFINITY);
+    assert_eq!(log_probs[2], f32::NEG_INFINITY);
+    // Original order preserved among finite values
+    assert!(log_probs[3] > log_probs[1]); // 3.0 > 2.0
+}
+
 // =========================================================================
 // Top-K Tests
 // =========================================================================

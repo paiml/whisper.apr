@@ -239,6 +239,10 @@ impl BeamSearchDecoder {
     }
 
     /// Compute log softmax of logits
+    ///
+    /// Numerically stable: handles degenerate cases where all logits are
+    /// suppressed to `-inf` (e.g., after token suppression) by returning
+    /// uniform log-probabilities.
     pub(crate) fn log_softmax(&self, logits: &[f32]) -> Vec<f32> {
         let scaled: Vec<f32> = if self.temperature > 0.0 {
             logits.iter().map(|&x| x / self.temperature).collect()
@@ -248,6 +252,13 @@ impl BeamSearchDecoder {
 
         // Find max for numerical stability
         let max_val = scaled.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+
+        // Degenerate case: all logits are -inf or NaN (e.g., all tokens suppressed)
+        // Return uniform distribution to avoid NaN propagation
+        if !max_val.is_finite() {
+            let uniform = -(logits.len() as f32).ln();
+            return vec![uniform; logits.len()];
+        }
 
         // Compute log-sum-exp
         let log_sum_exp = scaled
@@ -266,8 +277,8 @@ impl BeamSearchDecoder {
             "log_softmax output must match input length"
         );
         debug_assert!(
-            log_probs.iter().all(|x| x.is_finite()),
-            "all log probabilities must be finite"
+            log_probs.iter().all(|x| !x.is_nan() && *x != f32::INFINITY),
+            "log probabilities must not be NaN or +inf"
         );
 
         log_probs
