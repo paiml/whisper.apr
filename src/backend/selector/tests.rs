@@ -1851,3 +1851,154 @@ fn test_select_batch_exercises_select_automatic_gpu() {
     assert!(selection.is_gpu());
     assert_eq!(selection.reason, "Large workload benefits from GPU");
 }
+
+// =========================================================================
+// BackendSelector::new() coverage (WAPR-QA-009)
+//
+// new() at line 144 has 57.1% coverage because the GPU-available path
+// (lines 148-157) is never exercised in tests without the webgpu feature.
+// These tests cover the remaining paths by:
+// 1. Verifying the no-GPU path produces expected field values
+// 2. Testing with_simulated_gpu to exercise equivalent GPU logic
+// 3. Validating all constructor field assignments
+// =========================================================================
+
+/// Verify new() GPU detection path: without webgpu, detect_gpu returns
+/// unavailable, so gpu_caps is None and gpu_available is false.
+/// This covers lines 146 (simd_caps), 147 (gpu_result), 158-160 (else branch).
+#[test]
+fn test_new_covers_no_gpu_detection_path() {
+    let config = SelectorConfig::default();
+    let selector = BackendSelector::new(config);
+
+    // Line 146: simd_caps populated
+    let simd = selector.simd_capabilities();
+    assert!(simd.available);
+    assert!(simd.max_parallelism > 0);
+    assert!(simd.performance_score > 0.0);
+
+    // Lines 158-160: gpu_result.available is false
+    assert!(!selector.gpu_available());
+    assert!(selector.gpu_capabilities().is_none());
+
+    // Line 162-167: Self struct fields
+    assert_eq!(selector.config().strategy, SelectionStrategy::Automatic);
+}
+
+/// Verify new() stores all config fields correctly with each
+/// SelectorConfig constructor variant.
+#[test]
+fn test_new_all_config_constructors() {
+    // Default
+    let s1 = BackendSelector::new(SelectorConfig::default());
+    assert_eq!(s1.config().strategy, SelectionStrategy::Automatic);
+    assert_eq!(s1.config().gpu_threshold_flops, 100_000);
+
+    // For inference
+    let s2 = BackendSelector::new(SelectorConfig::for_inference());
+    assert_eq!(s2.config().strategy, SelectionStrategy::Automatic);
+    assert_eq!(s2.config().gpu_threshold_flops, 1_000_000);
+    assert_eq!(s2.config().gpu_dispatch_overhead_us, 50);
+
+    // Prefer GPU
+    let s3 = BackendSelector::new(SelectorConfig::prefer_gpu());
+    assert_eq!(s3.config().strategy, SelectionStrategy::PreferGpu);
+
+    // Prefer SIMD
+    let s4 = BackendSelector::new(SelectorConfig::prefer_simd());
+    assert_eq!(s4.config().strategy, SelectionStrategy::PreferSimd);
+
+    // Threshold
+    let s5 = BackendSelector::new(
+        SelectorConfig::default().with_strategy(SelectionStrategy::threshold(42)),
+    );
+    assert!(matches!(
+        s5.config().strategy,
+        SelectionStrategy::Threshold { min_flops: 42 }
+    ));
+}
+
+/// Verify with_simulated_gpu exercises the GPU-available path equivalent,
+/// setting gpu_caps to Some and gpu_available to true (analogous to
+/// lines 148-157 in new() when detect_gpu returns available).
+#[test]
+#[allow(clippy::expect_used)]
+fn test_simulated_gpu_covers_gpu_caps_construction() {
+    let config = SelectorConfig::for_inference();
+    let buffer_size = 512 * 1024 * 1024_u64;
+    let selector = BackendSelector::with_simulated_gpu(config, buffer_size);
+
+    // gpu_available = true (line 165 equivalent)
+    assert!(selector.gpu_available());
+
+    // gpu_caps = Some(...) (lines 148-157 equivalent)
+    let gpu = selector
+        .gpu_capabilities()
+        .expect("GPU caps should be present");
+    assert!(gpu.available);
+    assert_eq!(gpu.max_buffer_size, buffer_size);
+    assert!(gpu.supports_f16);
+    assert_eq!(gpu.backend_type, BackendType::Gpu);
+
+    // simd_caps always populated (line 145)
+    assert!(selector.simd_capabilities().available);
+
+    // Config stored correctly (line 162)
+    assert_eq!(selector.config().strategy, SelectionStrategy::Automatic);
+    assert_eq!(selector.config().gpu_threshold_flops, 1_000_000);
+}
+
+/// Verify that new() with custom config preserves all builder-set values
+/// and the GPU detection doesn't corrupt them.
+#[test]
+fn test_new_preserves_custom_config_after_gpu_detection() {
+    let config = SelectorConfig::default()
+        .with_strategy(SelectionStrategy::threshold(99_999))
+        .with_gpu_threshold(12_345)
+        .with_max_gpu_memory(67_890);
+
+    let selector = BackendSelector::new(config);
+
+    // Config should be preserved exactly as set, even after GPU detection
+    let stored = selector.config();
+    assert!(matches!(
+        stored.strategy,
+        SelectionStrategy::Threshold { min_flops: 99_999 }
+    ));
+    assert_eq!(stored.gpu_threshold_flops, 12_345);
+    assert_eq!(stored.max_gpu_memory, 67_890);
+}
+
+/// Test new() with a config that has zero thresholds to exercise edge cases.
+#[test]
+fn test_new_zero_threshold_config() {
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(0)
+        .with_max_gpu_memory(0);
+
+    let selector = BackendSelector::new(config);
+
+    assert_eq!(selector.config().gpu_threshold_flops, 0);
+    assert_eq!(selector.config().max_gpu_memory, 0);
+
+    // Even with zero memory limit, SIMD should still work
+    let op = MatMulOp::new(4, 4, 4);
+    let selection = selector.select(&op);
+    assert!(!selection.reason.is_empty());
+}
+
+/// Test new() followed by summary() to exercise the full constructor
+/// and display path.
+#[test]
+fn test_new_then_summary_exercises_constructor() {
+    let selector = BackendSelector::new(SelectorConfig::default());
+    let summary = selector.summary();
+
+    // Summary should include strategy description
+    assert!(summary.contains("automatic"));
+    assert!(summary.contains("SIMD"));
+    // Without GPU, should show "not available"
+    if !selector.gpu_available() {
+        assert!(summary.contains("not available"));
+    }
+}
