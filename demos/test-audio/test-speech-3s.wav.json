@@ -1,0 +1,227 @@
+{
+	"systeminfo": "WHISPER : COREML = 0 | OPENVINO = 0 | CUDA : ARCHS = 500,610,700,750,800,860,890 | PEER_MAX_BATCH_SIZE = 128 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | AVX512 = 1 | AVX512_VBMI = 1 | AVX512_VNNI = 1 | AVX512_BF16 = 1 | OPENMP = 1 | REPACK = 1 | ",
+	"model": {
+		"type": "tiny",
+		"multilingual": true,
+		"vocab": 51865,
+		"audio": {
+			"ctx": 1500,
+			"state": 384,
+			"head": 6,
+			"layer": 4
+		},
+		"text": {
+			"ctx": 448,
+			"state": 384,
+			"head": 6,
+			"layer": 4
+		},
+		"mels": 80,
+		"ftype": 1
+	},
+	"params": {
+		"model": "/home/noah/src/whisper.cpp/models/ggml-tiny.bin",
+		"language": "en",
+		"translate": false
+	},
+	"result": {
+		"language": "en"
+	},
+	"transcription": [
+		{
+			"timestamps": {
+				"from": "00:00:00,000",
+				"to": "00:00:03,000"
+			},
+			"offsets": {
+				"from": 0,
+				"to": 3000
+			},
+			"text": " The birch can use lid on this mood pipe.",
+			"tokens": [
+				{
+					"text": "[_BEG_]",
+					"timestamps": {
+						"from": "00:00:00,000",
+						"to": "00:00:00,000"
+					},
+					"offsets": {
+						"from": 0,
+						"to": 0
+					},
+					"id": 50364,
+					"p": 0.948952,
+					"t_dtw": -1
+				},
+				{
+					"text": " The",
+					"timestamps": {
+						"from": "00:00:00,000",
+						"to": "00:00:00,290"
+					},
+					"offsets": {
+						"from": 0,
+						"to": 290
+					},
+					"id": 440,
+					"p": 0.680467,
+					"t_dtw": -1
+				},
+				{
+					"text": " bir",
+					"timestamps": {
+						"from": "00:00:00,290",
+						"to": "00:00:00,580"
+					},
+					"offsets": {
+						"from": 290,
+						"to": 580
+					},
+					"id": 1904,
+					"p": 0.134152,
+					"t_dtw": -1
+				},
+				{
+					"text": "ch",
+					"timestamps": {
+						"from": "00:00:00,580",
+						"to": "00:00:00,770"
+					},
+					"offsets": {
+						"from": 580,
+						"to": 770
+					},
+					"id": 339,
+					"p": 0.983384,
+					"t_dtw": -1
+				},
+				{
+					"text": " can",
+					"timestamps": {
+						"from": "00:00:00,770",
+						"to": "00:00:01,010"
+					},
+					"offsets": {
+						"from": 770,
+						"to": 1010
+					},
+					"id": 393,
+					"p": 0.951089,
+					"t_dtw": -1
+				},
+				{
+					"text": " use",
+					"timestamps": {
+						"from": "00:00:01,160",
+						"to": "00:00:01,350"
+					},
+					"offsets": {
+						"from": 1160,
+						"to": 1350
+					},
+					"id": 764,
+					"p": 0.659299,
+					"t_dtw": -1
+				},
+				{
+					"text": " lid",
+					"timestamps": {
+						"from": "00:00:01,350",
+						"to": "00:00:01,530"
+					},
+					"offsets": {
+						"from": 1350,
+						"to": 1530
+					},
+					"id": 10252,
+					"p": 0.942941,
+					"t_dtw": -1
+				},
+				{
+					"text": " on",
+					"timestamps": {
+						"from": "00:00:01,690",
+						"to": "00:00:01,830"
+					},
+					"offsets": {
+						"from": 1690,
+						"to": 1830
+					},
+					"id": 322,
+					"p": 0.993801,
+					"t_dtw": -1
+				},
+				{
+					"text": " this",
+					"timestamps": {
+						"from": "00:00:01,830",
+						"to": "00:00:02,180"
+					},
+					"offsets": {
+						"from": 1830,
+						"to": 2180
+					},
+					"id": 341,
+					"p": 0.646075,
+					"t_dtw": -1
+				},
+				{
+					"text": " mood",
+					"timestamps": {
+						"from": "00:00:02,310",
+						"to": "00:00:02,540"
+					},
+					"offsets": {
+						"from": 2310,
+						"to": 2540
+					},
+					"id": 9268,
+					"p": 0.293376,
+					"t_dtw": -1
+				},
+				{
+					"text": " pipe",
+					"timestamps": {
+						"from": "00:00:02,580",
+						"to": "00:00:02,990"
+					},
+					"offsets": {
+						"from": 2580,
+						"to": 2990
+					},
+					"id": 11240,
+					"p": 0.40175,
+					"t_dtw": -1
+				},
+				{
+					"text": ".",
+					"timestamps": {
+						"from": "00:00:02,990",
+						"to": "00:00:02,990"
+					},
+					"offsets": {
+						"from": 2990,
+						"to": 2990
+					},
+					"id": 13,
+					"p": 0.833235,
+					"t_dtw": -1
+				},
+				{
+					"text": "[_TT_150]",
+					"timestamps": {
+						"from": "00:00:03,000",
+						"to": "00:00:03,000"
+					},
+					"offsets": {
+						"from": 3000,
+						"to": 3000
+					},
+					"id": 50514,
+					"p": 0.0646866,
+					"t_dtw": -1
+				}
+			]
+		}
+	]
+}
