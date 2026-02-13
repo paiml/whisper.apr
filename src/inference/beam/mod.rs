@@ -258,7 +258,19 @@ impl BeamSearchDecoder {
             + max_val;
 
         // Log softmax = logit - log_sum_exp
-        scaled.iter().map(|&x| x - log_sum_exp).collect()
+        let log_probs: Vec<f32> = scaled.iter().map(|&x| x - log_sum_exp).collect();
+
+        debug_assert_eq!(
+            log_probs.len(),
+            logits.len(),
+            "log_softmax output must match input length"
+        );
+        debug_assert!(
+            log_probs.iter().all(|x| x.is_finite()),
+            "all log probabilities must be finite"
+        );
+
+        log_probs
     }
 
     /// Get top K indices by value

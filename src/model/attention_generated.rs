@@ -160,6 +160,7 @@ impl LinearWeights {
         }
 
         let batch_size = input.len() / (seq_len * self.in_features);
+        debug_assert!(batch_size > 0, "batch_size must be positive");
         let mut output = vec![0.0_f32; batch_size * seq_len * self.out_features];
 
         for b in 0..batch_size {
@@ -176,6 +177,12 @@ impl LinearWeights {
                 }
             }
         }
+
+        debug_assert_eq!(
+            output.len(),
+            batch_size * seq_len * self.out_features,
+            "output dimensions must match batch × seq × out_features"
+        );
 
         Ok(output)
     }

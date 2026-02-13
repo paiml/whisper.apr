@@ -3263,8 +3263,8 @@ fn diagnose_model_file(
     match fs::read(model_path) {
         Ok(data) => {
             let has_magic = data.len() >= 4 && data.get(0..4) == Some(b"APR1".as_slice());
-            let actual = if data.len() >= 4 {
-                String::from_utf8_lossy(&data[0..4]).to_string()
+            let actual = if let Some(magic) = data.get(0..4) {
+                String::from_utf8_lossy(magic).to_string()
             } else {
                 "too short".to_string()
             };
@@ -3969,7 +3969,7 @@ pub fn run_export(args: ExportArgs, global: &Args) -> CliResult<CommandResult> {
     let data = std::fs::read(&args.input)
         .map_err(|e| CliError::Io(io::Error::new(e.kind(), format!("Failed to read APR: {e}"))))?;
 
-    if data.len() < 4 || &data[0..4] != b"APR\0" {
+    if data.get(0..4) != Some(b"APR\0".as_slice()) {
         return Err(CliError::InvalidArgument(
             "Invalid APR file: missing APR\\0 magic bytes".to_string(),
         ));

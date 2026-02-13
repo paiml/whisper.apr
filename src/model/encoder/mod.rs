@@ -87,6 +87,15 @@ impl Encoder {
             }
         }
 
+        debug_assert_eq!(
+            pe.len(),
+            max_len * d_model,
+            "positional embedding size must be max_len × d_model"
+        );
+        debug_assert!(
+            pe.iter().all(|x| x.is_finite()),
+            "all positional embedding values must be finite"
+        );
         pe
     }
 
@@ -116,6 +125,11 @@ impl Encoder {
         for block in &self.blocks {
             x = block.forward(&x)?;
         }
+
+        debug_assert!(
+            x.iter().all(|v| v.is_finite()),
+            "encoder output must be finite before final layer norm"
+        );
 
         // Final layer norm
         self.ln_post.forward(&x)

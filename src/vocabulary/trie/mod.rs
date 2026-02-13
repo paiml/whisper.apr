@@ -244,6 +244,15 @@ impl VocabularyTrie {
             self.entry_count += 1;
         }
         node.set_terminal(text.to_string(), boost);
+
+        debug_assert!(
+            self.entry_count > 0,
+            "entry_count must be positive after insertion"
+        );
+        debug_assert!(
+            self.contains(tokens),
+            "inserted token sequence must be findable"
+        );
     }
 
     /// Insert with default boost
