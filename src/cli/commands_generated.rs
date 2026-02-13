@@ -2156,15 +2156,15 @@ fn poll_tui_event(app: &mut crate::tui::WhisperApp) -> CliResult<Option<CommandR
     Ok(None)
 }
 
+/// Run the TUI (terminal user interface) for interactive transcription.
 #[cfg(feature = "tui")]
 pub fn run_tui(global: &Args) -> CliResult<CommandResult> {
     use crossterm::{
-        event::{self, Event, KeyCode, KeyEventKind},
         execute,
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     };
     use ratatui::{backend::CrosstermBackend, Terminal};
-    use std::time::Duration;
+    
 
     use crate::tui::{render_whisper_dashboard, WhisperApp};
 
@@ -2541,6 +2541,8 @@ fn run_model_download(
         crate::cli::args::ModelSize::Small => "whisper-small",
         crate::cli::args::ModelSize::Medium => "whisper-medium",
         crate::cli::args::ModelSize::Large => "whisper-large",
+        crate::cli::args::ModelSize::MoonshineTiny => "moonshine-tiny",
+        crate::cli::args::ModelSize::MoonshineBase => "moonshine-base",
     };
 
     let model_info = find_model(model_name)
