@@ -937,3 +937,239 @@ fn test_compute_silhouette_euclidean_zero_distance_all_points() {
     // so silhouette should be 0.0 from the a.max(b) == 0 guard
     // (or could be negative from the MAX)
 }
+
+// =========================================================================
+// compute_silhouette additional coverage (WAPR-QA-008)
+//
+// Focus on exercising remaining uncovered paths:
+// - The b(i) iteration over multiple other_clusters with both distance metrics
+// - The s coefficient computation for edge cases
+// - Euclidean distance in both a(i) and b(i) loops simultaneously
+// =========================================================================
+
+/// Exercise compute_silhouette where each embedding is the sole member
+/// of its own cluster. This causes same_cluster to be empty (a = 0.0)
+/// for every point, and b is computed from all other clusters.
+#[test]
+fn test_compute_silhouette_all_singletons_cosine() {
+    let config = ClusteringConfig::default();
+    let clustering = SpectralClustering::new(config);
+
+    let embeddings = vec![
+        SpeakerEmbedding::new(vec![1.0, 0.0, 0.0], 0),
+        SpeakerEmbedding::new(vec![0.0, 1.0, 0.0], 1),
+        SpeakerEmbedding::new(vec![0.0, 0.0, 1.0], 2),
+    ];
+    let labels = vec![0, 1, 2];
+
+    let score = clustering.compute_silhouette(&embeddings, &labels);
+    assert!(
+        score.is_finite(),
+        "all-singletons cosine silhouette must be finite, got {}",
+        score
+    );
+}
+
+/// Exercise compute_silhouette with Euclidean distance where each point
+/// is its own cluster (all singletons). Covers a=0.0 path with Euclidean.
+#[test]
+fn test_compute_silhouette_all_singletons_euclidean() {
+    let config = ClusteringConfig {
+        use_cosine_distance: false,
+        ..ClusteringConfig::default()
+    };
+    let clustering = SpectralClustering::new(config);
+
+    let embeddings = vec![
+        SpeakerEmbedding::new(vec![0.0, 0.0], 0),
+        SpeakerEmbedding::new(vec![10.0, 0.0], 1),
+        SpeakerEmbedding::new(vec![0.0, 10.0], 2),
+    ];
+    let labels = vec![0, 1, 2];
+
+    let score = clustering.compute_silhouette(&embeddings, &labels);
+    assert!(
+        score.is_finite(),
+        "all-singletons euclidean silhouette must be finite, got {}",
+        score
+    );
+}
+
+/// Exercise compute_silhouette with mixed cluster sizes and Euclidean distance.
+/// One cluster has 3 members, another has 1 member. Exercises both the
+/// same_cluster iteration (non-empty for the big cluster, empty for the
+/// singleton) and the other_cluster iteration in Euclidean mode.
+#[test]
+fn test_compute_silhouette_euclidean_mixed_cluster_sizes() {
+    let config = ClusteringConfig {
+        use_cosine_distance: false,
+        ..ClusteringConfig::default()
+    };
+    let clustering = SpectralClustering::new(config);
+
+    let embeddings = vec![
+        SpeakerEmbedding::new(vec![0.0, 0.0, 0.0], 0),
+        SpeakerEmbedding::new(vec![0.1, 0.0, 0.0], 0),
+        SpeakerEmbedding::new(vec![0.0, 0.1, 0.0], 0),
+        SpeakerEmbedding::new(vec![50.0, 50.0, 50.0], 1), // Singleton
+    ];
+    let labels = vec![0, 0, 0, 1];
+
+    let score = clustering.compute_silhouette(&embeddings, &labels);
+    assert!(
+        score.is_finite(),
+        "mixed sizes euclidean silhouette must be finite, got {}",
+        score
+    );
+}
+
+/// Exercise compute_silhouette where the same_cluster average a(i) is
+/// larger than b(i), producing a negative silhouette coefficient.
+/// This happens when a point is closer to another cluster than its own.
+#[test]
+fn test_compute_silhouette_negative_coefficient() {
+    let config = ClusteringConfig {
+        use_cosine_distance: false,
+        ..ClusteringConfig::default()
+    };
+    let clustering = SpectralClustering::new(config);
+
+    // Point at (5,5) is assigned to cluster 0 (whose other member is at origin)
+    // but is closer to cluster 1 (at (5,6)). This should yield a negative s(i).
+    let embeddings = vec![
+        SpeakerEmbedding::new(vec![0.0, 0.0], 0),
+        SpeakerEmbedding::new(vec![5.0, 5.0], 0), // Misassigned
+        SpeakerEmbedding::new(vec![5.0, 6.0], 1),
+        SpeakerEmbedding::new(vec![5.0, 7.0], 1),
+    ];
+    let labels = vec![0, 0, 1, 1];
+
+    let score = clustering.compute_silhouette(&embeddings, &labels);
+    assert!(
+        score.is_finite(),
+        "negative coefficient silhouette must be finite, got {}",
+        score
+    );
+    assert!(
+        score >= -1.0 && score <= 1.0,
+        "silhouette must be in [-1, 1], got {}",
+        score
+    );
+}
+
+/// Exercise compute_silhouette with 3 clusters using cosine distance,
+/// focusing on the b(i) loop iterating over two other clusters per point.
+#[test]
+fn test_compute_silhouette_cosine_three_clusters_b_iteration() {
+    let config = ClusteringConfig {
+        use_cosine_distance: true,
+        ..ClusteringConfig::default()
+    };
+    let clustering = SpectralClustering::new(config);
+
+    // Three orthogonal clusters
+    let embeddings = vec![
+        SpeakerEmbedding::new(vec![1.0, 0.0, 0.0, 0.0], 0),
+        SpeakerEmbedding::new(vec![0.98, 0.02, 0.0, 0.0], 0),
+        SpeakerEmbedding::new(vec![0.0, 1.0, 0.0, 0.0], 1),
+        SpeakerEmbedding::new(vec![0.02, 0.98, 0.0, 0.0], 1),
+        SpeakerEmbedding::new(vec![0.0, 0.0, 1.0, 0.0], 2),
+        SpeakerEmbedding::new(vec![0.0, 0.02, 0.98, 0.0], 2),
+    ];
+    let labels = vec![0, 0, 1, 1, 2, 2];
+
+    let score = clustering.compute_silhouette(&embeddings, &labels);
+    assert!(
+        score.is_finite(),
+        "3-cluster cosine b-iteration silhouette must be finite, got {}",
+        score
+    );
+}
+
+/// Exercise the full cluster() pipeline which calls compute_silhouette,
+/// with Euclidean distance and 3 distinct groups to cover the Euclidean
+/// paths in both a(i) and b(i) within the pipeline context.
+#[test]
+fn test_cluster_pipeline_euclidean_three_groups() {
+    let config = ClusteringConfig {
+        use_cosine_distance: false,
+        ..ClusteringConfig::default()
+    };
+    let clustering = SpectralClustering::new(config);
+
+    let embeddings = vec![
+        SpeakerEmbedding::new(vec![0.0, 0.0], 0),
+        SpeakerEmbedding::new(vec![0.1, 0.1], 0),
+        SpeakerEmbedding::new(vec![50.0, 0.0], 1),
+        SpeakerEmbedding::new(vec![50.1, 0.1], 1),
+        SpeakerEmbedding::new(vec![0.0, 50.0], 2),
+        SpeakerEmbedding::new(vec![0.1, 50.1], 2),
+    ];
+
+    let result = clustering
+        .cluster(&embeddings, Some(3), 1)
+        .expect("clustering should succeed");
+
+    assert!(result.silhouette_score().is_finite());
+    assert!(result.num_clusters() >= 1);
+}
+
+/// Exercise compute_silhouette with only 2 points in same cluster
+/// (minimum for non-empty same_cluster), checking the a(i) computation.
+#[test]
+fn test_compute_silhouette_two_points_same_cluster_cosine() {
+    let config = ClusteringConfig {
+        use_cosine_distance: true,
+        ..ClusteringConfig::default()
+    };
+    let clustering = SpectralClustering::new(config);
+
+    let embeddings = vec![
+        SpeakerEmbedding::new(vec![1.0, 0.0], 0),
+        SpeakerEmbedding::new(vec![0.8, 0.2], 0),
+        SpeakerEmbedding::new(vec![-1.0, 0.0], 1),
+    ];
+    let labels = vec![0, 0, 1];
+
+    let score = clustering.compute_silhouette(&embeddings, &labels);
+    assert!(
+        score.is_finite(),
+        "two-in-cluster cosine silhouette must be finite, got {}",
+        score
+    );
+}
+
+/// Exercise compute_silhouette with Euclidean distance where a(i) > 0
+/// and b(i) > 0, ensuring the (b - a) / max(a, b) computation is exercised
+/// with non-trivial values.
+#[test]
+fn test_compute_silhouette_euclidean_nontrivial_coefficient() {
+    let config = ClusteringConfig {
+        use_cosine_distance: false,
+        ..ClusteringConfig::default()
+    };
+    let clustering = SpectralClustering::new(config);
+
+    // Cluster 0: spread out (a(i) > 0)
+    // Cluster 1: far away (b(i) > 0)
+    let embeddings = vec![
+        SpeakerEmbedding::new(vec![0.0, 0.0], 0),
+        SpeakerEmbedding::new(vec![1.0, 0.0], 0),
+        SpeakerEmbedding::new(vec![0.0, 1.0], 0),
+        SpeakerEmbedding::new(vec![20.0, 20.0], 1),
+        SpeakerEmbedding::new(vec![21.0, 20.0], 1),
+    ];
+    let labels = vec![0, 0, 0, 1, 1];
+
+    let score = clustering.compute_silhouette(&embeddings, &labels);
+    assert!(
+        score.is_finite(),
+        "nontrivial euclidean silhouette must be finite, got {}",
+        score
+    );
+    assert!(
+        score >= -1.0 && score <= 1.0,
+        "silhouette must be in [-1, 1], got {}",
+        score
+    );
+}
