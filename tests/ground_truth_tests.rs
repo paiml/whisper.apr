@@ -960,7 +960,10 @@ mod integration_tests {
         println!("Expected (greedy): '{}'", GROUND_TRUTH_3S_GREEDY);
         println!("Actual:            '{}'", actual);
         println!("WER vs beam:       {:.1}%", wer_beam * 100.0);
-        println!("WER vs greedy:     {:.1}% (fairer comparison)", wer_greedy * 100.0);
+        println!(
+            "WER vs greedy:     {:.1}% (fairer comparison)",
+            wer_greedy * 100.0
+        );
         println!("Tokens:   {}", token_count);
         println!("Time:     {:.3}s (RTF: {:.2}x)", elapsed, elapsed / 3.0);
 
@@ -1084,12 +1087,25 @@ mod integration_tests {
 
         println!("\n=== Full Speech Parity (WAPR-PARITY-003-B) ===");
         println!("Audio: {:.1}s", audio_duration);
-        println!("Expected (beam):   '{}'", &GROUND_TRUTH_FULL[..80.min(GROUND_TRUTH_FULL.len())]);
-        println!("Expected (greedy): '{}'", &GROUND_TRUTH_FULL_GREEDY[..80.min(GROUND_TRUTH_FULL_GREEDY.len())]);
+        println!(
+            "Expected (beam):   '{}'",
+            &GROUND_TRUTH_FULL[..80.min(GROUND_TRUTH_FULL.len())]
+        );
+        println!(
+            "Expected (greedy): '{}'",
+            &GROUND_TRUTH_FULL_GREEDY[..80.min(GROUND_TRUTH_FULL_GREEDY.len())]
+        );
         println!("Actual:            '{actual}'");
         println!("WER vs beam:       {:.1}%", wer_beam * 100.0);
-        println!("WER vs greedy:     {:.1}% (fairer comparison)", wer_greedy * 100.0);
-        println!("Segments: {}, Tokens: {}", result.segments.len(), token_count);
+        println!(
+            "WER vs greedy:     {:.1}% (fairer comparison)",
+            wer_greedy * 100.0
+        );
+        println!(
+            "Segments: {}, Tokens: {}",
+            result.segments.len(),
+            token_count
+        );
         println!(
             "Time:     {:.3}s (RTF: {:.2}x)",
             elapsed,

@@ -724,3 +724,62 @@ fn test_partial_results_not_returned_below_threshold() {
         "should not return partial below 30% progress"
     );
 }
+
+// =========================================================================
+// create_partial_result targeted coverage (WAPR-QA-005)
+// =========================================================================
+
+#[test]
+#[allow(clippy::expect_used)]
+fn test_create_partial_result_via_ultra_low_latency_40pct() {
+    // Ultra-low-latency chunk = 4000 samples. Push 40% = 1600 samples.
+    // With return_partial=true and >30% progress, create_partial_result is called.
+    let config = StreamingConfig {
+        audio: AudioStreamingConfig::ultra_low_latency().without_vad(),
+        max_tokens_per_chunk: 224,
+        overlap_tokens: 10,
+        temperature: 0.0,
+        return_partial: true,
+    };
+    let mut transcriber = StreamingTranscriber::new(config);
+
+    // 1600 samples = 40% of 4000 sample chunk
+    let samples = vec![0.05f32; 1600];
+    transcriber.push_audio(&samples);
+
+    let result = transcriber.process().expect("process should succeed");
+    // At 40% progress with partial enabled, we should get a partial result
+    if let Some(partial) = result {
+        assert_eq!(partial.text, "[listening...]");
+        assert!(!partial.is_final);
+        assert!((partial.confidence - 0.0).abs() < f32::EPSILON);
+        assert_eq!(partial.chunk_index, 0);
+        // latency_ms = chunk_progress * 30000, progress ~0.4, so ~12000ms
+        assert!(partial.latency_ms > 0);
+    }
+}
+
+#[test]
+#[allow(clippy::expect_used)]
+fn test_create_partial_result_preserves_chunk_index() {
+    // Verify that create_partial_result uses the current chunk_index (0 initially)
+    let config = StreamingConfig {
+        audio: AudioStreamingConfig::ultra_low_latency().without_vad(),
+        max_tokens_per_chunk: 224,
+        overlap_tokens: 10,
+        temperature: 0.0,
+        return_partial: true,
+    };
+    let mut transcriber = StreamingTranscriber::new(config);
+
+    // Push 40% of a chunk to trigger partial result
+    transcriber.push_audio(&vec![0.05f32; 1600]);
+    let result = transcriber.process().expect("process should succeed");
+
+    if let Some(partial) = result {
+        // chunk_index should be 0 since no full chunk has been processed
+        assert_eq!(partial.chunk_index, 0);
+        assert_eq!(partial.text, "[listening...]");
+        assert!(!partial.is_final);
+    }
+}

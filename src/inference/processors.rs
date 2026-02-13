@@ -342,11 +342,49 @@ mod tests {
         let mut suppressor = WhisperTokenSuppressor::with_tokens(vec![100]);
         suppressor.add_suppression(100); // Duplicate
         suppressor.add_suppression(200); // New
-        // 100 should appear only once
+                                         // 100 should appear only once
         assert_eq!(
-            suppressor.suppressed_tokens().iter().filter(|&&t| t == 100).count(),
+            suppressor
+                .suppressed_tokens()
+                .iter()
+                .filter(|&&t| t == 100)
+                .count(),
             1
         );
         assert!(suppressor.suppressed_tokens().contains(&200));
+    }
+
+    // =========================================================================
+    // with_vocab_size direct field verification (WAPR-QA-005)
+    // =========================================================================
+
+    #[test]
+    fn test_with_vocab_size_sets_field_directly() {
+        let suppressor = WhisperTokenSuppressor::new().with_vocab_size(32000);
+        // Verify the n_vocab field is set by checking timestamp suppression range
+        // With n_vocab=32000, timestamps at 50365+ are beyond vocab, so take(0)
+        let mut logits = vec![1.0f32; 51865];
+        suppressor.apply(&mut logits);
+
+        // Token at index 32000 should NOT be suppressed as timestamp
+        // (it's beyond n_vocab so the take() stops before it)
+        assert!(
+            logits[32000].is_finite(),
+            "token at 32000 should not be suppressed when n_vocab=32000"
+        );
+    }
+
+    #[test]
+    fn test_with_vocab_size_zero() {
+        // Edge case: n_vocab=0 means no timestamp suppression range
+        let suppressor = WhisperTokenSuppressor::new().with_vocab_size(0);
+        let mut logits = vec![1.0f32; 51865];
+        suppressor.apply(&mut logits);
+
+        // Timestamp base should NOT be suppressed (saturating_sub(50365) = 0)
+        assert!(
+            logits[special_tokens::TIMESTAMP_BASE as usize].is_finite(),
+            "timestamp base should not be suppressed when n_vocab=0"
+        );
     }
 }

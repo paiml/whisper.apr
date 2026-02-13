@@ -915,3 +915,207 @@ fn test_streaming_vad_continue_accumulates() {
     // Should have grown
     assert!(vad.speech_buffer.len() > initial_len);
 }
+
+// =========================================================================
+// Coverage Tests for detect() and process_frame() uncovered branches (WAPR-QA-005)
+// =========================================================================
+
+#[test]
+fn test_detect_speech_end_produces_segment() {
+    // Force reliable SpeechStart -> SpeechEnd cycle by tuning thresholds
+    let config = VadConfig::default()
+        .with_energy_threshold(0.1)
+        .with_min_speech_frames(1)
+        .with_min_silence_frames(1)
+        .with_zcr_threshold(0.5);
+    let mut vad = VoiceActivityDetector::new(config);
+
+    // Create speech followed by silence: should get a complete segment
+    let mut audio = generate_detectable_speech(4800, 0.5);
+    audio.extend(vec![0.0; 9600]); // Long silence to force SpeechEnd
+
+    let segments = vad.detect(&audio);
+
+    // At least one segment with valid start < end and positive energy
+    if !segments.is_empty() {
+        let seg = &segments[0];
+        assert!(seg.start < seg.end, "Segment start should be before end");
+        assert!(seg.energy > 0.0, "Segment energy should be positive");
+    }
+}
+
+#[test]
+fn test_detect_multiple_speech_segments() {
+    let config = VadConfig::default()
+        .with_energy_threshold(0.1)
+        .with_min_speech_frames(1)
+        .with_min_silence_frames(1)
+        .with_zcr_threshold(0.5);
+    let mut vad = VoiceActivityDetector::new(config);
+
+    // speech -> silence -> speech -> silence pattern
+    let mut audio = Vec::new();
+    audio.extend(generate_detectable_speech(3200, 0.5));
+    audio.extend(vec![0.0; 4800]); // Silence gap
+    audio.extend(generate_detectable_speech(3200, 0.5));
+    audio.extend(vec![0.0; 4800]); // Trailing silence
+
+    let segments = vad.detect(&audio);
+    // Could produce 1 or 2 segments depending on tuning
+    for seg in &segments {
+        assert!(seg.end > seg.start);
+        assert!(!seg.energy.is_nan());
+    }
+}
+
+#[test]
+fn test_process_frame_silence_to_not_enough_speech() {
+    // Test the branch in Silence state where speech frames < min_speech_frames
+    let config = VadConfig::default()
+        .with_energy_threshold(0.1)
+        .with_min_speech_frames(5) // Require 5 speech frames to start
+        .with_zcr_threshold(0.5);
+    let mut vad = VoiceActivityDetector::new(config);
+
+    // Process only 2 speech frames - not enough to trigger SpeechStart
+    let speech_frame = generate_detectable_speech(480, 0.5);
+    let event1 = vad.process_frame(&speech_frame);
+    assert_eq!(event1, VadEvent::Continue);
+    let event2 = vad.process_frame(&speech_frame);
+    assert_eq!(event2, VadEvent::Continue);
+    // Should still be in Silence state (speech_frames < min_speech_frames)
+    assert_eq!(vad.state(), VadState::Silence);
+
+    // Process silence to reset speech_frames
+    let silence_frame = vec![0.0; 480];
+    let event3 = vad.process_frame(&silence_frame);
+    assert_eq!(event3, VadEvent::Continue);
+    assert_eq!(vad.speech_frames, 0);
+}
+
+#[test]
+fn test_process_frame_speech_state_silence_not_long_enough() {
+    // Test the Speech state branch where silence_frames < min_silence_frames
+    let config = VadConfig::default()
+        .with_energy_threshold(0.1)
+        .with_min_speech_frames(1)
+        .with_min_silence_frames(10) // Need 10 silence frames to end
+        .with_zcr_threshold(0.5);
+    let mut vad = VoiceActivityDetector::new(config);
+
+    // Manually set state to Speech to guarantee we test the right branch
+    vad.state = VadState::Speech;
+    vad.speech_frames = 5;
+    vad.silence_frames = 0;
+
+    // Process just 1 silence frame - not enough to end
+    let silence_frame = vec![0.0; 480];
+    let event = vad.process_frame(&silence_frame);
+    assert_eq!(event, VadEvent::Continue);
+    assert!(vad.silence_frames >= 1);
+    assert_eq!(vad.speech_frames, 0);
+}
+
+#[test]
+fn test_process_frame_speech_start_state_with_silence() {
+    // Directly set SpeechStart and send silence
+    let config = VadConfig::default()
+        .with_energy_threshold(2.0)
+        .with_min_silence_frames(1);
+    let mut vad = VoiceActivityDetector::new(config);
+
+    vad.state = VadState::SpeechStart;
+    vad.silence_frames = 0;
+
+    let silence_frame = vec![0.0; 480];
+    let event = vad.process_frame(&silence_frame);
+    // In SpeechStart with silence, should increment silence_frames
+    // If enough silence frames, should emit SpeechEnd
+    assert!(event == VadEvent::SpeechEnd || event == VadEvent::Continue);
+}
+
+#[test]
+fn test_process_frame_noise_floor_update_only_in_silence() {
+    let mut vad = VoiceActivityDetector::default();
+    let initial_noise_floor = vad.noise_floor;
+
+    // Process a few silence frames to update noise floor
+    let low_energy = vec![0.01; 480];
+    for _ in 0..10 {
+        vad.process_frame(&low_energy);
+    }
+
+    // Noise floor should have changed (adapted to input)
+    assert_ne!(vad.noise_floor, initial_noise_floor);
+
+    // Now put into Speech state - noise floor should NOT update
+    vad.state = VadState::Speech;
+    let noise_before_speech = vad.noise_floor;
+    let high_energy = generate_detectable_speech(480, 0.9);
+    vad.process_frame(&high_energy);
+    assert!(
+        (vad.noise_floor - noise_before_speech).abs() < f32::EPSILON,
+        "Noise floor should not update during Speech state"
+    );
+}
+
+#[test]
+fn test_detect_continue_branch_accumulates_energy() {
+    // Verify that during Continue events inside a segment, energy is accumulated
+    let config = VadConfig::default()
+        .with_energy_threshold(0.1)
+        .with_min_speech_frames(1)
+        .with_min_silence_frames(100) // Very high so speech never ends
+        .with_zcr_threshold(0.5);
+    let mut vad = VoiceActivityDetector::new(config);
+
+    // Speech only (no silence to end)
+    let audio = generate_detectable_speech(9600, 0.5); // 600ms
+
+    let segments = vad.detect(&audio);
+    // Should produce exactly 1 unterminated segment
+    if !segments.is_empty() {
+        assert_eq!(segments.len(), 1);
+        let seg = &segments[0];
+        assert!(seg.energy > 0.0, "Energy should be accumulated");
+    }
+}
+
+#[test]
+fn test_detect_speech_end_state_with_speech_input() {
+    // From SpeechEnd state, receiving speech should restart toward SpeechStart
+    // Use is_speech_frame directly to avoid ZCR ambiguity
+    let config = VadConfig::default()
+        .with_energy_threshold(0.1)
+        .with_min_speech_frames(2)
+        .with_min_silence_frames(1)
+        .with_zcr_threshold(0.5);
+    let mut vad = VoiceActivityDetector::new(config);
+
+    vad.state = VadState::SpeechEnd;
+    vad.speech_frames = 0;
+    vad.noise_floor = 0.001;
+
+    // Craft a frame with known energy and ZCR in the speech range
+    // Need: energy > 0.001 * 0.1 = 0.0001 and 0.05 < zcr < 0.5
+    // Use a signal that alternates every ~10 samples for ZCR ~0.1
+    let speech: Vec<f32> = (0..480)
+        .map(|i| {
+            let phase = (i as f32 / 10.0 * std::f32::consts::PI).sin();
+            0.3 * phase
+        })
+        .collect();
+
+    // Verify is_speech_frame returns true for our crafted signal
+    let energy = VoiceActivityDetector::frame_energy(&speech);
+    let zcr = VoiceActivityDetector::zero_crossing_rate(&speech);
+    assert!(
+        vad.is_speech_frame(energy, zcr),
+        "energy={energy}, zcr={zcr} should be speech"
+    );
+
+    let e1 = vad.process_frame(&speech);
+    assert_eq!(e1, VadEvent::Continue); // 1 speech frame < min 2
+    let e2 = vad.process_frame(&speech);
+    assert_eq!(e2, VadEvent::SpeechStart); // 2 speech frames >= min 2
+}

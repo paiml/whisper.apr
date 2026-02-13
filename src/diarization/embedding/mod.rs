@@ -166,7 +166,11 @@ impl SpeakerEmbedding {
         let norm_b: f32 = other.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
         let denom = norm_a * norm_b;
 
-        if denom < f32::EPSILON { 0.0 } else { dot / denom }
+        if denom < f32::EPSILON {
+            0.0
+        } else {
+            dot / denom
+        }
     }
 
     /// Compute Euclidean distance to another embedding
@@ -541,14 +545,24 @@ impl EmbeddingExtractor {
             let rising_end = bin_points[i + 1].min(filter.len());
             let rising_base = bin_points[i];
             let rising_span = (bin_points[i + 1] - rising_base).max(1) as f32;
-            for (j, val) in filter.iter_mut().enumerate().take(rising_end).skip(rising_base) {
+            for (j, val) in filter
+                .iter_mut()
+                .enumerate()
+                .take(rising_end)
+                .skip(rising_base)
+            {
                 *val = (j - rising_base) as f32 / rising_span;
             }
 
             let falling_end = bin_points[i + 2].min(filter.len());
             let falling_peak = bin_points[i + 2];
             let falling_span = (falling_peak - bin_points[i + 1]).max(1) as f32;
-            for (j, val) in filter.iter_mut().enumerate().take(falling_end).skip(bin_points[i + 1]) {
+            for (j, val) in filter
+                .iter_mut()
+                .enumerate()
+                .take(falling_end)
+                .skip(bin_points[i + 1])
+            {
                 *val = (falling_peak - j) as f32 / falling_span;
             }
 

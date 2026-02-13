@@ -629,3 +629,142 @@ fn test_backend_selection_reason_non_empty() {
     assert!(sel_simd.is_simd());
     assert!(!sel_simd.is_gpu());
 }
+
+// =========================================================================
+// Coverage Tests for is_gpu_worthwhile, select_automatic, summary (WAPR-QA-005)
+// =========================================================================
+
+#[test]
+fn test_is_gpu_worthwhile_flops_above_threshold_caps_pass() {
+    // GPU with large buffer, flops above threshold -> true
+    let config = SelectorConfig::default().with_gpu_threshold(100);
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let op = MatMulOp::new(64, 64, 64);
+    let selection = selector.select(&op);
+    assert!(selection.is_gpu());
+    assert!(selection.reason.contains("Large workload"));
+}
+
+#[test]
+fn test_is_gpu_worthwhile_flops_below_threshold_returns_false() {
+    // flops < gpu_threshold_flops -> false -> "Small workload"
+    let config = SelectorConfig::default().with_gpu_threshold(999_999_999);
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let op = MatMulOp::new(4, 4, 4);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert!(selection.reason.contains("Small workload"));
+}
+
+#[test]
+fn test_is_gpu_worthwhile_caps_cannot_handle_returns_false() {
+    // GPU caps with small max_buffer_size so can_handle returns false
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(1)
+        .with_max_gpu_memory(1024 * 1024 * 1024); // High enough to pass memory check in select_automatic
+                                                  // GPU buffer = 32 bytes (tiny), so can_handle fails for any real workload
+    let selector = BackendSelector::with_simulated_gpu(config, 32);
+    let op = MatMulOp::new(64, 64, 64); // Memory req: (64*64 + 64*64 + 64*64)*4 = 49152 > 32
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert!(selection.reason.contains("Small workload"));
+}
+
+#[test]
+fn test_select_automatic_no_gpu_available() {
+    // Test select_automatic when GPU is not available
+    let selector = BackendSelector::new(SelectorConfig::default());
+    if !selector.gpu_available() {
+        let op = MatMulOp::new(256, 256, 256);
+        let selection = selector.select(&op);
+        assert!(selection.is_simd());
+        assert!(
+            selection.reason.contains("not available")
+                || selection.reason.contains("Small workload")
+        );
+    }
+}
+
+#[test]
+fn test_select_automatic_memory_exceeds_limit() {
+    // Automatic with GPU, memory exceeds max_gpu_memory
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(1)
+        .with_max_gpu_memory(1); // 1 byte limit
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let op = MatMulOp::new(128, 128, 128);
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert!(selection.reason.contains("Memory exceeds"));
+}
+
+#[test]
+fn test_select_automatic_gpu_worthwhile_true() {
+    // GPU available, memory fits, workload above threshold
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(10)
+        .with_max_gpu_memory(1024 * 1024 * 1024);
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let op = MatMulOp::new(128, 128, 128);
+    let selection = selector.select(&op);
+    assert!(selection.is_gpu());
+    assert!(selection.reason.contains("Large workload"));
+}
+
+#[test]
+fn test_select_automatic_gpu_worthwhile_false() {
+    // GPU available, memory fits, but workload below threshold
+    let config = SelectorConfig::default()
+        .with_gpu_threshold(u64::MAX)
+        .with_max_gpu_memory(1024 * 1024 * 1024);
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let op = MatMulOp::new(2, 2, 2); // Tiny workload
+    let selection = selector.select(&op);
+    assert!(selection.is_simd());
+    assert!(selection.reason.contains("Small workload"));
+}
+
+#[test]
+fn test_summary_with_simulated_gpu_includes_gpu_line() {
+    let config = SelectorConfig::default();
+    let selector = BackendSelector::with_simulated_gpu(config, 256 * 1024 * 1024);
+    let summary = selector.summary();
+
+    assert!(summary.contains("Backend Selector"));
+    assert!(summary.contains("automatic"));
+    assert!(summary.contains("SIMD"));
+    assert!(summary.contains("GPU"));
+    assert!(summary.contains("parallelism="));
+    assert!(summary.contains("score="));
+    assert!(summary.contains("f16="));
+}
+
+#[test]
+fn test_summary_without_gpu_shows_not_available() {
+    let selector = BackendSelector::new(SelectorConfig::default());
+    if !selector.gpu_available() {
+        let summary = selector.summary();
+        assert!(summary.contains("not available"));
+    }
+}
+
+#[test]
+fn test_summary_with_different_strategy_names() {
+    // PreferGpu strategy
+    let config = SelectorConfig::prefer_gpu();
+    let selector = BackendSelector::with_simulated_gpu(config, 1024 * 1024 * 1024);
+    let summary = selector.summary();
+    assert!(summary.contains("prefer GPU"));
+
+    // PreferSimd strategy
+    let config2 = SelectorConfig::prefer_simd();
+    let selector2 = BackendSelector::new(config2);
+    let summary2 = selector2.summary();
+    assert!(summary2.contains("prefer SIMD"));
+
+    // Threshold strategy
+    let config3 = SelectorConfig::default().with_strategy(SelectionStrategy::threshold(1000));
+    let selector3 = BackendSelector::new(config3);
+    let summary3 = selector3.summary();
+    assert!(summary3.contains("threshold-based"));
+}

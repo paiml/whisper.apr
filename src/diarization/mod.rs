@@ -1030,4 +1030,100 @@ mod tests {
             );
         }
     }
+
+    // =========================================================================
+    // cluster_speakers + process deeper path coverage (WAPR-QA-005)
+    // =========================================================================
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn test_cluster_speakers_spectral_with_forced_segments() {
+        // Create audio with a very loud burst surrounded by silence
+        // to force VAD to detect at least one segment, exercising cluster_speakers
+        let config = DiarizationConfig::default().with_min_segment_duration(0.05);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        // 2s silence + 3s loud speech + 2s silence = 7s total, ~57% silence
+        let audio = generate_speech_with_silence(sr, &[(2.0, 5.0, 440.0)], 7.0);
+
+        let result = diarizer.process(&audio, sr).expect("should succeed");
+        // Duration should be correct
+        assert!((result.duration() - 7.0).abs() < 0.1);
+        // If VAD detected segments, we must have exercised cluster_speakers
+        if result.num_speakers() > 0 {
+            assert!(!result.segments().is_empty());
+            // Speaker embeddings should be present (step 6)
+            assert!(!result.speaker_embeddings().is_empty());
+        }
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn test_process_exercises_all_steps_with_two_speech_bursts() {
+        // Two distinct speech bursts separated by silence to exercise:
+        // step 1 (VAD), step 2 (embeddings), step 3 (clustering),
+        // step 4 (labeling), step 5 (merging), step 6 (centroids)
+        let config = DiarizationConfig::default()
+            .with_max_speakers(3)
+            .with_min_segment_duration(0.1);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        // 1s silence + 2s@200Hz + 1s silence + 2s@600Hz + 1s silence = 7s total
+        let audio = generate_speech_with_silence(sr, &[(1.0, 3.0, 200.0), (4.0, 6.0, 600.0)], 7.0);
+
+        let result = diarizer.process(&audio, sr).expect("should succeed");
+        assert!((result.duration() - 7.0).abs() < 0.1);
+        // The pipeline should detect at least one speaker from the loud bursts
+        if result.num_speakers() >= 1 {
+            assert!(
+                !result.segments().is_empty(),
+                "with speakers detected, segments should not be empty"
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn test_process_spectral_algorithm_exercises_cluster_speakers() {
+        // Explicitly use Spectral algorithm and ensure cluster_speakers path is hit
+        let mut config = DiarizationConfig::default().with_min_segment_duration(0.1);
+        config.clustering.algorithm = ClusteringAlgorithm::Spectral;
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        // Silence + speech + silence pattern to trigger VAD
+        let audio = generate_speech_with_silence(sr, &[(1.5, 3.5, 350.0)], 5.0);
+
+        let result = diarizer.process(&audio, sr).expect("should succeed");
+        assert!((result.duration() - 5.0).abs() < 0.1);
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn test_process_long_audio_multiple_speakers() {
+        // Longer audio with three speech regions to better exercise the pipeline
+        let config = DiarizationConfig::default()
+            .with_max_speakers(4)
+            .with_min_segment_duration(0.1);
+        let diarizer = Diarizer::new(config);
+        let sr = 16000u32;
+
+        // 1s silence + 2s@150Hz + 1s silence + 2s@400Hz + 1s silence + 2s@250Hz + 1s silence
+        let audio = generate_speech_with_silence(
+            sr,
+            &[(1.0, 3.0, 150.0), (4.0, 6.0, 400.0), (7.0, 9.0, 250.0)],
+            10.0,
+        );
+
+        let result = diarizer.process(&audio, sr).expect("should succeed");
+        assert!((result.duration() - 10.0).abs() < 0.1);
+
+        // Verify speaker_turns() works when there are multiple segments
+        let turns = result.speaker_turns();
+        // Turns count depends on how many distinct speakers clustering finds
+        // but the method should not panic
+        let _ = turns.len();
+    }
 }

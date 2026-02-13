@@ -294,3 +294,111 @@ fn test_weight_dtype_all_bytes() {
     assert_eq!(WeightDtype::Bf16.bytes_per_element(), 2);
     assert_eq!(WeightDtype::Int4.bytes_per_element(), 1);
 }
+
+// =========================================================================
+// Coverage Tests for random_access and additional branches (WAPR-QA-005)
+// =========================================================================
+
+#[test]
+fn test_mmap_config_random_access_fields() {
+    let config = MmapConfig::random_access();
+    // Verify all fields match expectations for random access config
+    assert!(!config.sequential_access);
+    assert_eq!(config.mode, MmapMode::ReadOnly);
+    assert!(!config.prefetch);
+    assert!(!config.lock_pages);
+    assert_eq!(config.page_size_hint, 0);
+}
+
+#[test]
+fn test_mmap_config_random_access_with_mode() {
+    let config = MmapConfig::random_access().with_mode(MmapMode::ReadWrite);
+    assert!(!config.sequential_access);
+    assert_eq!(config.mode, MmapMode::ReadWrite);
+}
+
+#[test]
+fn test_mmap_config_random_access_with_prefetch() {
+    let config = MmapConfig::random_access().with_prefetch();
+    assert!(!config.sequential_access);
+    assert!(config.prefetch);
+}
+
+#[test]
+fn test_mmap_config_random_access_with_locked_pages() {
+    let config = MmapConfig::random_access().with_locked_pages();
+    assert!(!config.sequential_access);
+    assert!(config.lock_pages);
+}
+
+#[test]
+fn test_mmap_config_random_access_with_page_size() {
+    let config = MmapConfig::random_access().with_page_size(8192);
+    assert!(!config.sequential_access);
+    assert_eq!(config.page_size_hint, 8192);
+}
+
+#[test]
+fn test_mmap_handle_read_at_invalid() {
+    let mut handle = MmapHandle::new(1024, MmapConfig::default()).expect("Should create");
+    handle.invalidate();
+    let result = handle.read_at(0, 100);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_mmap_handle_write_at_invalid() {
+    let mut handle = MmapHandle::new(1024, MmapConfig::default().with_mode(MmapMode::ReadWrite))
+        .expect("Should create");
+    handle.invalidate();
+    let result = handle.write_at(0, &[1, 2, 3]);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_mmap_handle_write_copy_on_write() {
+    let mut handle = MmapHandle::new(1024, MmapConfig::default().with_mode(MmapMode::CopyOnWrite))
+        .expect("Should create");
+    // CopyOnWrite is writable
+    assert!(handle.write_at(0, &[1, 2, 3]).is_ok());
+}
+
+#[test]
+fn test_weight_dtype_bf16_name() {
+    assert_eq!(WeightDtype::Bf16.name(), "bfloat16");
+}
+
+#[test]
+fn test_memory_region_aligned_no_alignment() {
+    let region = MemoryRegion::new(50, 100).with_alignment(1);
+    assert_eq!(region.aligned_offset(), 50);
+    assert_eq!(region.aligned_size(), 100);
+}
+
+#[test]
+fn test_memory_region_aligned_offset_exact_boundary() {
+    let region = MemoryRegion::new(128, 256).with_alignment(64);
+    assert_eq!(region.aligned_offset(), 128); // Already aligned
+    assert_eq!(region.aligned_size(), 256);
+}
+
+#[test]
+fn test_weight_region_empty_shape() {
+    let region = WeightRegion::new(
+        "test_empty",
+        WeightType::Bias,
+        MemoryRegion::new(0, 0),
+        WeightDtype::F32,
+        vec![],
+    );
+    // Product of empty shape is 1 (identity)
+    assert_eq!(region.num_elements(), 1);
+    assert_eq!(region.expected_bytes(), 4); // 1 * 4 bytes
+}
+
+#[test]
+fn test_mmap_handle_unique_ids() {
+    let h1 = MmapHandle::new(1024, MmapConfig::default()).expect("Should create");
+    let h2 = MmapHandle::new(1024, MmapConfig::default()).expect("Should create");
+    assert_ne!(h1.id(), h2.id());
+}
