@@ -73,7 +73,7 @@ pub fn expand_response_files(args: Vec<String>) -> Result<Vec<String>, std::io::
 /// whisper-apr: WASM-first automatic speech recognition
 ///
 /// A high-performance speech recognition CLI that runs natively and in browsers.
-/// Install with: cargo install whisper-apr
+/// Install with: cargo install whisper-apr --features cli
 #[derive(Parser, Debug, Clone)]
 #[command(name = "whisper-apr")]
 #[command(version)]
@@ -176,6 +176,9 @@ pub enum Command {
 
     /// APR model format tools (inspect, lint, convert, diff)
     Apr(crate::cli::apr_args::AprArgs),
+
+    /// Run self-test (diagnose + backend test + optional transcription)
+    Selftest(SelftestArgs),
 }
 
 /// Arguments for transcribe command
@@ -1189,6 +1192,25 @@ pub struct DiagnoseArgs {
     /// Run all checks including slow ones
     #[arg(long)]
     pub full: bool,
+}
+
+/// Arguments for selftest command
+///
+/// Runs a multi-phase self-test: diagnose, backend test, and optional transcription.
+/// Use after `cargo install whisper-apr --features cli` to verify the installation.
+#[derive(Parser, Debug, Clone)]
+pub struct SelftestArgs {
+    /// Path to .apr model file for transcription test
+    #[arg(long)]
+    pub model: Option<PathBuf>,
+
+    /// Path to audio file for transcription test
+    #[arg(long)]
+    pub audio: Option<PathBuf>,
+
+    /// Expected substring in transcription output
+    #[arg(long)]
+    pub expect: Option<String>,
 }
 
 /// Arguments for convert command (WAPR-LFM2-004)
@@ -2220,5 +2242,48 @@ mod tests {
         let args =
             Args::try_parse_from(["whisper-apr", "transcribe-folder", "--input-dir", "./audio"]);
         assert!(args.is_err(), "Should fail without --output-dir");
+    }
+
+    // -------------------------------------------------------------------------
+    // Selftest command tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_selftest_minimal() {
+        let args = Args::try_parse_from(["whisper-apr", "selftest"]);
+        assert!(args.is_ok(), "Should parse minimal selftest command");
+        let args = args.expect("test parse should succeed");
+        match args.command {
+            Command::Selftest(s) => {
+                assert!(s.model.is_none());
+                assert!(s.audio.is_none());
+                assert!(s.expect.is_none());
+            }
+            _ => panic!("Expected Selftest command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_selftest_full_args() {
+        let args = Args::try_parse_from([
+            "whisper-apr",
+            "selftest",
+            "--model",
+            "tiny.apr",
+            "--audio",
+            "test.wav",
+            "--expect",
+            "birds",
+        ]);
+        assert!(args.is_ok(), "Should parse selftest with all args");
+        let args = args.expect("test parse should succeed");
+        match args.command {
+            Command::Selftest(s) => {
+                assert_eq!(s.model, Some(PathBuf::from("tiny.apr")));
+                assert_eq!(s.audio, Some(PathBuf::from("test.wav")));
+                assert_eq!(s.expect, Some("birds".to_string()));
+            }
+            _ => panic!("Expected Selftest command"),
+        }
     }
 }

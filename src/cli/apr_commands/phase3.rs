@@ -3,14 +3,20 @@
 use std::fs;
 use std::time::Instant;
 
-use aprender::format::{format_size, RosettaStone};
+use aprender::format::format_size;
 
 use super::super::apr_args::{
     AprDecryptArgs, AprEncryptArgs, AprHeInspectArgs, AprImportShardedArgs, AprProfileArgs,
     AprQuantizeArgs, AprSignArgs, AprVerifySigArgs,
 };
 use super::super::commands::{CliError, CliResult, CommandResult};
-use super::{inspect_model, require_password, rtf_tier_label, validate_sharded_source};
+use super::{rtf_tier_label, validate_sharded_source};
+#[cfg(feature = "format-encryption")]
+use super::require_password;
+#[cfg(any(feature = "format-quantize", feature = "format-homomorphic"))]
+use super::inspect_model;
+#[cfg(feature = "format-quantize")]
+use aprender::format::RosettaStone;
 
 // ============================================================================
 // Phase 3: Tier B — Feature-Gated Handlers
