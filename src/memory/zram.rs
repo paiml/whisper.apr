@@ -73,23 +73,22 @@ impl ZramConfig {
     pub fn detect() -> Self {
         let available = is_zram_available_impl();
         let gpu_enabled = is_gpu_zram_available();
+        let algorithm = detect_compression_algorithm();
+        Self::from_detected(available, gpu_enabled, algorithm)
+    }
 
-        let buffer_size = if available {
-            if gpu_enabled {
-                ZRAM_BUFFER_SIZE // 4 MB for GPU batching
-            } else {
-                DEFAULT_BUFFER_SIZE // 64 KB for CPU ZRAM
-            }
-        } else {
-            DEFAULT_BUFFER_SIZE
-        };
-
+    /// Build a `ZramConfig` from pre-detected system state (pure function for testability)
+    fn from_detected(
+        available: bool,
+        gpu_enabled: bool,
+        algorithm: CompressionAlgorithm,
+    ) -> Self {
         Self {
             available,
             gpu_enabled,
-            algorithm: detect_compression_algorithm(),
-            buffer_size,
-            entropy_threshold: 7.5, // Skip data above 7.5 bits/byte
+            algorithm,
+            buffer_size: select_buffer_size(available, gpu_enabled),
+            entropy_threshold: 7.5,
         }
     }
 
@@ -251,23 +250,44 @@ fn is_zram_available_impl() -> bool {
     false
 }
 
-/// Detect compression algorithm in use
-#[cfg(feature = "std")]
-fn detect_compression_algorithm() -> CompressionAlgorithm {
-    // Check trueno-ublk config
-    if let Ok(algo) = fs::read_to_string("/run/trueno-ublk/algorithm") {
+/// Select buffer size based on ZRAM availability (pure function for testability)
+fn select_buffer_size(available: bool, gpu_enabled: bool) -> usize {
+    if available {
+        if gpu_enabled {
+            ZRAM_BUFFER_SIZE // 4 MB for GPU batching
+        } else {
+            DEFAULT_BUFFER_SIZE // 64 KB for CPU ZRAM
+        }
+    } else {
+        DEFAULT_BUFFER_SIZE
+    }
+}
+
+/// Detect compression algorithm from file contents (pure function for testability)
+fn detect_algorithm_from_content(
+    trueno_algo: Option<&str>,
+    sysfs_algo: Option<&str>,
+) -> CompressionAlgorithm {
+    if let Some(algo) = trueno_algo {
         let parsed = parse_algorithm_name(algo.trim());
         if parsed != CompressionAlgorithm::Lz4 || algo.trim().to_lowercase() == "lz4" {
             return parsed;
         }
     }
 
-    // Check standard ZRAM comp_algorithm
-    if let Ok(algo) = fs::read_to_string("/sys/block/zram0/comp_algorithm") {
-        return parse_comp_algorithm_sysfs(&algo);
+    if let Some(algo) = sysfs_algo {
+        return parse_comp_algorithm_sysfs(algo);
     }
 
-    CompressionAlgorithm::Lz4 // Default to LZ4
+    CompressionAlgorithm::Lz4
+}
+
+/// Detect compression algorithm in use
+#[cfg(feature = "std")]
+fn detect_compression_algorithm() -> CompressionAlgorithm {
+    let trueno = fs::read_to_string("/run/trueno-ublk/algorithm").ok();
+    let sysfs = fs::read_to_string("/sys/block/zram0/comp_algorithm").ok();
+    detect_algorithm_from_content(trueno.as_deref(), sysfs.as_deref())
 }
 
 /// Parse a simple algorithm name string (e.g., "lz4", "zstd", "none")
