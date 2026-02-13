@@ -13,8 +13,14 @@ use ratatui::{
 };
 
 /// Render a data table with header row and fixed-width columns
-fn render_data_table(f: &mut Frame, area: Rect, headers: &[&str], widths: &[u16], rows: Vec<Row>) {
-    let header_cells: Vec<Cell> = headers.iter().map(|&h| Cell::from(h)).collect();
+fn render_data_table(
+    f: &mut Frame<'_>,
+    area: Rect,
+    headers: &[&str],
+    widths: &[u16],
+    rows: Vec<Row<'_>>,
+) {
+    let header_cells: Vec<Cell<'_>> = headers.iter().map(|&h| Cell::from(h)).collect();
     let header = Row::new(header_cells)
         .style(Style::default().add_modifier(Modifier::BOLD))
         .bottom_margin(1);
@@ -27,7 +33,7 @@ fn render_data_table(f: &mut Frame, area: Rect, headers: &[&str], widths: &[u16]
 
 /// Render an empty-state placeholder if the data slice is empty.
 /// Returns `true` (and renders placeholder) if empty, `false` otherwise.
-fn render_empty_placeholder<T>(f: &mut Frame, area: Rect, data: &[T], message: &str) -> bool {
+fn render_empty_placeholder<T>(f: &mut Frame<'_>, area: Rect, data: &[T], message: &str) -> bool {
     if data.is_empty() {
         let text = Paragraph::new(message).style(Style::default().fg(Color::DarkGray));
         f.render_widget(text, area);
@@ -38,7 +44,7 @@ fn render_empty_placeholder<T>(f: &mut Frame, area: Rect, data: &[T], message: &
 }
 
 /// Render the main whisper dashboard
-pub fn render_whisper_dashboard(f: &mut Frame, app: &WhisperApp) {
+pub fn render_whisper_dashboard(f: &mut Frame<'_>, app: &WhisperApp) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -59,8 +65,8 @@ pub fn render_whisper_dashboard(f: &mut Frame, app: &WhisperApp) {
 }
 
 /// Render tab navigation
-fn render_tabs(f: &mut Frame, app: &WhisperApp, area: Rect) {
-    let titles: Vec<Line> = WhisperPanel::titles()
+fn render_tabs(f: &mut Frame<'_>, app: &WhisperApp, area: Rect) {
+    let titles: Vec<Line<'_>> = WhisperPanel::titles()
         .iter()
         .map(|t| Line::from(*t))
         .collect();
@@ -78,7 +84,7 @@ fn render_tabs(f: &mut Frame, app: &WhisperApp, area: Rect) {
 }
 
 /// Render main content panel
-fn render_main_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
+fn render_main_panel(f: &mut Frame<'_>, app: &WhisperApp, area: Rect) {
     match app.current_panel {
         WhisperPanel::Waveform => render_waveform_panel(f, app, area),
         WhisperPanel::Mel => render_mel_panel(f, app, area),
@@ -92,7 +98,7 @@ fn render_main_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
 }
 
 /// Render waveform visualization panel
-fn render_waveform_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
+fn render_waveform_panel(f: &mut Frame<'_>, app: &WhisperApp, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("WAVEFORM - Audio Signal");
@@ -124,7 +130,7 @@ fn render_waveform_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
 }
 
 /// Render mel spectrogram panel
-fn render_mel_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
+fn render_mel_panel(f: &mut Frame<'_>, app: &WhisperApp, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("MEL SPECTROGRAM - 80 Mel Bins");
@@ -157,7 +163,7 @@ fn render_mel_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
 }
 
 /// Render encoder panel
-fn render_encoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
+fn render_encoder_panel(f: &mut Frame<'_>, app: &WhisperApp, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("ENCODER - Layer Activations");
@@ -175,7 +181,7 @@ fn render_encoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
     }
 
     // Create table of layer metrics
-    let rows: Vec<Row> = app
+    let rows: Vec<Row<'_>> = app
         .encoder_metrics
         .iter()
         .map(|m| {
@@ -198,7 +204,7 @@ fn render_encoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
 }
 
 /// Render decoder panel
-fn render_decoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
+fn render_decoder_panel(f: &mut Frame<'_>, app: &WhisperApp, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("DECODER - Token Generation");
@@ -216,7 +222,7 @@ fn render_decoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
     }
 
     // Create table of tokens
-    let rows: Vec<Row> = app
+    let rows: Vec<Row<'_>> = app
         .decoder_tokens
         .iter()
         .enumerate()
@@ -240,7 +246,7 @@ fn render_decoder_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
 }
 
 /// Render attention panel
-fn render_attention_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
+fn render_attention_panel(f: &mut Frame<'_>, app: &WhisperApp, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("ATTENTION - Cross-Attention Weights");
@@ -276,7 +282,7 @@ fn render_attention_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
 }
 
 /// Render transcription panel
-fn render_transcription_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
+fn render_transcription_panel(f: &mut Frame<'_>, app: &WhisperApp, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("TRANSCRIPTION - Final Output");
@@ -308,7 +314,7 @@ fn render_transcription_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
 }
 
 /// Render metrics panel
-fn render_metrics_panel(f: &mut Frame, app: &WhisperApp, area: Rect) {
+fn render_metrics_panel(f: &mut Frame<'_>, app: &WhisperApp, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("METRICS - Performance Data");
@@ -359,7 +365,7 @@ Tokens/Second:     {:.1}
 }
 
 /// Render help panel
-fn render_help_panel(f: &mut Frame, _app: &WhisperApp, area: Rect) {
+fn render_help_panel(f: &mut Frame<'_>, _app: &WhisperApp, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("HELP - Keyboard Shortcuts");
@@ -399,7 +405,7 @@ References:
 }
 
 /// Render status bar
-fn render_status_bar(f: &mut Frame, app: &WhisperApp, area: Rect) {
+fn render_status_bar(f: &mut Frame<'_>, app: &WhisperApp, area: Rect) {
     let state_color = match app.state {
         WhisperState::Idle => Color::DarkGray,
         WhisperState::WaveformReady => Color::Blue,

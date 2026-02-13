@@ -11,12 +11,10 @@ use phase3::{
 };
 
 use std::fs;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use aprender::format::hexdump::{
-    data_flow_diagram, hex_dump, statistics_table, tree_view, HexDumpConfig, LayerInfo,
-    TensorStatistics, TreeNode,
+    data_flow_diagram, hex_dump, tree_view, HexDumpConfig, LayerInfo, TreeNode,
 };
 use aprender::format::{
     diff_models, format_size, lint_model_file, list_tensors, DiffOptions, ImportOptions,
@@ -31,21 +29,14 @@ use aprender::format::model_family::build_default_registry;
 use aprender::format::{apr_export, ExportFormat, ExportOptions};
 
 use super::apr_args::{
-    AprAction, AprArgs, AprCanaryArgs, AprCompareArgs, AprContractArgs, AprDecryptArgs,
-    AprDiffArgs, AprEncryptArgs, AprExportArgs, AprF16AuditArgs, AprFlowArgs, AprGoldenArgs,
-    AprHeInspectArgs, AprHexArgs, AprImportArgs, AprImportShardedArgs, AprInspectArgs, AprLintArgs,
-    AprMergeArgs, AprProfileArgs, AprQuantizeArgs, AprSignArgs, AprTensorsArgs, AprTreeArgs,
-    AprValidateArgs, AprVerifySigArgs, FamilyAction, RosettaAction, RosettaArgs,
-    RosettaConvertArgs, RosettaDiffArgs, RosettaFingerprintArgs, RosettaInspectArgs,
-    RosettaVerifyArgs,
+    AprAction, AprArgs, AprCanaryArgs, AprCompareArgs, AprContractArgs, AprDiffArgs, AprExportArgs,
+    AprF16AuditArgs, AprFlowArgs, AprGoldenArgs, AprHexArgs, AprImportArgs, AprInspectArgs,
+    AprLintArgs, AprMergeArgs, AprTensorsArgs, AprTreeArgs, AprValidateArgs, FamilyAction,
 };
 use super::commands::{CliError, CliResult, CommandResult};
 
 mod rosetta;
-use rosetta::{
-    run_rosetta, run_rosetta_convert, run_rosetta_diff, run_rosetta_fingerprint,
-    run_rosetta_inspect, run_rosetta_verify,
-};
+use rosetta::run_rosetta;
 
 /// Dispatch apr subcommand with timing and quiet-mode support.
 ///

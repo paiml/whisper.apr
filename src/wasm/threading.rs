@@ -173,20 +173,29 @@ mod parallel {
     }
 
     /// Parallel matrix multiplication helper
-    pub fn parallel_matmul(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Vec<f32> {
-        let mut c = vec![0.0f32; m * n];
+    pub fn parallel_matmul(
+        lhs: &[f32],
+        rhs: &[f32],
+        rows: usize,
+        cols: usize,
+        inner: usize,
+    ) -> Vec<f32> {
+        let mut result = vec![0.0f32; rows * cols];
 
-        c.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
-            for j in 0..n {
-                let mut sum = 0.0f32;
-                for l in 0..k {
-                    sum += a[i * k + l] * b[l * n + j];
+        result
+            .par_chunks_mut(cols)
+            .enumerate()
+            .for_each(|(i, row)| {
+                for j in 0..cols {
+                    let mut sum = 0.0f32;
+                    for l in 0..inner {
+                        sum += lhs[i * inner + l] * rhs[l * cols + j];
+                    }
+                    row[j] = sum;
                 }
-                row[j] = sum;
-            }
-        });
+            });
 
-        c
+        result
     }
 }
 
@@ -218,20 +227,26 @@ mod sequential {
     }
 
     /// Sequential matrix multiplication (fallback)
-    pub fn parallel_matmul(a: &[f32], b: &[f32], m: usize, n: usize, k: usize) -> Vec<f32> {
-        let mut c = vec![0.0f32; m * n];
+    pub fn parallel_matmul(
+        lhs: &[f32],
+        rhs: &[f32],
+        rows: usize,
+        cols: usize,
+        inner: usize,
+    ) -> Vec<f32> {
+        let mut result = vec![0.0f32; rows * cols];
 
-        for i in 0..m {
-            for j in 0..n {
+        for i in 0..rows {
+            for j in 0..cols {
                 let mut sum = 0.0f32;
-                for l in 0..k {
-                    sum += a[i * k + l] * b[l * n + j];
+                for l in 0..inner {
+                    sum += lhs[i * inner + l] * rhs[l * cols + j];
                 }
-                c[i * n + j] = sum;
+                result[i * cols + j] = sum;
             }
         }
 
-        c
+        result
     }
 }
 

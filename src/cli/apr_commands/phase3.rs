@@ -504,7 +504,7 @@ pub(super) fn run_he_inspect(
 
     #[cfg(feature = "format-homomorphic")]
     {
-        use aprender::format::homomorphic::{HeParameters, HeScheme, SecurityLevel};
+        use aprender::format::homomorphic::HeParameters;
 
         // Inspect model file for HE metadata
         let report = inspect_model(&args.file)?;
@@ -521,7 +521,7 @@ pub(super) fn run_he_inspect(
                  \"coeff_modulus_bits\":{:?},\"scale_bits\":{}}}",
                 args.file.display(),
                 report.format,
-                report.tensor_count,
+                report.tensors.len(),
                 params.scheme,
                 params.security_level,
                 params.security_level.poly_modulus_degree(),
@@ -532,7 +532,7 @@ pub(super) fn run_he_inspect(
         } else if !global.quiet {
             println!("HE Model Inspection: {}", args.file.display());
             println!("  Format: {}", report.format);
-            println!("  Tensors: {}", report.tensor_count);
+            println!("  Tensors: {}", report.tensors.len());
             println!("  HE Scheme: {:?}", params.scheme);
             println!("  Security Level: {:?}", params.security_level);
             println!(
