@@ -4,10 +4,10 @@ use std::fs::File;
 use std::io::Read;
 use whisper_apr::WhisperApr;
 
-fn load_npy_f32(path: &str) -> Vec<f32> {
-    let mut file = File::open(path).expect("open file");
+fn load_npy_f32(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let mut file = File::open(path)?;
     let mut buf = Vec::new();
-    file.read_to_end(&mut buf).expect("read file");
+    file.read_to_end(&mut buf)?;
 
     let header_len = u16::from_le_bytes([buf[8], buf[9]]) as usize;
     let data_start = 10 + header_len;
@@ -15,14 +15,15 @@ fn load_npy_f32(path: &str) -> Vec<f32> {
     println!("Loading {}: header = {}", path, header.trim());
 
     let data = &buf[data_start..];
-    data.chunks(4)
+    Ok(data
+        .chunks(4)
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect()
+        .collect())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load HF mel
-    let hf_mel = load_npy_f32("/tmp/hf_mel_full.npy");
+    let hf_mel = load_npy_f32("/tmp/hf_mel_full.npy")?;
     println!("HF mel: {} values", hf_mel.len());
 
     // HF mel is [80, 3000] in C-order (frame-major in their code)

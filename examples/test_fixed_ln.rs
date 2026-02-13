@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used)]
 //! Test with fixed layer norm weights
 
 use whisper_apr::tokenizer::special_tokens;
@@ -62,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .unwrap();
+            .ok_or("empty logits")?;
 
         let mut indexed: Vec<_> = last_logits.iter().enumerate().collect();
         indexed.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
