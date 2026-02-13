@@ -31,6 +31,8 @@ pub(super) fn run_sign(
 
     #[cfg(feature = "format-signing")]
     {
+        use ed25519_dalek::Signer;
+
         // Read the signing key file (raw 32-byte seed)
         let key_bytes = fs::read(&args.key)
             .map_err(|e| CliError::InvalidArgument(format!("Failed to read key file: {e}")))?;
@@ -53,7 +55,6 @@ pub(super) fn run_sign(
             .map_err(|e| CliError::InvalidArgument(format!("Failed to read model: {e}")))?;
 
         // Compute Ed25519 signature over model content
-        use ed25519_dalek::Signer;
         let signature = signing_key.sign(&model_data);
         let verifying_key = signing_key.verifying_key();
 
@@ -129,6 +130,8 @@ pub(super) fn run_verify_sig(
 
     #[cfg(feature = "format-signing")]
     {
+        use ed25519_dalek::Verifier;
+
         let content = fs::read(&args.file)
             .map_err(|e| CliError::InvalidArgument(format!("Failed to read file: {e}")))?;
 
@@ -153,7 +156,6 @@ pub(super) fn run_verify_sig(
         };
 
         let model_data = &content[..sig_start];
-        use ed25519_dalek::Verifier;
         let valid = verifying_key.verify(model_data, &signature).is_ok();
 
         if global.json {
@@ -187,17 +189,16 @@ pub(super) fn run_encrypt(
 
     #[cfg(feature = "format-encryption")]
     {
-        let password = require_password(args.password.as_deref())?;
-
-        let model_data = fs::read(&args.file)
-            .map_err(|e| CliError::InvalidArgument(format!("Failed to read model: {e}")))?;
-
-        // Encrypt using AES-256-GCM with Argon2id KDF
         use aes_gcm::{
             aead::{Aead, KeyInit},
             Aes256Gcm, Nonce,
         };
         use argon2::Argon2;
+
+        let password = require_password(args.password.as_deref())?;
+
+        let model_data = fs::read(&args.file)
+            .map_err(|e| CliError::InvalidArgument(format!("Failed to read model: {e}")))?;
 
         let mut salt = [0u8; 16];
         let mut nonce_bytes = [0u8; 12];
@@ -256,6 +257,12 @@ pub(super) fn run_decrypt(
 
     #[cfg(feature = "format-encryption")]
     {
+        use aes_gcm::{
+            aead::{Aead, KeyInit},
+            Aes256Gcm, Nonce,
+        };
+        use argon2::Argon2;
+
         let password = require_password(args.password.as_deref())?;
 
         let content = fs::read(&args.file).map_err(|e| {
@@ -286,12 +293,6 @@ pub(super) fn run_decrypt(
         let ciphertext = content.get(28..).ok_or_else(|| {
             CliError::InvalidArgument("Encrypted file too short for ciphertext".to_string())
         })?;
-
-        use aes_gcm::{
-            aead::{Aead, KeyInit},
-            Aes256Gcm, Nonce,
-        };
-        use argon2::Argon2;
 
         let mut key = [0u8; 32];
         Argon2::default()
@@ -369,6 +370,7 @@ pub(super) fn run_quantize(
     #[cfg(feature = "format-quantize")]
     {
         use aprender::format::quantize::quantize;
+        use std::fmt::Write as _;
 
         let quant_type = parse_quant_type(&args.r#type)?;
 
@@ -412,7 +414,7 @@ pub(super) fn run_quantize(
                 quant_type
             );
             if args.verify {
-                json.push_str(&format!(",\"max_mse\":{max_mse:.6}"));
+                let _ = write!(json, ",\"max_mse\":{max_mse:.6}");
             }
             json.push('}');
             println!("{json}");
