@@ -499,6 +499,7 @@ impl WordTimestampExtractorWasm {
     /// * `tokens` - Token texts within the word
     /// * `start_index` - Starting token index
     #[wasm_bindgen(js_name = interpolateWordTokens)]
+    #[allow(clippy::needless_pass_by_value)] // Vec<String> required by wasm-bindgen FFI
     pub fn interpolate_word_tokens(
         &self,
         word_start: f32,
@@ -553,6 +554,7 @@ impl TimestampInterpolatorWasm {
 
     /// Interpolate timestamps for tokens within a word
     #[wasm_bindgen]
+    #[allow(clippy::needless_pass_by_value)] // Vec<String> required by wasm-bindgen FFI
     pub fn interpolate(
         &self,
         word_start: f32,

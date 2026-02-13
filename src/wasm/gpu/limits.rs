@@ -7,6 +7,7 @@ use crate::gpu::GpuLimits;
 /// WASM-friendly GPU limits
 #[wasm_bindgen]
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_field_names)]
 pub struct GpuLimitsWasm {
     pub(super) max_buffer_size: u64,
     pub(super) max_storage_buffer_binding_size: u32,

@@ -117,6 +117,18 @@ impl GpuExecutor {
         lhs: &[f32],
         rhs: &[f32],
     ) -> GpuResult<Vec<f32>> {
+        // Uniform buffer layout for dimensions (must be declared before statements)
+        #[repr(C)]
+        #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+        struct Dimensions {
+            m: u32,
+            k: u32,
+            n: u32,
+            alpha: f32,
+            beta: f32,
+            _padding: [u32; 3],
+        }
+
         let dims = op.dimensions();
 
         // Validate input sizes
@@ -140,18 +152,6 @@ impl GpuExecutor {
         let b_buffer = self.create_storage_buffer_init("B", bytemuck::cast_slice(rhs));
         let c_buffer = self.create_storage_buffer("C", dims.result_bytes() as u64);
         let staging_buffer = self.create_staging_buffer("staging", dims.result_bytes() as u64);
-
-        // Create uniform buffer for dimensions
-        #[repr(C)]
-        #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-        struct Dimensions {
-            m: u32,
-            k: u32,
-            n: u32,
-            alpha: f32,
-            beta: f32,
-            _padding: [u32; 3],
-        }
 
         let dims_data = Dimensions {
             m: dims.m,
@@ -238,7 +238,7 @@ impl GpuExecutor {
                 layout: Some(&pipeline_layout),
                 module: &shader,
                 entry_point: Some("main"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 cache: None,
             });
 
