@@ -30,8 +30,15 @@ exclude = [
     "proptest-regressions/",
 ]
 
+default-run = "whisper-apr"
+
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "whisper-apr"
+path = "src/bin/whisper-apr-cli.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "whisper-apr-cli"

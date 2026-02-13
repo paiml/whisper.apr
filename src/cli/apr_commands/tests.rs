@@ -1,5 +1,15 @@
 use super::*;
 
+// Phase 3 arg types (not re-exported from mod.rs)
+use super::super::apr_args::{
+    AprDecryptArgs, AprEncryptArgs, AprHeInspectArgs, AprImportShardedArgs, AprQuantizeArgs,
+    AprSignArgs, AprVerifySigArgs,
+};
+// Rosetta subcommand functions (pub(super) in rosetta.rs)
+use super::rosetta::{
+    run_rosetta_convert, run_rosetta_fingerprint, run_rosetta_inspect, run_rosetta_verify,
+};
+
 // ========================================================================
 // Helper unit tests
 // ========================================================================

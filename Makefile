@@ -24,7 +24,7 @@ FAST_TEST_FILTER := -E 'not test(/encoder_forward|transcription|encode_3_second|
 .PHONY: bench bench-wasm bench-pipeline bench-regression bench-tui bench-tui-test bench-tui-render bench-tui-playbook mutants mutants-quick
 .PHONY: profile profile-pipeline golden-traces golden-traces-clean
 .PHONY: pmat-tdg pmat-analyze pmat-score pmat-all
-.PHONY: audit deny docs install-tools
+.PHONY: audit deny docs install-tools install smoke-test dogfood
 
 # ============================================================================
 # TIER 1: ON-SAVE (Sub-second feedback)
@@ -443,6 +443,56 @@ demo-tier3: ## Run demo Tier 3 quality gates (95%+ GUI coverage)
 demo-all: demo-build demo-tier3 ## Build and validate all demos
 
 # ============================================================================
+# INSTALL & DOGFOOD
+# ============================================================================
+.PHONY: install smoke-test dogfood
+
+MODEL_PATH := models/whisper-tiny-fb.apr
+AUDIO_PATH := demos/test-audio/test-speech-1.5s.wav
+EXPECT_TEXT := birds
+
+install: ## Install whisper-apr binary via cargo install
+	cargo install --path . --features cli
+
+smoke-test: ## Quick smoke test via cargo run (no install required)
+	@echo "🔥 Smoke test (cargo run)..."
+	@echo ""
+	@echo "  [1/4] Version check..."
+	@cargo run --features cli -- --version
+	@echo ""
+	@echo "  [2/4] Diagnose (tokenizer)..."
+	@cargo run --features cli -- diagnose --tokenizer-only
+	@echo ""
+	@echo "  [3/4] Backend test (SIMD)..."
+	@cargo run --features cli -- test --backend simd
+	@echo ""
+	@echo "  [4/4] Transcription test..."
+	@test -f $(MODEL_PATH) || { echo "❌ Model not found: $(MODEL_PATH)"; exit 1; }
+	@test -f $(AUDIO_PATH) || { echo "❌ Audio not found: $(AUDIO_PATH)"; exit 1; }
+	@OUTPUT=$$(cargo run --features cli -- transcribe -f $(AUDIO_PATH) --model-path $(MODEL_PATH) 2>&1); \
+	echo "  Output: $$OUTPUT"; \
+	echo "$$OUTPUT" | grep -qi "$(EXPECT_TEXT)" || { echo "❌ Expected '$(EXPECT_TEXT)' in output"; exit 1; }
+	@echo ""
+	@echo "✅ Smoke test passed!"
+
+dogfood: install ## Install binary and run end-to-end selftest
+	@echo "🐕 Dogfood: exercising installed whisper-apr binary..."
+	@echo ""
+	@which whisper-apr || { echo "❌ whisper-apr not found in PATH"; exit 1; }
+	@echo "  [1/3] Version..."
+	@whisper-apr --version
+	@echo ""
+	@echo "  [2/3] Selftest (diagnose + backend)..."
+	@whisper-apr selftest
+	@echo ""
+	@echo "  [3/3] Selftest with transcription..."
+	@test -f $(MODEL_PATH) || { echo "❌ Model not found: $(MODEL_PATH)"; exit 1; }
+	@test -f $(AUDIO_PATH) || { echo "❌ Audio not found: $(AUDIO_PATH)"; exit 1; }
+	@whisper-apr selftest --model $(MODEL_PATH) --audio $(AUDIO_PATH) --expect "$(EXPECT_TEXT)"
+	@echo ""
+	@echo "✅ Dogfood passed!"
+
+# ============================================================================
 # KAIZEN: Continuous Improvement
 # ============================================================================
 kaizen: ## Kaizen: Continuous improvement analysis
@@ -522,6 +572,11 @@ help: ## Show this help message
 	@echo '  make lint         Run clippy with fixes'
 	@echo '  make test-fast    Run tests quickly (<5 min target)'
 	@echo '  make coverage     Generate coverage report (target: ≥95%)'
+	@echo ''
+	@echo 'Install & Dogfood:'
+	@echo '  make install      Install whisper-apr binary (cargo install)'
+	@echo '  make smoke-test   Quick smoke test via cargo run (no install)'
+	@echo '  make dogfood      Install + end-to-end selftest'
 	@echo ''
 	@echo 'All Commands:'
 	@echo ''

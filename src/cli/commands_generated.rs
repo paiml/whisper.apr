@@ -30,9 +30,9 @@ use crate::{DecodingStrategy, ProfilingStats, Task, TranscribeOptions, WhisperAp
 use crate::cli::args::{
     Args, BackendArg, BatchArgs, BenchmarkArgs, Command, CommandArgs, ConvertArgs, DiagnoseArgs,
     ExportArgs, ExportFormatArg, ModelAction, ModelArgs, ModelFamilyArg, OutputFormatArg,
-    ParityArgs, QuantizeArgs, QuantizeMethodArg, RecordArgs, ServeArgs, StreamArgs, SummarizeArgs,
-    SummarizeFormat, TestArgs, TranscribeArgs, TranscribeFolderArgs, TranslateArgs, ValidateArgs,
-    ValidateOutputFormat,
+    ParityArgs, QuantizeArgs, QuantizeMethodArg, RecordArgs, SelftestArgs, ServeArgs, StreamArgs,
+    SummarizeArgs, SummarizeFormat, TestArgs, TranscribeArgs, TranscribeFolderArgs, TranslateArgs,
+    ValidateArgs, ValidateOutputFormat,
 };
 
 use crate::cli::output::{format_output, OutputFormat};
@@ -166,6 +166,7 @@ pub fn run(args: Args) -> CliResult<CommandResult> {
         Command::Convert(c) => run_convert(c.clone(), &args),
         Command::Export(e) => run_export(e.clone(), &args),
         Command::Apr(a) => crate::cli::apr_commands::run_apr(a, &args),
+        Command::Selftest(s) => run_selftest(s.clone(), &args),
     }
 }
 
@@ -2287,6 +2288,170 @@ fn test_backend(backend: BackendArg, _global: &Args) -> CliResult<()> {
             Ok(())
         }
         BackendArg::All => unreachable!(),
+    }
+}
+
+/// Run selftest command: diagnose + backend test + optional transcription
+pub fn run_selftest(args: SelftestArgs, global: &Args) -> CliResult<CommandResult> {
+    use crate::cli::args::{DiagnoseArgs, TestArgs};
+
+    let mut all_passed = true;
+
+    // Phase 1: Diagnose (tokenizer validation)
+    if !global.quiet {
+        println!("Phase 1/3: Diagnose (tokenizer validation)");
+        println!("───────────────────────────────────────────────────────────────────");
+    }
+    let diag_args = DiagnoseArgs {
+        model: None,
+        tokenizer_only: true,
+        json: false,
+        full: false,
+    };
+    match run_diagnose(diag_args, global) {
+        Ok(r) if r.success => {
+            if !global.quiet {
+                println!("  Phase 1: PASS\n");
+            }
+        }
+        Ok(_) => {
+            if !global.quiet {
+                println!("  Phase 1: FAIL\n");
+            }
+            all_passed = false;
+        }
+        Err(e) => {
+            if !global.quiet {
+                println!("  Phase 1: ERROR ({e})\n");
+            }
+            all_passed = false;
+        }
+    }
+
+    // Phase 2: Backend test (SIMD)
+    if !global.quiet {
+        println!("Phase 2/3: Backend test (SIMD)");
+        println!("───────────────────────────────────────────────────────────────────");
+    }
+    let test_args = TestArgs {
+        backend: BackendArg::Simd,
+        demo: None,
+        pipeline: None,
+    };
+    match run_test(test_args, global) {
+        Ok(r) if r.success => {
+            if !global.quiet {
+                println!("  Phase 2: PASS\n");
+            }
+        }
+        Ok(_) => {
+            if !global.quiet {
+                println!("  Phase 2: FAIL\n");
+            }
+            all_passed = false;
+        }
+        Err(e) => {
+            if !global.quiet {
+                println!("  Phase 2: ERROR ({e})\n");
+            }
+            all_passed = false;
+        }
+    }
+
+    // Phase 3: Optional transcription test
+    if let (Some(model_path), Some(audio_path)) = (&args.model, &args.audio) {
+        if !global.quiet {
+            println!("Phase 3/3: Transcription test");
+            println!("───────────────────────────────────────────────────────────────────");
+        }
+        match run_selftest_transcription(model_path, audio_path, args.expect.as_deref(), global) {
+            Ok(true) => {
+                if !global.quiet {
+                    println!("  Phase 3: PASS\n");
+                }
+            }
+            Ok(false) => {
+                if !global.quiet {
+                    println!("  Phase 3: FAIL\n");
+                }
+                all_passed = false;
+            }
+            Err(e) => {
+                if !global.quiet {
+                    println!("  Phase 3: ERROR ({e})\n");
+                }
+                all_passed = false;
+            }
+        }
+    } else if !global.quiet {
+        println!("Phase 3/3: Transcription test (skipped — no --model/--audio)");
+        println!("───────────────────────────────────────────────────────────────────");
+        println!("  Provide --model <path.apr> --audio <file.wav> --expect <text>\n");
+    }
+
+    if all_passed {
+        Ok(CommandResult::success("All selftest phases passed".to_string()))
+    } else {
+        Ok(CommandResult::failure("One or more selftest phases failed".to_string()))
+    }
+}
+
+/// Run a transcription test as part of selftest
+fn run_selftest_transcription(
+    model_path: &Path,
+    audio_path: &Path,
+    expect: Option<&str>,
+    global: &Args,
+) -> CliResult<bool> {
+    if !model_path.exists() {
+        return Err(CliError::FileNotFound(format!(
+            "Model file: {}",
+            model_path.display()
+        )));
+    }
+    if !audio_path.exists() {
+        return Err(CliError::FileNotFound(format!(
+            "Audio file: {}",
+            audio_path.display()
+        )));
+    }
+
+    // Load audio
+    let audio_data = fs::read(audio_path).map_err(CliError::Io)?;
+    let wav = parse_wav_file(&audio_data)?;
+    let samples = if wav.sample_rate != 16000 {
+        resample(&wav.samples, wav.sample_rate, 16000)
+    } else {
+        wav.samples
+    };
+
+    // Load model and transcribe
+    let model_bytes = fs::read(model_path).map_err(CliError::Io)?;
+    let whisper = WhisperApr::load_from_apr(&model_bytes)?;
+    let options = TranscribeOptions::default();
+    let result = whisper.transcribe(&samples, options)?;
+
+    let text = result.text.trim().to_lowercase();
+    if !global.quiet {
+        println!("  Transcription: \"{text}\"");
+    }
+
+    if let Some(expected) = expect {
+        let expected_lower = expected.to_lowercase();
+        if text.contains(&expected_lower) {
+            if !global.quiet {
+                println!("  Expected \"{expected}\" found in output");
+            }
+            Ok(true)
+        } else {
+            if !global.quiet {
+                println!("  Expected \"{expected}\" NOT found in output");
+            }
+            Ok(false)
+        }
+    } else {
+        // No expectation — pass if transcription produced any text
+        Ok(!text.is_empty())
     }
 }
 
