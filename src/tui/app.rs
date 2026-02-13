@@ -187,6 +187,7 @@ impl JidokaAlerts {
 
 /// Whisper dashboard application state
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)] // TUI state naturally uses boolean flags
 pub struct WhisperApp {
     /// Current active panel
     pub current_panel: WhisperPanel,

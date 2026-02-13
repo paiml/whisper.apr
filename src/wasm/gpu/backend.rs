@@ -24,6 +24,7 @@ pub enum GpuBackendWasm {
 }
 
 impl From<GpuBackend> for GpuBackendWasm {
+    #[allow(clippy::match_same_arms)]
     fn from(backend: GpuBackend) -> Self {
         match backend {
             GpuBackend::Vulkan => Self::Vulkan,

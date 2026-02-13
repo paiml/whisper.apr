@@ -43,12 +43,11 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(js_name = recommendedBackendForModel)]
 pub fn recommended_backend_for_model(model_type: &str) -> String {
     let params = match model_type.to_lowercase().as_str() {
-        "tiny" | "tiny.en" => 39_000_000,
         "base" | "base.en" => 74_000_000,
         "small" | "small.en" => 244_000_000,
         "medium" | "medium.en" => 769_000_000,
         "large" | "large-v2" | "large-v3" => 1_550_000_000,
-        _ => 39_000_000,
+        _ => 39_000_000, // tiny and unknown default to smallest
     };
 
     // For models with >100M parameters, prefer GPU if available
