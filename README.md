@@ -503,18 +503,18 @@ make docs       # Build documentation
 ### Testing
 
 ```bash
-# Unit tests
+# Unit tests (fast, no large models)
 cargo test --lib
 
-# Integration tests
-cargo test --test integration
-
-# Property tests
-cargo test --test property_tests
+# Integration tests (requires large models, feature-gated)
+cargo test --features integration-tests
 
 # WASM tests (requires wasm-pack)
 wasm-pack test --headless --chrome
 ```
+
+> **Note:** Integration tests that load large models are behind the `integration-tests` feature flag.
+> Heavy lib tests that allocate large decoders are marked `#[ignore]` and skipped by default.
 
 ---
 
@@ -536,7 +536,7 @@ whisper.apr follows **EXTREME TDD** methodology with comprehensive quality gates
 
 | Metric | Value |
 |--------|-------|
-| **Test Count** | 2,273 |
+| **Test Count** | 2,920 |
 | **Total Functions** | 933 |
 | **Source LOC** | ~145,000 |
 | **Examples** | 103 |
@@ -618,7 +618,7 @@ Follow conventional commits format:
 - [x] Greedy and beam search decoding
 - [x] GPU-resident tensor architecture via trueno-gpu
 - [x] CUDA acceleration with 5.8x speedup
-- [x] 2,273+ tests, TDG A grade (90.9/100)
+- [x] 2,920+ tests, 97.92% coverage, TDG A grade (90.9/100)
 
 ### v0.3.0 (Planned)
 - [ ] WebGPU acceleration

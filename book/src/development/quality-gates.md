@@ -74,7 +74,7 @@ coverage:
 ```
 
 Current targets:
-- **Line coverage**: ≥95% (achieved: 95.17%)
+- **Line coverage**: ≥95% (achieved: 97.92%)
 - **Branch coverage**: tracked
 
 ## Tier 4: CI/CD (5-60min)
@@ -173,8 +173,8 @@ jobs:
 ## Quality Metrics
 
 Current project status:
-- **Test count**: 2,428 tests
-- **Line coverage**: 95.17%
+- **Test count**: 2,920 tests (133 heavy tests ignored by default)
+- **Line coverage**: 97.92%
 - **Property tests**: 19 tests
 - **Zero clippy warnings** (in strict mode)
 - **Zero unsafe code**

@@ -1,4 +1,5 @@
 //! Integration Tests for HuggingFace Publishing (WAPR-PUB-001)
+#![cfg(feature = "integration-tests")]
 //!
 //! End-to-end tests for the publish workflow:
 //! 1. APR → SafeTensors export

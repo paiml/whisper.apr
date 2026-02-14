@@ -1,4 +1,5 @@
 //! CLI Parity Integration Tests (EXTREME TDD)
+#![cfg(feature = "integration-tests")]
 //!
 //! These tests verify whisper-apr CLI parity with whisper.cpp.
 //!

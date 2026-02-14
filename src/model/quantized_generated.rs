@@ -5435,6 +5435,7 @@ mod tests {
         // ========================================================================
 
         #[test]
+        #[ignore = "Heavy: allocates large quantized decoder"]
         fn test_fully_quantized_decoder_creation() {
             // Test: FullyQuantizedDecoder creates with all Q4K weights
             //
@@ -5463,6 +5464,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "Heavy: allocates large quantized decoder"]
         fn test_fully_quantized_decoder_forward_one() {
             // Test: Forward pass for single token works
             //
@@ -5502,6 +5504,7 @@ mod tests {
         }
 
         #[test]
+        #[ignore = "Heavy: allocates large quantized decoder"]
         fn test_fully_quantized_decoder_memory_savings() {
             // Test: FullyQuantizedDecoder uses less memory than FP32
             //

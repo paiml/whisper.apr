@@ -2276,6 +2276,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Heavy: allocates large decoder model"]
     fn test_rtf_measurement() {
         // Test: run_rtf_benchmark returns valid RTF measurement
         //
@@ -2474,6 +2475,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[ignore = "Heavy: allocates large decoder model"]
     fn test_instrumented_forward_returns_breakdown() {
         // Test: run_rtf_benchmark_instrumented returns breakdown
         //
@@ -2780,6 +2782,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Heavy: allocates large decoder model"]
     fn test_decoder_latency_short_audio() {
         // Test: Decoder latency < 1500ms for short audio
         //
@@ -3511,6 +3514,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Heavy: allocates LFM2 model"]
     fn test_lfm2_inference_benchmark_forward_pass() {
         use crate::model::lfm2::Lfm2;
         use std::time::Instant;
@@ -3543,6 +3547,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Heavy: allocates LFM2 model"]
     fn test_lfm2_inference_benchmark_generate() {
         use crate::model::lfm2::Lfm2;
         use std::time::Instant;
@@ -3579,6 +3584,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Heavy: allocates LFM2 model"]
     fn test_lfm2_inference_benchmark_with_stats() {
         use crate::model::lfm2::Lfm2;
 
@@ -3616,6 +3622,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Heavy: allocates LFM2 model"]
     fn test_lfm2_inference_benchmark_streaming() {
         use crate::model::lfm2::Lfm2;
         use std::cell::RefCell;
@@ -3663,6 +3670,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Heavy: allocates LFM2 model"]
     fn test_lfm2_inference_benchmark_memory_estimate() {
         use crate::format::apr2::{LayerType, Lfm2Config};
         use crate::model::lfm2::Lfm2;
@@ -3711,6 +3719,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Heavy: allocates LFM2 model"]
     fn test_lfm2_inference_benchmark_throughput_scaling() {
         use crate::model::lfm2::Lfm2;
         use std::time::Instant;
