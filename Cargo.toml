@@ -76,6 +76,8 @@ realizar-inference = ["dep:realizar"]
 realizar-gpu = ["dep:realizar", "realizar/gpu", "realizar/cuda", "cuda"]
 # Experimental probar APIs (zero-js validation, worker harness)
 probar-experimental = []
+# Gate integration tests that load large models (run with: cargo test --features integration-tests)
+integration-tests = []
 # APR format feature-gated modules (Phase 3 — Tier B)
 format-signing = ["aprender/format-signing", "ed25519-dalek", "hex"]
 format-encryption = ["aprender/format-encryption", "aes-gcm", "argon2", "rand"]

@@ -1,4 +1,5 @@
 //! Integration test: Transcription produces meaningful text
+#![cfg(feature = "integration-tests")]
 //!
 //! This test verifies the CRITICAL behavior: given audio with speech,
 //! the transcription should produce non-empty, meaningful text.

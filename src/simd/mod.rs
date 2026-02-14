@@ -59,7 +59,13 @@ pub fn simd_available() -> bool {
 /// Get backend name for debugging
 #[must_use]
 pub fn backend_name() -> &'static str {
-    match best_backend() {
+    backend_name_for(best_backend())
+}
+
+/// Get name string for a specific backend
+#[must_use]
+pub fn backend_name_for(backend: Backend) -> &'static str {
+    match backend {
         Backend::Scalar => "Scalar",
         Backend::SSE2 => "SSE2",
         Backend::AVX => "AVX",
@@ -125,5 +131,18 @@ mod tests {
         let _ = gelu(&[0.0, 1.0]);
         let _ = relu(&[-1.0, 0.0, 1.0]);
         let _ = matmul(&[1.0, 0.0, 0.0, 1.0], &[1.0, 2.0, 3.0, 4.0], 2, 2, 2);
+    }
+
+    #[test]
+    fn test_backend_name_for_all_variants() {
+        assert_eq!(backend_name_for(Backend::Scalar), "Scalar");
+        assert_eq!(backend_name_for(Backend::SSE2), "SSE2");
+        assert_eq!(backend_name_for(Backend::AVX), "AVX");
+        assert_eq!(backend_name_for(Backend::AVX2), "AVX2");
+        assert_eq!(backend_name_for(Backend::AVX512), "AVX512");
+        assert_eq!(backend_name_for(Backend::NEON), "NEON");
+        assert_eq!(backend_name_for(Backend::WasmSIMD), "WasmSIMD");
+        assert_eq!(backend_name_for(Backend::GPU), "GPU");
+        assert_eq!(backend_name_for(Backend::Auto), "Auto");
     }
 }

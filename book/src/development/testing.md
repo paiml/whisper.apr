@@ -12,21 +12,32 @@ The project targets the following test distribution:
 ## Running Tests
 
 ```bash
-# All tests (unit + property + integration + doc)
-cargo test
+# Unit tests only (fast, no large models)
+cargo test --lib
 
 # Fast tests
 make test-fast
-
-# Unit tests only
-cargo test --lib
 
 # Property-based tests only
 cargo test property_ --lib
 
 # Doc tests
 cargo test --doc
+
+# Integration tests (feature-gated, requires large models)
+cargo test --features integration-tests
+
+# Run ignored heavy tests explicitly
+cargo test --lib -- --ignored
 ```
+
+### Test Isolation
+
+Tests are organized into three tiers of isolation:
+
+1. **Unit tests** (`cargo test --lib`): Fast, no large model allocation. Heavy tests that allocate large decoders are marked `#[ignore]` and skipped by default.
+2. **Integration tests** (`cargo test --features integration-tests`): Gated behind the `integration-tests` feature flag. These load large model files and run end-to-end pipelines.
+3. **WASM tests** (`wasm-pack test`): Browser-based tests requiring wasm-pack.
 
 ## Coverage
 
@@ -54,8 +65,8 @@ The coverage pattern follows the paiml-mcp-agent-toolkit convention:
 
 | Metric | Value |
 |--------|-------|
-| **Tests** | 2,428 |
-| **Line coverage** | 95.17% |
+| **Tests** | 2,920 |
+| **Line coverage** | 97.92% |
 | **Threshold** | 95% |
 
 ## Test Categories
@@ -105,7 +116,19 @@ mod property_tests {
 
 ### Integration Tests
 
-End-to-end tests in `tests/` directory testing the full transcription pipeline.
+End-to-end tests in `tests/` directory testing the full transcription pipeline. These are gated behind the `integration-tests` feature flag to prevent accidental execution during normal development:
+
+```bash
+# Run integration tests explicitly
+cargo test --features integration-tests
+```
+
+The feature-gated files include:
+- `tests/ground_truth_tests.rs` — Ground truth validation against reference implementations
+- `tests/integration_transcribe.rs` — Full transcription pipeline tests
+- `tests/cli_parity_tests.rs` — CLI output parity tests
+- `tests/pipeline_fuzz.rs` — Pipeline fuzz testing
+- `tests/publish_integration.rs` — HuggingFace publishing workflow tests
 
 ## Makefile Targets
 

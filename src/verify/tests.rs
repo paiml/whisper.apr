@@ -609,3 +609,33 @@ fn test_verifier_meets_threshold_empty_report() {
     // Empty report has 100% pass rate
     assert!(verifier.meets_threshold(&report));
 }
+
+#[cfg(unix)]
+#[test]
+fn test_verify_apr_permission_denied() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(b"APR\0").unwrap();
+    file.write_all(&[0u8; 60]).unwrap();
+    file.flush().unwrap();
+    let path = file.path().to_path_buf();
+
+    // Remove all permissions so File::open fails (A2_readable)
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let report = verify_apr(&path).unwrap();
+
+    // Restore permissions for cleanup
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    // A1 should pass (file exists), A2 should fail (can't open)
+    let a1 = report.checks.iter().find(|c| c.name == "A1_file_exists");
+    assert!(a1.is_some());
+    assert!(a1.unwrap().passed);
+
+    let a2 = report.checks.iter().find(|c| c.name == "A2_readable");
+    assert!(a2.is_some());
+    assert!(!a2.unwrap().passed);
+    assert!(a2.unwrap().message.contains("Cannot read"));
+}

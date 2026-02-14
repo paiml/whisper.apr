@@ -1,4 +1,5 @@
 //! Pipeline Fuzz Tests
+#![cfg(feature = "integration-tests")]
 //!
 //! Property-based and fuzz tests for the encode/decode pipeline.
 //! Validates correctness under various edge cases and random inputs.
