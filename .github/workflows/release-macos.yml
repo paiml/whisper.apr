@@ -8,7 +8,7 @@ on:
     inputs:
       version:
         description: 'Version (e.g., 1.0.1)'
-        required: true
+        required: "true"
         default: '1.0.0'
 
 env:
@@ -46,7 +46,7 @@ jobs:
           ls -la pkg/
 
       - name: Build demo WASM (if possible)
-        continue-on-error: true
+        continue-on-error: "true"
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: |
@@ -118,17 +118,15 @@ jobs:
           #!/bin/bash
           RESOURCES="$(dirname "$0")/../Resources"
           cd "$RESOURCES"
-
-          python3 << 'PYEOF' &
+          python3 -c "
           import http.server, socketserver
           class H(http.server.SimpleHTTPRequestHandler):
-              def end_headers(self):
-                  self.send_header('Cross-Origin-Opener-Policy', 'same-origin')
-                  self.send_header('Cross-Origin-Embedder-Policy', 'require-corp')
-                  super().end_headers()
+            def end_headers(self):
+              self.send_header('Cross-Origin-Opener-Policy', 'same-origin')
+              self.send_header('Cross-Origin-Embedder-Policy', 'require-corp')
+              super().end_headers()
           socketserver.TCPServer(('', 8765), H).serve_forever()
-          PYEOF
-
+          " &
           sleep 1
           open 'http://localhost:8765/index.html'
           wait
@@ -233,7 +231,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build CLI
-        continue-on-error: true
+        continue-on-error: "true"
         env:
           CARGO_TARGET_DIR: target
         run: |

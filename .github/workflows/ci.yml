@@ -183,7 +183,7 @@ jobs:
         uses: codecov/codecov-action@v4
         with:
           files: whisper.apr/lcov.info
-          fail_ci_if_error: false
+          fail_ci_if_error: "false"
 
   # Demo coverage
   demo-coverage:
@@ -250,7 +250,7 @@ jobs:
       - name: Run audit
         run: cargo audit
         working-directory: whisper.apr
-        continue-on-error: true
+        continue-on-error: "true"
 
   # Documentation
   docs:

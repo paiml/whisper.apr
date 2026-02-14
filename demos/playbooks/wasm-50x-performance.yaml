@@ -14,7 +14,7 @@ target: http://localhost:8766
 
 config:
   browser: chromium
-  headless: true
+  headless: "true"
   timeout: 120000
   retries: 2
 
@@ -124,7 +124,7 @@ states:
         wait: 3000
         eval: "typeof window.whisperInit === 'function' || window.wasmReady === true"
         assert:
-          result: true
+          result: "true"
 
     transitions:
       - event: pass
@@ -160,13 +160,13 @@ states:
       # Phase 2: Q2K model (~10 MB)
       - name: "Phase 2: Q2K model exists (FUTURE)"
         head: /models/whisper-tiny-q2k.apr
-        skip_if_missing: true
+        skip_if_missing: "true"
         assert:
           status: 200
 
       - name: "Phase 2: Q2K model size ≤10 MB (FUTURE)"
         head: /models/whisper-tiny-q2k.apr
-        skip_if_missing: true
+        skip_if_missing: "true"
         assert:
           content_length:
             lte: 10500000
@@ -174,13 +174,13 @@ states:
       # Phase 3: Q2K + Pruning (~4 MB)
       - name: "Phase 3: Q2K+Pruned model exists (FUTURE)"
         head: /models/whisper-tiny-q2k-pruned.apr
-        skip_if_missing: true
+        skip_if_missing: "true"
         assert:
           status: 200
 
       - name: "Phase 3: Q2K+Pruned size ≤4 MB (FUTURE)"
         head: /models/whisper-tiny-q2k-pruned.apr
-        skip_if_missing: true
+        skip_if_missing: "true"
         assert:
           content_length:
             lte: 4200000
@@ -198,7 +198,7 @@ states:
       - action: metric
         name: perf_50x_validation
         value: 1
-    final: true
+    final: "true"
 
   failed:
     on_enter:
@@ -209,4 +209,4 @@ states:
       - action: metric
         name: perf_50x_validation
         value: 0
-    final: true
+    final: "true"

@@ -136,4 +136,3 @@ To falsify any threshold claim:
 
 - [REPRODUCIBILITY.md](REPRODUCIBILITY.md) - Full reproducibility guide
 - [CONTRIBUTING.md](CONTRIBUTING.md) - Development setup and workflow
-- [benches/README.md](benches/README.md) - Benchmark documentation

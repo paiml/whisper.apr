@@ -131,8 +131,8 @@ specifications:
       max_wer_increase: 0.5
 
   numerical_tests:
-    - no_nan_after_dequant: true
-    - no_inf_after_dequant: true
+    - no_nan_after_dequant: "true"
+    - no_inf_after_dequant: "true"
     - l2_error_max: 0.01
     - cosine_similarity_min: 0.99
     - scale_range: [-65504.0, 65504.0]
@@ -144,5 +144,5 @@ specifications:
 
   hallucination_checks:
     - no_repetition_pattern: "(.{5,})\\1{3,}"
-    - max_tokens: 448
-    - eot_detected: true
+    - max_output_length: 448
+    - eot_detected: "true"

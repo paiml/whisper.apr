@@ -127,14 +127,14 @@ specifications:
       iterations: 50
       focus: kv_cache
       assertions:
-        - kv_cache_size_constant: true
-        - kv_cache_released: true
+        - kv_cache_size_constant: "true"
+        - kv_cache_released: "true"
 
     - name: "Encoder output leak"
       iterations: 50
       focus: encoder_output
       assertions:
-        - encoder_output_released_after_decode: true
+        - encoder_output_released_after_decode: "true"
 
   allocation_tests:
     - max_allocations_per_transcription: 1000

@@ -222,7 +222,7 @@ time whisper-apr transcribe -f audio.wav --threads 4
 
 ## Specification Reference
 
-See [§11.3 Performance Parity: Parallel Inference](../../../docs/specifications/whisper-cli-parity.md#113-performance-parity-parallel-inference-specification) for the complete specification including:
+See [§11.3 Performance Parity: Parallel Inference](../../../docs/specifications/archive/whisper-cli-parity.md#113-performance-parity-parallel-inference-specification) for the complete specification including:
 
 - Five-Whys root cause analysis
 - Amdahl's Law derivation

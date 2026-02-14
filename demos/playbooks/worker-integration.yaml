@@ -294,7 +294,7 @@ performance_assertions:
 # =============================================================================
 
 tracing:
-  enabled: true
+  enabled: "true"
   spans:
     - name: "whisper.session"
       description: "Top-level session span"
@@ -468,7 +468,7 @@ scenarios:
 stress_testing:
   # Point 116: SharedArrayBuffer atomics contention
   atomics:
-    enabled: true
+    enabled: "true"
     pass_criteria: "> 10000 ops/sec"
     duration_s: 30
     concurrency: 4
@@ -476,7 +476,7 @@ stress_testing:
 
   # Point 117: Worker message throughput
   worker_msg:
-    enabled: true
+    enabled: "true"
     pass_criteria: "> 5000 msg/sec"
     duration_s: 30
     concurrency: 4
@@ -484,21 +484,21 @@ stress_testing:
 
   # Point 118: Render loop stability
   render:
-    enabled: true
+    enabled: "true"
     pass_criteria: "60 FPS maintained (< 5% frame drops)"
     duration_s: 30
     command: "probar stress --render --duration 30"
 
   # Point 119: Tracing overhead
   trace:
-    enabled: true
+    enabled: "true"
     pass_criteria: "< 5% overhead at saturation"
     duration_s: 30
     command: "probar stress --trace --duration 30"
 
   # Point 123: Full system stress (all modes combined)
   full:
-    enabled: true
+    enabled: "true"
     pass_criteria: "All sub-tests pass"
     duration_s: 60
     concurrency: 4

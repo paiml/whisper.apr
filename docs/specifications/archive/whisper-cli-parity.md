@@ -907,7 +907,7 @@ All shell scripts MUST pass **bashrs** validation (NOT shellcheck) following apr
 
 - [whisper.cpp Repository](https://github.com/ggerganov/whisper.cpp)
 - [OpenAI Whisper API](https://platform.openai.com/docs/guides/speech-to-text)
-- [aprender Specification](../aprender-spec-v1.md)
+- aprender Specification (document relocated)
 
 ---
 

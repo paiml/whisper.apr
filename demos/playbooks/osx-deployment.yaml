@@ -128,7 +128,7 @@ specifications:
   plist_validation:
     CFBundleIdentifier: "com.paiml.whisper-apr"
     LSMinimumSystemVersion: "10.15"
-    NSHighResolutionCapable: true
+    NSHighResolutionCapable: "true"
 
   ux_metrics:
     cold_start_target_s: 5

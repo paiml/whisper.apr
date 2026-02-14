@@ -50,7 +50,7 @@ machine:
 
     complete:
       id: "complete"
-      final_state: true
+      final_state: "true"
       invariants:
         - description: "Transcript displayed"
           condition: "has_element('#transcript')"

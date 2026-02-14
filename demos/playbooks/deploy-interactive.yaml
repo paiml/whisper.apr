@@ -9,7 +9,7 @@ target: https://interactive.paiml.com/whisper/
 
 config:
   browser: chromium
-  headless: true
+  headless: "true"
   timeout: 60000
   retries: 3
 
@@ -121,13 +121,13 @@ states:
         navigate: /index.html
         eval: "typeof SharedArrayBuffer !== 'undefined'"
         assert:
-          result: true
+          result: "true"
 
       - name: "Point 53: AudioContext available"
         navigate: /index.html
         eval: "typeof AudioContext !== 'undefined' || typeof webkitAudioContext !== 'undefined'"
         assert:
-          result: true
+          result: "true"
 
     transitions:
       - event: pass
@@ -143,7 +143,7 @@ states:
         wait: 2000
         eval: "window.wasmInitialized === true || document.body.innerText.includes('Ready')"
         assert:
-          result: true
+          result: "true"
 
     transitions:
       - event: pass
@@ -159,7 +159,7 @@ states:
         wait: 5000
         eval: "!document.body.innerText.includes('Error')"
         assert:
-          result: true
+          result: "true"
 
     transitions:
       - event: pass
@@ -187,7 +187,7 @@ states:
     on_enter:
       - action: log
         message: "SUCCESS: Deployment validation passed"
-    final: true
+    final: "true"
 
   failed:
     on_enter:
@@ -195,4 +195,4 @@ states:
         message: "FAILED: Deployment validation failed"
       - action: screenshot
         path: deployment-failure.png
-    final: true
+    final: "true"
