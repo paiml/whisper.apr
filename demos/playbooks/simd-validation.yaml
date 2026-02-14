@@ -120,8 +120,8 @@ specifications:
       tolerance: 1e-6
 
     - operation: softmax
-      stability_check: true
+      stability_check: "true"
       extreme_values: [1000.0, -1000.0]
 
     - operation: layer_norm
-      zero_variance_safe: true
+      zero_variance_safe: "true"

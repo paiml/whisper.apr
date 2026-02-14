@@ -129,5 +129,4 @@ Total size: `8 + (n_mels × n_freqs × 4)` bytes
 ## Related Resources
 
 - [.apr Model Format](./apr-format.md) - Full format specification
-- [Filterbank Embedding Example](../examples/filterbank-embedding.md)
 - [Model Conversion](../advanced/model-conversion.md) - How filterbank is embedded during conversion

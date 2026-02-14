@@ -76,16 +76,16 @@ keyboard_navigation:
       context: "recording_state"
 
 focus_indicators:
-  visible: true
+  visible: "true"
   min_contrast: 3.0
   style: "outline"
   checks:
     - selector: "button"
-      focus_visible: true
+      focus_visible: "true"
     - selector: "select"
-      focus_visible: true
+      focus_visible: "true"
     - selector: "a"
-      focus_visible: true
+      focus_visible: "true"
 
 screen_reader:
   announcements:
@@ -113,7 +113,7 @@ screen_reader:
     - "#footer"
 
 motion_preferences:
-  respect_reduced_motion: true
+  respect_reduced_motion: "true"
   animations:
     - name: "loading-spinner"
       duration_ms: 1000

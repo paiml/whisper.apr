@@ -188,5 +188,5 @@ pmat work complete WAPR-T10-D-FIVE-WHYS
 
 ## Further Reading
 
-- [CLI Parity Specification](../../specifications/whisper-cli-parity.md) - Full 240-point validation
-- [Ground Truth Specification](../../specifications/ground-truth-whisper-apr-cpp-hugging-face.md) - Three-way comparison methodology
+- [CLI Parity Specification](../../../docs/specifications/archive/whisper-cli-parity.md) - Full 240-point validation
+- [Ground Truth Specification](../../../docs/specifications/archive/ground-truth-whisper-apr-cpp-hugging-face.md) - Three-way comparison methodology

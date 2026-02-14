@@ -13,7 +13,7 @@ on:
     inputs:
       reason:
         description: 'Reason for running benchmarks'
-        required: false
+        required: "false"
         default: 'Manual benchmark run'
 
   pull_request:
@@ -58,19 +58,19 @@ jobs:
         run: |
           echo "=== Running Preprocessing Benchmarks ==="
           cargo bench --bench pipeline -- step_b step_c step_f 2>&1 | tee bench-preprocessing.txt
-        continue-on-error: true
+        continue-on-error: "true"
 
       - name: Run format comparison benchmark
         run: |
           echo "=== Running Format Comparison ==="
           cargo bench --bench format_comparison 2>&1 | tee bench-format.txt
-        continue-on-error: true
+        continue-on-error: "true"
 
       - name: Run format comparison example
         run: |
           echo "=== Running Format Comparison Example ==="
           cargo run --release --example format_comparison 2>&1 | tee format-comparison-output.txt
-        continue-on-error: true
+        continue-on-error: "true"
 
       - name: Generate benchmark summary
         if: always()

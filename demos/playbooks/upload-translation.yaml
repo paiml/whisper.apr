@@ -40,7 +40,7 @@ machine:
 
     complete:
       id: "complete"
-      final_state: true
+      final_state: "true"
       invariants:
         - description: "Translation displayed"
           condition: "has_element('#translation')"
