@@ -656,12 +656,46 @@ mod tests {
     fn test_get_hf_repo_id() {
         assert_eq!(get_hf_repo_id(ModelSize::Tiny), "openai/whisper-tiny");
         assert_eq!(get_hf_repo_id(ModelSize::Base), "openai/whisper-base");
+        assert_eq!(get_hf_repo_id(ModelSize::Small), "openai/whisper-small");
         assert_eq!(get_hf_repo_id(ModelSize::Large), "openai/whisper-large-v3");
+        assert_eq!(
+            get_hf_repo_id(ModelSize::MoonshineTiny),
+            "usefulsensors/moonshine-tiny"
+        );
+        assert_eq!(
+            get_hf_repo_id(ModelSize::MoonshineBase),
+            "usefulsensors/moonshine-base"
+        );
     }
 
     #[test]
     fn test_get_model_filename() {
         assert_eq!(get_model_filename(ModelSize::Tiny), "tiny.apr");
+        assert_eq!(get_model_filename(ModelSize::Small), "small.apr");
         assert_eq!(get_model_filename(ModelSize::Medium), "medium.apr");
+        assert_eq!(
+            get_model_filename(ModelSize::MoonshineTiny),
+            "moonshine-tiny.apr"
+        );
+        assert_eq!(
+            get_model_filename(ModelSize::MoonshineBase),
+            "moonshine-base.apr"
+        );
+    }
+
+    #[test]
+    fn test_moonshine_cache_paths() {
+        let tiny_path = get_model_cache_path(ModelSize::MoonshineTiny);
+        assert!(
+            tiny_path.ends_with("moonshine-tiny.apr"),
+            "Path should end with moonshine-tiny.apr: {}",
+            tiny_path.display()
+        );
+        let base_path = get_model_cache_path(ModelSize::MoonshineBase);
+        assert!(
+            base_path.ends_with("moonshine-base.apr"),
+            "Path should end with moonshine-base.apr: {}",
+            base_path.display()
+        );
     }
 }
