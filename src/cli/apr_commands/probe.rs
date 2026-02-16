@@ -5,6 +5,7 @@
 //! implementations (HuggingFace, whisper.cpp).
 
 use std::fs;
+use std::path::Path;
 
 use super::super::apr_args::{AprConfigCheckArgs, AprParityArgs, AprProbeArgs};
 use super::super::commands::{CliError, CliResult, CommandResult};
@@ -94,16 +95,8 @@ pub(super) fn run_parity(
     args: &AprParityArgs,
     _global: &super::super::args::Args,
 ) -> CliResult<CommandResult> {
-    // Load both probe outputs
-    let ours_json = fs::read_to_string(&args.ours)
-        .map_err(|e| CliError::InvalidArgument(format!("Ours: {e}")))?;
-    let ref_json = fs::read_to_string(&args.reference)
-        .map_err(|e| CliError::InvalidArgument(format!("Reference: {e}")))?;
-
-    let ours: ProbeOutput = serde_json::from_str(&ours_json)
-        .map_err(|e| CliError::InvalidArgument(format!("Parse ours: {e}")))?;
-    let reference: ProbeOutput = serde_json::from_str(&ref_json)
-        .map_err(|e| CliError::InvalidArgument(format!("Parse reference: {e}")))?;
+    let ours = load_probe_output(&args.ours, "Ours")?;
+    let reference = load_probe_output(&args.reference, "Reference")?;
 
     println!(
         "Parity: {} vs {} (tol: {:.2}%)\n",
@@ -179,6 +172,14 @@ pub(super) fn run_parity(
     Ok(CommandResult::success(format!(
         "Parity {status}: {pass_count} pass, {fail_count} fail"
     )))
+}
+
+/// Load and parse a probe output JSON file.
+fn load_probe_output(path: &Path, label: &str) -> CliResult<ProbeOutput> {
+    let json =
+        fs::read_to_string(path).map_err(|e| CliError::InvalidArgument(format!("{label}: {e}")))?;
+    serde_json::from_str(&json)
+        .map_err(|e| CliError::InvalidArgument(format!("Parse {label}: {e}")))
 }
 
 /// Compute relative L2 difference between two checkpoints.
