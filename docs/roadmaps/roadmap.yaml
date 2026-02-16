@@ -1640,3 +1640,71 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: PMAT-025
+  github_issue: null
+  item_type: task
+  title: 'WAPR-MOONSHINE-011: Moonshine ONNX-to-APR weight conversion pipeline'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-02-16T10:10:39Z
+  updated: 2026-02-16T10:10:39Z
+  spec: null
+  acceptance_criteria:
+  - Extend tools/convert.rs to parse Moonshine ONNX graphs and remap tensor names to APR format. Scaffolding exists but ONNX tensor extraction is incomplete. Blocks real model inference.
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: PMAT-026
+  github_issue: null
+  item_type: task
+  title: 'WAPR-MOONSHINE-012: End-to-end numerical parity tests vs ONNX reference'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-02-16T10:10:45Z
+  updated: 2026-02-16T10:10:45Z
+  spec: null
+  acceptance_criteria:
+  - Compare whisper.apr Moonshine output against Moonshine ONNX runtime on test audio clips. Greedy decoding, exact token match. Requires WAPR-MOONSHINE-011 (weights) first.
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: PMAT-027
+  github_issue: null
+  item_type: task
+  title: 'WAPR-MOONSHINE-013: Model registry and download integration'
+  status: planned
+  priority: medium
+  assigned_to: null
+  created: 2026-02-16T10:10:46Z
+  updated: 2026-02-16T10:10:46Z
+  spec: null
+  acceptance_criteria:
+  - Add Moonshine entries to MODELS registry in src/model/download.rs. Wire up CLI --model moonshine-tiny/moonshine-base flags. Default model resolution.
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: PMAT-028
+  github_issue: null
+  item_type: task
+  title: 'WAPR-MOONSHINE-014: Variable-length correctness tests (padding invariance)'
+  status: planned
+  priority: low
+  assigned_to: null
+  created: 2026-02-16T10:10:48Z
+  updated: 2026-02-16T10:10:48Z
+  spec: null
+  acceptance_criteria:
+  - Verify Moonshine produces identical output regardless of trailing silence padding. 1.5s audio with 0 padding == 1.5s with 28.5s padding. Requires WAPR-MOONSHINE-011.
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
