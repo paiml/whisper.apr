@@ -59,8 +59,10 @@ wasm = ["std", "wasm-bindgen", "js-sys", "web-sys", "console_error_panic_hook"]
 webgpu = ["wgpu", "bytemuck", "tokio", "pollster"]
 cuda = ["trueno/gpu", "dep:trueno-gpu", "trueno-gpu/cuda"]
 simd = []
-# Parallel execution via rayon (native) or wasm-bindgen-rayon (WASM with Web Workers)
-parallel = ["rayon", "wasm-bindgen-rayon"]
+# Parallel execution via rayon (native multi-threading)
+parallel = ["rayon"]
+# WASM threaded mode: requires atomics + bulk-memory target features and COOP/COEP headers
+wasm-threads = ["wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
 converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs", "zip"]
 cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "half", "symphonia", "dirs", "parallel"]

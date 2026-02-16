@@ -49,7 +49,7 @@
 
 use wasm_bindgen::prelude::*;
 
-#[cfg(feature = "parallel")]
+#[cfg(feature = "wasm-threads")]
 pub use wasm_bindgen_rayon::init_thread_pool;
 
 /// Check if threading is available in current environment
