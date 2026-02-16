@@ -3,11 +3,12 @@
 //! Replaces the mel filterbank + encoder ConvFrontend for Moonshine models.
 //! Three Conv1d layers with normalization process raw audio waveform directly:
 //!
-//! 1. Conv1d(1, C, kernel=441, stride=441, no bias) + tanh + GroupNorm
-//! 2. Conv1d(C, C, kernel=7, stride=4, pad=3) + GELU
-//! 3. Conv1d(C, D, kernel=7, stride=2, pad=3) + GELU + LayerNorm
+//! 1. Conv1d(1, C, kernel=127, stride=64, no bias) + tanh + GroupNorm
+//! 2. Conv1d(C, 2*C, kernel=7, stride=3) + GELU
+//! 3. Conv1d(2*C, C, kernel=3, stride=2) + GELU
 //!
-//! Total stride: 441 × 4 × 2 = 3528 samples per output frame (~220ms).
+//! No LayerNorm in the stem — the encoder's post-block LayerNorm handles that.
+//! Total stride: 64 × 3 × 2 = 384 samples per output frame.
 //! Output length is proportional to input duration (no 30s padding).
 
 use crate::error::{WhisperError, WhisperResult};
@@ -121,69 +122,10 @@ pub struct ConvStem {
     pub conv2: Conv1d,
     /// Layer 3: intermediate → d_model (stride 2)
     pub conv3: Conv1d,
-    /// Layer normalization after conv3 (before encoder blocks)
-    pub layer_norm: LayerNormStem,
     /// Intermediate channel count
     pub intermediate_channels: usize,
     /// Output model dimension
     pub d_model: usize,
-}
-
-/// Simple layer normalization for the conv stem output
-///
-/// Weight-only layer norm (no bias) applied after the final conv layer.
-#[derive(Debug, Clone)]
-pub struct LayerNormStem {
-    /// Scale parameter (gamma)
-    pub weight: Vec<f32>,
-    /// Normalized dimension
-    pub normalized_shape: usize,
-    /// Epsilon for numerical stability
-    pub eps: f32,
-}
-
-impl LayerNormStem {
-    /// Create new layer norm
-    #[must_use]
-    pub fn new(normalized_shape: usize) -> Self {
-        Self {
-            weight: vec![1.0; normalized_shape],
-            normalized_shape,
-            eps: 1e-5,
-        }
-    }
-
-    /// Apply layer normalization
-    ///
-    /// # Errors
-    /// Returns error if input size doesn't match
-    pub fn forward(&self, input: &[f32]) -> WhisperResult<Vec<f32>> {
-        if input.len() % self.normalized_shape != 0 {
-            return Err(WhisperError::Model(
-                "input size mismatch for LayerNormStem".into(),
-            ));
-        }
-
-        let seq_len = input.len() / self.normalized_shape;
-        let mut output = vec![0.0_f32; input.len()];
-
-        for s in 0..seq_len {
-            let start = s * self.normalized_shape;
-            let end = start + self.normalized_shape;
-            let slice = &input[start..end];
-
-            let mean: f32 = slice.iter().sum::<f32>() / self.normalized_shape as f32;
-            let variance: f32 = slice.iter().map(|&x| (x - mean).powi(2)).sum::<f32>()
-                / self.normalized_shape as f32;
-            let inv_std = 1.0 / (variance + self.eps).sqrt();
-
-            for i in 0..self.normalized_shape {
-                output[start + i] = (slice[i] - mean) * inv_std * self.weight[i];
-            }
-        }
-
-        Ok(output)
-    }
 }
 
 /// Total stride of the Moonshine conv stem (64 × 3 × 2)
@@ -197,7 +139,8 @@ impl ConvStem {
     /// - tanh → GroupNorm(1, d_model)
     /// - conv2: `Conv1d(d_model, 2*d_model, kernel=7, stride=3, pad=0, bias=True)` → GELU
     /// - conv3: `Conv1d(2*d_model, d_model, kernel=3, stride=2, pad=0, bias=True)` → GELU
-    /// - LayerNorm(d_model, bias=False)
+    ///
+    /// No LayerNorm in the stem — `encoder.layer_norm` is applied after all encoder blocks.
     ///
     /// # Arguments
     /// * `d_model` - Model dimension (288 for tiny, 416 for base)
@@ -208,7 +151,6 @@ impl ConvStem {
             groupnorm: GroupNorm::new(1, d_model),
             conv2: Conv1d::new(d_model, 2 * d_model, 7, 3, 0),
             conv3: Conv1d::new(2 * d_model, d_model, 3, 2, 0),
-            layer_norm: LayerNormStem::new(d_model),
             intermediate_channels: 2 * d_model,
             d_model,
         }
@@ -216,7 +158,7 @@ impl ConvStem {
 
     /// Forward pass: raw audio → encoder features
     ///
-    /// Pipeline: conv1 → tanh → GroupNorm → conv2 → GELU → conv3 → GELU → LayerNorm
+    /// Pipeline: conv1 → tanh → GroupNorm → conv2 → GELU → conv3 → GELU
     ///
     /// # Arguments
     /// * `audio` - Raw audio samples (mono, 16kHz, f32)
@@ -245,8 +187,7 @@ impl ConvStem {
         let x = self.conv3.forward(&x)?;
         let x = crate::simd::gelu(&x);
 
-        // Final LayerNorm before encoder blocks
-        self.layer_norm.forward(&x)
+        Ok(x)
     }
 
     /// Forward pass with activation probing
@@ -271,6 +212,7 @@ impl ConvStem {
         probe.record("conv_stem.conv1_out", &x, &[seq_len, self.d_model]);
 
         let x = crate::simd::tanh_activation(&x);
+        probe.record("conv_stem.tanh_out", &x, &[seq_len, self.d_model]);
 
         let x = self.groupnorm.forward(&x, seq_len)?;
         probe.record("conv_stem.groupnorm_out", &x, &[seq_len, self.d_model]);
@@ -292,10 +234,7 @@ impl ConvStem {
         probe.record("conv_stem.conv3_out", &x, &[seq_len3, self.d_model]);
 
         let x = crate::simd::gelu(&x);
-
-        // Final LayerNorm before encoder blocks
-        let x = self.layer_norm.forward(&x)?;
-        probe.record("conv_stem.layernorm_out", &x, &[seq_len3, self.d_model]);
+        probe.record("conv_stem.gelu3_out", &x, &[seq_len3, self.d_model]);
 
         Ok(x)
     }
@@ -351,7 +290,6 @@ mod tests {
         assert_eq!(stem.conv3.stride, 2);
         assert_eq!(stem.d_model, 288);
         assert_eq!(stem.groupnorm.num_channels, 288);
-        assert_eq!(stem.layer_norm.normalized_shape, 288);
     }
 
     #[test]
@@ -473,46 +411,4 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // =========================================================================
-    // LayerNormStem Tests
-    // =========================================================================
-
-    #[test]
-    fn test_layernorm_stem_new() {
-        let ln = LayerNormStem::new(8);
-        assert_eq!(ln.normalized_shape, 8);
-        assert_eq!(ln.weight.len(), 8);
-        assert!((ln.weight[0] - 1.0).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn test_layernorm_stem_forward_identity() {
-        let ln = LayerNormStem::new(4);
-        let input = vec![1.0, 2.0, 3.0, 4.0];
-        let output = ln.forward(&input).expect("forward should succeed");
-        assert_eq!(output.len(), 4);
-        // With weight=1, output should be normalized (zero mean)
-        let mean: f32 = output.iter().sum::<f32>() / 4.0;
-        assert!(mean.abs() < 1e-5, "output mean should be ~0, got {mean}");
-    }
-
-    #[test]
-    fn test_layernorm_stem_forward_multi_position() {
-        let ln = LayerNormStem::new(4);
-        let input = vec![
-            1.0, 2.0, 3.0, 4.0, // pos 0
-            5.0, 6.0, 7.0, 8.0, // pos 1
-        ];
-        let output = ln.forward(&input).expect("forward should succeed");
-        assert_eq!(output.len(), 8);
-        assert!(output.iter().all(|x| x.is_finite()));
-    }
-
-    #[test]
-    fn test_layernorm_stem_wrong_size() {
-        let ln = LayerNormStem::new(4);
-        let input = vec![1.0, 2.0, 3.0]; // Not divisible by 4
-        let result = ln.forward(&input);
-        assert!(result.is_err());
-    }
 }

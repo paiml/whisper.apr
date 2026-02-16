@@ -318,7 +318,7 @@ fn convert_moonshine_safetensors_to_apr(
     size: ModelSize,
     verbose: bool,
 ) -> ModelLoaderResult<()> {
-    use crate::format::{map_moonshine_tensor_name, AprWriter};
+    use crate::format::AprWriter;
     use crate::model::ModelConfig;
     use safetensors::SafeTensors;
 

@@ -1723,11 +1723,8 @@ impl WhisperApr {
             stem.groupnorm.bias[..len].copy_from_slice(&b[..len]);
         }
 
-        // LayerNorm after conv3 (weight only — no bias in Moonshine)
-        if let Ok(w) = reader.load_tensor("encoder.layer_norm.weight") {
-            let len = w.len().min(stem.layer_norm.weight.len());
-            stem.layer_norm.weight[..len].copy_from_slice(&w[..len]);
-        }
+        // Note: encoder.layer_norm is NOT in the conv stem — it's the post-encoder-blocks
+        // norm, loaded into encoder.ln_post_rms by load_moonshine_encoder_weights().
     }
 
     /// Get mutable encoder reference (for testing/loading)

@@ -11,7 +11,7 @@
 //! conv_stem.groupnorm_out
 //! conv_stem.conv2_out
 //! conv_stem.conv3_out
-//! conv_stem.layernorm_out
+//! conv_stem.gelu3_out
 //! encoder.block_{i}.ln1_out
 //! encoder.block_{i}.self_attn_out
 //! encoder.block_{i}.residual_1

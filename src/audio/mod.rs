@@ -15,7 +15,7 @@ mod streaming;
 pub mod wav;
 
 pub use batch::{split_into_chunks, AudioBatch, BatchMelResult, BatchPreprocessor};
-pub use conv_stem::{ConvStem, GroupNorm, LayerNormStem, CONV_STEM_TOTAL_STRIDE};
+pub use conv_stem::{ConvStem, GroupNorm, CONV_STEM_TOTAL_STRIDE};
 pub use mel::MelFilterbank;
 pub use resampler::{Resampler, SincResampler};
 pub use ring_buffer::RingBuffer;
