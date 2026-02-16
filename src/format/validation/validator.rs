@@ -92,23 +92,17 @@ impl<'a> AprValidator<'a> {
     /// E. Functional Validation (checks 21-25)
     #[allow(clippy::unused_self)]
     fn validate_functional(&self) -> Vec<ValidationCheck> {
-        vec![
-            ValidationCheck::pass(
-                21,
-                'E',
-                "Encoder output match",
-                "Skipped: no reference data",
-            ),
-            ValidationCheck::pass(
-                22,
-                'E',
-                "Decoder logits match",
-                "Skipped: no reference data",
-            ),
-            ValidationCheck::pass(23, 'E', "Transcription test", "Skipped: no test audio"),
-            ValidationCheck::pass(24, 'E', "No repetitive output", "Skipped: no test audio"),
-            ValidationCheck::pass(25, 'E', "End-to-end accuracy", "Skipped: no validation set"),
-        ]
+        const FUNCTIONAL_CHECKS: [(u8, &str, &str); 5] = [
+            (21, "Encoder output match", "Skipped: no reference data"),
+            (22, "Decoder logits match", "Skipped: no reference data"),
+            (23, "Transcription test", "Skipped: no test audio"),
+            (24, "No repetitive output", "Skipped: no test audio"),
+            (25, "End-to-end accuracy", "Skipped: no validation set"),
+        ];
+        FUNCTIONAL_CHECKS
+            .iter()
+            .map(|(id, desc, reason)| ValidationCheck::pass(*id, 'E', desc, reason))
+            .collect()
     }
 
     #[allow(clippy::unused_self)]
@@ -289,35 +283,27 @@ impl<'a> AprValidator<'a> {
     }
 
     fn check_ln_nan_inf(&self) -> ValidationCheck {
-        let mut nan_tensors = Vec::new();
-        let mut inf_tensors = Vec::new();
-
-        for tensor in &self.reader.tensors {
-            if tensor.name.contains("layer_norm") {
-                if let Ok(data) = self.reader.load_tensor(&tensor.name) {
-                    let stats = TensorStats::compute(&tensor.name, &data);
-                    if stats.has_nan() {
-                        nan_tensors.push(tensor.name.clone());
-                    }
-                    if stats.has_inf() {
-                        inf_tensors.push(tensor.name.clone());
-                    }
+        self.check_tensor_stats(
+            10,
+            'B',
+            "No NaN/Inf in LN",
+            |name| name.contains("layer_norm"),
+            |stats| {
+                let mut issues = Vec::new();
+                if stats.has_nan() {
+                    issues.push("NaN");
                 }
-            }
-        }
-
-        if nan_tensors.is_empty() && inf_tensors.is_empty() {
-            ValidationCheck::pass(10, 'B', "No NaN/Inf in LN", "All LN tensors clean")
-        } else {
-            let mut msg = Vec::new();
-            if !nan_tensors.is_empty() {
-                msg.push(format!("NaN in: {nan_tensors:?}"));
-            }
-            if !inf_tensors.is_empty() {
-                msg.push(format!("Inf in: {inf_tensors:?}"));
-            }
-            ValidationCheck::fail(10, 'B', "No NaN/Inf in LN", &msg.join("; "))
-        }
+                if stats.has_inf() {
+                    issues.push("Inf");
+                }
+                if issues.is_empty() {
+                    None
+                } else {
+                    Some(issues.join("+"))
+                }
+            },
+            "LN tensors clean",
+        )
     }
 
     fn check_qkv_proj_means(&self) -> ValidationCheck {
@@ -354,9 +340,8 @@ impl<'a> AprValidator<'a> {
     }
 
     fn check_weight_std(&self) -> ValidationCheck {
-        let mut failures = Vec::new();
-        let mut checked = 0;
-
+        // Uses custom tolerance: up to 25% outliers are acceptable (minor outliers)
+        let (mut failures, mut checked) = (Vec::new(), 0usize);
         for tensor in &self.reader.tensors {
             if tensor.name.ends_with(".weight") && !tensor.name.contains("embedding") {
                 if let Ok(data) = self.reader.load_tensor(&tensor.name) {
@@ -368,7 +353,6 @@ impl<'a> AprValidator<'a> {
                 }
             }
         }
-
         if failures.is_empty() {
             ValidationCheck::pass(
                 13,
@@ -394,27 +378,14 @@ impl<'a> AprValidator<'a> {
     }
 
     fn check_no_zero_tensors(&self) -> ValidationCheck {
-        let mut zero_tensors = Vec::new();
-
-        for tensor in &self.reader.tensors {
-            if let Ok(data) = self.reader.load_tensor(&tensor.name) {
-                let stats = TensorStats::compute(&tensor.name, &data);
-                if stats.is_all_zeros() {
-                    zero_tensors.push(tensor.name.clone());
-                }
-            }
-        }
-
-        if zero_tensors.is_empty() {
-            ValidationCheck::pass(14, 'C', "No zero tensors", "No all-zero tensors found")
-        } else {
-            ValidationCheck::fail(
-                14,
-                'C',
-                "No zero tensors",
-                &format!("Zero tensors: {zero_tensors:?}"),
-            )
-        }
+        self.check_tensor_stats(
+            14,
+            'C',
+            "No zero tensors",
+            |_| true,
+            |stats| stats.is_all_zeros().then(|| "all zeros".to_string()),
+            "tensors non-zero",
+        )
     }
 
     #[allow(clippy::case_sensitive_file_extension_comparisons)]
