@@ -1,33 +1,35 @@
 //! Moonshine decoder block
 //!
-//! Masked MHA self-attention (RoPE) + cross-attention (no RoPE) + SiLU MLP FFN.
-//! Pre-RMSNorm before each sub-layer with residual connections.
+//! Masked MHA self-attention (RoPE) + cross-attention (no RoPE) + SiLU gated MLP FFN.
+//! Pre-LayerNorm (no bias) before each sub-layer with residual connections.
 
 use crate::error::WhisperResult;
 use crate::model::LayerKVCache;
 use crate::model::lfm2::gqa::{GqaConfig, GroupedQueryAttention};
-use crate::model::lfm2::layer::RmsNorm;
+use crate::model::lfm2::layer::LayerNormNoBias;
 use crate::model::lfm2::mlp::GatedMlpFfn;
 use crate::model::lfm2::rope::RotaryEmbedding;
 
 /// Single Moonshine decoder transformer block
 ///
 /// Architecture:
-/// 1. Pre-RMSNorm → masked MHA self-attention (with RoPE) → residual
-/// 2. Pre-RMSNorm → MHA cross-attention (Q from decoder, KV from encoder) → residual
-/// 3. Pre-RMSNorm → SiLU MLP FFN → residual
+/// 1. Pre-LayerNorm → masked MHA self-attention (with RoPE) → residual
+/// 2. Pre-LayerNorm → MHA cross-attention (Q from decoder, KV from encoder) → residual
+/// 3. Pre-LayerNorm → SiLU gated MLP FFN → residual
+///
+/// Uses `LayerNorm(bias=False)` matching the HuggingFace Moonshine implementation.
 #[derive(Debug, Clone)]
 pub struct MoonshineDecoderBlock {
-    /// Pre-self-attention RMS normalization
-    pub ln1: RmsNorm,
+    /// Pre-self-attention layer normalization (weight-only, no bias)
+    pub ln1: LayerNormNoBias,
     /// Masked MHA self-attention (causal, with RoPE)
     pub self_attn: GroupedQueryAttention,
-    /// Pre-cross-attention RMS normalization
-    pub ln_cross: RmsNorm,
+    /// Pre-cross-attention layer normalization (weight-only, no bias)
+    pub ln_cross: LayerNormNoBias,
     /// MHA cross-attention (Q from decoder, KV from encoder, no RoPE, no causal mask)
     pub cross_attn: GroupedQueryAttention,
-    /// Pre-FFN RMS normalization
-    pub ln2: RmsNorm,
+    /// Pre-FFN layer normalization (weight-only, no bias)
+    pub ln2: LayerNormNoBias,
     /// Gated MLP feed-forward network (fc1[→2x] → SiLU(gate)*value → fc2)
     pub ffn: GatedMlpFfn,
 }
@@ -72,11 +74,11 @@ impl MoonshineDecoderBlock {
         };
 
         Ok(Self {
-            ln1: RmsNorm::new(d_model),
+            ln1: LayerNormNoBias::new(d_model),
             self_attn: GroupedQueryAttention::new(self_attn_config)?,
-            ln_cross: RmsNorm::new(d_model),
+            ln_cross: LayerNormNoBias::new(d_model),
             cross_attn: GroupedQueryAttention::new(cross_attn_config)?,
-            ln2: RmsNorm::new(d_model),
+            ln2: LayerNormNoBias::new(d_model),
             ffn: GatedMlpFfn::new(d_model, intermediate_size)?,
         })
     }

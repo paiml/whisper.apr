@@ -317,3 +317,172 @@ impl RmsNorm {
         Ok(output)
     }
 }
+
+/// Layer Normalization (weight-only, no bias)
+///
+/// Used by Moonshine: `nn.LayerNorm(hidden_size, bias=False)`.
+/// Computes `(x - mean(x)) / sqrt(var(x) + eps) * weight`.
+/// Unlike RMSNorm, this subtracts the mean before normalizing.
+#[derive(Debug, Clone)]
+pub struct LayerNormNoBias {
+    /// Learnable scale parameter (gamma)
+    pub weight: Vec<f32>,
+    /// Epsilon for numerical stability
+    pub eps: f32,
+}
+
+impl LayerNormNoBias {
+    /// Create new LayerNorm (no bias) layer
+    #[must_use]
+    pub fn new(hidden_size: usize) -> Self {
+        Self {
+            weight: vec![1.0; hidden_size],
+            eps: 1e-5,
+        }
+    }
+
+    /// Forward pass
+    ///
+    /// # Errors
+    /// Returns error if dimensions are invalid
+    pub fn forward(&self, hidden_states: &[f32], seq_len: usize) -> WhisperResult<Vec<f32>> {
+        let hidden_size = self.weight.len();
+
+        if hidden_states.len() != seq_len * hidden_size {
+            return Err(WhisperError::Model(format!(
+                "LayerNormNoBias input length {} != seq_len * hidden_size ({})",
+                hidden_states.len(),
+                seq_len * hidden_size
+            )));
+        }
+
+        let mut output = vec![0.0f32; hidden_states.len()];
+
+        for s in 0..seq_len {
+            let start = s * hidden_size;
+            let end = start + hidden_size;
+            let x = &hidden_states[start..end];
+
+            // Compute mean
+            let mean: f32 = x.iter().sum::<f32>() / hidden_size as f32;
+
+            // Compute variance
+            let variance: f32 =
+                x.iter().map(|&v| (v - mean) * (v - mean)).sum::<f32>() / hidden_size as f32;
+            let inv_std = 1.0 / (variance + self.eps).sqrt();
+
+            // Normalize and scale (no bias)
+            for (i, &w) in self.weight.iter().enumerate() {
+                output[start + i] = (x[i] - mean) * inv_std * w;
+            }
+        }
+
+        Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rmsnorm_shape() {
+        let rms = RmsNorm::new(4);
+        let input = vec![1.0, 2.0, 3.0, 4.0];
+        let output = rms.forward(&input, 1).expect("forward");
+        assert_eq!(output.len(), 4);
+        assert!(output.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn test_rmsnorm_multi_seq() {
+        let rms = RmsNorm::new(4);
+        let input = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let output = rms.forward(&input, 2).expect("forward");
+        assert_eq!(output.len(), 8);
+    }
+
+    #[test]
+    fn test_rmsnorm_dim_error() {
+        let rms = RmsNorm::new(4);
+        let bad = vec![1.0, 2.0, 3.0]; // wrong size
+        assert!(rms.forward(&bad, 1).is_err());
+    }
+
+    #[test]
+    fn test_layernorm_nobias_shape() {
+        let ln = LayerNormNoBias::new(4);
+        let input = vec![1.0, 2.0, 3.0, 4.0];
+        let output = ln.forward(&input, 1).expect("forward");
+        assert_eq!(output.len(), 4);
+        assert!(output.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn test_layernorm_nobias_zero_mean() {
+        // LayerNorm subtracts mean, so output should have near-zero mean
+        let ln = LayerNormNoBias::new(4);
+        let input = vec![1.0, 2.0, 3.0, 4.0];
+        let output = ln.forward(&input, 1).expect("forward");
+        let mean: f32 = output.iter().sum::<f32>() / 4.0;
+        assert!(mean.abs() < 1e-5, "LayerNorm output mean should be ~0, got {mean}");
+    }
+
+    #[test]
+    fn test_rmsnorm_nonzero_mean() {
+        // RMSNorm does NOT subtract mean, so output mean is generally nonzero
+        let rms = RmsNorm::new(4);
+        let input = vec![1.0, 2.0, 3.0, 4.0];
+        let output = rms.forward(&input, 1).expect("forward");
+        let mean: f32 = output.iter().sum::<f32>() / 4.0;
+        // RMSNorm preserves the sign pattern, mean should NOT be zero
+        assert!(mean.abs() > 0.1, "RMSNorm output mean should be nonzero, got {mean}");
+    }
+
+    #[test]
+    fn test_layernorm_nobias_differs_from_rmsnorm() {
+        // LayerNorm and RMSNorm should produce different outputs for non-zero-mean inputs
+        let ln = LayerNormNoBias::new(4);
+        let rms = RmsNorm::new(4);
+        let input = vec![1.0, 2.0, 3.0, 4.0]; // mean = 2.5 (nonzero)
+
+        let ln_out = ln.forward(&input, 1).expect("ln forward");
+        let rms_out = rms.forward(&input, 1).expect("rms forward");
+
+        let diff: f32 = ln_out
+            .iter()
+            .zip(rms_out.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert!(diff > 0.01, "LayerNorm and RMSNorm should differ for non-zero-mean input");
+    }
+
+    #[test]
+    fn test_layernorm_nobias_multi_seq() {
+        let ln = LayerNormNoBias::new(4);
+        let input = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let output = ln.forward(&input, 2).expect("forward");
+        assert_eq!(output.len(), 8);
+    }
+
+    #[test]
+    fn test_layernorm_nobias_dim_error() {
+        let ln = LayerNormNoBias::new(4);
+        let bad = vec![1.0, 2.0, 3.0]; // wrong size
+        assert!(ln.forward(&bad, 1).is_err());
+    }
+
+    #[test]
+    fn test_layernorm_nobias_unit_variance() {
+        // With weight=1 and no bias, output should have unit variance
+        let ln = LayerNormNoBias::new(4);
+        let input = vec![1.0, 3.0, 5.0, 7.0];
+        let output = ln.forward(&input, 1).expect("forward");
+        let mean: f32 = output.iter().sum::<f32>() / 4.0;
+        let variance: f32 = output.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / 4.0;
+        assert!(
+            (variance - 1.0).abs() < 0.01,
+            "LayerNorm output variance should be ~1.0, got {variance}"
+        );
+    }
+}

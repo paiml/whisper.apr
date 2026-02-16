@@ -1,25 +1,26 @@
 //! Moonshine encoder block
 //!
-//! Pre-RMSNorm + MHA self-attention + GELU MLP FFN with residual connections.
+//! Pre-LayerNorm (no bias) + MHA self-attention + GELU MLP FFN with residual connections.
 //! RoPE is applied within the attention forward pass.
 
 use crate::error::WhisperResult;
 use crate::model::lfm2::gqa::{GqaConfig, GroupedQueryAttention};
-use crate::model::lfm2::layer::RmsNorm;
+use crate::model::lfm2::layer::LayerNormNoBias;
 use crate::model::lfm2::mlp::{MlpActivation, MlpConfig, MlpFfn};
 use crate::model::lfm2::rope::RotaryEmbedding;
 
 /// Single Moonshine encoder transformer block
 ///
-/// Architecture: Pre-RMSNorm → MHA self-attention → residual → Pre-RMSNorm → GELU MLP → residual
+/// Architecture: Pre-LayerNorm → MHA self-attention → residual → Pre-LayerNorm → GELU MLP → residual
+/// Uses `LayerNorm(bias=False)` matching the HuggingFace Moonshine implementation.
 #[derive(Debug, Clone)]
 pub struct MoonshineEncoderBlock {
-    /// Pre-attention RMS normalization
-    pub ln1: RmsNorm,
+    /// Pre-attention layer normalization (weight-only, no bias)
+    pub ln1: LayerNormNoBias,
     /// Multi-head self-attention (with RoPE applied internally)
     pub self_attn: GroupedQueryAttention,
-    /// Pre-FFN RMS normalization
-    pub ln2: RmsNorm,
+    /// Pre-FFN layer normalization (weight-only, no bias)
+    pub ln2: LayerNormNoBias,
     /// Standard MLP feed-forward network (fc1 → GELU → fc2)
     pub ffn: MlpFfn,
 }
@@ -60,9 +61,9 @@ impl MoonshineEncoderBlock {
         };
 
         Ok(Self {
-            ln1: RmsNorm::new(d_model),
+            ln1: LayerNormNoBias::new(d_model),
             self_attn: GroupedQueryAttention::new(gqa_config)?,
-            ln2: RmsNorm::new(d_model),
+            ln2: LayerNormNoBias::new(d_model),
             ffn: MlpFfn::new(mlp_config)?,
         })
     }
