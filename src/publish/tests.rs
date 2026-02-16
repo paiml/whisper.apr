@@ -153,7 +153,7 @@ fn test_publish_config_builder_chain() {
 fn test_prepare_apr_only() {
     let temp_dir = tempfile::tempdir().unwrap();
     let apr_path = temp_dir.path().join("test.apr");
-    std::fs::write(&apr_path, b"APR1test_content").unwrap();
+    std::fs::write(&apr_path, b"APR\0test_content").unwrap();
 
     let output_dir = temp_dir.path().join("output");
     let publisher = Publisher::with_token("test");
@@ -172,7 +172,7 @@ fn test_prepare_apr_only() {
 fn test_prepare_safetensors_only() {
     let temp_dir = tempfile::tempdir().unwrap();
     let apr_path = temp_dir.path().join("model.apr");
-    std::fs::write(&apr_path, b"APR1test").unwrap();
+    std::fs::write(&apr_path, b"APR\0test").unwrap();
 
     let output_dir = temp_dir.path().join("output");
     let publisher = Publisher::new();
@@ -192,7 +192,7 @@ fn test_prepare_safetensors_only() {
 fn test_prepare_both_formats() {
     let temp_dir = tempfile::tempdir().unwrap();
     let apr_path = temp_dir.path().join("whisper.apr");
-    std::fs::write(&apr_path, b"APR1content").unwrap();
+    std::fs::write(&apr_path, b"APR\0content").unwrap();
 
     let output_dir = temp_dir.path().join("out");
     let publisher = Publisher::with_token("tok");
@@ -210,7 +210,7 @@ fn test_prepare_both_formats() {
 fn test_prepare_creates_output_dir() {
     let temp_dir = tempfile::tempdir().unwrap();
     let apr_path = temp_dir.path().join("model.apr");
-    std::fs::write(&apr_path, b"APR1data").unwrap();
+    std::fs::write(&apr_path, b"APR\0data").unwrap();
 
     let nested_output = temp_dir.path().join("a").join("b").join("c");
     let publisher = Publisher::new();

@@ -510,7 +510,7 @@ impl Lfm2Config {
             hidden_size: 288,
             num_layers: 6,
             num_q_heads: 8,
-            num_kv_heads: 8, // MHA (kv_heads = q_heads)
+            num_kv_heads: 8,         // MHA (kv_heads = q_heads)
             intermediate_size: 1152, // 4x expansion
             vocab_size: 32768,       // SentencePiece
             rope_theta: 10_000.0,
@@ -533,7 +533,7 @@ impl Lfm2Config {
             hidden_size: 416,
             num_layers: 8,
             num_q_heads: 8,
-            num_kv_heads: 8, // MHA (kv_heads = q_heads)
+            num_kv_heads: 8,         // MHA (kv_heads = q_heads)
             intermediate_size: 1664, // 4x expansion
             vocab_size: 32768,
             rope_theta: 10_000.0,
@@ -2060,14 +2060,20 @@ mod tests {
         assert_eq!(config.hidden_size, 288);
         assert_eq!(config.num_layers, 6);
         assert_eq!(config.num_q_heads, 8);
-        assert_eq!(config.num_kv_heads, 8, "Moonshine uses MHA (kv_heads == q_heads)");
+        assert_eq!(
+            config.num_kv_heads, 8,
+            "Moonshine uses MHA (kv_heads == q_heads)"
+        );
         assert_eq!(config.intermediate_size, 1152);
         assert_eq!(config.vocab_size, 32768, "SentencePiece vocab");
         assert_eq!(config.gqa_ratio(), 1);
         assert_eq!(config.layer_types.len(), 6);
 
         for layer_type in &config.layer_types {
-            assert!(matches!(layer_type, LayerType::Attention { use_gqa: false }));
+            assert!(matches!(
+                layer_type,
+                LayerType::Attention { use_gqa: false }
+            ));
         }
     }
 

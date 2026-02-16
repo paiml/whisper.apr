@@ -17,7 +17,6 @@
 //! ```
 
 use crate::error::WhisperResult;
-use crate::tokenizer::special_tokens;
 
 /// Greedy decoder for token generation
 ///
@@ -111,17 +110,22 @@ impl GreedyDecoder {
     ///
     /// # Arguments
     /// * `logits_fn` - Function that takes current tokens and returns next logits
-    /// * `n_vocab` - Vocabulary size
     /// * `initial_tokens` - Initial tokens to start with (e.g., [SOT, language, task])
+    /// * `eot_token` - End-of-transcription token ID (model-specific)
     ///
     /// # Returns
     /// Generated token sequence (including initial tokens)
-    pub fn decode<F>(&self, mut logits_fn: F, initial_tokens: &[u32]) -> WhisperResult<Vec<u32>>
+    pub fn decode<F>(
+        &self,
+        mut logits_fn: F,
+        initial_tokens: &[u32],
+        eot_token: u32,
+    ) -> WhisperResult<Vec<u32>>
     where
         F: FnMut(&[u32]) -> WhisperResult<Vec<f32>>,
     {
         let mut tokens = initial_tokens.to_vec();
-        let eot = special_tokens::EOT;
+        let eot = eot_token;
 
         // Loop until we hit max_tokens total (not max_tokens NEW tokens)
         while tokens.len() < self.max_tokens {
@@ -212,6 +216,7 @@ fn softmax(logits: &[f32]) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tokenizer::special_tokens;
 
     // =========================================================================
     // Construction Tests
@@ -413,7 +418,7 @@ mod tests {
         };
 
         let result = decoder
-            .decode(logits_fn, &[special_tokens::SOT])
+            .decode(logits_fn, &[special_tokens::SOT], eot)
             .expect("decode should succeed");
 
         // Should have: SOT + 2 tokens + EOT = 4 tokens
@@ -434,7 +439,7 @@ mod tests {
         };
 
         let result = decoder
-            .decode(logits_fn, &[special_tokens::SOT])
+            .decode(logits_fn, &[special_tokens::SOT], special_tokens::EOT)
             .expect("decode should succeed");
 
         // max_tokens=5 means TOTAL tokens, not NEW tokens
@@ -456,7 +461,7 @@ mod tests {
 
         let initial = vec![special_tokens::SOT, special_tokens::LANG_BASE];
         let result = decoder
-            .decode(logits_fn, &initial)
+            .decode(logits_fn, &initial, eot)
             .expect("decode should succeed");
 
         // Initial tokens preserved, plus EOT generated
@@ -485,7 +490,7 @@ mod tests {
         // Start with 5 initial tokens
         let initial = vec![1, 2, 3, 4, 5];
         let result = decoder
-            .decode(logits_fn, &initial)
+            .decode(logits_fn, &initial, special_tokens::EOT)
             .expect("decode should succeed");
 
         // INVARIANT: total tokens must never exceed max_tokens
@@ -526,7 +531,7 @@ mod tests {
         };
 
         let result = decoder
-            .decode(logits_fn, &[special_tokens::SOT])
+            .decode(logits_fn, &[special_tokens::SOT], eot)
             .expect("decode should succeed");
 
         let calls = call_count.load(Ordering::SeqCst);
@@ -566,7 +571,7 @@ mod tests {
 
                 let initial: Vec<u32> = (0..initial_len).map(|i| i as u32).collect();
                 let result = decoder
-                    .decode(logits_fn, &initial)
+                    .decode(logits_fn, &initial, special_tokens::EOT)
                     .expect("decode should succeed");
 
                 assert!(
@@ -595,7 +600,7 @@ mod tests {
 
             let initial: Vec<u32> = (100..100 + initial_len).collect();
             let result = decoder
-                .decode(logits_fn, &initial)
+                .decode(logits_fn, &initial, eot)
                 .expect("decode should succeed");
 
             assert_eq!(

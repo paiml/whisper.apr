@@ -1,6 +1,7 @@
 //! Tests for beam search decoding
 
 use super::*;
+use crate::tokenizer::special_tokens;
 
 // =========================================================================
 // Construction Tests
@@ -205,7 +206,7 @@ fn test_beam_decode_stops_at_eot() {
     };
 
     let result = decoder
-        .decode(logits_fn, &[special_tokens::SOT])
+        .decode(logits_fn, &[special_tokens::SOT], eot)
         .expect("beam decode should succeed");
 
     // Result should contain EOT (might have intermediate tokens too)
@@ -224,7 +225,7 @@ fn test_beam_decode_respects_max_tokens() {
     };
 
     let result = decoder
-        .decode(logits_fn, &[special_tokens::SOT])
+        .decode(logits_fn, &[special_tokens::SOT], special_tokens::EOT)
         .expect("beam decode should succeed");
 
     // Should stop at max_tokens
@@ -247,7 +248,7 @@ fn test_beam_decode_explores_multiple_paths() {
     };
 
     let result = decoder
-        .decode(logits_fn, &[special_tokens::SOT])
+        .decode(logits_fn, &[special_tokens::SOT], special_tokens::EOT)
         .expect("beam decode should succeed");
 
     // Should return a valid sequence
@@ -272,7 +273,7 @@ fn test_decode_nbest() {
     };
 
     let results = decoder
-        .decode_nbest(logits_fn, &[special_tokens::SOT], 2)
+        .decode_nbest(logits_fn, &[special_tokens::SOT], eot, 2)
         .expect("decode_nbest should succeed");
 
     // Should return up to 2 results
@@ -292,7 +293,7 @@ fn test_decode_nbest_empty_initial() {
     };
 
     let results = decoder
-        .decode_nbest(logits_fn, &[], 3)
+        .decode_nbest(logits_fn, &[], eot, 3)
         .expect("decode_nbest should succeed");
     assert!(!results.is_empty());
 }
@@ -319,7 +320,7 @@ fn test_beam_decode_total_tokens_never_exceeds_max() {
     // Start with 5 initial tokens
     let initial = vec![1, 2, 3, 4, 5];
     let result = decoder
-        .decode(logits_fn, &initial)
+        .decode(logits_fn, &initial, special_tokens::EOT)
         .expect("decode should succeed");
 
     // INVARIANT: total tokens must never exceed max_tokens
@@ -359,7 +360,7 @@ fn test_beam_decode_is_on_not_on2() {
     };
 
     let result = decoder
-        .decode(logits_fn, &[special_tokens::SOT])
+        .decode(logits_fn, &[special_tokens::SOT], eot)
         .expect("decode should succeed");
 
     let calls = call_count.load(Ordering::SeqCst);
@@ -401,7 +402,7 @@ fn property_beam_output_length_bounded_by_max_tokens() {
 
             let initial: Vec<u32> = (0..initial_len).map(|i| i as u32).collect();
             let result = decoder
-                .decode(logits_fn, &initial)
+                .decode(logits_fn, &initial, special_tokens::EOT)
                 .expect("decode should succeed");
 
             assert!(
@@ -430,7 +431,7 @@ fn property_beam_initial_tokens_preserved() {
 
         let initial: Vec<u32> = (100..100 + initial_len).collect();
         let result = decoder
-            .decode(logits_fn, &initial)
+            .decode(logits_fn, &initial, eot)
             .expect("decode should succeed");
 
         assert_eq!(
@@ -457,7 +458,7 @@ fn property_beam_nbest_all_bounded() {
 
     let initial = vec![1, 2, 3, 4, 5]; // 5 initial tokens
     let results = decoder
-        .decode_nbest(logits_fn, &initial, 3)
+        .decode_nbest(logits_fn, &initial, special_tokens::EOT, 3)
         .expect("decode_nbest should succeed");
 
     for (i, result) in results.iter().enumerate() {

@@ -29,12 +29,17 @@ use crate::error::{WhisperError, WhisperResult};
 /// RoPE configuration
 #[derive(Debug, Clone)]
 pub struct RopeConfig {
-    /// Head dimension (must be even for rotation pairs)
+    /// Head dimension (full dimension including non-rotary part)
     pub head_dim: usize,
     /// Base for frequency computation (θ in the paper)
     pub base: f32,
     /// Maximum sequence length for precomputation
     pub max_seq_len: usize,
+    /// Number of dimensions to apply rotation to (must be even, <= head_dim).
+    /// Remaining `head_dim - rotary_dim` dimensions pass through unchanged.
+    /// Set to `head_dim` for full rotation (default behavior).
+    /// Moonshine uses `int(head_dim * partial_rotary_factor)` where factor=0.9.
+    pub rotary_dim: Option<usize>,
 }
 
 impl RopeConfig {
@@ -45,7 +50,14 @@ impl RopeConfig {
             head_dim: 64,
             base: 1_000_000.0, // Long-context extrapolation
             max_seq_len: 4096, // WASM-friendly limit
+            rotary_dim: None,  // Full rotation
         }
+    }
+
+    /// Effective rotary dimension (defaults to head_dim if not set)
+    #[must_use]
+    pub fn effective_rotary_dim(&self) -> usize {
+        self.rotary_dim.unwrap_or(self.head_dim)
     }
 
     /// Validate configuration
@@ -53,9 +65,15 @@ impl RopeConfig {
     /// # Errors
     /// Returns error if configuration is invalid
     pub fn validate(&self) -> WhisperResult<()> {
-        if self.head_dim % 2 != 0 {
+        let rdim = self.effective_rotary_dim();
+        if rdim % 2 != 0 {
             return Err(WhisperError::Model(format!(
-                "head_dim ({}) must be even for RoPE rotation pairs",
+                "rotary_dim ({rdim}) must be even for RoPE rotation pairs",
+            )));
+        }
+        if rdim > self.head_dim {
+            return Err(WhisperError::Model(format!(
+                "rotary_dim ({rdim}) must be <= head_dim ({})",
                 self.head_dim
             )));
         }
@@ -90,26 +108,28 @@ impl RotaryEmbedding {
     pub fn new(config: RopeConfig) -> WhisperResult<Self> {
         config.validate()?;
 
-        let half_dim = config.head_dim / 2;
+        let rotary_dim = config.effective_rotary_dim();
+        let half_rotary = rotary_dim / 2;
         let max_seq = config.max_seq_len;
 
         // Compute inverse frequencies: θᵢ = base^(-2i/d)
-        let inv_freq: Vec<f32> = (0..half_dim)
+        // Uses rotary_dim for frequency computation (partial rotary)
+        let inv_freq: Vec<f32> = (0..half_rotary)
             .map(|i| {
-                let exp = -2.0 * (i as f32) / (config.head_dim as f32);
+                let exp = -2.0 * (i as f32) / (rotary_dim as f32);
                 config.base.powf(exp)
             })
             .collect();
 
         // Precompute sin/cos for all positions
-        let mut cos_cache = vec![0.0f32; max_seq * half_dim];
-        let mut sin_cache = vec![0.0f32; max_seq * half_dim];
+        let mut cos_cache = vec![0.0f32; max_seq * half_rotary];
+        let mut sin_cache = vec![0.0f32; max_seq * half_rotary];
 
         for pos in 0..max_seq {
             for (i, &freq) in inv_freq.iter().enumerate() {
                 let angle = (pos as f32) * freq;
-                cos_cache[pos * half_dim + i] = angle.cos();
-                sin_cache[pos * half_dim + i] = angle.sin();
+                cos_cache[pos * half_rotary + i] = angle.cos();
+                sin_cache[pos * half_rotary + i] = angle.sin();
             }
         }
 
@@ -141,7 +161,8 @@ impl RotaryEmbedding {
         position_offset: usize,
     ) -> WhisperResult<Vec<f32>> {
         let head_dim = self.config.head_dim;
-        let half_dim = head_dim / 2;
+        let rotary_dim = self.config.effective_rotary_dim();
+        let half_rotary = rotary_dim / 2;
         let max_seq = self.config.max_seq_len;
 
         // Validate dimensions
@@ -164,25 +185,25 @@ impl RotaryEmbedding {
             )));
         }
 
-        let mut output = vec![0.0f32; expected_len];
+        let mut output = x.to_vec();
 
         for s in 0..seq_len {
             let pos = position_offset + s;
-            let cos = &self.cos_cache[pos * half_dim..(pos + 1) * half_dim];
-            let sin = &self.sin_cache[pos * half_dim..(pos + 1) * half_dim];
+            let cos = &self.cos_cache[pos * half_rotary..(pos + 1) * half_rotary];
+            let sin = &self.sin_cache[pos * half_rotary..(pos + 1) * half_rotary];
 
             for h in 0..num_heads {
                 let offset = (s * num_heads + h) * head_dim;
 
-                // Apply rotation to each pair of dimensions
-                for i in 0..half_dim {
+                // Apply rotation only to first rotary_dim dimensions
+                for i in 0..half_rotary {
                     let x0 = x[offset + 2 * i];
                     let x1 = x[offset + 2 * i + 1];
 
-                    // Rotation formula
                     output[offset + 2 * i] = x0 * cos[i] - x1 * sin[i];
                     output[offset + 2 * i + 1] = x0 * sin[i] + x1 * cos[i];
                 }
+                // Dimensions rotary_dim..head_dim are already copied from x.to_vec()
             }
         }
 
@@ -201,7 +222,8 @@ impl RotaryEmbedding {
         position_offset: usize,
     ) -> WhisperResult<()> {
         let head_dim = self.config.head_dim;
-        let half_dim = head_dim / 2;
+        let rotary_dim = self.config.effective_rotary_dim();
+        let half_rotary = rotary_dim / 2;
         let max_seq = self.config.max_seq_len;
 
         if position_offset + seq_len > max_seq {
@@ -213,19 +235,21 @@ impl RotaryEmbedding {
 
         for s in 0..seq_len {
             let pos = position_offset + s;
-            let cos = &self.cos_cache[pos * half_dim..(pos + 1) * half_dim];
-            let sin = &self.sin_cache[pos * half_dim..(pos + 1) * half_dim];
+            let cos = &self.cos_cache[pos * half_rotary..(pos + 1) * half_rotary];
+            let sin = &self.sin_cache[pos * half_rotary..(pos + 1) * half_rotary];
 
             for h in 0..num_heads {
                 let offset = (s * num_heads + h) * head_dim;
 
-                for i in 0..half_dim {
+                // Only rotate first rotary_dim dimensions
+                for i in 0..half_rotary {
                     let x0 = x[offset + 2 * i];
                     let x1 = x[offset + 2 * i + 1];
 
                     x[offset + 2 * i] = x0 * cos[i] - x1 * sin[i];
                     x[offset + 2 * i + 1] = x0 * sin[i] + x1 * cos[i];
                 }
+                // Dimensions rotary_dim..head_dim remain unchanged
             }
         }
 
@@ -235,15 +259,15 @@ impl RotaryEmbedding {
     /// Get cos values for a position range
     #[must_use]
     pub fn get_cos(&self, start: usize, len: usize) -> &[f32] {
-        let half_dim = self.config.head_dim / 2;
-        &self.cos_cache[start * half_dim..(start + len) * half_dim]
+        let half_rotary = self.config.effective_rotary_dim() / 2;
+        &self.cos_cache[start * half_rotary..(start + len) * half_rotary]
     }
 
     /// Get sin values for a position range
     #[must_use]
     pub fn get_sin(&self, start: usize, len: usize) -> &[f32] {
-        let half_dim = self.config.head_dim / 2;
-        &self.sin_cache[start * half_dim..(start + len) * half_dim]
+        let half_rotary = self.config.effective_rotary_dim() / 2;
+        &self.sin_cache[start * half_rotary..(start + len) * half_rotary]
     }
 
     /// Memory usage in bytes
@@ -277,6 +301,7 @@ mod tests {
             head_dim: 63,
             base: 10000.0,
             max_seq_len: 100,
+            rotary_dim: None,
         };
         assert!(config.validate().is_err());
 
@@ -285,6 +310,7 @@ mod tests {
             head_dim: 64,
             base: 0.0,
             max_seq_len: 100,
+            rotary_dim: None,
         };
         assert!(config.validate().is_err());
     }
@@ -295,6 +321,7 @@ mod tests {
             head_dim: 8,
             base: 10000.0,
             max_seq_len: 10,
+            rotary_dim: None,
         };
         let rope = RotaryEmbedding::new(config).expect("should create RoPE");
 
@@ -308,6 +335,7 @@ mod tests {
             head_dim: 8,
             base: 10000.0,
             max_seq_len: 100,
+            rotary_dim: None,
         };
         let rope = RotaryEmbedding::new(config).expect("should create RoPE");
 
@@ -329,6 +357,7 @@ mod tests {
             head_dim: 4,
             base: 10000.0,
             max_seq_len: 10,
+            rotary_dim: None,
         };
         let rope = RotaryEmbedding::new(config).expect("should create RoPE");
 
@@ -356,6 +385,7 @@ mod tests {
             head_dim: 4,
             base: 10000.0,
             max_seq_len: 10,
+            rotary_dim: None,
         };
         let rope = RotaryEmbedding::new(config).expect("should create RoPE");
 
@@ -385,6 +415,7 @@ mod tests {
             head_dim: 4,
             base: 10000.0,
             max_seq_len: 10,
+            rotary_dim: None,
         };
         let rope = RotaryEmbedding::new(config).expect("should create RoPE");
 
@@ -412,6 +443,7 @@ mod tests {
             head_dim: 4,
             base: 10000.0,
             max_seq_len: 10,
+            rotary_dim: None,
         };
         let rope = RotaryEmbedding::new(config).expect("should create RoPE");
 
@@ -441,6 +473,7 @@ mod tests {
             head_dim: 4,
             base: 10000.0,
             max_seq_len: 10,
+            rotary_dim: None,
         };
         let rope = RotaryEmbedding::new(config).expect("should create RoPE");
 
@@ -457,6 +490,7 @@ mod tests {
             head_dim: 64,
             base: 10000.0,
             max_seq_len: 4096,
+            rotary_dim: None,
         };
         let rope = RotaryEmbedding::new(config).expect("should create RoPE");
 

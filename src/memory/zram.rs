@@ -78,11 +78,7 @@ impl ZramConfig {
     }
 
     /// Build a `ZramConfig` from pre-detected system state (pure function for testability)
-    fn from_detected(
-        available: bool,
-        gpu_enabled: bool,
-        algorithm: CompressionAlgorithm,
-    ) -> Self {
+    fn from_detected(available: bool, gpu_enabled: bool, algorithm: CompressionAlgorithm) -> Self {
         Self {
             available,
             gpu_enabled,

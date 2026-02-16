@@ -28,8 +28,7 @@ pub(super) fn run_probe(
     // Load audio
     let audio_bytes =
         fs::read(&args.audio).map_err(|e| CliError::InvalidArgument(format!("Audio: {e}")))?;
-    let samples =
-        super::super::commands::load_audio_samples(args.audio.as_path(), &audio_bytes)?;
+    let samples = super::super::commands::load_audio_samples(args.audio.as_path(), &audio_bytes)?;
 
     // Determine decoder input tokens
     let tokens: Vec<u32> = if let Some(ref tok_str) = args.tokens {
@@ -44,10 +43,7 @@ pub(super) fn run_probe(
     };
 
     // Build probe
-    let filter = args
-        .layer
-        .clone()
-        .or_else(|| args.stage.clone());
+    let filter = args.layer.clone().or_else(|| args.stage.clone());
 
     let mut probe = ActivationProbe::new()
         .with_full_capture(args.full_tensor)
@@ -71,8 +67,7 @@ pub(super) fn run_probe(
         checkpoints: probe.snapshots,
     };
 
-    let json =
-        serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string());
+    let json = serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string());
 
     if let Some(ref path) = args.output {
         fs::write(path, &json)
@@ -180,7 +175,10 @@ pub(super) fn run_parity(
     if let Some(ref name) = first_fail {
         println!("  Result: FAIL at {name}");
     } else {
-        println!("  Result: PASS ({pass_count}/{} checkpoints)", pass_count + fail_count);
+        println!(
+            "  Result: PASS ({pass_count}/{} checkpoints)",
+            pass_count + fail_count
+        );
     }
 
     let status = if first_fail.is_some() { "FAIL" } else { "PASS" };
@@ -320,7 +318,10 @@ pub(super) fn run_config_check(
         ))
     })?;
 
-    println!("Config Check: {} against {ref_name}\n", args.model.display());
+    println!(
+        "Config Check: {} against {ref_name}\n",
+        args.model.display()
+    );
 
     let mut mismatches = 0usize;
     let mut checks = 0usize;
@@ -333,21 +334,47 @@ pub(super) fn run_config_check(
             let expected_val = $expected;
             if actual_val == expected_val {
                 if args.verbose {
-                    println!("  PASS  {:<30} {} (expected {})", $label, actual_val, expected_val);
+                    println!(
+                        "  PASS  {:<30} {} (expected {})",
+                        $label, actual_val, expected_val
+                    );
                 }
             } else {
-                println!("  FAIL  {:<30} {} (expected {})", $label, actual_val, expected_val);
+                println!(
+                    "  FAIL  {:<30} {} (expected {})",
+                    $label, actual_val, expected_val
+                );
                 mismatches += 1;
             }
         };
     }
 
     // Dimension & layer counts
-    check!("hidden_size", config.n_audio_state as usize, reference.hidden_size);
-    check!("num_heads", config.n_audio_head as usize, reference.num_heads);
-    check!("head_dim", config.n_audio_state as usize / config.n_audio_head as usize, reference.head_dim);
-    check!("n_encoder_layers", config.n_audio_layer as usize, reference.n_encoder_layers);
-    check!("n_decoder_layers", config.n_text_layer as usize, reference.n_decoder_layers);
+    check!(
+        "hidden_size",
+        config.n_audio_state as usize,
+        reference.hidden_size
+    );
+    check!(
+        "num_heads",
+        config.n_audio_head as usize,
+        reference.num_heads
+    );
+    check!(
+        "head_dim",
+        config.n_audio_state as usize / config.n_audio_head as usize,
+        reference.head_dim
+    );
+    check!(
+        "n_encoder_layers",
+        config.n_audio_layer as usize,
+        reference.n_encoder_layers
+    );
+    check!(
+        "n_decoder_layers",
+        config.n_text_layer as usize,
+        reference.n_decoder_layers
+    );
 
     // KV heads (extracted from AttentionType)
     let actual_kv_heads = match config.attention_type {
@@ -358,8 +385,16 @@ pub(super) fn run_config_check(
 
     // FFN intermediate size (4x hidden for both Whisper and Moonshine)
     let actual_ffn = config.n_audio_state as usize * 4;
-    check!("encoder_ffn_intermediate", actual_ffn, reference.encoder_ffn_intermediate);
-    check!("decoder_ffn_intermediate", actual_ffn, reference.decoder_ffn_intermediate);
+    check!(
+        "encoder_ffn_intermediate",
+        actual_ffn,
+        reference.encoder_ffn_intermediate
+    );
+    check!(
+        "decoder_ffn_intermediate",
+        actual_ffn,
+        reference.decoder_ffn_intermediate
+    );
 
     // Activation functions
     let actual_enc_act = match config.ffn_activation {
@@ -368,14 +403,22 @@ pub(super) fn run_config_check(
         crate::format::FfnActivation::Swiglu => "swiglu",
         crate::format::FfnActivation::Relu => "relu",
     };
-    check!("encoder_activation", actual_enc_act, reference.encoder_activation);
+    check!(
+        "encoder_activation",
+        actual_enc_act,
+        reference.encoder_activation
+    );
 
     // Decoder activation: Moonshine uses SiLU (gated MLP), Whisper uses GELU
     let actual_dec_act = match config.model_family {
         crate::format::ModelFamily::Moonshine => "silu",
         _ => actual_enc_act,
     };
-    check!("decoder_activation", actual_dec_act, reference.decoder_activation);
+    check!(
+        "decoder_activation",
+        actual_dec_act,
+        reference.decoder_activation
+    );
 
     // Positional encoding
     let uses_rope = config.positional_encoding == crate::model::PositionalEncoding::Rotary;

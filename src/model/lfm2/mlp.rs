@@ -110,14 +110,7 @@ impl MlpFfn {
         }
 
         // fc1: [seq_len, hidden_size] → [seq_len, intermediate_size]
-        let mut intermediate = linear(
-            hidden_states,
-            seq_len,
-            &self.fc1,
-            self.b1.as_deref(),
-            h,
-            i,
-        );
+        let mut intermediate = linear(hidden_states, seq_len, &self.fc1, self.b1.as_deref(), h, i);
 
         // Apply activation in-place
         match self.config.activation {
@@ -134,14 +127,7 @@ impl MlpFfn {
         }
 
         // fc2: [seq_len, intermediate_size] → [seq_len, hidden_size]
-        let output = linear(
-            &intermediate,
-            seq_len,
-            &self.fc2,
-            self.b2.as_deref(),
-            i,
-            h,
-        );
+        let output = linear(&intermediate, seq_len, &self.fc2, self.b2.as_deref(), i, h);
 
         Ok(output)
     }

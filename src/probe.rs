@@ -230,7 +230,10 @@ mod tests {
         probe.record("test", &data, &[3]);
 
         assert!(probe.snapshots[0].full_data.is_some());
-        assert_eq!(probe.snapshots[0].full_data.as_ref().map(|d| d.len()), Some(3));
+        assert_eq!(
+            probe.snapshots[0].full_data.as_ref().map(|d| d.len()),
+            Some(3)
+        );
     }
 
     #[test]

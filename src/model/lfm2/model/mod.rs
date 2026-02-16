@@ -102,6 +102,7 @@ impl Lfm2 {
             head_dim: (hidden_size / config.num_q_heads as usize),
             base: config.rope_theta,
             max_seq_len: config.max_seq_len.min(4096) as usize, // WASM limit
+            rotary_dim: None,
         };
         let rope = RotaryEmbedding::new(rope_config)?;
 
