@@ -1729,11 +1729,27 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'WAPR-MOONSHINE-016: Fix Moonshine FFN from SwiGLU to standard MLP (fc1/fc2)'
-  status: inprogress
+  status: completed
   priority: critical
   assigned_to: null
   created: 2026-02-16T10:30:50Z
-  updated: 2026-02-16T10:30:52.977670412+00:00
+  updated: 2026-02-16T10:37:31.894786834+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: PMAT-031
+  github_issue: null
+  item_type: task
+  title: 'WAPR-MOONSHINE-017: Fix Moonshine normalization from RMSNorm to LayerNorm (bias=False)'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-02-16T10:42:35Z
+  updated: 2026-02-16T11:04:49.464402443+00:00
   spec: null
   acceptance_criteria: []
   phases: []
