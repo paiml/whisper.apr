@@ -22,7 +22,7 @@ retaining full Whisper support as an alternative. The change is justified by:
 
 - **Smaller models**: Moonshine tiny is 27.1M params vs Whisper tiny's 39M (30% smaller)
 - **Proportional compute**: Processing time scales with audio length, not a fixed 30s window
-- **Architecture reuse**: Moonshine uses RoPE, SwiGLU, and GQA — all already implemented in whisper.apr for LFM2
+- **Architecture reuse**: Moonshine uses RoPE and MHA — already implemented in whisper.apr for LFM2/Whisper
 - **MIT license**: No usage restrictions, unlike Whisper's MIT license with OpenAI's model weights under their own terms
 
 No code changes are included in this specification. This is a design document only.
@@ -33,20 +33,23 @@ No code changes are included in this specification. This is a design document on
 
 | Aspect | Whisper | Moonshine |
 |--------|---------|-----------|
-| **Audio frontend** | 80-mel filterbank (FFT + Hann window + triangular filters) | Learned conv stem (3 Conv1d layers, stride 441->4->2) |
-| **Positional encoding** | Sinusoidal (fixed 1500 frames max) | RoPE (variable length, no max) |
-| **FFN activation** | GELU (4x expansion, 2 projections) | SwiGLU (3-projection gated, ~2.67x expansion) |
-| **Attention** | Standard multi-head attention (MHA) | Grouped Query Attention (GQA) |
+| **Audio frontend** | 80-mel filterbank (FFT + Hann window + triangular filters) | Learned conv stem (3 Conv1d: k=127/s=64, k=7/s=3, k=3/s=2) |
+| **Positional encoding** | Sinusoidal (fixed 1500 frames max) | RoPE (variable length, partial_rotary_factor=0.9/0.62) |
+| **Encoder FFN** | GELU (4x expansion, 2 projections) | GELU MLP (4x expansion, 2 projections: fc1→GELU→fc2) |
+| **Decoder FFN** | GELU (4x expansion, 2 projections) | Gated SiLU MLP (fc1→2x, chunk→SiLU(gate)*value→fc2) |
+| **Attention** | Standard multi-head attention (MHA) | MHA (8 Q heads = 8 KV heads, not GQA) |
+| **Normalization** | LayerNorm (with bias) | LayerNorm (no bias, weight-only) |
 | **Input length** | Fixed 30s (zero-padded to 480,000 samples) | Variable (proportional to audio duration) |
 | **Vocabulary** | 51,865 BPE tokens | 32,768 SentencePiece tokens |
 | **Encoder layers (tiny)** | 4 | 6 |
-| **Encoder layers (base)** | 6 | 12 |
+| **Encoder layers (base)** | 6 | 8 |
 | **Decoder layers (tiny)** | 4 | 6 |
-| **Decoder layers (base)** | 6 | 6 |
+| **Decoder layers (base)** | 6 | 8 |
 | **Params (tiny)** | 39M | 27.1M |
 | **Params (base)** | 74M | 61.5M |
 | **Encoder-decoder arch** | Yes (cross-attention) | Yes (cross-attention) |
 | **Autoregressive decoding** | Yes | Yes |
+| **Tied embeddings** | No (separate proj_out) | Yes (proj_out tied to embed_tokens) |
 
 Both models are encoder-decoder transformers with cross-attention. The decoder
 architecture is structurally identical: autoregressive text generation conditioned on
@@ -69,22 +72,27 @@ implemented in whisper.apr. The following modules carry over directly:
 - Existing `lfm2_2_6b()` factory proves the implementation works; Moonshine needs
   its own factory (e.g., `moonshine_tiny()`) with appropriate `head_dim` and `base`
 
-### 3.2 SwiGLU — `src/model/lfm2/swiglu.rs`
+### 3.2 MLP FFN — `src/model/lfm2/mlp.rs`
 
-- `SwiGluConfig` struct with `hidden_size`, `intermediate_size`, `bias`
-- `SwiGluFfn` struct with gate/up/down projections
-- Formula: `output = (Swish(x @ W_gate) * (x @ W_up)) @ W_down`
-- Moonshine tiny: hidden_size=288, intermediate_size ~= 768 (2.67x)
-- Moonshine base: hidden_size=416, intermediate_size ~= 1110
+- `MlpFfn`: Standard 2-projection FFN (fc1→activation→fc2)
+  - Used by Moonshine encoder with GELU activation
+  - Moonshine tiny: hidden=288, intermediate=1152 (4x)
+  - Moonshine base: hidden=416, intermediate=1664 (4x)
+- `GatedMlpFfn`: Gated MLP (fc1→2x, chunk→SiLU(gate)*value→fc2)
+  - Used by Moonshine decoder with SiLU gating
+  - fc1 projects to 2*intermediate_size, chunks into (value, gate)
+  - Same intermediate_size as encoder (1152/1664)
 
-### 3.3 GQA — `src/model/lfm2/gqa.rs`
+### 3.3 MHA — `src/model/lfm2/gqa.rs`
 
 - `GqaConfig` struct with `num_q_heads`, `num_kv_heads`, `head_dim`
 - `GroupedQueryAttention` struct with Q/K/V/O projections
 - `forward_with_rope()` method integrates RoPE directly
 - Built-in `KvCache` struct with `append()` and `reset()` for incremental decoding
-- Moonshine tiny: 8 Q heads, 2 KV heads (4:1 ratio), head_dim=36
-- Moonshine base: 8 Q heads, 2 KV heads (4:1 ratio), head_dim=52
+- Moonshine uses MHA (num_kv_heads == num_q_heads == 8), NOT GQA
+- Moonshine tiny: 8 heads, head_dim=36 (288/8)
+- Moonshine base: 8 heads, head_dim=52 (416/8)
+- Attention projections have NO bias
 
 ### 3.4 KV Cache — `src/model/decoder_generated.rs`
 
@@ -129,12 +137,13 @@ implemented in whisper.apr. The following modules carry over directly:
 
 **Replacement (Moonshine):** Learned convolutional stem
 - 3 Conv1d layers applied directly to raw audio waveform
-- Layer 1: in=1, out=C, kernel=441, stride=441 (captures ~27.6ms per frame at 16kHz)
-- Layer 2: in=C, out=C, kernel=7, stride=4
-- Layer 3: in=C, out=D, kernel=7, stride=2
-- Total stride: 441 x 4 x 2 = 3528 samples per output frame (~220ms)
+- Layer 1: in=1, out=d_model, kernel=127, stride=64, no bias
+- Layer 2: in=d_model, out=2*d_model, kernel=7, stride=3, with bias
+- Layer 3: in=2*d_model, out=d_model, kernel=3, stride=2, with bias
+- GroupNorm after conv1, LayerNorm after conv3
+- Total stride: 64 x 3 x 2 = 384 samples per output frame (~24ms at 16kHz)
 - No FFT, no Hann window, no mel triangular filters
-- Output length is `ceil(audio_samples / 3528)`, proportional to input duration
+- Output length is proportional to input duration
 - Weights are learned during training (stored in APR file)
 
 The `MelFilterbank` is bypassed entirely for Moonshine models. The `ConvFrontend`
@@ -160,12 +169,12 @@ initial projection.
 **Current (Whisper):**
 - Standard MHA with `n_audio_head` heads (6 for tiny, 8 for base)
 - GELU FFN with 4x expansion
-- Pre-LayerNorm
+- Pre-LayerNorm (with bias)
 
 **Replacement (Moonshine):**
-- GQA with 8 Q heads, 2 KV heads (reuse `GroupedQueryAttention`)
-- SwiGLU FFN with ~2.67x expansion (reuse `SwiGluFfn`)
-- Pre-RMSNorm (standard for RoPE-based architectures)
+- MHA with 8 heads (reuse `GroupedQueryAttention` with num_kv_heads == num_q_heads)
+- GELU MLP FFN with 4x expansion (reuse `MlpFfn` with GELU activation)
+- Pre-LayerNorm (weight-only, no bias) — currently using RMSNorm (WAPR-MOONSHINE-017 pending)
 
 ### 4.4 Tokenizer Vocabulary
 
@@ -300,7 +309,7 @@ impl ModelConfig {
             n_vocab: 32768,
             n_audio_ctx: 0,        // variable length (no fixed max)
             n_audio_state: 288,
-            n_audio_head: 8,
+            n_audio_head: 8,       // MHA: 8 Q heads = 8 KV heads
             n_audio_layer: 6,
             n_text_ctx: 448,
             n_text_state: 288,
@@ -309,8 +318,8 @@ impl ModelConfig {
             n_mels: 0,            // no mel filterbank
             audio_frontend: AudioFrontend::LearnedConv,
             positional_encoding: PositionalEncoding::Rotary,
-            ffn_activation: FfnActivation::Swiglu,
-            attention_type: AttentionType::Gqa { kv_heads: 2 },
+            ffn_activation: FfnActivation::Gelu, // encoder GELU, decoder gated SiLU
+            attention_type: AttentionType::Mha,   // NOT GQA
             model_family: ModelFamily::Moonshine,
         }
     }
@@ -322,16 +331,16 @@ impl ModelConfig {
             n_audio_ctx: 0,
             n_audio_state: 416,
             n_audio_head: 8,
-            n_audio_layer: 12,
+            n_audio_layer: 8,     // 8 layers (not 12)
             n_text_ctx: 448,
             n_text_state: 416,
             n_text_head: 8,
-            n_text_layer: 6,
+            n_text_layer: 8,      // 8 layers (not 6)
             n_mels: 0,
             audio_frontend: AudioFrontend::LearnedConv,
             positional_encoding: PositionalEncoding::Rotary,
-            ffn_activation: FfnActivation::Swiglu,
-            attention_type: AttentionType::Gqa { kv_heads: 2 },
+            ffn_activation: FfnActivation::Gelu,
+            attention_type: AttentionType::Mha,
             model_family: ModelFamily::Moonshine,
         }
     }

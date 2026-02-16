@@ -994,26 +994,35 @@ fn parse_args() -> Result<CliArgs, Box<dyn std::error::Error>> {
     })
 }
 
-/// Moonshine ONNX → APR conversion (stub)
+/// Moonshine SafeTensors → APR conversion (stub)
 ///
-/// Downloads Moonshine ONNX models from HuggingFace (usefulsensors/moonshine-tiny
-/// or usefulsensors/moonshine-base) and converts them to .apr format.
+/// Downloads Moonshine SafeTensors models from HuggingFace
+/// (usefulsensors/moonshine-tiny or usefulsensors/moonshine-base)
+/// and converts them to .apr format.
 ///
-/// # ONNX Weight Name Mapping
+/// Tensor name mapping is defined by the aprender model family contract:
+/// `aprender/contracts/model-families/moonshine.yaml`
 ///
-/// | ONNX Node Pattern             | APR Tensor Name                          |
-/// |-------------------------------|------------------------------------------|
-/// | `preprocess/conv.{i}/weight`  | `encoder.conv_stem.{i}.weight`           |
-/// | `preprocess/conv.{i}/bias`    | `encoder.conv_stem.{i}.bias`             |
-/// | `encode/layers.{i}/...`       | `encoder.blocks.{i}/...` (same pattern)  |
-/// | `decode/layers.{i}/...`       | `decoder.blocks.{i}/...` (same pattern)  |
-/// | `decode/token_embedding/weight` | `decoder.token_embedding.weight`       |
-/// | `decode/ln_final/weight`      | `decoder.ln_final.weight`                |
+/// # SafeTensors Tensor Inventory (160 tensors for tiny)
 ///
-/// # Status: Not Yet Implemented
+/// | HF Tensor Pattern                                        | Count |
+/// |----------------------------------------------------------|-------|
+/// | `model.encoder.conv{1,2,3}.{weight,bias}`               | 5     |
+/// | `model.encoder.groupnorm.{weight,bias}`                  | 2     |
+/// | `model.encoder.layer_norm.weight`                        | 1     |
+/// | `model.encoder.layers.{n}.self_attn.{q,k,v,o}_proj.weight` | 4/layer |
+/// | `model.encoder.layers.{n}.{input,post_attention}_layernorm.weight` | 2/layer |
+/// | `model.encoder.layers.{n}.mlp.fc{1,2}.{weight,bias}`    | 4/layer |
+/// | `model.decoder.embed_tokens.weight`                      | 1     |
+/// | `model.decoder.norm.weight`                              | 1     |
+/// | `model.decoder.layers.{n}.self_attn.{q,k,v,o}_proj.weight` | 4/layer |
+/// | `model.decoder.layers.{n}.encoder_attn.{q,k,v,o}_proj.weight` | 4/layer |
+/// | `model.decoder.layers.{n}.{input,post_attention,final}_layernorm.weight` | 3/layer |
+/// | `model.decoder.layers.{n}.mlp.fc{1,2}.{weight,bias}`    | 4/layer |
 ///
-/// This stub documents the conversion interface. Full ONNX parsing will be added
-/// when the ort (ONNX Runtime) dependency is integrated.
+/// proj_out.weight is tied to embed_tokens.weight.
+///
+/// # Status: Stub — aprender contract ready, converter pending
 async fn convert_moonshine(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
     let repo = format!(
         "https://huggingface.co/{}/{}",
@@ -1021,17 +1030,13 @@ async fn convert_moonshine(args: CliArgs) -> Result<(), Box<dyn std::error::Erro
         args.model_size.hf_repo_name()
     );
 
-    eprintln!("Moonshine ONNX → APR conversion is not yet implemented.");
+    eprintln!("Moonshine SafeTensors → APR conversion is not yet implemented.");
     eprintln!();
     eprintln!("Source: {repo}");
     eprintln!("Target: {}", args.output_path.display());
     eprintln!();
-    eprintln!("To implement, this tool needs:");
-    eprintln!("  1. ONNX model download from HuggingFace ({repo})");
-    eprintln!("  2. ONNX graph parsing (ort or custom parser)");
-    eprintln!("  3. Weight extraction with name mapping (see doc comment above)");
-    eprintln!("  4. SentencePiece tokenizer vocabulary extraction");
-    eprintln!("  5. APR serialization with ModelFamily::Moonshine header");
+    eprintln!("Tensor name mapping is defined in aprender:");
+    eprintln!("  aprender/contracts/model-families/moonshine.yaml");
     eprintln!();
     eprintln!("Config that will be used:");
     let config = args.model_size.to_model_config();
@@ -1042,7 +1047,8 @@ async fn convert_moonshine(args: CliArgs) -> Result<(), Box<dyn std::error::Erro
     eprintln!("  n_vocab:       {}", config.n_vocab);
 
     Err(
-        "Moonshine ONNX conversion not yet implemented (see WAPR-MOONSHINE-001 spec section 8)"
+        "Moonshine SafeTensors conversion not yet implemented — aprender contract ready, \
+         converter pending (Refs WAPR-MOONSHINE-011)"
             .into(),
     )
 }
