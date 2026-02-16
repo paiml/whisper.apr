@@ -3,7 +3,7 @@
 //! Replaces the mel filterbank + encoder ConvFrontend for Moonshine models.
 //! Three Conv1d layers with normalization process raw audio waveform directly:
 //!
-//! 1. Conv1d(1, C, kernel=441, stride=441, no bias) + GroupNorm + GELU
+//! 1. Conv1d(1, C, kernel=441, stride=441, no bias) + tanh + GroupNorm
 //! 2. Conv1d(C, C, kernel=7, stride=4, pad=3) + GELU
 //! 3. Conv1d(C, D, kernel=7, stride=2, pad=3) + GELU + LayerNorm
 //!
@@ -194,7 +194,7 @@ impl ConvStem {
     ///
     /// Architecture (from HuggingFace `MoonshineEncoder`):
     /// - conv1: `Conv1d(1, d_model, kernel=127, stride=64, pad=0, bias=False)`
-    /// - GroupNorm(1, d_model) → GELU
+    /// - tanh → GroupNorm(1, d_model)
     /// - conv2: `Conv1d(d_model, 2*d_model, kernel=7, stride=3, pad=0, bias=True)` → GELU
     /// - conv3: `Conv1d(2*d_model, d_model, kernel=3, stride=2, pad=0, bias=True)` → GELU
     /// - LayerNorm(d_model, bias=False)
@@ -216,7 +216,7 @@ impl ConvStem {
 
     /// Forward pass: raw audio → encoder features
     ///
-    /// Pipeline: conv1 → GroupNorm → GELU → conv2 → GELU → conv3 → GELU → LayerNorm
+    /// Pipeline: conv1 → tanh → GroupNorm → conv2 → GELU → conv3 → GELU → LayerNorm
     ///
     /// # Arguments
     /// * `audio` - Raw audio samples (mono, 16kHz, f32)
@@ -233,9 +233,9 @@ impl ConvStem {
 
         // Layer 1: raw audio → d_model channels (stride 64, no bias)
         let x = self.conv1.forward(audio)?;
+        let x = crate::simd::tanh_activation(&x);
         let seq_len = x.len() / self.d_model;
         let x = self.groupnorm.forward(&x, seq_len)?;
-        let x = crate::simd::gelu(&x);
 
         // Layer 2: d_model → 2*d_model (stride 3)
         let x = self.conv2.forward(&x)?;
@@ -270,15 +270,19 @@ impl ConvStem {
         let seq_len = x.len() / self.d_model;
         probe.record("conv_stem.conv1_out", &x, &[seq_len, self.d_model]);
 
+        let x = crate::simd::tanh_activation(&x);
+
         let x = self.groupnorm.forward(&x, seq_len)?;
         probe.record("conv_stem.groupnorm_out", &x, &[seq_len, self.d_model]);
-
-        let x = crate::simd::gelu(&x);
 
         // Layer 2: d_model → 2*d_model (stride 3)
         let x = self.conv2.forward(&x)?;
         let seq_len2 = x.len() / self.intermediate_channels;
-        probe.record("conv_stem.conv2_out", &x, &[seq_len2, self.intermediate_channels]);
+        probe.record(
+            "conv_stem.conv2_out",
+            &x,
+            &[seq_len2, self.intermediate_channels],
+        );
 
         let x = crate::simd::gelu(&x);
 

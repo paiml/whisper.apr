@@ -76,6 +76,7 @@ impl Lfm2Layer {
                     head_dim: hidden_size / num_q_heads,
                     causal: true,
                     dropout: 0.0,
+                    pad_head_dim_to: None,
                 };
                 (Some(GroupedQueryAttention::new(gqa_config)?), None)
             }
@@ -425,7 +426,10 @@ mod tests {
         let input = vec![1.0, 2.0, 3.0, 4.0];
         let output = ln.forward(&input, 1).expect("forward");
         let mean: f32 = output.iter().sum::<f32>() / 4.0;
-        assert!(mean.abs() < 1e-5, "LayerNorm output mean should be ~0, got {mean}");
+        assert!(
+            mean.abs() < 1e-5,
+            "LayerNorm output mean should be ~0, got {mean}"
+        );
     }
 
     #[test]
@@ -436,7 +440,10 @@ mod tests {
         let output = rms.forward(&input, 1).expect("forward");
         let mean: f32 = output.iter().sum::<f32>() / 4.0;
         // RMSNorm preserves the sign pattern, mean should NOT be zero
-        assert!(mean.abs() > 0.1, "RMSNorm output mean should be nonzero, got {mean}");
+        assert!(
+            mean.abs() > 0.1,
+            "RMSNorm output mean should be nonzero, got {mean}"
+        );
     }
 
     #[test]
@@ -454,7 +461,10 @@ mod tests {
             .zip(rms_out.iter())
             .map(|(a, b)| (a - b).abs())
             .sum();
-        assert!(diff > 0.01, "LayerNorm and RMSNorm should differ for non-zero-mean input");
+        assert!(
+            diff > 0.01,
+            "LayerNorm and RMSNorm should differ for non-zero-mean input"
+        );
     }
 
     #[test]

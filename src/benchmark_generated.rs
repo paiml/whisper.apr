@@ -1671,6 +1671,7 @@ fn bench_gqa(config: &Lfm2BenchmarkConfig, input: &[f32]) -> WhisperResult<(u128
         head_dim: h / config.num_q_heads,
         causal: true,
         dropout: 0.0,
+        pad_head_dim_to: None,
     };
     let mut attn = crate::model::lfm2::GroupedQueryAttention::new(gqa_config)?;
 
@@ -1707,6 +1708,7 @@ fn bench_rope(config: &Lfm2BenchmarkConfig, input: &[f32]) -> WhisperResult<(u12
         head_dim,
         base: 1_000_000.0,
         max_seq_len: 4096,
+        rotary_dim: None,
     };
     let rope = crate::model::lfm2::RotaryEmbedding::new(rope_config)?;
 
@@ -1776,6 +1778,7 @@ fn bench_full_layer(
         head_dim: h / config.num_q_heads,
         causal: true,
         dropout: 0.0,
+        pad_head_dim_to: None,
     };
     let mut attn = crate::model::lfm2::GroupedQueryAttention::new(gqa_config)?;
 

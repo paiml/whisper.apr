@@ -51,6 +51,7 @@ impl MoonshineEncoderBlock {
             head_dim,
             causal: false, // Encoder self-attention is bidirectional
             dropout: 0.0,
+            pad_head_dim_to: Some(8),
         };
 
         let mlp_config = MlpConfig {
@@ -85,7 +86,9 @@ impl MoonshineEncoderBlock {
     ) -> WhisperResult<Vec<f32>> {
         // Pre-norm + self-attention + residual
         let normed = self.ln1.forward(x, seq_len)?;
-        let attn_out = self.self_attn.forward_with_rope(&normed, seq_len, Some(rope))?;
+        let attn_out = self
+            .self_attn
+            .forward_with_rope(&normed, seq_len, Some(rope))?;
         let mut residual = add_vectors(x, &attn_out);
 
         // Pre-norm + FFN + residual
@@ -122,11 +125,21 @@ impl MoonshineEncoderBlock {
         let normed = self.ln1.forward(x, seq_len)?;
         probe.record(&format!("{prefix}.ln1_out"), &normed, &[seq_len, d_model]);
 
-        let attn_out = self.self_attn.forward_with_rope(&normed, seq_len, Some(rope))?;
-        probe.record(&format!("{prefix}.self_attn_out"), &attn_out, &[seq_len, d_model]);
+        let attn_out = self
+            .self_attn
+            .forward_with_rope(&normed, seq_len, Some(rope))?;
+        probe.record(
+            &format!("{prefix}.self_attn_out"),
+            &attn_out,
+            &[seq_len, d_model],
+        );
 
         let mut residual = add_vectors(x, &attn_out);
-        probe.record(&format!("{prefix}.residual_1"), &residual, &[seq_len, d_model]);
+        probe.record(
+            &format!("{prefix}.residual_1"),
+            &residual,
+            &[seq_len, d_model],
+        );
 
         // Pre-norm + FFN + residual
         let normed2 = self.ln2.forward(&residual, seq_len)?;
@@ -136,7 +149,11 @@ impl MoonshineEncoderBlock {
         probe.record(&format!("{prefix}.ffn_out"), &ffn_out, &[seq_len, d_model]);
 
         add_vectors_inplace(&mut residual, &ffn_out);
-        probe.record(&format!("{prefix}.residual_2"), &residual, &[seq_len, d_model]);
+        probe.record(
+            &format!("{prefix}.residual_2"),
+            &residual,
+            &[seq_len, d_model],
+        );
 
         Ok(residual)
     }
@@ -169,10 +186,10 @@ mod tests {
     fn test_moonshine_encoder_block_forward_shape() {
         let block = MoonshineEncoderBlock::new(288, 8, 8, 1152).expect("block creation");
         let rope = RotaryEmbedding::new(crate::model::lfm2::rope::RopeConfig {
-            head_dim: 36, // 288 / 8
+            head_dim: 40, // 288/8=36 padded to 40 (pad_head_dim_to=8)
             base: 10000.0,
             max_seq_len: 2048,
-            rotary_dim: None,
+            rotary_dim: Some(32),
         })
         .expect("rope creation");
 
@@ -188,10 +205,10 @@ mod tests {
     fn test_moonshine_encoder_block_residual() {
         let block = MoonshineEncoderBlock::new(288, 8, 8, 1152).expect("block creation");
         let rope = RotaryEmbedding::new(crate::model::lfm2::rope::RopeConfig {
-            head_dim: 36,
+            head_dim: 40,
             base: 10000.0,
             max_seq_len: 2048,
-            rotary_dim: None,
+            rotary_dim: Some(32),
         })
         .expect("rope creation");
 
