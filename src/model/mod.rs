@@ -219,6 +219,32 @@ impl ModelConfig {
         }
     }
 
+    /// Create configuration for Whisper large v3 turbo model (~809M params)
+    ///
+    /// Asymmetric encoder-decoder: 32 encoder layers but only 4 decoder layers.
+    /// Uses 128-mel filterbank like large-v3. Vocab size 51866 (one extra token).
+    #[must_use]
+    pub const fn large_v3_turbo() -> Self {
+        Self {
+            model_type: ModelType::LargeV3Turbo,
+            n_vocab: 51866,
+            n_audio_ctx: 1500,
+            n_audio_state: 1280,
+            n_audio_head: 20,
+            n_audio_layer: 32,
+            n_text_ctx: 448,
+            n_text_state: 1280,
+            n_text_head: 20,
+            n_text_layer: 4,
+            n_mels: 128,
+            audio_frontend: AudioFrontend::MelFilterbank,
+            positional_encoding: PositionalEncoding::Sinusoidal,
+            ffn_activation: FfnActivation::Gelu,
+            attention_type: AttentionType::Mha,
+            model_family: ModelFamily::Whisper,
+        }
+    }
+
     /// Create configuration for Moonshine tiny model (27.1M params)
     ///
     /// Variable-length ASR with MHA, RoPE, GELU encoder / SiLU decoder,
@@ -828,6 +854,48 @@ mod tests {
         assert_eq!(config.n_text_layer, 8);
         assert_eq!(config.n_vocab, 32768);
         assert!(config.is_moonshine());
+    }
+
+    #[test]
+    fn test_large_v3_turbo_config() {
+        let config = ModelConfig::large_v3_turbo();
+        // Large v3 turbo: 1280-dim, 32 enc layers, 4 dec layers, 20 heads, 128 mels
+        assert_eq!(config.n_audio_state, 1280);
+        assert_eq!(config.n_audio_layer, 32);
+        assert_eq!(config.n_audio_head, 20);
+        assert_eq!(config.n_text_state, 1280);
+        assert_eq!(config.n_text_layer, 4);
+        assert_eq!(config.n_text_head, 20);
+        assert_eq!(config.n_mels, 128);
+        assert_eq!(config.n_vocab, 51866);
+        assert!(config.is_whisper());
+        assert!(!config.is_moonshine());
+        assert_eq!(config.model_family, ModelFamily::Whisper);
+    }
+
+    #[test]
+    fn test_large_v3_turbo_asymmetric_layers() {
+        let config = ModelConfig::large_v3_turbo();
+        // Key difference: 32 encoder layers but only 4 decoder layers
+        assert_eq!(config.n_audio_layer, 32);
+        assert_eq!(config.n_text_layer, 4);
+        // Compare with large: 32 encoder, 32 decoder
+        let large = ModelConfig::large();
+        assert_eq!(config.n_audio_layer, large.n_audio_layer);
+        assert!(config.n_text_layer < large.n_text_layer);
+    }
+
+    #[test]
+    fn test_large_v3_turbo_fewer_params_than_large() {
+        let turbo = ModelConfig::large_v3_turbo();
+        let large = ModelConfig::large();
+        // Turbo ~809M vs Large ~1.5B (fewer decoder layers)
+        assert!(
+            turbo.parameter_count() < large.parameter_count(),
+            "Turbo ({}) should have fewer params than Large ({})",
+            turbo.parameter_count(),
+            large.parameter_count()
+        );
     }
 
     #[test]

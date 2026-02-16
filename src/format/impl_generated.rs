@@ -207,6 +207,7 @@ impl AprHeader {
             9 => ModelType::LargeV1,
             10 => ModelType::LargeV2,
             11 => ModelType::LargeV3,
+            12 => ModelType::LargeV3Turbo,
             // 0 and unknown values default to Tiny
             _ => ModelType::Tiny,
         };
@@ -285,6 +286,7 @@ impl AprHeader {
             ModelType::LargeV1 => 9,
             ModelType::LargeV2 => 10,
             ModelType::LargeV3 => 11,
+            ModelType::LargeV3Turbo => 12,
         };
 
         Self {

@@ -2524,6 +2524,7 @@ fn run_model_download(
         crate::cli::args::ModelSize::Small => "whisper-small",
         crate::cli::args::ModelSize::Medium => "whisper-medium",
         crate::cli::args::ModelSize::Large => "whisper-large",
+        crate::cli::args::ModelSize::LargeV3Turbo => "whisper-large-v3-turbo",
         crate::cli::args::ModelSize::MoonshineTiny => "moonshine-tiny",
         crate::cli::args::ModelSize::MoonshineBase => "moonshine-base",
     };

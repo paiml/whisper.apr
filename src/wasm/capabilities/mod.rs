@@ -188,6 +188,7 @@ impl Capabilities {
             "small" | "small.en" => 900,
             "medium" | "medium.en" => 2500,
             "large" | "large-v2" | "large-v3" => 4000,
+            "large-v3-turbo" => 2500,
             _ => 200, // Default to tiny requirements
         };
 
