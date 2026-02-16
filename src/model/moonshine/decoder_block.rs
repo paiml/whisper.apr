@@ -223,6 +223,73 @@ impl MoonshineDecoderBlock {
 
         Ok(residual)
     }
+
+    /// Forward pass with activation probing
+    ///
+    /// Same logic as [`forward()`](Self::forward) but records activation snapshots
+    /// at each sub-layer boundary.
+    ///
+    /// # Arguments
+    /// * `x` - Decoder input tensor [dec_seq_len, d_model]
+    /// * `encoder_out` - Encoder output tensor [enc_seq_len, d_model]
+    /// * `dec_seq_len` - Decoder sequence length
+    /// * `enc_seq_len` - Encoder sequence length
+    /// * `rope` - Rotary position embedding
+    /// * `block_idx` - Block index for checkpoint naming
+    /// * `probe` - Activation probe for recording snapshots
+    #[allow(clippy::too_many_arguments)]
+    pub fn forward_probed(
+        &self,
+        x: &[f32],
+        encoder_out: &[f32],
+        dec_seq_len: usize,
+        enc_seq_len: usize,
+        rope: &RotaryEmbedding,
+        block_idx: usize,
+        probe: &mut crate::probe::ActivationProbe,
+    ) -> WhisperResult<Vec<f32>> {
+        let d_model = self.self_attn.config.hidden_size;
+        let prefix = format!("decoder.block_{block_idx}");
+
+        // 1. Masked self-attention with RoPE + residual
+        let normed = self.ln1.forward(x, dec_seq_len)?;
+        probe.record(&format!("{prefix}.ln1_out"), &normed, &[dec_seq_len, d_model]);
+
+        let self_attn_out =
+            self.self_attn
+                .forward_with_rope(&normed, dec_seq_len, Some(rope))?;
+        probe.record(&format!("{prefix}.self_attn_out"), &self_attn_out, &[dec_seq_len, d_model]);
+
+        let mut residual = add_vectors(x, &self_attn_out);
+        probe.record(&format!("{prefix}.residual_1"), &residual, &[dec_seq_len, d_model]);
+
+        // 2. Cross-attention (Q from decoder, KV from encoder) + residual
+        let normed_cross = self.ln_cross.forward(&residual, dec_seq_len)?;
+        probe.record(&format!("{prefix}.ln_cross_out"), &normed_cross, &[dec_seq_len, d_model]);
+
+        let cross_attn_out = self.cross_attn.forward_cross_attention(
+            &normed_cross,
+            encoder_out,
+            dec_seq_len,
+            enc_seq_len,
+        )?;
+        probe.record(&format!("{prefix}.cross_attn_out"), &cross_attn_out, &[dec_seq_len, d_model]);
+
+        add_vectors_inplace(&mut residual, &cross_attn_out);
+        probe.record(&format!("{prefix}.residual_2"), &residual, &[dec_seq_len, d_model]);
+
+        // 3. FFN + residual
+        let normed2 = self.ln2.forward(&residual, dec_seq_len)?;
+        probe.record(&format!("{prefix}.ln2_out"), &normed2, &[dec_seq_len, d_model]);
+
+        let ffn_out = self.ffn.forward(&normed2, dec_seq_len)?;
+        probe.record(&format!("{prefix}.ffn_out"), &ffn_out, &[dec_seq_len, d_model]);
+
+        add_vectors_inplace(&mut residual, &ffn_out);
+        probe.record(&format!("{prefix}.residual_3"), &residual, &[dec_seq_len, d_model]);
+
+        Ok(residual)
+    }
 }
 
 /// Element-wise vector addition
@@ -255,6 +322,7 @@ mod tests {
             head_dim: 36, // 288 / 8
             base: 10000.0,
             max_seq_len: 2048,
+            rotary_dim: None,
         })
         .expect("rope creation");
 
@@ -278,6 +346,7 @@ mod tests {
             head_dim: 36, // 288 / 8
             base: 10000.0,
             max_seq_len: 2048,
+            rotary_dim: None,
         })
         .expect("rope creation");
 
@@ -321,6 +390,7 @@ mod tests {
             head_dim: 36,
             base: 10000.0,
             max_seq_len: 2048,
+            rotary_dim: None,
         })
         .expect("rope creation");
 

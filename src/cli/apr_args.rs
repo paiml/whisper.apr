@@ -96,6 +96,15 @@ pub enum AprAction {
 
     /// Profile transcription with per-step timing breakdown (renacer integration)
     Profile(AprProfileArgs),
+
+    /// Probe activation tensors through the forward pass for parity debugging
+    Probe(AprProbeArgs),
+
+    /// Compare probed activations against a reference for numerical parity
+    Parity(AprParityArgs),
+
+    /// Check model configuration against known reference configs
+    ConfigCheck(AprConfigCheckArgs),
 }
 
 // ============================================================================
@@ -600,4 +609,88 @@ pub struct AprProfileArgs {
     /// Compare against whisper.cpp timing (if available)
     #[arg(long)]
     pub compare_cpp: bool,
+}
+
+// ============================================================================
+// Tier D — Forward-Pass Debugging (WAPR-MOONSHINE-013)
+// ============================================================================
+
+/// Arguments for `apr probe`
+///
+/// Runs a probed forward pass, recording activation statistics at each
+/// checkpoint in the pipeline (ConvStem → Encoder → Decoder).
+#[derive(Args, Debug, Clone)]
+pub struct AprProbeArgs {
+    /// Model file (.apr format)
+    pub model: PathBuf,
+
+    /// Audio file to process (WAV, MP3, FLAC, etc.)
+    pub audio: PathBuf,
+
+    /// Output JSON file (stdout if not specified)
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+
+    /// Filter to specific pipeline stage (e.g. "conv_stem", "encoder", "decoder")
+    #[arg(long)]
+    pub stage: Option<String>,
+
+    /// Filter to specific layer (e.g. "encoder.block_0")
+    #[arg(long)]
+    pub layer: Option<String>,
+
+    /// Capture full tensor data (large output)
+    #[arg(long)]
+    pub full_tensor: bool,
+
+    /// Number of leading values to show per checkpoint
+    #[arg(long, default_value = "8")]
+    pub first_n: usize,
+
+    /// Decoder input tokens (comma-separated IDs; default: SOT for Whisper, 1 for Moonshine)
+    #[arg(long)]
+    pub tokens: Option<String>,
+}
+
+/// Arguments for `apr parity`
+///
+/// Compares two probe JSON outputs checkpoint-by-checkpoint, reporting
+/// where activations first diverge beyond tolerance.
+#[derive(Args, Debug, Clone)]
+pub struct AprParityArgs {
+    /// Our probe JSON file
+    pub ours: PathBuf,
+
+    /// Reference probe JSON file (e.g. from HuggingFace)
+    pub reference: PathBuf,
+
+    /// Relative L2 tolerance (default: 1% = 0.01)
+    #[arg(long, default_value = "0.01")]
+    pub tolerance: f64,
+
+    /// Absolute tolerance for near-zero L2 values
+    #[arg(long, default_value = "1e-5")]
+    pub abs_tolerance: f64,
+
+    /// Stop and mark remaining as propagated after first failure
+    #[arg(long)]
+    pub stop_first: bool,
+}
+
+/// Arguments for `apr config-check`
+///
+/// Validates that a model's configuration parameters match a known reference
+/// configuration for its model family and size.
+#[derive(Args, Debug, Clone)]
+pub struct AprConfigCheckArgs {
+    /// Model file (.apr format)
+    pub model: PathBuf,
+
+    /// Reference model name (e.g. "moonshine-tiny", "whisper-tiny") or JSON config file
+    #[arg(long)]
+    pub reference: Option<String>,
+
+    /// Show all checked parameters (not just mismatches)
+    #[arg(long)]
+    pub verbose: bool,
 }

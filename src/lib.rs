@@ -63,6 +63,9 @@ pub mod backend;
 /// Vocabulary and hotword customization
 pub mod vocabulary;
 
+/// Activation probing for forward-pass debugging (WAPR-MOONSHINE-013)
+pub mod probe;
+
 /// HuggingFace Hub publishing (WAPR-PUB-001)
 pub mod publish;
 

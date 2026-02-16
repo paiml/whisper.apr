@@ -35,6 +35,7 @@ use super::apr_args::{
 };
 use super::commands::{CliError, CliResult, CommandResult};
 
+mod probe;
 mod rosetta;
 use rosetta::run_rosetta;
 
@@ -89,6 +90,9 @@ fn subcommand_name(action: &AprAction) -> &'static str {
         AprAction::ImportSharded(_) => "import-sharded",
         AprAction::HeInspect(_) => "he-inspect",
         AprAction::Profile(_) => "profile",
+        AprAction::Probe(_) => "probe",
+        AprAction::Parity(_) => "parity",
+        AprAction::ConfigCheck(_) => "config-check",
     }
 }
 
@@ -120,6 +124,9 @@ fn dispatch_apr(args: &AprArgs, global: &super::args::Args) -> CliResult<Command
         AprAction::ImportSharded(a) => phase3::run_import_sharded(a, global),
         AprAction::HeInspect(a) => phase3::run_he_inspect(a, global),
         AprAction::Profile(a) => phase3::run_profile(a, global),
+        AprAction::Probe(a) => probe::run_probe(a, global),
+        AprAction::Parity(a) => probe::run_parity(a, global),
+        AprAction::ConfigCheck(a) => probe::run_config_check(a, global),
     }
 }
 
@@ -485,7 +492,11 @@ fn run_merge(args: &AprMergeArgs, global: &super::args::Args) -> CliResult<Comma
             .collect::<Vec<f32>>()
     });
 
-    let options = MergeOptions { strategy, weights };
+    let options = MergeOptions {
+        strategy,
+        weights,
+        ..Default::default()
+    };
 
     if !global.quiet {
         eprintln!(
@@ -1327,11 +1338,11 @@ fn print_diff_text(report: &aprender::format::DiffReport) {
 fn format_model_error(e: &aprender::error::AprenderError, path: &std::path::Path) -> CliError {
     let msg = e.to_string();
 
-    // APR v1 files have correct magic APRN (4150524e) but aren't supported by Rosetta
-    if msg.contains("Invalid magic: 4150524e") || msg.contains("Invalid magic: APRN") {
+    // Unrecognized magic — not a valid APR file
+    if msg.contains("Invalid magic") {
         return CliError::UnsupportedFormat(format!(
-            "{}: APR v1 format not supported by Rosetta Stone inspector. \
-             Use `apr lint` for APR v1 files, or convert to v2 with `apr import`.",
+            "{}: not a valid APR file (invalid magic number). \
+             Re-download or re-convert the model.",
             path.display()
         ));
     }

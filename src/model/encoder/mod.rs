@@ -23,7 +23,7 @@ pub use layers::{FeedForward, LayerNorm};
 use super::moonshine::MoonshineEncoderBlock;
 use super::{AttentionType, AudioFrontend, ModelConfig, PositionalEncoding};
 use crate::error::{WhisperError, WhisperResult};
-use crate::model::lfm2::layer::RmsNorm;
+use crate::model::lfm2::layer::LayerNormNoBias;
 use crate::model::lfm2::rope::{RopeConfig, RotaryEmbedding};
 
 /// Transformer encoder for audio features
@@ -50,8 +50,8 @@ pub struct Encoder {
     rope: Option<RotaryEmbedding>,
     /// Final layer norm (Whisper — learned affine LayerNorm)
     ln_post: LayerNorm,
-    /// Final layer norm (Moonshine — RMS normalization)
-    ln_post_rms: Option<RmsNorm>,
+    /// Final layer norm (Moonshine — LayerNorm without bias)
+    ln_post_rms: Option<LayerNormNoBias>,
     /// Sinusoidal positional embeddings (Whisper only; empty for Moonshine/RoPE)
     positional_embedding: Vec<f32>,
     /// Maximum sequence length (0 = variable for Moonshine)
@@ -109,10 +109,14 @@ impl Encoder {
                         Err(_) => return Self::fallback_encoder(config),
                     }
                 }
+                // Moonshine partial_rotary_factor=0.9: rotate first 32 of 36 head dims
+                let rotary_dim = (head_dim as f64 * 0.9).floor() as usize;
+                let rotary_dim = rotary_dim - (rotary_dim % 2);
                 let Ok(rope_emb) = RotaryEmbedding::new(RopeConfig {
                     head_dim,
                     base: 10000.0,
                     max_seq_len: 2048,
+                    rotary_dim: Some(rotary_dim),
                 }) else {
                     return Self::fallback_encoder(config);
                 };
@@ -126,9 +130,9 @@ impl Encoder {
             PositionalEncoding::Rotary => Vec::new(),
         };
 
-        // Moonshine uses RmsNorm for final norm; Whisper uses LayerNorm
+        // Moonshine uses LayerNorm(bias=False) for final norm; Whisper uses LayerNorm
         let ln_post_rms = if rope.is_some() {
-            Some(RmsNorm::new(d_model))
+            Some(LayerNormNoBias::new(d_model))
         } else {
             None
         };
@@ -346,14 +350,14 @@ impl Encoder {
         self.rope.as_ref()
     }
 
-    /// Get RMS layer norm reference (Moonshine only)
+    /// Get Moonshine final layer norm reference
     #[must_use]
-    pub fn ln_post_rms(&self) -> Option<&RmsNorm> {
+    pub fn ln_post_rms(&self) -> Option<&LayerNormNoBias> {
         self.ln_post_rms.as_ref()
     }
 
-    /// Get mutable RMS layer norm reference (Moonshine only)
-    pub fn ln_post_rms_mut(&mut self) -> Option<&mut RmsNorm> {
+    /// Get mutable Moonshine final layer norm reference (for loading weights)
+    pub fn ln_post_rms_mut(&mut self) -> Option<&mut LayerNormNoBias> {
         self.ln_post_rms.as_mut()
     }
 
@@ -441,6 +445,66 @@ impl Encoder {
             batch_size,
             d_model: self.d_model,
         })
+    }
+
+    /// Forward pass with activation probing (Moonshine path only)
+    ///
+    /// Records activation snapshots at each encoder block boundary
+    /// and the final layer norm output.
+    ///
+    /// # Errors
+    /// Returns error on dimension mismatch or if RoPE is unavailable
+    pub fn forward_probed(
+        &self,
+        features: &[f32],
+        probe: &mut crate::probe::ActivationProbe,
+    ) -> WhisperResult<Vec<f32>> {
+        let seq_len = features.len() / self.d_model;
+
+        if features.len() % self.d_model != 0 {
+            return Err(WhisperError::Model("input size mismatch".into()));
+        }
+        if self.max_len > 0 && seq_len > self.max_len {
+            return Err(WhisperError::Model(format!(
+                "sequence length {} exceeds max {}",
+                seq_len, self.max_len
+            )));
+        }
+
+        let mut x = features.to_vec();
+
+        if self.rope.is_some() {
+            // Moonshine path: probed block-by-block
+            let rope = self.rope.as_ref().ok_or_else(|| {
+                WhisperError::Model("Moonshine encoder requires RoPE".into())
+            })?;
+            for (i, block) in self.moonshine_blocks.iter().enumerate() {
+                x = block.forward_probed(&x, seq_len, rope, i, probe)?;
+            }
+        } else {
+            // Whisper path: sinusoidal PE + blocks (no per-block probing)
+            if self.positional_encoding == PositionalEncoding::Sinusoidal {
+                for pos in 0..seq_len {
+                    for d in 0..self.d_model {
+                        x[pos * self.d_model + d] +=
+                            self.positional_embedding[pos * self.d_model + d];
+                    }
+                }
+            }
+            for block in &self.blocks {
+                x = block.forward(&x)?;
+            }
+        }
+
+        // Final layer norm
+        let result = if let Some(ref rms) = self.ln_post_rms {
+            rms.forward(&x, seq_len)?
+        } else {
+            self.ln_post.forward(&x)?
+        };
+        probe.record("encoder.ln_post_out", &result, &[seq_len, self.d_model]);
+
+        Ok(result)
     }
 
     /// Finalize all weights by caching transposed/pre-computed data

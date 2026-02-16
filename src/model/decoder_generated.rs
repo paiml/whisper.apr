@@ -28,7 +28,7 @@
 
 use crate::error::{WhisperError, WhisperResult};
 use crate::model::encoder::{FeedForward, LayerNorm};
-use crate::model::lfm2::layer::RmsNorm;
+use crate::model::lfm2::layer::LayerNormNoBias;
 use crate::model::lfm2::rope::{RopeConfig, RotaryEmbedding};
 use crate::model::moonshine::MoonshineDecoderBlock;
 use crate::model::{AttentionType, ModelConfig, MultiHeadAttention, PositionalEncoding};
@@ -1744,14 +1744,14 @@ pub struct Decoder {
     n_heads: usize,
     /// Whisper decoder blocks (MHA + GELU + LayerNorm)
     blocks: Vec<DecoderBlock>,
-    /// Moonshine decoder blocks (MHA + SiLU MLP + RmsNorm + RoPE)
+    /// Moonshine decoder blocks (MHA + SiLU MLP + LayerNorm + RoPE)
     moonshine_blocks: Vec<MoonshineDecoderBlock>,
     /// Rotary positional embedding for Moonshine decoder (None for Whisper)
     rope: Option<RotaryEmbedding>,
     /// Final layer norm (Whisper — learned affine LayerNorm)
     ln_post: LayerNorm,
-    /// Final layer norm (Moonshine — RMS normalization)
-    ln_post_rms: Option<RmsNorm>,
+    /// Final layer norm (Moonshine — LayerNorm without bias)
+    ln_post_rms: Option<LayerNormNoBias>,
     /// Token embeddings (n_vocab x d_model)
     token_embedding: Vec<f32>,
     /// Transposed token embeddings for fast projection (d_model x n_vocab)
@@ -1811,10 +1811,15 @@ impl Decoder {
                         Err(_) => return Self::fallback_decoder(config),
                     }
                 }
+                // Moonshine partial_rotary_factor=0.9: rotate first 32 of 36 head dims
+                let rotary_dim = (head_dim as f64 * 0.9).floor() as usize;
+                // Ensure rotary_dim is even (required for sin/cos pairs)
+                let rotary_dim = rotary_dim - (rotary_dim % 2);
                 let Ok(rope_emb) = RotaryEmbedding::new(RopeConfig {
                     head_dim,
                     base: 10000.0,
                     max_seq_len: 2048,
+                    rotary_dim: Some(rotary_dim),
                 }) else {
                     return Self::fallback_decoder(config);
                 };
@@ -1822,7 +1827,7 @@ impl Decoder {
                     Vec::new(),
                     moon_blocks,
                     Some(rope_emb),
-                    Some(RmsNorm::new(d_model)),
+                    Some(LayerNormNoBias::new(d_model)),
                 )
             }
         };
@@ -2015,6 +2020,81 @@ impl Decoder {
 
         // Project to vocabulary (x @ embedding.T)
         Ok(self.project_to_vocab(&x, seq_len))
+    }
+
+    /// Forward pass with activation probing
+    ///
+    /// Same logic as [`forward()`](Self::forward) but records activation snapshots
+    /// at each checkpoint for numerical parity debugging.
+    ///
+    /// # Errors
+    /// Returns error if sequence too long or invalid tokens
+    #[allow(clippy::no_effect_underscore_binding)]
+    pub fn forward_probed(
+        &self,
+        tokens: &[u32],
+        encoder_output: &[f32],
+        probe: &mut crate::probe::ActivationProbe,
+    ) -> WhisperResult<Vec<f32>> {
+        let seq_len = tokens.len();
+
+        if seq_len == 0 {
+            return Err(WhisperError::Model("empty token sequence".into()));
+        }
+        if seq_len > self.max_len {
+            return Err(WhisperError::Model(format!(
+                "sequence length {} exceeds max {}",
+                seq_len, self.max_len
+            )));
+        }
+        if encoder_output.len() % self.d_model != 0 {
+            return Err(WhisperError::Model("encoder output size mismatch".into()));
+        }
+
+        // Embed tokens
+        let mut x = self.embed_tokens(tokens)?;
+        probe.record("decoder.token_emb", &x, &[seq_len, self.d_model]);
+
+        let enc_seq_len = encoder_output.len() / self.d_model;
+
+        if self.rope.is_some() {
+            // Moonshine path: MHA + MLP + RoPE
+            let rope = self.rope.as_ref().ok_or_else(|| {
+                WhisperError::Model("Moonshine decoder requires RoPE".into())
+            })?;
+
+            for (i, block) in self.moonshine_blocks.iter().enumerate() {
+                x = block.forward_probed(&x, encoder_output, seq_len, enc_seq_len, rope, i, probe)?;
+            }
+
+            // Final RMS norm (Moonshine)
+            if let Some(ref rms) = self.ln_post_rms {
+                x = rms.forward(&x, seq_len)?;
+            }
+        } else {
+            // Whisper path: sinusoidal PE + MHA + GELU
+            for pos in 0..seq_len {
+                for d in 0..self.d_model {
+                    x[pos * self.d_model + d] +=
+                        self.positional_embedding[pos * self.d_model + d];
+                }
+            }
+
+            let causal_mask = MultiHeadAttention::causal_mask(seq_len);
+            for block in &self.blocks {
+                x = block.forward(&x, encoder_output, Some(&causal_mask))?;
+            }
+
+            x = self.ln_post.forward(&x)?;
+        }
+
+        probe.record("decoder.ln_post_out", &x, &[seq_len, self.d_model]);
+
+        // Project to vocabulary
+        let logits = self.project_to_vocab(&x, seq_len);
+        probe.record("decoder.logits", &logits, &[seq_len, self.n_vocab]);
+
+        Ok(logits)
     }
 
     /// Forward pass with diagnostic tracing (for debugging)
@@ -2304,14 +2384,14 @@ impl Decoder {
         self.rope.as_ref()
     }
 
-    /// Get Moonshine final RMS norm reference
+    /// Get Moonshine final layer norm reference
     #[must_use]
-    pub fn ln_post_rms(&self) -> Option<&RmsNorm> {
+    pub fn ln_post_rms(&self) -> Option<&LayerNormNoBias> {
         self.ln_post_rms.as_ref()
     }
 
-    /// Get mutable Moonshine final RMS norm reference (for loading weights)
-    pub fn ln_post_rms_mut(&mut self) -> Option<&mut RmsNorm> {
+    /// Get mutable Moonshine final layer norm reference (for loading weights)
+    pub fn ln_post_rms_mut(&mut self) -> Option<&mut LayerNormNoBias> {
         self.ln_post_rms.as_mut()
     }
 
