@@ -10,7 +10,7 @@
 //! # Moonshine Architecture
 //! 1. Learned conv stem (handled externally by `audio::ConvStem`)
 //! 2. RoPE positional encoding (applied per-block, not additive)
-//! 3. N transformer encoder blocks (GQA + SwiGLU FFN)
+//! 3. N transformer encoder blocks (MHA + GELU MLP FFN)
 
 mod block;
 mod conv;
@@ -29,7 +29,7 @@ use crate::model::lfm2::rope::{RopeConfig, RotaryEmbedding};
 /// Transformer encoder for audio features
 ///
 /// Supports both Whisper (mel + sinusoidal PE + MHA + GELU) and
-/// Moonshine (conv stem + RoPE + GQA + SwiGLU) architectures.
+/// Moonshine (conv stem + RoPE + MHA + GELU MLP) architectures.
 #[derive(Debug, Clone)]
 pub struct Encoder {
     /// Number of layers
@@ -93,7 +93,7 @@ impl Encoder {
                 (whisper_blocks, Vec::new(), None)
             }
             AttentionType::Gqa { kv_heads } => {
-                // Moonshine: GQA + SwiGLU blocks with RoPE
+                // Moonshine: MHA + GELU MLP blocks with RoPE
                 let head_dim = d_model / n_heads;
                 // HF Moonshine config: intermediate_size = 4 * hidden_size
                 let intermediate_size = d_model * 4;
@@ -220,7 +220,7 @@ impl Encoder {
 
         // Dispatch based on model type
         if self.rope.is_some() {
-            // Moonshine path: GQA + SwiGLU with RoPE per-block
+            // Moonshine path: MHA + GELU MLP with RoPE per-block
             let rope = self.rope.as_ref().ok_or_else(|| {
                 WhisperError::Model("Moonshine encoder requires RoPE".into())
             })?;
@@ -448,7 +448,7 @@ impl Encoder {
         for block in &mut self.blocks {
             block.finalize_weights();
         }
-        // Moonshine blocks use GQA/SwiGLU which don't have weight finalization;
+        // Moonshine blocks use MHA/MLP which don't have weight finalization;
         // no additional work needed for moonshine_blocks.
     }
 }
