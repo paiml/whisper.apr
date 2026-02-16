@@ -211,24 +211,47 @@ impl AprHeader {
             _ => ModelType::Tiny,
         };
 
-        ModelConfig {
-            model_type,
-            n_vocab: self.n_vocab,
-            n_audio_ctx: self.n_audio_ctx,
-            n_audio_state: self.n_audio_state,
-            n_audio_head: self.n_audio_head,
-            n_audio_layer: self.n_audio_layer,
-            n_text_ctx: self.n_text_ctx,
-            n_text_state: self.n_text_state,
-            n_text_head: self.n_text_head,
-            n_text_layer: self.n_text_layer,
-            n_mels: self.n_mels,
-            // Default to Whisper settings for APR v1 files
-            audio_frontend: crate::model::AudioFrontend::MelFilterbank,
-            positional_encoding: crate::model::PositionalEncoding::Sinusoidal,
-            ffn_activation: crate::format::FfnActivation::Gelu,
-            attention_type: crate::model::AttentionType::Mha,
-            model_family: crate::format::ModelFamily::Whisper,
+        // Detect Moonshine from header: n_mels==0 and n_vocab==32768
+        let is_moonshine = self.n_mels == 0 && self.n_vocab == 32768;
+
+        if is_moonshine {
+            // Reconstruct Moonshine config from header dimensions
+            let mut config = if self.n_audio_state == 288 {
+                ModelConfig::moonshine_tiny()
+            } else {
+                ModelConfig::moonshine_base()
+            };
+            // Override with actual header values in case they differ
+            config.n_vocab = self.n_vocab;
+            config.n_audio_ctx = self.n_audio_ctx;
+            config.n_audio_state = self.n_audio_state;
+            config.n_audio_head = self.n_audio_head;
+            config.n_audio_layer = self.n_audio_layer;
+            config.n_text_ctx = self.n_text_ctx;
+            config.n_text_state = self.n_text_state;
+            config.n_text_head = self.n_text_head;
+            config.n_text_layer = self.n_text_layer;
+            config
+        } else {
+            ModelConfig {
+                model_type,
+                n_vocab: self.n_vocab,
+                n_audio_ctx: self.n_audio_ctx,
+                n_audio_state: self.n_audio_state,
+                n_audio_head: self.n_audio_head,
+                n_audio_layer: self.n_audio_layer,
+                n_text_ctx: self.n_text_ctx,
+                n_text_state: self.n_text_state,
+                n_text_head: self.n_text_head,
+                n_text_layer: self.n_text_layer,
+                n_mels: self.n_mels,
+                // Default to Whisper settings for APR v1 files
+                audio_frontend: crate::model::AudioFrontend::MelFilterbank,
+                positional_encoding: crate::model::PositionalEncoding::Sinusoidal,
+                ffn_activation: crate::format::FfnActivation::Gelu,
+                attention_type: crate::model::AttentionType::Mha,
+                model_family: crate::format::ModelFamily::Whisper,
+            }
         }
     }
 
@@ -1467,12 +1490,7 @@ pub fn estimate_model_memory_mb(header: &AprHeader) -> u32 {
     (total_bytes / (1024 * 1024)) as u32
 }
 
-/// APR v1 magic number ("APR1")
-pub const MAGIC_V1: [u8; 4] = [0x41, 0x50, 0x52, 0x31];
-
 /// Validate .apr file magic number
-///
-/// Accepts both APR v1 ("APR1") and APR v2 ("APR\0") formats.
 ///
 /// # Errors
 /// Returns error if magic number is invalid
@@ -1481,8 +1499,7 @@ pub fn validate_magic(data: &[u8]) -> WhisperResult<()> {
         return Err(WhisperError::Format("file too short".into()));
     }
 
-    // Accept both v1 (APR1) and v2 (APR\0) magic
-    if data[..4] != MAGIC && data[..4] != MAGIC_V1 {
+    if data[..4] != MAGIC {
         return Err(WhisperError::Format("invalid magic number".into()));
     }
 

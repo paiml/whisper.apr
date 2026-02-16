@@ -682,9 +682,10 @@ impl WhisperApr {
                 self.encode(&mel)
             }
             model::AudioFrontend::LearnedConv => {
-                let stem = self.conv_stem.as_ref().ok_or_else(|| {
-                    WhisperError::Model("Moonshine requires ConvStem".into())
-                })?;
+                let stem = self
+                    .conv_stem
+                    .as_ref()
+                    .ok_or_else(|| WhisperError::Model("Moonshine requires ConvStem".into()))?;
                 let stem_out = stem.forward(audio)?;
                 // Pass ConvStem output through encoder blocks
                 self.encoder.forward(&stem_out)
@@ -722,9 +723,10 @@ impl WhisperApr {
                 self.encoder.forward_probed(&mel, probe)?
             }
             model::AudioFrontend::LearnedConv => {
-                let stem = self.conv_stem.as_ref().ok_or_else(|| {
-                    WhisperError::Model("Moonshine requires ConvStem".into())
-                })?;
+                let stem = self
+                    .conv_stem
+                    .as_ref()
+                    .ok_or_else(|| WhisperError::Model("Moonshine requires ConvStem".into()))?;
                 let stem_out = stem.forward_probed(audio, probe)?;
                 self.encoder.forward_probed(&stem_out, probe)?
             }
@@ -5184,10 +5186,7 @@ mod tests {
         // Test different sequence lengths (Moonshine supports variable-length)
         for seq_len in [3, 7, 15, 31] {
             let features = vec![0.1_f32; seq_len * d_model];
-            let output = model
-                .encoder
-                .forward(&features)
-                .expect("encoder forward");
+            let output = model.encoder.forward(&features).expect("encoder forward");
             assert_eq!(
                 output.len(),
                 seq_len * d_model,
@@ -5277,11 +5276,8 @@ mod tests {
         let decoder = model::Decoder::new(&config);
 
         // Verify that a valid Moonshine decoder has cache layers
-        let cache = model::DecoderKVCache::new(
-            decoder.n_layers(),
-            decoder.d_model(),
-            decoder.max_len(),
-        );
+        let cache =
+            model::DecoderKVCache::new(decoder.n_layers(), decoder.d_model(), decoder.max_len());
         assert!(
             !cache.self_attn_cache.is_empty(),
             "Moonshine decoder cache must have at least 1 layer"

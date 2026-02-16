@@ -122,14 +122,16 @@ fn main() {
         let tokens: Vec<u32> = (1..=n_tokens as u32).collect();
 
         let w_time = bench(WARMUP, ITERS, || {
-            let _ = std::hint::black_box(
-                w_dec.forward(std::hint::black_box(&tokens), std::hint::black_box(&w_enc_out)),
-            );
+            let _ = std::hint::black_box(w_dec.forward(
+                std::hint::black_box(&tokens),
+                std::hint::black_box(&w_enc_out),
+            ));
         });
         let m_time = bench(WARMUP, ITERS, || {
-            let _ = std::hint::black_box(
-                m_dec.forward(std::hint::black_box(&tokens), std::hint::black_box(&m_enc_out)),
-            );
+            let _ = std::hint::black_box(m_dec.forward(
+                std::hint::black_box(&tokens),
+                std::hint::black_box(&m_enc_out),
+            ));
         });
 
         let label = format!("Decoder fwd (tok={})", n_tokens);

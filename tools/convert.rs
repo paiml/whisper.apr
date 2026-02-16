@@ -1001,9 +1001,7 @@ async fn download_model_hf(
     repo_name: &str,
     cache_dir: &PathBuf,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let url = format!(
-        "https://huggingface.co/{org}/{repo_name}/resolve/main/model.safetensors"
-    );
+    let url = format!("https://huggingface.co/{org}/{repo_name}/resolve/main/model.safetensors");
 
     let cache_file = cache_dir.join(format!("{repo_name}.safetensors"));
 
@@ -1151,12 +1149,8 @@ async fn convert_moonshine(args: CliArgs) -> Result<(), Box<dyn std::error::Erro
     // Convert to APR format
     // Moonshine has no mel filterbank and no Whisper vocabulary
     let apr_bytes = match args.quantize {
-        QuantizeType::None => {
-            convert_to_apr_f32(tensors, args.model_size, None, None)?
-        }
-        QuantizeType::Int8 => {
-            convert_to_apr_int8(tensors, args.model_size, None, None)?
-        }
+        QuantizeType::None => convert_to_apr_f32(tensors, args.model_size, None, None)?,
+        QuantizeType::Int8 => convert_to_apr_int8(tensors, args.model_size, None, None)?,
     };
 
     // Write output
@@ -1171,10 +1165,7 @@ async fn convert_moonshine(args: CliArgs) -> Result<(), Box<dyn std::error::Erro
     let config = args.model_size.to_model_config();
     println!(
         "   Config: {}d, {}+{} layers, {} vocab",
-        config.n_audio_state,
-        config.n_audio_layer,
-        config.n_text_layer,
-        config.n_vocab
+        config.n_audio_state, config.n_audio_layer, config.n_text_layer, config.n_vocab
     );
 
     Ok(())

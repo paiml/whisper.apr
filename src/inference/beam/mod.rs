@@ -18,7 +18,6 @@
 //! ```
 
 use crate::error::WhisperResult;
-use crate::tokenizer::special_tokens;
 
 #[cfg(test)]
 mod tests;
@@ -142,14 +141,20 @@ impl BeamSearchDecoder {
     /// # Arguments
     /// * `logits_fn` - Function that takes tokens and returns logits
     /// * `initial_tokens` - Initial tokens (e.g., [SOT, language, task])
+    /// * `eot_token` - End-of-transcription token ID (model-specific)
     ///
     /// # Returns
     /// Best token sequence found
-    pub fn decode<F>(&self, mut logits_fn: F, initial_tokens: &[u32]) -> WhisperResult<Vec<u32>>
+    pub fn decode<F>(
+        &self,
+        mut logits_fn: F,
+        initial_tokens: &[u32],
+        eot_token: u32,
+    ) -> WhisperResult<Vec<u32>>
     where
         F: FnMut(&[u32]) -> WhisperResult<Vec<f32>>,
     {
-        let eot = special_tokens::EOT;
+        let eot = eot_token;
 
         // Initialize with single hypothesis
         let mut hypotheses = vec![Hypothesis::new(initial_tokens.to_vec(), 0.0)];
@@ -331,12 +336,13 @@ impl BeamSearchDecoder {
         &self,
         mut logits_fn: F,
         initial_tokens: &[u32],
+        eot_token: u32,
         n: usize,
     ) -> WhisperResult<Vec<Vec<u32>>>
     where
         F: FnMut(&[u32]) -> WhisperResult<Vec<f32>>,
     {
-        let eot = special_tokens::EOT;
+        let eot = eot_token;
         let mut hypotheses = vec![Hypothesis::new(initial_tokens.to_vec(), 0.0)];
         let mut completed: Vec<Hypothesis> = Vec::new();
 
