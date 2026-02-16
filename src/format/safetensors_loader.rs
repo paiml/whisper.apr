@@ -697,6 +697,26 @@ mod tests {
     }
 
     #[test]
+    fn test_map_tensor_name_attention_biases() {
+        assert_eq!(
+            map_tensor_name("model.layers.0.self_attn.q_proj.bias"),
+            "layers.0.attn.q.bias"
+        );
+        assert_eq!(
+            map_tensor_name("model.layers.0.self_attn.k_proj.bias"),
+            "layers.0.attn.k.bias"
+        );
+        assert_eq!(
+            map_tensor_name("model.layers.0.self_attn.v_proj.bias"),
+            "layers.0.attn.v.bias"
+        );
+        assert_eq!(
+            map_tensor_name("model.layers.0.self_attn.o_proj.bias"),
+            "layers.0.attn.o.bias"
+        );
+    }
+
+    #[test]
     fn test_map_tensor_name_ffn() {
         assert_eq!(
             map_tensor_name("model.layers.0.mlp.gate_proj.weight"),
@@ -713,6 +733,22 @@ mod tests {
     }
 
     #[test]
+    fn test_map_tensor_name_ffn_biases() {
+        assert_eq!(
+            map_tensor_name("model.layers.0.mlp.gate_proj.bias"),
+            "layers.0.ffn.gate.bias"
+        );
+        assert_eq!(
+            map_tensor_name("model.layers.0.mlp.up_proj.bias"),
+            "layers.0.ffn.up.bias"
+        );
+        assert_eq!(
+            map_tensor_name("model.layers.0.mlp.down_proj.bias"),
+            "layers.0.ffn.down.bias"
+        );
+    }
+
+    #[test]
     fn test_map_tensor_name_layernorm() {
         assert_eq!(
             map_tensor_name("model.layers.0.input_layernorm.weight"),
@@ -721,6 +757,18 @@ mod tests {
         assert_eq!(
             map_tensor_name("model.layers.0.post_attention_layernorm.weight"),
             "layers.0.ln2.weight"
+        );
+    }
+
+    #[test]
+    fn test_map_tensor_name_layernorm_biases() {
+        assert_eq!(
+            map_tensor_name("model.layers.0.input_layernorm.bias"),
+            "layers.0.ln1.bias"
+        );
+        assert_eq!(
+            map_tensor_name("model.layers.0.post_attention_layernorm.bias"),
+            "layers.0.ln2.bias"
         );
     }
 
