@@ -1745,11 +1745,11 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'WAPR-MOONSHINE-017: Fix Moonshine normalization from RMSNorm to LayerNorm (bias=False)'
-  status: inprogress
+  status: completed
   priority: medium
   assigned_to: null
   created: 2026-02-16T10:42:35Z
-  updated: 2026-02-16T11:04:49.464402443+00:00
+  updated: 2026-02-16T11:20:12.213909522+00:00
   spec: null
   acceptance_criteria: []
   phases: []
