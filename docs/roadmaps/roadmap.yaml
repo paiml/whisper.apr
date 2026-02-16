@@ -1661,11 +1661,11 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'WAPR-MOONSHINE-012: End-to-end numerical parity tests vs ONNX reference'
-  status: planned
+  status: inprogress
   priority: high
   assigned_to: null
   created: 2026-02-16T10:10:45Z
-  updated: 2026-02-16T10:10:45Z
+  updated: 2026-02-16T11:45:52.967030956+00:00
   spec: null
   acceptance_criteria:
   - Compare whisper.apr Moonshine output against Moonshine ONNX runtime on test audio clips. Greedy decoding, exact token match. Requires WAPR-MOONSHINE-011 (weights) first.

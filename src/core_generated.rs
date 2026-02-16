@@ -1133,10 +1133,13 @@ impl WhisperApr {
                 );
                 (Some(mf), None)
             }
-            model::AudioFrontend::LearnedConv => (
-                None,
-                Some(audio::ConvStem::new(64, config.n_audio_state as usize)),
-            ),
+            model::AudioFrontend::LearnedConv => {
+                let d_model = config.n_audio_state as usize;
+                let intermediate = 64; // Moonshine conv stem intermediate channels
+                let mut stem = audio::ConvStem::new(intermediate, d_model);
+                Self::load_conv_stem_weights(&reader, &mut stem);
+                (None, Some(stem))
+            }
         };
         tracker.complete();
         callback(&tracker.to_progress());
@@ -1568,6 +1571,56 @@ impl WhisperApr {
         if let Ok(w) = reader.load_tensor(&format!("{prefix}.fc2.weight")) {
             let len = w.len().min(ffn.fc2.len());
             ffn.fc2[..len].copy_from_slice(&w[..len]);
+        }
+    }
+
+    /// Load conv stem weights (Moonshine: conv1, conv2, conv3 + GroupNorm + LayerNorm)
+    fn load_conv_stem_weights(reader: &format::AprReader, stem: &mut audio::ConvStem) {
+        // Conv1 (no bias — weight only)
+        if let Ok(w) = reader.load_tensor("encoder.conv1.weight") {
+            let target = stem.conv1.weight_mut();
+            let len = w.len().min(target.len());
+            target[..len].copy_from_slice(&w[..len]);
+        }
+
+        // Conv2 (weight + bias)
+        if let Ok(w) = reader.load_tensor("encoder.conv2.weight") {
+            let target = stem.conv2.weight_mut();
+            let len = w.len().min(target.len());
+            target[..len].copy_from_slice(&w[..len]);
+        }
+        if let Ok(b) = reader.load_tensor("encoder.conv2.bias") {
+            let target = stem.conv2.bias_mut();
+            let len = b.len().min(target.len());
+            target[..len].copy_from_slice(&b[..len]);
+        }
+
+        // Conv3 (weight + bias)
+        if let Ok(w) = reader.load_tensor("encoder.conv3.weight") {
+            let target = stem.conv3.weight_mut();
+            let len = w.len().min(target.len());
+            target[..len].copy_from_slice(&w[..len]);
+        }
+        if let Ok(b) = reader.load_tensor("encoder.conv3.bias") {
+            let target = stem.conv3.bias_mut();
+            let len = b.len().min(target.len());
+            target[..len].copy_from_slice(&b[..len]);
+        }
+
+        // GroupNorm after conv1 (weight + bias)
+        if let Ok(w) = reader.load_tensor("encoder.groupnorm.weight") {
+            let len = w.len().min(stem.groupnorm.weight.len());
+            stem.groupnorm.weight[..len].copy_from_slice(&w[..len]);
+        }
+        if let Ok(b) = reader.load_tensor("encoder.groupnorm.bias") {
+            let len = b.len().min(stem.groupnorm.bias.len());
+            stem.groupnorm.bias[..len].copy_from_slice(&b[..len]);
+        }
+
+        // LayerNorm after conv3 (weight only — no bias in Moonshine)
+        if let Ok(w) = reader.load_tensor("encoder.layer_norm.weight") {
+            let len = w.len().min(stem.layer_norm.weight.len());
+            stem.layer_norm.weight[..len].copy_from_slice(&w[..len]);
         }
     }
 
