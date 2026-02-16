@@ -315,7 +315,7 @@ impl WhisperApr {
             ),
             model::AudioFrontend::LearnedConv => (
                 None,
-                Some(audio::ConvStem::new(64, config.n_audio_state as usize)),
+                Some(audio::ConvStem::new(config.n_audio_state as usize)),
             ),
         };
 
@@ -692,6 +692,48 @@ impl WhisperApr {
         }
     }
 
+    /// Run a probed forward pass through the full pipeline
+    ///
+    /// Orchestrates: audio → ConvStem → Encoder → Decoder with activation
+    /// probing at every checkpoint. For Moonshine models uses the probed
+    /// path end-to-end; for Whisper models the probed path covers encoder
+    /// and decoder boundaries.
+    ///
+    /// # Arguments
+    /// * `audio` - Raw audio samples (mono, 16kHz)
+    /// * `tokens` - Decoder input token IDs (e.g. SOT)
+    /// * `probe` - Activation probe for recording snapshots
+    ///
+    /// # Returns
+    /// Decoder logits [seq_len, n_vocab]
+    ///
+    /// # Errors
+    /// Returns error if any pipeline stage fails
+    pub fn forward_probed(
+        &self,
+        audio: &[f32],
+        tokens: &[u32],
+        probe: &mut crate::probe::ActivationProbe,
+    ) -> WhisperResult<Vec<f32>> {
+        // Compute audio features with probing
+        let audio_features = match self.config.audio_frontend {
+            model::AudioFrontend::MelFilterbank => {
+                let mel = self.compute_mel(audio)?;
+                self.encoder.forward_probed(&mel, probe)?
+            }
+            model::AudioFrontend::LearnedConv => {
+                let stem = self.conv_stem.as_ref().ok_or_else(|| {
+                    WhisperError::Model("Moonshine requires ConvStem".into())
+                })?;
+                let stem_out = stem.forward_probed(audio, probe)?;
+                self.encoder.forward_probed(&stem_out, probe)?
+            }
+        };
+
+        // Decode with probing
+        self.decoder.forward_probed(tokens, &audio_features, probe)
+    }
+
     /// Get the end-of-transcription token ID for the current model
     fn eot_token(&self) -> u32 {
         if self.config.model_family == format::ModelFamily::Moonshine {
@@ -890,10 +932,11 @@ impl WhisperApr {
         };
 
         // Choose decoding strategy
+        let eot = self.eot_token();
         match options.strategy {
             DecodingStrategy::Greedy => {
                 let decoder = inference::GreedyDecoder::new(max_tokens);
-                decoder.decode(logits_fn, initial_tokens)
+                decoder.decode(logits_fn, initial_tokens, eot)
             }
             DecodingStrategy::BeamSearch {
                 beam_size,
@@ -903,13 +946,13 @@ impl WhisperApr {
                 let decoder = inference::BeamSearchDecoder::new(beam_size, max_tokens)
                     .with_temperature(temperature)
                     .with_patience(patience);
-                decoder.decode(logits_fn, initial_tokens)
+                decoder.decode(logits_fn, initial_tokens, eot)
             }
             DecodingStrategy::Sampling { temperature, .. } => {
                 // Use greedy with temperature for sampling
                 let decoder =
                     inference::GreedyDecoder::new(max_tokens).with_temperature(temperature);
-                decoder.decode(logits_fn, initial_tokens)
+                decoder.decode(logits_fn, initial_tokens, eot)
             }
         }
     }
@@ -920,7 +963,14 @@ impl WhisperApr {
     /// trigram completions, forcing EOT on degenerate 4-gram loops, and
     /// capping unigram frequency in recent output.
     fn suppress_repetitions(logits: &mut [f32], tokens: &[u32], eot_id: u32, n_vocab: usize) {
-        let text_tokens: Vec<u32> = tokens.iter().copied().filter(|&t| t < eot_id).collect();
+        // Filter to only text tokens (exclude special tokens)
+        // Whisper BPE: text tokens are < EOT (50257); specials are >= EOT
+        // SentencePiece (Moonshine): text tokens are > EOS (2); specials are 0=unk,1=BOS,2=EOS
+        let text_tokens: Vec<u32> = if eot_id <= 3 {
+            tokens.iter().copied().filter(|&t| t > eot_id).collect()
+        } else {
+            tokens.iter().copied().filter(|&t| t < eot_id).collect()
+        };
 
         // Token-level penalty: penalize recently-seen tokens
         let window_start = text_tokens.len().saturating_sub(50);
@@ -1110,11 +1160,8 @@ impl WhisperApr {
 
         // Phase 4: Loading vocabulary
         callback(&tracker.to_progress());
-        // Load vocab from APR if available, otherwise fall back to base tokens
-        let tokenizer = tokenizer::Tokenizer::Bpe(reader.read_vocabulary().map_or_else(
-            tokenizer::BpeTokenizer::with_base_tokens,
-            tokenizer::BpeTokenizer::from_vocabulary,
-        ));
+        // Moonshine uses SentencePiece, Whisper uses BPE
+        let tokenizer = Self::build_tokenizer(&config, &reader);
         tracker.next_phase();
 
         // Phase 5: Initializing audio frontend
@@ -1135,8 +1182,7 @@ impl WhisperApr {
             }
             model::AudioFrontend::LearnedConv => {
                 let d_model = config.n_audio_state as usize;
-                let intermediate = 64; // Moonshine conv stem intermediate channels
-                let mut stem = audio::ConvStem::new(intermediate, d_model);
+                let mut stem = audio::ConvStem::new(d_model);
                 Self::load_conv_stem_weights(&reader, &mut stem);
                 (None, Some(stem))
             }
@@ -1154,6 +1200,41 @@ impl WhisperApr {
             resampler: None,
             weights_loaded: true,
         })
+    }
+
+    /// Build tokenizer from APR reader and config
+    fn build_tokenizer(
+        config: &model::ModelConfig,
+        reader: &format::AprReader,
+    ) -> tokenizer::Tokenizer {
+        if config.model_family == format::ModelFamily::Moonshine {
+            let mut sp = tokenizer::SentencePieceTokenizer::moonshine_default();
+            if let Some(vocab) = reader.read_vocabulary() {
+                Self::populate_sentencepiece(&mut sp, &vocab);
+            }
+            tokenizer::Tokenizer::SentencePiece(sp)
+        } else {
+            tokenizer::Tokenizer::Bpe(reader.read_vocabulary().map_or_else(
+                tokenizer::BpeTokenizer::with_base_tokens,
+                tokenizer::BpeTokenizer::from_vocabulary,
+            ))
+        }
+    }
+
+    /// Populate SentencePiece tokenizer from APR vocabulary
+    fn populate_sentencepiece(
+        sp: &mut tokenizer::SentencePieceTokenizer,
+        vocab: &tokenizer::Vocabulary,
+    ) {
+        for id in 0..vocab.len() as u32 {
+            if let Some(bytes) = vocab.get_bytes(id) {
+                if let Ok(piece) = core::str::from_utf8(bytes) {
+                    if !piece.is_empty() {
+                        sp.add_piece(id, piece);
+                    }
+                }
+            }
+        }
     }
 
     /// Load encoder weights from .apr reader
@@ -1279,8 +1360,14 @@ impl WhisperApr {
             }
         }
 
-        // Load encoder final layer norm
-        Self::load_layer_norm_weights(reader, "encoder.layer_norm", encoder.ln_post_mut());
+        // Load encoder final layer norm — dispatch by model type
+        if let Some(ln) = encoder.ln_post_rms_mut() {
+            // Moonshine: LayerNorm(bias=False) (weight-only)
+            Self::load_layernorm_nobias_weights(reader, "encoder.layer_norm", ln);
+        } else {
+            // Whisper: affine LayerNorm (weight + bias)
+            Self::load_layer_norm_weights(reader, "encoder.layer_norm", encoder.ln_post_mut());
+        }
     }
 
     /// Load decoder weights from .apr reader
@@ -1292,9 +1379,13 @@ impl WhisperApr {
     ) {
         let n_layers = decoder.n_layers();
 
-        // Load token embedding if available (HF uses embed_tokens.weight)
+        // Load token embedding if available
+        // Whisper HF: decoder.embed_tokens.weight
+        // Moonshine APR: decoder.token_embedding.weight
+        // Legacy: decoder.token_embedding
         let te_result = reader
             .load_tensor("decoder.embed_tokens.weight")
+            .or_else(|_| reader.load_tensor("decoder.token_embedding.weight"))
             .or_else(|_| reader.load_tensor("decoder.token_embedding"));
         if let Ok(te) = te_result {
             let target = decoder.token_embedding_mut();
@@ -1365,9 +1456,9 @@ impl WhisperApr {
                 );
             }
 
-            // Load Moonshine final LayerNorm (weight-only)
+            // Load Moonshine final LayerNorm(bias=False) (weight-only)
             if let Some(ln) = decoder.ln_post_rms_mut() {
-                Self::load_rms_norm_weights(reader, "decoder.ln_post", ln);
+                Self::load_layernorm_nobias_weights(reader, "decoder.ln_post", ln);
             }
         } else {
             // Whisper decoder: MHA + GELU + LayerNorm
@@ -1495,6 +1586,7 @@ impl WhisperApr {
     }
 
     /// Load RMS norm weights (LFM2: single weight vector, no bias)
+    #[allow(dead_code)]
     fn load_rms_norm_weights(
         reader: &format::AprReader,
         prefix: &str,
@@ -1552,9 +1644,15 @@ impl WhisperApr {
             let len = w.len().min(ffn.fc1.len());
             ffn.fc1[..len].copy_from_slice(&w[..len]);
         }
+        if let Ok(b) = reader.load_tensor(&format!("{prefix}.fc1.bias")) {
+            ffn.b1 = Some(b);
+        }
         if let Ok(w) = reader.load_tensor(&format!("{prefix}.fc2.weight")) {
             let len = w.len().min(ffn.fc2.len());
             ffn.fc2[..len].copy_from_slice(&w[..len]);
+        }
+        if let Ok(b) = reader.load_tensor(&format!("{prefix}.fc2.bias")) {
+            ffn.b2 = Some(b);
         }
     }
 
@@ -1568,9 +1666,15 @@ impl WhisperApr {
             let len = w.len().min(ffn.fc1.len());
             ffn.fc1[..len].copy_from_slice(&w[..len]);
         }
+        if let Ok(b) = reader.load_tensor(&format!("{prefix}.fc1.bias")) {
+            ffn.b1 = Some(b);
+        }
         if let Ok(w) = reader.load_tensor(&format!("{prefix}.fc2.weight")) {
             let len = w.len().min(ffn.fc2.len());
             ffn.fc2[..len].copy_from_slice(&w[..len]);
+        }
+        if let Ok(b) = reader.load_tensor(&format!("{prefix}.fc2.bias")) {
+            ffn.b2 = Some(b);
         }
     }
 

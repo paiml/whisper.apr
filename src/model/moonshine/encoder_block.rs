@@ -95,6 +95,51 @@ impl MoonshineEncoderBlock {
 
         Ok(residual)
     }
+
+    /// Forward pass with activation probing
+    ///
+    /// Same logic as [`forward()`](Self::forward) but records activation snapshots
+    /// at each sub-layer boundary.
+    ///
+    /// # Arguments
+    /// * `x` - Input tensor [seq_len, d_model]
+    /// * `seq_len` - Sequence length
+    /// * `rope` - Rotary position embedding
+    /// * `block_idx` - Block index for checkpoint naming
+    /// * `probe` - Activation probe for recording snapshots
+    pub fn forward_probed(
+        &self,
+        x: &[f32],
+        seq_len: usize,
+        rope: &RotaryEmbedding,
+        block_idx: usize,
+        probe: &mut crate::probe::ActivationProbe,
+    ) -> WhisperResult<Vec<f32>> {
+        let d_model = self.ln1.weight.len();
+        let prefix = format!("encoder.block_{block_idx}");
+
+        // Pre-norm + self-attention + residual
+        let normed = self.ln1.forward(x, seq_len)?;
+        probe.record(&format!("{prefix}.ln1_out"), &normed, &[seq_len, d_model]);
+
+        let attn_out = self.self_attn.forward_with_rope(&normed, seq_len, Some(rope))?;
+        probe.record(&format!("{prefix}.self_attn_out"), &attn_out, &[seq_len, d_model]);
+
+        let mut residual = add_vectors(x, &attn_out);
+        probe.record(&format!("{prefix}.residual_1"), &residual, &[seq_len, d_model]);
+
+        // Pre-norm + FFN + residual
+        let normed2 = self.ln2.forward(&residual, seq_len)?;
+        probe.record(&format!("{prefix}.ln2_out"), &normed2, &[seq_len, d_model]);
+
+        let ffn_out = self.ffn.forward(&normed2, seq_len)?;
+        probe.record(&format!("{prefix}.ffn_out"), &ffn_out, &[seq_len, d_model]);
+
+        add_vectors_inplace(&mut residual, &ffn_out);
+        probe.record(&format!("{prefix}.residual_2"), &residual, &[seq_len, d_model]);
+
+        Ok(residual)
+    }
 }
 
 /// Element-wise vector addition
@@ -127,6 +172,7 @@ mod tests {
             head_dim: 36, // 288 / 8
             base: 10000.0,
             max_seq_len: 2048,
+            rotary_dim: None,
         })
         .expect("rope creation");
 
@@ -145,6 +191,7 @@ mod tests {
             head_dim: 36,
             base: 10000.0,
             max_seq_len: 2048,
+            rotary_dim: None,
         })
         .expect("rope creation");
 

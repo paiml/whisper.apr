@@ -186,24 +186,30 @@ impl LayerNormStem {
     }
 }
 
-/// Total stride of the Moonshine conv stem (441 × 4 × 2)
-pub const CONV_STEM_TOTAL_STRIDE: usize = 3528;
+/// Total stride of the Moonshine conv stem (64 × 3 × 2)
+pub const CONV_STEM_TOTAL_STRIDE: usize = 384;
 
 impl ConvStem {
-    /// Create a new learned conv stem
+    /// Create a new learned conv stem matching HF Moonshine architecture
+    ///
+    /// Architecture (from HuggingFace `MoonshineEncoder`):
+    /// - conv1: `Conv1d(1, d_model, kernel=127, stride=64, pad=0, bias=False)`
+    /// - GroupNorm(1, d_model) → GELU
+    /// - conv2: `Conv1d(d_model, 2*d_model, kernel=7, stride=3, pad=0, bias=True)` → GELU
+    /// - conv3: `Conv1d(2*d_model, d_model, kernel=3, stride=2, pad=0, bias=True)` → GELU
+    /// - LayerNorm(d_model, bias=False)
     ///
     /// # Arguments
-    /// * `intermediate_channels` - Intermediate feature channels (model-specific, ~64 for tiny)
-    /// * `d_model` - Output dimension (288 for tiny, 416 for base)
+    /// * `d_model` - Model dimension (288 for tiny, 416 for base)
     #[must_use]
-    pub fn new(intermediate_channels: usize, d_model: usize) -> Self {
+    pub fn new(d_model: usize) -> Self {
         Self {
-            conv1: Conv1d::new(1, intermediate_channels, 441, 441, 0),
-            groupnorm: GroupNorm::new(1, intermediate_channels),
-            conv2: Conv1d::new(intermediate_channels, intermediate_channels, 7, 4, 3),
-            conv3: Conv1d::new(intermediate_channels, d_model, 7, 2, 3),
+            conv1: Conv1d::new(1, d_model, 127, 64, 0),
+            groupnorm: GroupNorm::new(1, d_model),
+            conv2: Conv1d::new(d_model, 2 * d_model, 7, 3, 0),
+            conv3: Conv1d::new(2 * d_model, d_model, 3, 2, 0),
             layer_norm: LayerNormStem::new(d_model),
-            intermediate_channels,
+            intermediate_channels: 2 * d_model,
             d_model,
         }
     }
@@ -225,17 +231,17 @@ impl ConvStem {
             return Err(WhisperError::Audio("empty audio input".into()));
         }
 
-        // Layer 1: raw audio → intermediate (stride 441, no bias)
+        // Layer 1: raw audio → d_model channels (stride 64, no bias)
         let x = self.conv1.forward(audio)?;
-        let seq_len = x.len() / self.intermediate_channels;
+        let seq_len = x.len() / self.d_model;
         let x = self.groupnorm.forward(&x, seq_len)?;
         let x = crate::simd::gelu(&x);
 
-        // Layer 2: intermediate → intermediate (stride 4)
+        // Layer 2: d_model → 2*d_model (stride 3)
         let x = self.conv2.forward(&x)?;
         let x = crate::simd::gelu(&x);
 
-        // Layer 3: intermediate → d_model (stride 2)
+        // Layer 3: 2*d_model → d_model (stride 2)
         let x = self.conv3.forward(&x)?;
         let x = crate::simd::gelu(&x);
 
@@ -243,29 +249,77 @@ impl ConvStem {
         self.layer_norm.forward(&x)
     }
 
+    /// Forward pass with activation probing
+    ///
+    /// Same logic as [`forward()`](Self::forward) but records activation snapshots
+    /// at each sub-layer boundary for numerical parity debugging.
+    ///
+    /// # Errors
+    /// Returns error if audio is empty or convolution fails
+    pub fn forward_probed(
+        &self,
+        audio: &[f32],
+        probe: &mut crate::probe::ActivationProbe,
+    ) -> crate::error::WhisperResult<Vec<f32>> {
+        if audio.is_empty() {
+            return Err(WhisperError::Audio("empty audio input".into()));
+        }
+
+        // Layer 1: raw audio → d_model channels (stride 64, no bias)
+        let x = self.conv1.forward(audio)?;
+        let seq_len = x.len() / self.d_model;
+        probe.record("conv_stem.conv1_out", &x, &[seq_len, self.d_model]);
+
+        let x = self.groupnorm.forward(&x, seq_len)?;
+        probe.record("conv_stem.groupnorm_out", &x, &[seq_len, self.d_model]);
+
+        let x = crate::simd::gelu(&x);
+
+        // Layer 2: d_model → 2*d_model (stride 3)
+        let x = self.conv2.forward(&x)?;
+        let seq_len2 = x.len() / self.intermediate_channels;
+        probe.record("conv_stem.conv2_out", &x, &[seq_len2, self.intermediate_channels]);
+
+        let x = crate::simd::gelu(&x);
+
+        // Layer 3: 2*d_model → d_model (stride 2)
+        let x = self.conv3.forward(&x)?;
+        let seq_len3 = x.len() / self.d_model;
+        probe.record("conv_stem.conv3_out", &x, &[seq_len3, self.d_model]);
+
+        let x = crate::simd::gelu(&x);
+
+        // Final LayerNorm before encoder blocks
+        let x = self.layer_norm.forward(&x)?;
+        probe.record("conv_stem.layernorm_out", &x, &[seq_len3, self.d_model]);
+
+        Ok(x)
+    }
+
     /// Calculate output frame count for a given number of audio samples
     ///
-    /// Each output frame corresponds to `CONV_STEM_TOTAL_STRIDE` (3528) input samples.
+    /// HF Moonshine conv stem: conv1(k=127,s=64) → conv2(k=7,s=3) → conv3(k=3,s=2)
+    /// All padding=0.
     #[must_use]
     pub fn output_frames(audio_samples: usize) -> usize {
         if audio_samples == 0 {
             return 0;
         }
-        // Layer 1: (samples + 0 - 441) / 441 + 1
-        let after_conv1 = if audio_samples >= 441 {
-            (audio_samples - 441) / 441 + 1
+        // Layer 1: (samples - 127) / 64 + 1
+        let after_conv1 = if audio_samples >= 127 {
+            (audio_samples - 127) / 64 + 1
         } else {
             0
         };
-        // Layer 2: (after_conv1 + 6 - 7) / 4 + 1
-        let after_conv2 = if after_conv1 >= 1 {
-            (after_conv1 + 2 * 3 - 7) / 4 + 1
+        // Layer 2: (after_conv1 - 7) / 3 + 1
+        let after_conv2 = if after_conv1 >= 7 {
+            (after_conv1 - 7) / 3 + 1
         } else {
             0
         };
-        // Layer 3: (after_conv2 + 6 - 7) / 2 + 1
-        if after_conv2 >= 1 {
-            (after_conv2 + 2 * 3 - 7) / 2 + 1
+        // Layer 3: (after_conv2 - 3) / 2 + 1
+        if after_conv2 >= 3 {
+            (after_conv2 - 3) / 2 + 1
         } else {
             0
         }
@@ -278,17 +332,21 @@ mod tests {
 
     #[test]
     fn test_conv_stem_new() {
-        let stem = ConvStem::new(64, 288);
+        let stem = ConvStem::new(288);
         assert_eq!(stem.conv1.in_channels, 1);
-        assert_eq!(stem.conv1.out_channels, 64);
-        assert_eq!(stem.conv1.kernel_size, 441);
-        assert_eq!(stem.conv1.stride, 441);
-        assert_eq!(stem.conv2.in_channels, 64);
-        assert_eq!(stem.conv2.stride, 4);
+        assert_eq!(stem.conv1.out_channels, 288);
+        assert_eq!(stem.conv1.kernel_size, 127);
+        assert_eq!(stem.conv1.stride, 64);
+        assert_eq!(stem.conv2.in_channels, 288);
+        assert_eq!(stem.conv2.out_channels, 576);
+        assert_eq!(stem.conv2.kernel_size, 7);
+        assert_eq!(stem.conv2.stride, 3);
+        assert_eq!(stem.conv3.in_channels, 576);
         assert_eq!(stem.conv3.out_channels, 288);
+        assert_eq!(stem.conv3.kernel_size, 3);
         assert_eq!(stem.conv3.stride, 2);
         assert_eq!(stem.d_model, 288);
-        assert_eq!(stem.groupnorm.num_channels, 64);
+        assert_eq!(stem.groupnorm.num_channels, 288);
         assert_eq!(stem.layer_norm.normalized_shape, 288);
     }
 
@@ -300,16 +358,17 @@ mod tests {
             frames > 0,
             "1.5s audio should produce >0 frames, got {frames}"
         );
+        // With stride 64*3*2=384, expect ~24000/384 ≈ 62 frames (minus kernel overlap)
         assert!(
-            frames < 20,
-            "1.5s audio should produce <20 frames, got {frames}"
+            frames > 30 && frames < 100,
+            "1.5s audio should produce 30-100 frames, got {frames}"
         );
 
         // 30s at 16kHz = 480,000 samples
         let frames_30s = ConvStem::output_frames(480_000);
         assert!(
-            frames_30s > 100,
-            "30s audio should produce >100 frames, got {frames_30s}"
+            frames_30s > 500,
+            "30s audio should produce >500 frames, got {frames_30s}"
         );
 
         // Proportionality: 30s should produce ~20x more frames than 1.5s
@@ -327,14 +386,14 @@ mod tests {
 
     #[test]
     fn test_conv_stem_output_frames_short() {
-        // Very short audio (less than one kernel)
-        assert_eq!(ConvStem::output_frames(100), 0);
-        assert_eq!(ConvStem::output_frames(440), 0);
+        // Very short audio (less than conv1 kernel)
+        assert_eq!(ConvStem::output_frames(0), 0);
+        assert_eq!(ConvStem::output_frames(126), 0);
     }
 
     #[test]
     fn test_conv_stem_forward_produces_output() {
-        let stem = ConvStem::new(4, 8);
+        let stem = ConvStem::new(8);
         // 2 seconds of audio = 32000 samples
         let audio = vec![0.0_f32; 32_000];
         let output = stem.forward(&audio).expect("forward should succeed");
@@ -348,14 +407,14 @@ mod tests {
 
     #[test]
     fn test_conv_stem_forward_empty_errors() {
-        let stem = ConvStem::new(4, 8);
+        let stem = ConvStem::new(8);
         let result = stem.forward(&[]);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_conv_stem_total_stride() {
-        assert_eq!(CONV_STEM_TOTAL_STRIDE, 441 * 4 * 2);
+        assert_eq!(CONV_STEM_TOTAL_STRIDE, 64 * 3 * 2);
     }
 
     // =========================================================================
