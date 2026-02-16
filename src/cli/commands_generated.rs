@@ -2164,7 +2164,6 @@ pub fn run_tui(global: &Args) -> CliResult<CommandResult> {
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     };
     use ratatui::{backend::CrosstermBackend, Terminal};
-    
 
     use crate::tui::{render_whisper_dashboard, WhisperApp};
 
@@ -2291,105 +2290,89 @@ fn test_backend(backend: BackendArg, _global: &Args) -> CliResult<()> {
     }
 }
 
+/// Report a selftest phase result, returning whether it passed
+fn report_selftest_phase(result: CliResult<CommandResult>, phase: u8, quiet: bool) -> bool {
+    match result {
+        Ok(r) if r.success => {
+            if !quiet {
+                println!("  Phase {phase}: PASS\n");
+            }
+            true
+        }
+        Ok(_) => {
+            if !quiet {
+                println!("  Phase {phase}: FAIL\n");
+            }
+            false
+        }
+        Err(e) => {
+            if !quiet {
+                println!("  Phase {phase}: ERROR ({e})\n");
+            }
+            false
+        }
+    }
+}
+
+/// Print a selftest phase header
+fn selftest_header(label: &str, quiet: bool) {
+    if !quiet {
+        println!("{label}");
+        println!("───────────────────────────────────────────────────────────────────");
+    }
+}
+
 /// Run selftest command: diagnose + backend test + optional transcription
 pub fn run_selftest(args: SelftestArgs, global: &Args) -> CliResult<CommandResult> {
     use crate::cli::args::{DiagnoseArgs, TestArgs};
 
-    let mut all_passed = true;
+    let quiet = global.quiet;
 
     // Phase 1: Diagnose (tokenizer validation)
-    if !global.quiet {
-        println!("Phase 1/3: Diagnose (tokenizer validation)");
-        println!("───────────────────────────────────────────────────────────────────");
-    }
+    selftest_header("Phase 1/3: Diagnose (tokenizer validation)", quiet);
     let diag_args = DiagnoseArgs {
         model: None,
         tokenizer_only: true,
         json: false,
         full: false,
     };
-    match run_diagnose(diag_args, global) {
-        Ok(r) if r.success => {
-            if !global.quiet {
-                println!("  Phase 1: PASS\n");
-            }
-        }
-        Ok(_) => {
-            if !global.quiet {
-                println!("  Phase 1: FAIL\n");
-            }
-            all_passed = false;
-        }
-        Err(e) => {
-            if !global.quiet {
-                println!("  Phase 1: ERROR ({e})\n");
-            }
-            all_passed = false;
-        }
-    }
+    let p1 = report_selftest_phase(run_diagnose(diag_args, global), 1, quiet);
 
     // Phase 2: Backend test (SIMD)
-    if !global.quiet {
-        println!("Phase 2/3: Backend test (SIMD)");
-        println!("───────────────────────────────────────────────────────────────────");
-    }
+    selftest_header("Phase 2/3: Backend test (SIMD)", quiet);
     let test_args = TestArgs {
         backend: BackendArg::Simd,
         demo: None,
         pipeline: None,
     };
-    match run_test(test_args, global) {
-        Ok(r) if r.success => {
-            if !global.quiet {
-                println!("  Phase 2: PASS\n");
-            }
-        }
-        Ok(_) => {
-            if !global.quiet {
-                println!("  Phase 2: FAIL\n");
-            }
-            all_passed = false;
-        }
-        Err(e) => {
-            if !global.quiet {
-                println!("  Phase 2: ERROR ({e})\n");
-            }
-            all_passed = false;
-        }
-    }
+    let p2 = report_selftest_phase(run_test(test_args, global), 2, quiet);
 
     // Phase 3: Optional transcription test
-    if let (Some(model_path), Some(audio_path)) = (&args.model, &args.audio) {
-        if !global.quiet {
-            println!("Phase 3/3: Transcription test");
+    let p3 = if let (Some(model_path), Some(audio_path)) = (&args.model, &args.audio) {
+        selftest_header("Phase 3/3: Transcription test", quiet);
+        let result =
+            run_selftest_transcription(model_path, audio_path, args.expect.as_deref(), global);
+        report_selftest_phase(
+            result.map(|ok| {
+                if ok {
+                    CommandResult::success(String::new())
+                } else {
+                    CommandResult::failure(String::new())
+                }
+            }),
+            3,
+            quiet,
+        )
+    } else {
+        if !quiet {
+            println!("Phase 3/3: Transcription test (skipped — no --model/--audio)");
             println!("───────────────────────────────────────────────────────────────────");
+            println!("  Provide --model <path.apr> --audio <file.wav> --expect <text>\n");
         }
-        match run_selftest_transcription(model_path, audio_path, args.expect.as_deref(), global) {
-            Ok(true) => {
-                if !global.quiet {
-                    println!("  Phase 3: PASS\n");
-                }
-            }
-            Ok(false) => {
-                if !global.quiet {
-                    println!("  Phase 3: FAIL\n");
-                }
-                all_passed = false;
-            }
-            Err(e) => {
-                if !global.quiet {
-                    println!("  Phase 3: ERROR ({e})\n");
-                }
-                all_passed = false;
-            }
-        }
-    } else if !global.quiet {
-        println!("Phase 3/3: Transcription test (skipped — no --model/--audio)");
-        println!("───────────────────────────────────────────────────────────────────");
-        println!("  Provide --model <path.apr> --audio <file.wav> --expect <text>\n");
-    }
+        true
+    };
 
-    if all_passed {
+    if p1 && p2 && p3 {
         Ok(CommandResult::success(
             "All selftest phases passed".to_string(),
         ))
@@ -3433,9 +3416,12 @@ fn diagnose_model_file(
 
     match fs::read(model_path) {
         Ok(data) => {
-            let has_magic = data.len() >= 4 && data.get(0..4) == Some(b"APR1".as_slice());
+            let has_magic = data.len() >= 4 && data.get(0..4) == Some(&crate::format::MAGIC);
             let actual = if let Some(magic) = data.get(0..4) {
-                String::from_utf8_lossy(magic).to_string()
+                format!(
+                    "{:02X} {:02X} {:02X} {:02X}",
+                    magic[0], magic[1], magic[2], magic[3]
+                )
             } else {
                 "too short".to_string()
             };
@@ -3443,7 +3429,7 @@ fn diagnose_model_file(
                 "MDL-002",
                 "APR magic bytes",
                 has_magic,
-                "APR1",
+                "APR\\0",
                 &actual,
                 "Model file format identifier",
             );

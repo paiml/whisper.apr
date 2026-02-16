@@ -138,7 +138,20 @@ fn download_model(size: ModelSize, verbose: bool) -> ModelLoaderResult<PathBuf> 
 
     // Moonshine uses SafeTensors with different tensor naming and no mel/vocab
     if size.is_moonshine() {
-        convert_moonshine_safetensors_to_apr(&safetensors_path, &cache_path, size, verbose)?;
+        // Download tokenizer.json for BPE vocabulary
+        let tokenizer_path = repo.get("tokenizer.json").map_err(|e| {
+            ModelLoaderError::Download(format!("Failed to download tokenizer: {e}"))
+        })?;
+        if verbose {
+            eprintln!("[INFO] Downloaded tokenizer.json");
+        }
+        convert_moonshine_safetensors_to_apr(
+            &safetensors_path,
+            &tokenizer_path,
+            &cache_path,
+            size,
+            verbose,
+        )?;
         return Ok(cache_path);
     }
 
@@ -296,10 +309,11 @@ fn convert_safetensors_to_apr(
 /// Convert Moonshine SafeTensors to .apr format
 ///
 /// Moonshine models use different tensor naming, no mel filterbank,
-/// and SentencePiece tokenizer (not GPT-2 BPE). Tied embeddings
+/// and BPE tokenizer from tokenizer.json. Tied embeddings
 /// (proj_out = embed_tokens) are handled by cloning.
 fn convert_moonshine_safetensors_to_apr(
     safetensors_path: &std::path::Path,
+    tokenizer_path: &std::path::Path,
     apr_path: &std::path::Path,
     size: ModelSize,
     verbose: bool,
@@ -324,7 +338,62 @@ fn convert_moonshine_safetensors_to_apr(
 
     let mut writer = AprWriter::from_config(&config);
 
-    // Track embed_tokens for tied embeddings
+    // Load and embed vocabulary from tokenizer.json
+    embed_moonshine_vocab(&mut writer, tokenizer_path, verbose);
+
+    // Convert all tensors, tracking embed_tokens for tied embeddings
+    let (has_proj_out, embed_tokens_data) =
+        convert_moonshine_tensors(&tensors, &mut writer, verbose);
+
+    // Handle tied embeddings: clone embed_tokens → proj_out if missing
+    if !has_proj_out {
+        if let Some((shape, data)) = embed_tokens_data {
+            if verbose {
+                eprintln!("[INFO] Tied embeddings: cloning embed_tokens → proj_out");
+            }
+            writer.add("decoder.proj_out.weight", shape, data);
+        }
+    }
+
+    let apr_data = writer
+        .to_bytes()
+        .map_err(|e| ModelLoaderError::Download(format!("Failed to write APR: {e}")))?;
+    fs::write(apr_path, apr_data)?;
+
+    if verbose {
+        eprintln!("[INFO] Saved Moonshine model to: {}", apr_path.display());
+    }
+
+    Ok(())
+}
+
+/// Embed Moonshine vocabulary into APR writer from tokenizer.json
+fn embed_moonshine_vocab(
+    writer: &mut crate::format::AprWriter,
+    tokenizer_path: &std::path::Path,
+    verbose: bool,
+) {
+    if let Ok(vocab) = load_moonshine_vocabulary(tokenizer_path, verbose) {
+        if verbose {
+            eprintln!(
+                "[INFO] Embedding Moonshine vocabulary with {} tokens",
+                vocab.len()
+            );
+        }
+        writer.set_vocabulary(vocab);
+    } else if verbose {
+        eprintln!("[WARN] Failed to load Moonshine tokenizer, vocab not embedded");
+    }
+}
+
+/// Convert all Moonshine tensors, returning (has_proj_out, embed_tokens_data)
+fn convert_moonshine_tensors(
+    tensors: &safetensors::SafeTensors<'_>,
+    writer: &mut crate::format::AprWriter,
+    verbose: bool,
+) -> (bool, Option<(Vec<usize>, Vec<f32>)>) {
+    use crate::format::map_moonshine_tensor_name;
+
     let mut embed_tokens_data: Option<(Vec<usize>, Vec<f32>)> = None;
     let mut has_proj_out = false;
 
@@ -349,26 +418,74 @@ fn convert_moonshine_safetensors_to_apr(
         writer.add(our_name, shape, f32_data);
     }
 
-    // Handle tied embeddings: clone embed_tokens → proj_out if missing
-    if !has_proj_out {
-        if let Some((shape, data)) = embed_tokens_data {
-            if verbose {
-                eprintln!("[INFO] Tied embeddings: cloning embed_tokens → proj_out");
-            }
-            writer.add("decoder.proj_out.weight", shape, data);
+    (has_proj_out, embed_tokens_data)
+}
+
+/// Load Moonshine vocabulary from HuggingFace tokenizer.json
+///
+/// Parses the BPE vocabulary from the tokenizer.json format and converts
+/// it to our `Vocabulary` type for APR embedding.
+fn load_moonshine_vocabulary(
+    tokenizer_path: &std::path::Path,
+    verbose: bool,
+) -> ModelLoaderResult<crate::tokenizer::Vocabulary> {
+    use std::collections::HashMap;
+
+    let json_str = fs::read_to_string(tokenizer_path)?;
+    let json: serde_json::Value =
+        serde_json::from_str(&json_str).map_err(|e| ModelLoaderError::Download(e.to_string()))?;
+
+    // Extract model.vocab: { piece_string: token_id }
+    let vocab_obj = json
+        .get("model")
+        .and_then(|m| m.get("vocab"))
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| {
+            ModelLoaderError::Download("Missing model.vocab in tokenizer.json".into())
+        })?;
+
+    // Build sorted (id → piece) mapping
+    let mut id_to_piece: HashMap<u32, String> = HashMap::new();
+    for (piece, id_val) in vocab_obj {
+        if let Some(id) = id_val.as_u64() {
+            id_to_piece.insert(id as u32, piece.clone());
         }
     }
 
-    let apr_data = writer
-        .to_bytes()
-        .map_err(|e| ModelLoaderError::Download(format!("Failed to write APR: {e}")))?;
-    fs::write(apr_path, apr_data)?;
-
-    if verbose {
-        eprintln!("[INFO] Saved Moonshine model to: {}", apr_path.display());
+    // Also include added_tokens (sentinel tokens etc.)
+    if let Some(added) = json.get("added_tokens").and_then(|a| a.as_array()) {
+        for token in added {
+            if let (Some(id), Some(content)) = (
+                token.get("id").and_then(|i| i.as_u64()),
+                token.get("content").and_then(|c| c.as_str()),
+            ) {
+                id_to_piece
+                    .entry(id as u32)
+                    .or_insert_with(|| content.to_string());
+            }
+        }
     }
 
-    Ok(())
+    let max_id = id_to_piece.keys().copied().max().unwrap_or(0);
+
+    if verbose {
+        eprintln!(
+            "[INFO] Parsed tokenizer.json: {} vocab entries, max_id={}",
+            id_to_piece.len(),
+            max_id
+        );
+    }
+
+    // Build Vocabulary: each token's piece string stored as UTF-8 bytes
+    let mut vocab = crate::tokenizer::Vocabulary::new();
+    for id in 0..=max_id {
+        let piece = id_to_piece.get(&id).cloned().unwrap_or_default();
+        let bytes = piece.into_bytes();
+        let assigned = vocab.add_token(bytes);
+        debug_assert_eq!(assigned, id);
+    }
+
+    Ok(vocab)
 }
 
 /// Map HuggingFace tensor names to our internal format
