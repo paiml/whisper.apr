@@ -135,6 +135,97 @@ pub fn map_tensor_name(hf_name: &str) -> String {
     hf_name.to_string()
 }
 
+/// Convert Moonshine HuggingFace tensor name to internal format
+///
+/// Maps 160 tensor names from `usefulsensors/moonshine-*` SafeTensors to
+/// the internal naming used by `core_generated.rs` weight loading.
+///
+/// HF naming:
+/// - `model.encoder.layers.{n}.self_attn.q_proj.weight`
+/// - `model.decoder.layers.{n}.encoder_attn.k_proj.weight`
+///
+/// Internal naming:
+/// - `encoder.blocks.{n}.attn.q.weight`
+/// - `decoder.blocks.{n}.cross_attn.k.weight`
+#[must_use]
+pub fn map_moonshine_tensor_name(hf_name: &str) -> String {
+    // Direct mappings (non-layer tensors)
+    match hf_name {
+        // Encoder conv stem
+        "model.encoder.conv1.weight" => return "encoder.conv1.weight".into(),
+        "model.encoder.conv2.weight" => return "encoder.conv2.weight".into(),
+        "model.encoder.conv2.bias" => return "encoder.conv2.bias".into(),
+        "model.encoder.conv3.weight" => return "encoder.conv3.weight".into(),
+        "model.encoder.conv3.bias" => return "encoder.conv3.bias".into(),
+        "model.encoder.groupnorm.weight" => return "encoder.groupnorm.weight".into(),
+        "model.encoder.groupnorm.bias" => return "encoder.groupnorm.bias".into(),
+        "model.encoder.layer_norm.weight" => return "encoder.layer_norm.weight".into(),
+        // Decoder embeddings and final norm
+        "model.decoder.embed_tokens.weight" => return "decoder.token_embedding.weight".into(),
+        "model.decoder.norm.weight" => return "decoder.ln_post.weight".into(),
+        // Output projection (tied to embed_tokens, may not exist in SafeTensors)
+        "proj_out.weight" => return "decoder.proj_out.weight".into(),
+        _ => {}
+    }
+
+    // Encoder layer patterns: model.encoder.layers.{n}.suffix
+    if let Some(rest) = hf_name.strip_prefix("model.encoder.layers.") {
+        if let Some(dot_pos) = rest.find('.') {
+            let layer_num = &rest[..dot_pos];
+            let suffix = &rest[dot_pos + 1..];
+
+            let mapped = match suffix {
+                "input_layernorm.weight" => "ln1.weight",
+                "self_attn.q_proj.weight" => "attn.q.weight",
+                "self_attn.k_proj.weight" => "attn.k.weight",
+                "self_attn.v_proj.weight" => "attn.v.weight",
+                "self_attn.o_proj.weight" => "attn.o.weight",
+                "post_attention_layernorm.weight" => "ln2.weight",
+                "mlp.fc1.weight" => "ffn.fc1.weight",
+                "mlp.fc1.bias" => "ffn.fc1.bias",
+                "mlp.fc2.weight" => "ffn.fc2.weight",
+                "mlp.fc2.bias" => "ffn.fc2.bias",
+                other => other,
+            };
+            return format!("encoder.blocks.{layer_num}.{mapped}");
+        }
+    }
+
+    // Decoder layer patterns: model.decoder.layers.{n}.suffix
+    if let Some(rest) = hf_name.strip_prefix("model.decoder.layers.") {
+        if let Some(dot_pos) = rest.find('.') {
+            let layer_num = &rest[..dot_pos];
+            let suffix = &rest[dot_pos + 1..];
+
+            let mapped = match suffix {
+                // Self-attention
+                "input_layernorm.weight" => "ln1.weight",
+                "self_attn.q_proj.weight" => "attn.q.weight",
+                "self_attn.k_proj.weight" => "attn.k.weight",
+                "self_attn.v_proj.weight" => "attn.v.weight",
+                "self_attn.o_proj.weight" => "attn.o.weight",
+                // Cross-attention
+                "post_attention_layernorm.weight" => "ln_cross.weight",
+                "encoder_attn.q_proj.weight" => "cross_attn.q.weight",
+                "encoder_attn.k_proj.weight" => "cross_attn.k.weight",
+                "encoder_attn.v_proj.weight" => "cross_attn.v.weight",
+                "encoder_attn.o_proj.weight" => "cross_attn.o.weight",
+                // FFN
+                "final_layernorm.weight" => "ln2.weight",
+                "mlp.fc1.weight" => "ffn.fc1.weight",
+                "mlp.fc1.bias" => "ffn.fc1.bias",
+                "mlp.fc2.weight" => "ffn.fc2.weight",
+                "mlp.fc2.bias" => "ffn.fc2.bias",
+                other => other,
+            };
+            return format!("decoder.blocks.{layer_num}.{mapped}");
+        }
+    }
+
+    // Unknown pattern - pass through
+    hf_name.to_string()
+}
+
 /// SafeTensors file loader
 #[cfg(feature = "cli")]
 #[derive(Debug)]
@@ -847,5 +938,293 @@ mod tests {
             (stats.compression_ratio - 0.0).abs() < f32::EPSILON,
             "default with zero input should yield 0.0 ratio"
         );
+    }
+
+    // =========================================================================
+    // Moonshine tensor name mapping tests (WAPR-MOONSHINE-011)
+    // =========================================================================
+
+    #[test]
+    fn test_moonshine_map_encoder_conv_stem() {
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.conv1.weight"),
+            "encoder.conv1.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.conv2.weight"),
+            "encoder.conv2.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.conv2.bias"),
+            "encoder.conv2.bias"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.conv3.weight"),
+            "encoder.conv3.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.conv3.bias"),
+            "encoder.conv3.bias"
+        );
+    }
+
+    #[test]
+    fn test_moonshine_map_encoder_norms() {
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.groupnorm.weight"),
+            "encoder.groupnorm.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.groupnorm.bias"),
+            "encoder.groupnorm.bias"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.layer_norm.weight"),
+            "encoder.layer_norm.weight"
+        );
+    }
+
+    #[test]
+    fn test_moonshine_map_decoder_direct() {
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.embed_tokens.weight"),
+            "decoder.token_embedding.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.norm.weight"),
+            "decoder.ln_post.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("proj_out.weight"),
+            "decoder.proj_out.weight"
+        );
+    }
+
+    #[test]
+    fn test_moonshine_map_encoder_layer_attention() {
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.layers.0.self_attn.q_proj.weight"),
+            "encoder.blocks.0.attn.q.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.layers.0.self_attn.k_proj.weight"),
+            "encoder.blocks.0.attn.k.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.layers.0.self_attn.v_proj.weight"),
+            "encoder.blocks.0.attn.v.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.layers.0.self_attn.o_proj.weight"),
+            "encoder.blocks.0.attn.o.weight"
+        );
+    }
+
+    #[test]
+    fn test_moonshine_map_encoder_layer_norms_mlp() {
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.layers.2.input_layernorm.weight"),
+            "encoder.blocks.2.ln1.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.layers.2.post_attention_layernorm.weight"),
+            "encoder.blocks.2.ln2.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.layers.3.mlp.fc1.weight"),
+            "encoder.blocks.3.ffn.fc1.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.layers.3.mlp.fc1.bias"),
+            "encoder.blocks.3.ffn.fc1.bias"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.layers.3.mlp.fc2.weight"),
+            "encoder.blocks.3.ffn.fc2.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.layers.3.mlp.fc2.bias"),
+            "encoder.blocks.3.ffn.fc2.bias"
+        );
+    }
+
+    #[test]
+    fn test_moonshine_map_decoder_layer_self_attn() {
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.0.input_layernorm.weight"),
+            "decoder.blocks.0.ln1.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.1.self_attn.q_proj.weight"),
+            "decoder.blocks.1.attn.q.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.1.self_attn.k_proj.weight"),
+            "decoder.blocks.1.attn.k.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.1.self_attn.v_proj.weight"),
+            "decoder.blocks.1.attn.v.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.1.self_attn.o_proj.weight"),
+            "decoder.blocks.1.attn.o.weight"
+        );
+    }
+
+    #[test]
+    fn test_moonshine_map_decoder_layer_cross_attn() {
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.0.post_attention_layernorm.weight"),
+            "decoder.blocks.0.ln_cross.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.0.encoder_attn.q_proj.weight"),
+            "decoder.blocks.0.cross_attn.q.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.0.encoder_attn.k_proj.weight"),
+            "decoder.blocks.0.cross_attn.k.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.0.encoder_attn.v_proj.weight"),
+            "decoder.blocks.0.cross_attn.v.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.0.encoder_attn.o_proj.weight"),
+            "decoder.blocks.0.cross_attn.o.weight"
+        );
+    }
+
+    #[test]
+    fn test_moonshine_map_decoder_layer_ffn() {
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.5.final_layernorm.weight"),
+            "decoder.blocks.5.ln2.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.5.mlp.fc1.weight"),
+            "decoder.blocks.5.ffn.fc1.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.5.mlp.fc1.bias"),
+            "decoder.blocks.5.ffn.fc1.bias"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.5.mlp.fc2.weight"),
+            "decoder.blocks.5.ffn.fc2.weight"
+        );
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.5.mlp.fc2.bias"),
+            "decoder.blocks.5.ffn.fc2.bias"
+        );
+    }
+
+    #[test]
+    fn test_moonshine_map_multi_digit_layer() {
+        // Layer indices beyond single digits
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.layers.11.self_attn.q_proj.weight"),
+            "encoder.blocks.11.attn.q.weight"
+        );
+    }
+
+    #[test]
+    fn test_moonshine_map_unknown_passthrough() {
+        assert_eq!(
+            map_moonshine_tensor_name("some.random.tensor"),
+            "some.random.tensor"
+        );
+    }
+
+    #[test]
+    fn test_moonshine_map_unknown_encoder_suffix_passthrough() {
+        // Unknown suffix within encoder layer passes through as-is
+        assert_eq!(
+            map_moonshine_tensor_name("model.encoder.layers.0.unknown_thing.weight"),
+            "encoder.blocks.0.unknown_thing.weight"
+        );
+    }
+
+    #[test]
+    fn test_moonshine_map_unknown_decoder_suffix_passthrough() {
+        // Unknown suffix within decoder layer passes through as-is
+        assert_eq!(
+            map_moonshine_tensor_name("model.decoder.layers.0.unknown_thing.weight"),
+            "decoder.blocks.0.unknown_thing.weight"
+        );
+    }
+
+    #[test]
+    fn test_moonshine_map_all_160_tensor_coverage() {
+        // Verify coverage of the full Moonshine tiny tensor set:
+        // 68 encoder tensors + 92 decoder tensors = 160 total
+        // Encoder per-layer: 10 tensors * 6 layers = 60, + 8 direct = 68
+        // Decoder per-layer: 15 tensors * 6 layers = 90, + 2 direct = 92
+
+        let encoder_per_layer_suffixes = [
+            "input_layernorm.weight",
+            "self_attn.q_proj.weight",
+            "self_attn.k_proj.weight",
+            "self_attn.v_proj.weight",
+            "self_attn.o_proj.weight",
+            "post_attention_layernorm.weight",
+            "mlp.fc1.weight",
+            "mlp.fc1.bias",
+            "mlp.fc2.weight",
+            "mlp.fc2.bias",
+        ];
+
+        let decoder_per_layer_suffixes = [
+            "input_layernorm.weight",
+            "self_attn.q_proj.weight",
+            "self_attn.k_proj.weight",
+            "self_attn.v_proj.weight",
+            "self_attn.o_proj.weight",
+            "post_attention_layernorm.weight",
+            "encoder_attn.q_proj.weight",
+            "encoder_attn.k_proj.weight",
+            "encoder_attn.v_proj.weight",
+            "encoder_attn.o_proj.weight",
+            "final_layernorm.weight",
+            "mlp.fc1.weight",
+            "mlp.fc1.bias",
+            "mlp.fc2.weight",
+            "mlp.fc2.bias",
+        ];
+
+        // Verify all encoder layers map without passthrough
+        for layer in 0..6 {
+            for suffix in &encoder_per_layer_suffixes {
+                let hf = format!("model.encoder.layers.{layer}.{suffix}");
+                let mapped = map_moonshine_tensor_name(&hf);
+                assert!(
+                    !mapped.contains("self_attn")
+                        && !mapped.contains("encoder_attn")
+                        && !mapped.contains("input_layernorm")
+                        && !mapped.contains("post_attention_layernorm")
+                        && !mapped.contains("final_layernorm")
+                        && !mapped.contains("mlp."),
+                    "encoder tensor {hf} was not properly mapped: {mapped}"
+                );
+            }
+        }
+
+        // Verify all decoder layers map without passthrough
+        for layer in 0..6 {
+            for suffix in &decoder_per_layer_suffixes {
+                let hf = format!("model.decoder.layers.{layer}.{suffix}");
+                let mapped = map_moonshine_tensor_name(&hf);
+                assert!(
+                    !mapped.contains("self_attn")
+                        && !mapped.contains("encoder_attn")
+                        && !mapped.contains("input_layernorm")
+                        && !mapped.contains("post_attention_layernorm")
+                        && !mapped.contains("final_layernorm")
+                        && !mapped.contains("mlp."),
+                    "decoder tensor {hf} was not properly mapped: {mapped}"
+                );
+            }
+        }
     }
 }
