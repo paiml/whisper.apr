@@ -32,6 +32,10 @@ pub struct GqaConfig {
     pub causal: bool,
     /// Dropout probability (0.0 = no dropout)
     pub dropout: f32,
+    /// Pad head_dim to next multiple of this value for aligned computation.
+    /// HuggingFace Moonshine uses `pad_head_dim_to_multiple_of=8` (36→40).
+    /// `None` means no padding.
+    pub pad_head_dim_to: Option<usize>,
 }
 
 impl GqaConfig {
@@ -45,6 +49,7 @@ impl GqaConfig {
             head_dim: 64, // 2048 / 32
             causal: true,
             dropout: 0.0,
+            pad_head_dim_to: None,
         }
     }
 
@@ -52,6 +57,15 @@ impl GqaConfig {
     #[must_use]
     pub const fn gqa_ratio(&self) -> usize {
         self.num_q_heads / self.num_kv_heads
+    }
+
+    /// Head dimension after padding (rounds up to next multiple of `pad_head_dim_to`)
+    #[must_use]
+    pub fn padded_head_dim(&self) -> usize {
+        match self.pad_head_dim_to {
+            Some(multiple) if multiple > 0 => self.head_dim.div_ceil(multiple) * multiple,
+            _ => self.head_dim,
+        }
     }
 
     /// Validate configuration
@@ -184,6 +198,7 @@ impl GroupedQueryAttention {
         let hidden_size = self.config.hidden_size;
         let num_q_heads = self.config.num_q_heads;
         let head_dim = self.config.head_dim;
+        let padded_hd = self.config.padded_head_dim();
         let gqa_ratio = self.config.gqa_ratio();
 
         // Validate input shape
@@ -197,52 +212,67 @@ impl GroupedQueryAttention {
 
         // Project to Q, K, V
         // Q: [seq_len, hidden_size] -> [seq_len, num_q_heads * head_dim]
-        let mut q = self.linear(hidden_states, &self.w_q, self.b_q.as_deref(), hidden_size);
+        let q_raw = self.linear(hidden_states, &self.w_q, self.b_q.as_deref(), hidden_size);
 
         // K, V: [seq_len, hidden_size] -> [seq_len, num_kv_heads * head_dim]
         let kv_dim = self.kv_dim();
-        let mut k = self.linear(hidden_states, &self.w_k, self.b_k.as_deref(), kv_dim);
-        let v = self.linear(hidden_states, &self.w_v, self.b_v.as_deref(), kv_dim);
+        let k_raw = self.linear(hidden_states, &self.w_k, self.b_k.as_deref(), kv_dim);
+        let v_raw = self.linear(hidden_states, &self.w_v, self.b_v.as_deref(), kv_dim);
 
-        // Apply RoPE to Q and K if provided
+        // Pad head_dim if needed (e.g., 36→40 for Moonshine)
+        let (mut q, mut k, v, q_stride, kv_padded_dim) = if padded_hd == head_dim {
+            (q_raw, k_raw, v_raw, hidden_size, kv_dim)
+        } else {
+            let q_padded = Self::pad_heads(&q_raw, seq_len, num_q_heads, head_dim, padded_hd);
+            let k_padded = Self::pad_heads(
+                &k_raw,
+                seq_len,
+                self.config.num_kv_heads,
+                head_dim,
+                padded_hd,
+            );
+            let v_padded = Self::pad_heads(
+                &v_raw,
+                seq_len,
+                self.config.num_kv_heads,
+                head_dim,
+                padded_hd,
+            );
+            let q_s = num_q_heads * padded_hd;
+            let kv_p = self.config.num_kv_heads * padded_hd;
+            (q_padded, k_padded, v_padded, q_s, kv_p)
+        };
+
+        // Apply RoPE to Q and K if provided (operates on padded dim)
         if let Some(rope_emb) = rope {
-            // Apply RoPE to Q [seq_len, num_q_heads, head_dim]
             q = rope_emb.forward(&q, seq_len, num_q_heads, 0)?;
-            // Apply RoPE to K [seq_len, num_kv_heads, head_dim]
             k = rope_emb.forward(&k, seq_len, self.config.num_kv_heads, 0)?;
         }
 
-        // Compute attention scores
-        // For GQA: expand K, V to match Q heads by repeating each KV head
-        let mut attn_output = vec![0.0f32; seq_len * hidden_size];
+        // Compute attention scores using padded head_dim
+        let mut attn_output = vec![0.0f32; seq_len * q_stride];
 
-        // Scale factor
+        // Scale factor uses ORIGINAL head_dim (matching HuggingFace)
         let scale = 1.0 / (head_dim as f32).sqrt();
 
         // Process each query head
         for q_head in 0..num_q_heads {
-            // Determine which KV head this query head uses
             let kv_head = q_head / gqa_ratio;
 
             for seq_i in 0..seq_len {
-                // Get query vector for this position and head
-                let q_offset = seq_i * hidden_size + q_head * head_dim;
-                let q_vec = &q[q_offset..q_offset + head_dim];
+                let q_offset = seq_i * q_stride + q_head * padded_hd;
+                let q_vec = &q[q_offset..q_offset + padded_hd];
 
-                // Compute attention scores against all keys
                 let mut scores = Vec::with_capacity(seq_len);
                 for seq_j in 0..seq_len {
-                    // Causal masking: can only attend to positions <= current
                     if self.config.causal && seq_j > seq_i {
                         scores.push(f32::NEG_INFINITY);
                         continue;
                     }
 
-                    // Get key vector
-                    let k_offset = seq_j * kv_dim + kv_head * head_dim;
-                    let k_vec = &k[k_offset..k_offset + head_dim];
+                    let k_offset = seq_j * kv_padded_dim + kv_head * padded_hd;
+                    let k_vec = &k[k_offset..k_offset + padded_hd];
 
-                    // Dot product
                     let score: f32 = q_vec.iter().zip(k_vec.iter()).map(|(q, k)| q * k).sum();
                     scores.push(score * scale);
                 }
@@ -253,22 +283,29 @@ impl GroupedQueryAttention {
                 let sum_exp: f32 = exp_scores.iter().sum();
                 let attn_weights: Vec<f32> = exp_scores.iter().map(|e| e / sum_exp).collect();
 
-                // Weighted sum of values
-                let out_offset = seq_i * hidden_size + q_head * head_dim;
+                // Weighted sum of values (using padded dim)
+                let out_offset = seq_i * q_stride + q_head * padded_hd;
                 for (seq_j, &weight) in attn_weights.iter().enumerate() {
                     if weight.abs() < 1e-10 {
                         continue;
                     }
-                    let v_offset = seq_j * kv_dim + kv_head * head_dim;
-                    for d in 0..head_dim {
+                    let v_offset = seq_j * kv_padded_dim + kv_head * padded_hd;
+                    for d in 0..padded_hd {
                         attn_output[out_offset + d] += weight * v[v_offset + d];
                     }
                 }
             }
         }
 
+        // Strip padding before output projection (padded → original head_dim)
+        let attn_unpadded = if padded_hd == head_dim {
+            attn_output
+        } else {
+            Self::unpad_heads(&attn_output, seq_len, num_q_heads, head_dim, padded_hd)
+        };
+
         // Output projection
-        let output = self.linear(&attn_output, &self.w_o, self.b_o.as_deref(), hidden_size);
+        let output = self.linear(&attn_unpadded, &self.w_o, self.b_o.as_deref(), hidden_size);
 
         Ok(output)
     }
@@ -299,6 +336,7 @@ impl GroupedQueryAttention {
         let hidden_size = self.config.hidden_size;
         let num_q_heads = self.config.num_q_heads;
         let head_dim = self.config.head_dim;
+        let padded_hd = self.config.padded_head_dim();
         let gqa_ratio = self.config.gqa_ratio();
         let kv_dim = self.kv_dim();
 
@@ -319,15 +357,15 @@ impl GroupedQueryAttention {
         }
 
         // Q from decoder, K/V from encoder
-        let q = self.linear(decoder_hidden, &self.w_q, self.b_q.as_deref(), hidden_size);
-        let k = self.linear_with_dim(
+        let q_raw = self.linear(decoder_hidden, &self.w_q, self.b_q.as_deref(), hidden_size);
+        let k_raw = self.linear_with_dim(
             encoder_output,
             &self.w_k,
             self.b_k.as_deref(),
             hidden_size,
             kv_dim,
         );
-        let v = self.linear_with_dim(
+        let v_raw = self.linear_with_dim(
             encoder_output,
             &self.w_v,
             self.b_v.as_deref(),
@@ -335,22 +373,51 @@ impl GroupedQueryAttention {
             kv_dim,
         );
 
+        // Pad head_dim if needed
+        let (q, k, v, q_stride, kv_padded_dim) = if padded_hd == head_dim {
+            (q_raw, k_raw, v_raw, hidden_size, kv_dim)
+        } else {
+            let q_p = Self::pad_heads(&q_raw, dec_seq_len, num_q_heads, head_dim, padded_hd);
+            let k_p = Self::pad_heads(
+                &k_raw,
+                enc_seq_len,
+                self.config.num_kv_heads,
+                head_dim,
+                padded_hd,
+            );
+            let v_p = Self::pad_heads(
+                &v_raw,
+                enc_seq_len,
+                self.config.num_kv_heads,
+                head_dim,
+                padded_hd,
+            );
+            (
+                q_p,
+                k_p,
+                v_p,
+                num_q_heads * padded_hd,
+                self.config.num_kv_heads * padded_hd,
+            )
+        };
+
         // Compute attention (no causal masking for cross-attention)
-        let mut attn_output = vec![0.0f32; dec_seq_len * hidden_size];
+        let mut attn_output = vec![0.0f32; dec_seq_len * q_stride];
+        // Scale uses ORIGINAL head_dim (matching HuggingFace)
         let scale = 1.0 / (head_dim as f32).sqrt();
 
         for q_head in 0..num_q_heads {
             let kv_head = q_head / gqa_ratio;
 
             for seq_i in 0..dec_seq_len {
-                let q_offset = seq_i * hidden_size + q_head * head_dim;
-                let q_vec = &q[q_offset..q_offset + head_dim];
+                let q_offset = seq_i * q_stride + q_head * padded_hd;
+                let q_vec = &q[q_offset..q_offset + padded_hd];
 
                 // Attend to all encoder positions (no causal mask)
                 let mut scores = Vec::with_capacity(enc_seq_len);
                 for seq_j in 0..enc_seq_len {
-                    let k_offset = seq_j * kv_dim + kv_head * head_dim;
-                    let k_vec = &k[k_offset..k_offset + head_dim];
+                    let k_offset = seq_j * kv_padded_dim + kv_head * padded_hd;
+                    let k_vec = &k[k_offset..k_offset + padded_hd];
                     let score: f32 = q_vec.iter().zip(k_vec.iter()).map(|(q, k)| q * k).sum();
                     scores.push(score * scale);
                 }
@@ -366,21 +433,28 @@ impl GroupedQueryAttention {
                 };
 
                 // Weighted sum of encoder values
-                let out_offset = seq_i * hidden_size + q_head * head_dim;
+                let out_offset = seq_i * q_stride + q_head * padded_hd;
                 for (seq_j, &weight) in attn_weights.iter().enumerate() {
                     if weight.abs() < 1e-10 {
                         continue;
                     }
-                    let v_offset = seq_j * kv_dim + kv_head * head_dim;
-                    for d in 0..head_dim {
+                    let v_offset = seq_j * kv_padded_dim + kv_head * padded_hd;
+                    for d in 0..padded_hd {
                         attn_output[out_offset + d] += weight * v[v_offset + d];
                     }
                 }
             }
         }
 
+        // Strip padding before output projection
+        let attn_unpadded = if padded_hd == head_dim {
+            attn_output
+        } else {
+            Self::unpad_heads(&attn_output, dec_seq_len, num_q_heads, head_dim, padded_hd)
+        };
+
         // Output projection
-        let output = self.linear(&attn_output, &self.w_o, self.b_o.as_deref(), hidden_size);
+        let output = self.linear(&attn_unpadded, &self.w_o, self.b_o.as_deref(), hidden_size);
         Ok(output)
     }
 
@@ -443,6 +517,55 @@ impl GroupedQueryAttention {
 
         output
     }
+
+    /// Zero-pad each head's dimension from `head_dim` to `padded_hd`
+    ///
+    /// Input layout: `[seq_len, num_heads * head_dim]` (contiguous)
+    /// Output layout: `[seq_len, num_heads * padded_hd]` (zero-filled gaps)
+    fn pad_heads(
+        data: &[f32],
+        seq_len: usize,
+        num_heads: usize,
+        head_dim: usize,
+        padded_hd: usize,
+    ) -> Vec<f32> {
+        let in_stride = num_heads * head_dim;
+        let out_stride = num_heads * padded_hd;
+        let mut out = vec![0.0_f32; seq_len * out_stride];
+        for s in 0..seq_len {
+            for h in 0..num_heads {
+                let src = s * in_stride + h * head_dim;
+                let dst = s * out_stride + h * padded_hd;
+                out[dst..dst + head_dim].copy_from_slice(&data[src..src + head_dim]);
+                // dst + head_dim .. dst + padded_hd remains zero
+            }
+        }
+        out
+    }
+
+    /// Strip padding from each head's dimension back to `head_dim`
+    ///
+    /// Input layout: `[seq_len, num_heads * padded_hd]`
+    /// Output layout: `[seq_len, num_heads * head_dim]`
+    fn unpad_heads(
+        data: &[f32],
+        seq_len: usize,
+        num_heads: usize,
+        head_dim: usize,
+        padded_hd: usize,
+    ) -> Vec<f32> {
+        let in_stride = num_heads * padded_hd;
+        let out_stride = num_heads * head_dim;
+        let mut out = vec![0.0_f32; seq_len * out_stride];
+        for s in 0..seq_len {
+            for h in 0..num_heads {
+                let src = s * in_stride + h * padded_hd;
+                let dst = s * out_stride + h * head_dim;
+                out[dst..dst + head_dim].copy_from_slice(&data[src..src + head_dim]);
+            }
+        }
+        out
+    }
 }
 
 impl GroupedQueryAttention {
@@ -468,6 +591,9 @@ impl GroupedQueryAttention {
         position: usize,
     ) -> WhisperResult<(Vec<f32>, Vec<f32>, Vec<f32>)> {
         let hidden_size = self.config.hidden_size;
+        let head_dim = self.config.head_dim;
+        let padded_hd = self.config.padded_head_dim();
+
         if hidden.len() != hidden_size {
             return Err(WhisperError::Model(format!(
                 "hidden length {} != hidden_size {}",
@@ -479,11 +605,21 @@ impl GroupedQueryAttention {
         let kv_dim = self.kv_dim();
 
         // Project with seq_len=1
-        let mut q = self.linear(hidden, &self.w_q, self.b_q.as_deref(), hidden_size);
-        let mut k = self.linear(hidden, &self.w_k, self.b_k.as_deref(), kv_dim);
-        let v = self.linear(hidden, &self.w_v, self.b_v.as_deref(), kv_dim);
+        let q_raw = self.linear(hidden, &self.w_q, self.b_q.as_deref(), hidden_size);
+        let k_raw = self.linear(hidden, &self.w_k, self.b_k.as_deref(), kv_dim);
+        let v_raw = self.linear(hidden, &self.w_v, self.b_v.as_deref(), kv_dim);
 
-        // Apply RoPE if provided (self-attention path)
+        // Pad head_dim if needed
+        let (mut q, mut k, v) = if padded_hd == head_dim {
+            (q_raw, k_raw, v_raw)
+        } else {
+            let qp = Self::pad_heads(&q_raw, 1, self.config.num_q_heads, head_dim, padded_hd);
+            let kp = Self::pad_heads(&k_raw, 1, self.config.num_kv_heads, head_dim, padded_hd);
+            let vp = Self::pad_heads(&v_raw, 1, self.config.num_kv_heads, head_dim, padded_hd);
+            (qp, kp, vp)
+        };
+
+        // Apply RoPE if provided (self-attention path) — operates on padded dims
         if let Some(rope_emb) = rope {
             q = rope_emb.forward(&q, 1, self.config.num_q_heads, position)?;
             k = rope_emb.forward(&k, 1, self.config.num_kv_heads, position)?;
@@ -517,38 +653,42 @@ impl GroupedQueryAttention {
     ) -> WhisperResult<Vec<f32>> {
         let num_q_heads = self.config.num_q_heads;
         let head_dim = self.config.head_dim;
-        let hidden_size = self.config.hidden_size;
+        let padded_hd = self.config.padded_head_dim();
         let gqa_ratio = self.config.gqa_ratio();
-        let kv_dim = self.kv_dim();
 
-        if q.len() != hidden_size {
+        // Use padded dimensions for Q stride and KV stride
+        let q_total = num_q_heads * padded_hd;
+        let kv_padded_dim = self.config.num_kv_heads * padded_hd;
+
+        if q.len() != q_total {
             return Err(WhisperError::Model(format!(
-                "q length {} != hidden_size {}",
+                "q length {} != num_q_heads * padded_head_dim ({})",
                 q.len(),
-                hidden_size
+                q_total
             )));
         }
-        if k_cache.len() != cache_len * kv_dim {
+        if k_cache.len() != cache_len * kv_padded_dim {
             return Err(WhisperError::Model(format!(
-                "k_cache length {} != cache_len * kv_dim ({})",
+                "k_cache length {} != cache_len * kv_padded_dim ({})",
                 k_cache.len(),
-                cache_len * kv_dim
+                cache_len * kv_padded_dim
             )));
         }
 
+        // Scale uses ORIGINAL head_dim (matching HuggingFace)
         let scale = 1.0 / (head_dim as f32).sqrt();
-        let mut output = vec![0.0_f32; hidden_size];
+        let mut output = vec![0.0_f32; q_total];
 
         for q_head in 0..num_q_heads {
             let kv_head = q_head / gqa_ratio;
-            let q_offset = q_head * head_dim;
-            let q_vec = &q[q_offset..q_offset + head_dim];
+            let q_offset = q_head * padded_hd;
+            let q_vec = &q[q_offset..q_offset + padded_hd];
 
             // Compute scores against all cached keys
             let mut scores = Vec::with_capacity(cache_len);
             for pos in 0..cache_len {
-                let k_offset = pos * kv_dim + kv_head * head_dim;
-                let k_vec = &k_cache[k_offset..k_offset + head_dim];
+                let k_offset = pos * kv_padded_dim + kv_head * padded_hd;
+                let k_vec = &k_cache[k_offset..k_offset + padded_hd];
                 let score: f32 = q_vec.iter().zip(k_vec).map(|(qi, ki)| qi * ki).sum();
                 scores.push(score * scale);
             }
@@ -564,13 +704,13 @@ impl GroupedQueryAttention {
             };
 
             // Weighted sum of cached values
-            let out_offset = q_head * head_dim;
+            let out_offset = q_head * padded_hd;
             for (pos, &weight) in attn_weights.iter().enumerate() {
                 if weight.abs() < 1e-10 {
                     continue;
                 }
-                let v_offset = pos * kv_dim + kv_head * head_dim;
-                for d in 0..head_dim {
+                let v_offset = pos * kv_padded_dim + kv_head * padded_hd;
+                for d in 0..padded_hd {
                     output[out_offset + d] += weight * v_cache[v_offset + d];
                 }
             }
@@ -581,59 +721,104 @@ impl GroupedQueryAttention {
 
     /// Apply output projection W_o to attention output
     ///
+    /// If head_dim padding is active, unpads before projecting.
+    ///
     /// # Arguments
-    /// * `attn_out` - Concatenated head output `[hidden_size]`
+    /// * `attn_out` - Concatenated head output `[num_q_heads * padded_head_dim]`
     ///
     /// # Returns
     /// Projected output `[hidden_size]`
     pub fn output_projection(&self, attn_out: &[f32]) -> Vec<f32> {
-        self.linear(attn_out, &self.w_o, self.b_o.as_deref(), self.config.hidden_size)
+        let head_dim = self.config.head_dim;
+        let padded_hd = self.config.padded_head_dim();
+        let input = if padded_hd == head_dim {
+            attn_out.to_vec()
+        } else {
+            Self::unpad_heads(attn_out, 1, self.config.num_q_heads, head_dim, padded_hd)
+        };
+        self.linear(
+            &input,
+            &self.w_o,
+            self.b_o.as_deref(),
+            self.config.hidden_size,
+        )
     }
 
     /// Project encoder output to K, V for cross-attention caching
     ///
     /// Called once per encoder output to populate cross-attention cache.
+    /// If head_dim padding is active, returns padded K/V.
     ///
     /// # Arguments
     /// * `encoder_out` - Encoder hidden states `[enc_seq_len * hidden_size]`
     /// * `enc_seq_len` - Encoder sequence length
     ///
     /// # Returns
-    /// `(K, V)` both `[enc_seq_len * kv_dim]`
-    pub fn project_kv(
-        &self,
-        encoder_out: &[f32],
-        enc_seq_len: usize,
-    ) -> (Vec<f32>, Vec<f32>) {
+    /// `(K, V)` both `[enc_seq_len * padded_kv_dim]`
+    pub fn project_kv(&self, encoder_out: &[f32], enc_seq_len: usize) -> (Vec<f32>, Vec<f32>) {
         let kv_dim = self.kv_dim();
-        let k = self.linear_with_dim(
+        let head_dim = self.config.head_dim;
+        let padded_hd = self.config.padded_head_dim();
+
+        let k_raw = self.linear_with_dim(
             encoder_out,
             &self.w_k,
             self.b_k.as_deref(),
             self.config.hidden_size,
             kv_dim,
         );
-        let v = self.linear_with_dim(
+        let v_raw = self.linear_with_dim(
             encoder_out,
             &self.w_v,
             self.b_v.as_deref(),
             self.config.hidden_size,
             kv_dim,
         );
-        // Adjust: for seq_len>1 input, we need proper seq_len handling
-        let _ = enc_seq_len; // dimensions are implicit in input length
-        (k, v)
+
+        if padded_hd == head_dim {
+            (k_raw, v_raw)
+        } else {
+            let k = Self::pad_heads(
+                &k_raw,
+                enc_seq_len,
+                self.config.num_kv_heads,
+                head_dim,
+                padded_hd,
+            );
+            let v = Self::pad_heads(
+                &v_raw,
+                enc_seq_len,
+                self.config.num_kv_heads,
+                head_dim,
+                padded_hd,
+            );
+            (k, v)
+        }
     }
 
     /// Project decoder hidden state to Q only (for cross-attention)
+    ///
+    /// If head_dim padding is active, returns padded Q.
     ///
     /// # Arguments
     /// * `hidden` - Single decoder hidden state `[hidden_size]`
     ///
     /// # Returns
-    /// Query vector `[num_q_heads * head_dim]` = `[hidden_size]`
+    /// Query vector `[num_q_heads * padded_head_dim]`
     pub fn project_q(&self, hidden: &[f32]) -> Vec<f32> {
-        self.linear(hidden, &self.w_q, self.b_q.as_deref(), self.config.hidden_size)
+        let head_dim = self.config.head_dim;
+        let padded_hd = self.config.padded_head_dim();
+        let q_raw = self.linear(
+            hidden,
+            &self.w_q,
+            self.b_q.as_deref(),
+            self.config.hidden_size,
+        );
+        if padded_hd == head_dim {
+            q_raw
+        } else {
+            Self::pad_heads(&q_raw, 1, self.config.num_q_heads, head_dim, padded_hd)
+        }
     }
 }
 
@@ -732,6 +917,7 @@ mod tests {
             head_dim: 64,
             causal: true,
             dropout: 0.0,
+            pad_head_dim_to: None,
         };
         assert!(config.validate().is_err());
 
@@ -743,6 +929,7 @@ mod tests {
             head_dim: 64,
             causal: true,
             dropout: 0.0,
+            pad_head_dim_to: None,
         };
         assert!(config.validate().is_err());
     }
@@ -785,6 +972,7 @@ mod tests {
             head_dim: 4,
             causal: true,
             dropout: 0.0,
+            pad_head_dim_to: None,
         };
         let mut gqa = GroupedQueryAttention::new(config).expect("should create GQA");
 
@@ -892,6 +1080,7 @@ mod tests {
             head_dim: 36,
             causal: false,
             dropout: 0.0,
+            pad_head_dim_to: None,
         };
         let gqa = GroupedQueryAttention::new(config).expect("should create GQA");
 
@@ -918,6 +1107,7 @@ mod tests {
             head_dim: 4,
             causal: false,
             dropout: 0.0,
+            pad_head_dim_to: None,
         };
         let gqa = GroupedQueryAttention::new(config).expect("should create GQA");
 
@@ -948,6 +1138,7 @@ mod tests {
             head_dim: 4,
             causal: false,
             dropout: 0.0,
+            pad_head_dim_to: None,
         };
         let gqa = GroupedQueryAttention::new(config).expect("should create GQA");
 
@@ -972,6 +1163,7 @@ mod tests {
             head_dim: 4,
             causal: true,
             dropout: 0.0,
+            pad_head_dim_to: None,
         };
         let mut gqa = GroupedQueryAttention::new(config).expect("create GQA");
         for (i, w) in gqa.w_q.iter_mut().enumerate() {
@@ -1012,6 +1204,7 @@ mod tests {
             head_dim: 4,
             base: 10000.0,
             max_seq_len: 100,
+            rotary_dim: None,
         })
         .expect("rope");
 
@@ -1102,6 +1295,7 @@ mod tests {
             head_dim: 36,
             causal: false,
             dropout: 0.0,
+            pad_head_dim_to: None,
         };
         let gqa = GroupedQueryAttention::new(config).expect("create GQA");
 
@@ -1132,14 +1326,10 @@ mod tests {
         let hidden = vec![0.3_f32; 16];
 
         // Full forward with seq_len=1 (no causal mask effect with 1 token)
-        let full_out = gqa
-            .forward(&hidden, 1, None, None)
-            .expect("full forward");
+        let full_out = gqa.forward(&hidden, 1, None, None).expect("full forward");
 
         // Cached path: project → attention_cached → output_projection
-        let (q, k, v) = gqa
-            .project_qkv_single(&hidden, None, 0)
-            .expect("project");
+        let (q, k, v) = gqa.project_qkv_single(&hidden, None, 0).expect("project");
         let attn_out = gqa
             .attention_cached(&q, &k, &v, 1)
             .expect("attention_cached");

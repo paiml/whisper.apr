@@ -4,11 +4,11 @@
 //! Pre-LayerNorm (no bias) before each sub-layer with residual connections.
 
 use crate::error::WhisperResult;
-use crate::model::LayerKVCache;
 use crate::model::lfm2::gqa::{GqaConfig, GroupedQueryAttention};
 use crate::model::lfm2::layer::LayerNormNoBias;
 use crate::model::lfm2::mlp::GatedMlpFfn;
 use crate::model::lfm2::rope::RotaryEmbedding;
+use crate::model::LayerKVCache;
 
 /// Single Moonshine decoder transformer block
 ///
@@ -61,6 +61,7 @@ impl MoonshineDecoderBlock {
             head_dim,
             causal: true,
             dropout: 0.0,
+            pad_head_dim_to: Some(8),
         };
 
         // Cross-attention: not causal (decoder attends to all encoder positions)
@@ -71,6 +72,7 @@ impl MoonshineDecoderBlock {
             head_dim,
             causal: false,
             dropout: 0.0,
+            pad_head_dim_to: Some(8),
         };
 
         Ok(Self {
@@ -119,9 +121,9 @@ impl MoonshineDecoderBlock {
 
         // 1. Pre-norm → self-attention with RoPE + KV cache
         let normed = self.ln1.forward(x, 1)?;
-        let (q, k_new, v_new) =
-            self.self_attn
-                .project_qkv_single(&normed, Some(rope), position)?;
+        let (q, k_new, v_new) = self
+            .self_attn
+            .project_qkv_single(&normed, Some(rope), position)?;
 
         // Append new K, V to self-attention cache
         self_attn_cache.append(&k_new, &v_new)?;
@@ -130,7 +132,9 @@ impl MoonshineDecoderBlock {
         let k_full = self_attn_cache.get_key();
         let v_full = self_attn_cache.get_value();
         let cache_len = self_attn_cache.len();
-        let attn_out = self.self_attn.attention_cached(&q, k_full, v_full, cache_len)?;
+        let attn_out = self
+            .self_attn
+            .attention_cached(&q, k_full, v_full, cache_len)?;
         let attn_out = self.self_attn.output_projection(&attn_out);
 
         // Residual connection
@@ -145,12 +149,9 @@ impl MoonshineDecoderBlock {
             cross_attn_cache.append(&k_enc, &v_enc)?;
 
             let q_cross = self.cross_attn.project_q(&normed_cross);
-            let attn_out = self.cross_attn.attention_cached(
-                &q_cross,
-                &k_enc,
-                &v_enc,
-                enc_seq_len,
-            )?;
+            let attn_out =
+                self.cross_attn
+                    .attention_cached(&q_cross, &k_enc, &v_enc, enc_seq_len)?;
             self.cross_attn.output_projection(&attn_out)
         } else {
             // Subsequent tokens: reuse cached encoder K/V
@@ -159,12 +160,9 @@ impl MoonshineDecoderBlock {
             let cached_enc_len = cross_attn_cache.len();
 
             let q_cross = self.cross_attn.project_q(&normed_cross);
-            let attn_out = self.cross_attn.attention_cached(
-                &q_cross,
-                k_cached,
-                v_cached,
-                cached_enc_len,
-            )?;
+            let attn_out =
+                self.cross_attn
+                    .attention_cached(&q_cross, k_cached, v_cached, cached_enc_len)?;
             self.cross_attn.output_projection(&attn_out)
         };
 
@@ -201,9 +199,9 @@ impl MoonshineDecoderBlock {
     ) -> WhisperResult<Vec<f32>> {
         // 1. Masked self-attention with RoPE + residual
         let normed = self.ln1.forward(x, dec_seq_len)?;
-        let self_attn_out =
-            self.self_attn
-                .forward_with_rope(&normed, dec_seq_len, Some(rope))?;
+        let self_attn_out = self
+            .self_attn
+            .forward_with_rope(&normed, dec_seq_len, Some(rope))?;
         let mut residual = add_vectors(x, &self_attn_out);
 
         // 2. Cross-attention (Q from decoder, KV from encoder) + residual
@@ -253,19 +251,35 @@ impl MoonshineDecoderBlock {
 
         // 1. Masked self-attention with RoPE + residual
         let normed = self.ln1.forward(x, dec_seq_len)?;
-        probe.record(&format!("{prefix}.ln1_out"), &normed, &[dec_seq_len, d_model]);
+        probe.record(
+            &format!("{prefix}.ln1_out"),
+            &normed,
+            &[dec_seq_len, d_model],
+        );
 
-        let self_attn_out =
-            self.self_attn
-                .forward_with_rope(&normed, dec_seq_len, Some(rope))?;
-        probe.record(&format!("{prefix}.self_attn_out"), &self_attn_out, &[dec_seq_len, d_model]);
+        let self_attn_out = self
+            .self_attn
+            .forward_with_rope(&normed, dec_seq_len, Some(rope))?;
+        probe.record(
+            &format!("{prefix}.self_attn_out"),
+            &self_attn_out,
+            &[dec_seq_len, d_model],
+        );
 
         let mut residual = add_vectors(x, &self_attn_out);
-        probe.record(&format!("{prefix}.residual_1"), &residual, &[dec_seq_len, d_model]);
+        probe.record(
+            &format!("{prefix}.residual_1"),
+            &residual,
+            &[dec_seq_len, d_model],
+        );
 
         // 2. Cross-attention (Q from decoder, KV from encoder) + residual
         let normed_cross = self.ln_cross.forward(&residual, dec_seq_len)?;
-        probe.record(&format!("{prefix}.ln_cross_out"), &normed_cross, &[dec_seq_len, d_model]);
+        probe.record(
+            &format!("{prefix}.ln_cross_out"),
+            &normed_cross,
+            &[dec_seq_len, d_model],
+        );
 
         let cross_attn_out = self.cross_attn.forward_cross_attention(
             &normed_cross,
@@ -273,20 +287,40 @@ impl MoonshineDecoderBlock {
             dec_seq_len,
             enc_seq_len,
         )?;
-        probe.record(&format!("{prefix}.cross_attn_out"), &cross_attn_out, &[dec_seq_len, d_model]);
+        probe.record(
+            &format!("{prefix}.cross_attn_out"),
+            &cross_attn_out,
+            &[dec_seq_len, d_model],
+        );
 
         add_vectors_inplace(&mut residual, &cross_attn_out);
-        probe.record(&format!("{prefix}.residual_2"), &residual, &[dec_seq_len, d_model]);
+        probe.record(
+            &format!("{prefix}.residual_2"),
+            &residual,
+            &[dec_seq_len, d_model],
+        );
 
         // 3. FFN + residual
         let normed2 = self.ln2.forward(&residual, dec_seq_len)?;
-        probe.record(&format!("{prefix}.ln2_out"), &normed2, &[dec_seq_len, d_model]);
+        probe.record(
+            &format!("{prefix}.ln2_out"),
+            &normed2,
+            &[dec_seq_len, d_model],
+        );
 
         let ffn_out = self.ffn.forward(&normed2, dec_seq_len)?;
-        probe.record(&format!("{prefix}.ffn_out"), &ffn_out, &[dec_seq_len, d_model]);
+        probe.record(
+            &format!("{prefix}.ffn_out"),
+            &ffn_out,
+            &[dec_seq_len, d_model],
+        );
 
         add_vectors_inplace(&mut residual, &ffn_out);
-        probe.record(&format!("{prefix}.residual_3"), &residual, &[dec_seq_len, d_model]);
+        probe.record(
+            &format!("{prefix}.residual_3"),
+            &residual,
+            &[dec_seq_len, d_model],
+        );
 
         Ok(residual)
     }
@@ -319,10 +353,10 @@ mod tests {
     fn test_moonshine_decoder_block_forward_shape() {
         let block = MoonshineDecoderBlock::new(288, 8, 8, 1152).expect("block creation");
         let rope = RotaryEmbedding::new(crate::model::lfm2::rope::RopeConfig {
-            head_dim: 36, // 288 / 8
+            head_dim: 40, // 288/8=36 padded to 40 (pad_head_dim_to=8)
             base: 10000.0,
             max_seq_len: 2048,
-            rotary_dim: None,
+            rotary_dim: Some(32),
         })
         .expect("rope creation");
 
@@ -334,7 +368,13 @@ mod tests {
         let encoder_output = vec![0.2_f32; enc_seq_len * d_model];
 
         let output = block
-            .forward(&decoder_input, &encoder_output, dec_seq_len, enc_seq_len, &rope)
+            .forward(
+                &decoder_input,
+                &encoder_output,
+                dec_seq_len,
+                enc_seq_len,
+                &rope,
+            )
             .expect("forward");
         assert_eq!(output.len(), dec_seq_len * d_model);
     }
@@ -343,23 +383,24 @@ mod tests {
     fn test_moonshine_decoder_block_forward_cached_shape() {
         let block = MoonshineDecoderBlock::new(288, 8, 8, 1152).expect("block creation");
         let rope = RotaryEmbedding::new(crate::model::lfm2::rope::RopeConfig {
-            head_dim: 36, // 288 / 8
+            head_dim: 40, // 288/8=36 padded to 40 (pad_head_dim_to=8)
             base: 10000.0,
             max_seq_len: 2048,
-            rotary_dim: None,
+            rotary_dim: Some(32),
         })
         .expect("rope creation");
 
         let d_model = 288;
-        let kv_dim = 8 * 36; // num_kv_heads * head_dim = 288 (MHA: kv_dim == d_model)
+        // With pad_head_dim_to=8, head_dim 36 pads to 40; kv_dim = 8 * 40 = 320
+        let padded_kv_dim = 8 * 40;
         let enc_seq_len = 7;
         let max_tokens = 100;
 
         let encoder_output = vec![0.2_f32; enc_seq_len * d_model];
 
         // Simulate 3 decode steps
-        let mut self_cache = LayerKVCache::new(kv_dim, max_tokens);
-        let mut cross_cache = LayerKVCache::new(kv_dim, max_tokens);
+        let mut self_cache = LayerKVCache::new(padded_kv_dim, max_tokens);
+        let mut cross_cache = LayerKVCache::new(padded_kv_dim, max_tokens);
 
         for pos in 0..3 {
             let x = vec![0.1_f32; d_model];
@@ -387,10 +428,10 @@ mod tests {
     fn test_moonshine_decoder_block_finite_output() {
         let block = MoonshineDecoderBlock::new(288, 8, 8, 1152).expect("block creation");
         let rope = RotaryEmbedding::new(crate::model::lfm2::rope::RopeConfig {
-            head_dim: 36,
+            head_dim: 40,
             base: 10000.0,
             max_seq_len: 2048,
-            rotary_dim: None,
+            rotary_dim: Some(32),
         })
         .expect("rope creation");
 
@@ -402,7 +443,13 @@ mod tests {
         let encoder_output = vec![0.5_f32; enc_seq_len * d_model];
 
         let output = block
-            .forward(&decoder_input, &encoder_output, dec_seq_len, enc_seq_len, &rope)
+            .forward(
+                &decoder_input,
+                &encoder_output,
+                dec_seq_len,
+                enc_seq_len,
+                &rope,
+            )
             .expect("forward");
         assert!(output.iter().all(|v| v.is_finite()));
     }

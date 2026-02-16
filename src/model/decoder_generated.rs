@@ -1815,8 +1815,10 @@ impl Decoder {
                 let rotary_dim = (head_dim as f64 * 0.9).floor() as usize;
                 // Ensure rotary_dim is even (required for sin/cos pairs)
                 let rotary_dim = rotary_dim - (rotary_dim % 2);
+                // RoPE uses padded head_dim (36→40) so it accepts padded Q/K
+                let padded_hd = head_dim.div_ceil(8) * 8;
                 let Ok(rope_emb) = RotaryEmbedding::new(RopeConfig {
-                    head_dim,
+                    head_dim: padded_hd,
                     base: 10000.0,
                     max_seq_len: 2048,
                     rotary_dim: Some(rotary_dim),
@@ -1989,9 +1991,10 @@ impl Decoder {
 
         if self.rope.is_some() {
             // Moonshine path: MHA + MLP + RoPE
-            let rope = self.rope.as_ref().ok_or_else(|| {
-                WhisperError::Model("Moonshine decoder requires RoPE".into())
-            })?;
+            let rope = self
+                .rope
+                .as_ref()
+                .ok_or_else(|| WhisperError::Model("Moonshine decoder requires RoPE".into()))?;
 
             for block in &self.moonshine_blocks {
                 x = block.forward(&x, encoder_output, seq_len, enc_seq_len, rope)?;
@@ -2005,8 +2008,7 @@ impl Decoder {
             // Whisper path: sinusoidal PE + MHA + GELU
             for pos in 0..seq_len {
                 for d in 0..self.d_model {
-                    x[pos * self.d_model + d] +=
-                        self.positional_embedding[pos * self.d_model + d];
+                    x[pos * self.d_model + d] += self.positional_embedding[pos * self.d_model + d];
                 }
             }
 
@@ -2059,12 +2061,21 @@ impl Decoder {
 
         if self.rope.is_some() {
             // Moonshine path: MHA + MLP + RoPE
-            let rope = self.rope.as_ref().ok_or_else(|| {
-                WhisperError::Model("Moonshine decoder requires RoPE".into())
-            })?;
+            let rope = self
+                .rope
+                .as_ref()
+                .ok_or_else(|| WhisperError::Model("Moonshine decoder requires RoPE".into()))?;
 
             for (i, block) in self.moonshine_blocks.iter().enumerate() {
-                x = block.forward_probed(&x, encoder_output, seq_len, enc_seq_len, rope, i, probe)?;
+                x = block.forward_probed(
+                    &x,
+                    encoder_output,
+                    seq_len,
+                    enc_seq_len,
+                    rope,
+                    i,
+                    probe,
+                )?;
             }
 
             // Final RMS norm (Moonshine)
@@ -2075,8 +2086,7 @@ impl Decoder {
             // Whisper path: sinusoidal PE + MHA + GELU
             for pos in 0..seq_len {
                 for d in 0..self.d_model {
-                    x[pos * self.d_model + d] +=
-                        self.positional_embedding[pos * self.d_model + d];
+                    x[pos * self.d_model + d] += self.positional_embedding[pos * self.d_model + d];
                 }
             }
 
@@ -2146,9 +2156,10 @@ impl Decoder {
 
         if self.rope.is_some() {
             // Moonshine path: MHA + MLP + RoPE with tracing
-            let rope = self.rope.as_ref().ok_or_else(|| {
-                WhisperError::Model("Moonshine decoder requires RoPE".into())
-            })?;
+            let rope = self
+                .rope
+                .as_ref()
+                .ok_or_else(|| WhisperError::Model("Moonshine decoder requires RoPE".into()))?;
             let enc_seq_len = encoder_output.len() / self.d_model;
 
             for (layer_idx, block) in self.moonshine_blocks.iter().enumerate() {
@@ -2419,12 +2430,16 @@ impl Decoder {
         match self.attention_type {
             AttentionType::Gqa { kv_heads } => {
                 let head_dim = self.d_model / self.n_heads;
-                let kv_dim = kv_heads as usize * head_dim;
+                // Use padded head_dim for cache if Moonshine blocks have padding
+                let padded_hd = if self.moonshine_blocks.is_empty() {
+                    head_dim
+                } else {
+                    self.moonshine_blocks[0].self_attn.config.padded_head_dim()
+                };
+                let kv_dim = kv_heads as usize * padded_hd;
                 DecoderKVCache::new_gqa(self.n_layers, kv_dim, self.d_model, self.max_len)
             }
-            AttentionType::Mha => {
-                DecoderKVCache::new(self.n_layers, self.d_model, self.max_len)
-            }
+            AttentionType::Mha => DecoderKVCache::new(self.n_layers, self.d_model, self.max_len),
         }
     }
 
@@ -2701,9 +2716,10 @@ impl Decoder {
 
         if self.rope.is_some() {
             // Moonshine path: incremental GQA with KV cache (WAPR-MOONSHINE-002)
-            let rope = self.rope.as_ref().ok_or_else(|| {
-                WhisperError::Model("Moonshine decoder requires RoPE".into())
-            })?;
+            let rope = self
+                .rope
+                .as_ref()
+                .ok_or_else(|| WhisperError::Model("Moonshine decoder requires RoPE".into()))?;
             let pos = cache.seq_position;
             let enc_seq_len = encoder_output.len() / self.d_model;
 
@@ -2794,9 +2810,10 @@ impl Decoder {
 
         if self.rope.is_some() {
             // Moonshine path: incremental GQA with KV cache (WAPR-MOONSHINE-002)
-            let rope = self.rope.as_ref().ok_or_else(|| {
-                WhisperError::Model("Moonshine decoder requires RoPE".into())
-            })?;
+            let rope = self
+                .rope
+                .as_ref()
+                .ok_or_else(|| WhisperError::Model("Moonshine decoder requires RoPE".into()))?;
             let moon_pos = cache.seq_position;
             let enc_seq_len = encoder_output.len() / self.d_model;
 

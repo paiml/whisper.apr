@@ -112,8 +112,10 @@ impl Encoder {
                 // Moonshine partial_rotary_factor=0.9: rotate first 32 of 36 head dims
                 let rotary_dim = (head_dim as f64 * 0.9).floor() as usize;
                 let rotary_dim = rotary_dim - (rotary_dim % 2);
+                // RoPE uses padded head_dim (36→40) so it accepts padded Q/K
+                let padded_hd = head_dim.div_ceil(8) * 8;
                 let Ok(rope_emb) = RotaryEmbedding::new(RopeConfig {
-                    head_dim,
+                    head_dim: padded_hd,
                     base: 10000.0,
                     max_seq_len: 2048,
                     rotary_dim: Some(rotary_dim),
@@ -225,9 +227,10 @@ impl Encoder {
         // Dispatch based on model type
         if self.rope.is_some() {
             // Moonshine path: MHA + GELU MLP with RoPE per-block
-            let rope = self.rope.as_ref().ok_or_else(|| {
-                WhisperError::Model("Moonshine encoder requires RoPE".into())
-            })?;
+            let rope = self
+                .rope
+                .as_ref()
+                .ok_or_else(|| WhisperError::Model("Moonshine encoder requires RoPE".into()))?;
             for block in &self.moonshine_blocks {
                 x = block.forward(&x, seq_len, rope)?;
             }
@@ -475,9 +478,10 @@ impl Encoder {
 
         if self.rope.is_some() {
             // Moonshine path: probed block-by-block
-            let rope = self.rope.as_ref().ok_or_else(|| {
-                WhisperError::Model("Moonshine encoder requires RoPE".into())
-            })?;
+            let rope = self
+                .rope
+                .as_ref()
+                .ok_or_else(|| WhisperError::Model("Moonshine encoder requires RoPE".into()))?;
             for (i, block) in self.moonshine_blocks.iter().enumerate() {
                 x = block.forward_probed(&x, seq_len, rope, i, probe)?;
             }
