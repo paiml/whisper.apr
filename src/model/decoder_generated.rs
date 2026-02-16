@@ -1744,7 +1744,7 @@ pub struct Decoder {
     n_heads: usize,
     /// Whisper decoder blocks (MHA + GELU + LayerNorm)
     blocks: Vec<DecoderBlock>,
-    /// Moonshine decoder blocks (GQA + SwiGLU + RmsNorm + RoPE)
+    /// Moonshine decoder blocks (MHA + SiLU MLP + RmsNorm + RoPE)
     moonshine_blocks: Vec<MoonshineDecoderBlock>,
     /// Rotary positional embedding for Moonshine decoder (None for Whisper)
     rope: Option<RotaryEmbedding>,
@@ -1795,7 +1795,7 @@ impl Decoder {
                 (blocks, Vec::new(), None, None)
             }
             AttentionType::Gqa { kv_heads } => {
-                // Moonshine: GQA + SwiGLU + RoPE decoder blocks
+                // Moonshine: MHA + MLP + RoPE decoder blocks
                 let head_dim = d_model / n_heads;
                 // HF Moonshine config: intermediate_size = 4 * hidden_size
                 let intermediate_size = d_model * 4;
@@ -1983,7 +1983,7 @@ impl Decoder {
         let enc_seq_len = encoder_output.len() / self.d_model;
 
         if self.rope.is_some() {
-            // Moonshine path: GQA + SwiGLU + RoPE
+            // Moonshine path: MHA + MLP + RoPE
             let rope = self.rope.as_ref().ok_or_else(|| {
                 WhisperError::Model("Moonshine decoder requires RoPE".into())
             })?;
@@ -2065,7 +2065,7 @@ impl Decoder {
         trace.push(("after_pos_emb".to_string(), l2_pos_emb));
 
         if self.rope.is_some() {
-            // Moonshine path: GQA + SwiGLU + RoPE with tracing
+            // Moonshine path: MHA + MLP + RoPE with tracing
             let rope = self.rope.as_ref().ok_or_else(|| {
                 WhisperError::Model("Moonshine decoder requires RoPE".into())
             })?;
@@ -2788,7 +2788,7 @@ impl Decoder {
         encoder_output: &[f32],
         cache: &mut DecoderKVCache,
     ) -> WhisperResult<Vec<f32>> {
-        // Moonshine uses SwiGLU (not GELU), fused FFN is Whisper-only
+        // Moonshine uses MLP FFN (fc1/fc2), fused FFN is Whisper-only
         if self.rope.is_some() {
             return Err(WhisperError::Model(
                 "forward_one_fused is not supported for Moonshine; use forward_one instead".into(),

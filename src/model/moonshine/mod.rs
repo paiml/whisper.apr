@@ -2,8 +2,8 @@
 //!
 //! Moonshine encoder and decoder blocks composed from existing LFM2 components:
 //! - `RmsNorm` for pre-normalization
-//! - `GroupedQueryAttention` for GQA self-attention and cross-attention
-//! - `SwiGluFfn` for gated feed-forward
+//! - `GroupedQueryAttention` for MHA self-attention and cross-attention
+//! - `MlpFfn` for feed-forward (GELU in encoder, SiLU in decoder)
 //! - `RotaryEmbedding` for position encoding (applied within attention)
 
 pub mod decoder_block;

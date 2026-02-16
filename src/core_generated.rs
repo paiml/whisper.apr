@@ -1201,7 +1201,7 @@ impl WhisperApr {
 
         // Load encoder block weights — dispatch Whisper vs Moonshine
         if !encoder.moonshine_blocks().is_empty() {
-            // Moonshine encoder: GQA + SwiGLU + RmsNorm
+            // Moonshine encoder: MHA + GELU MLP + RmsNorm
             for layer_idx in 0..n_layers {
                 let progress = layer_idx as f32 / n_layers as f32;
                 tracker.update_phase_progress(progress);
@@ -1216,7 +1216,7 @@ impl WhisperApr {
                     &mut block.ln1,
                 );
 
-                // GQA self-attention
+                // MHA self-attention
                 Self::load_gqa_weights(
                     reader,
                     &format!("encoder.blocks.{layer_idx}.attn"),
@@ -1230,8 +1230,8 @@ impl WhisperApr {
                     &mut block.ln2,
                 );
 
-                // SwiGLU FFN
-                Self::load_swiglu_weights(
+                // MLP FFN (fc1 → GELU → fc2)
+                Self::load_mlp_weights(
                     reader,
                     &format!("encoder.blocks.{layer_idx}.ffn"),
                     &mut block.ffn,
@@ -1311,7 +1311,7 @@ impl WhisperApr {
 
         // Load decoder block weights — dispatch Whisper vs Moonshine
         if !decoder.moonshine_blocks().is_empty() {
-            // Moonshine decoder: GQA self-attn + GQA cross-attn + SwiGLU + RmsNorm
+            // Moonshine decoder: MHA self-attn + MHA cross-attn + SiLU MLP + RmsNorm
             for layer_idx in 0..n_layers {
                 let progress = layer_idx as f32 / n_layers as f32;
                 tracker.update_phase_progress(progress);
@@ -1326,7 +1326,7 @@ impl WhisperApr {
                     &mut block.ln1,
                 );
 
-                // GQA self-attention (causal, with RoPE)
+                // MHA self-attention (causal, with RoPE)
                 Self::load_gqa_weights(
                     reader,
                     &format!("decoder.blocks.{layer_idx}.attn"),
@@ -1340,7 +1340,7 @@ impl WhisperApr {
                     &mut block.ln_cross,
                 );
 
-                // GQA cross-attention (Q from decoder, KV from encoder)
+                // MHA cross-attention (Q from decoder, KV from encoder)
                 Self::load_gqa_weights(
                     reader,
                     &format!("decoder.blocks.{layer_idx}.cross_attn"),
@@ -1354,8 +1354,8 @@ impl WhisperApr {
                     &mut block.ln2,
                 );
 
-                // SwiGLU FFN
-                Self::load_swiglu_weights(
+                // MLP FFN (fc1 → SiLU → fc2)
+                Self::load_mlp_weights(
                     reader,
                     &format!("decoder.blocks.{layer_idx}.ffn"),
                     &mut block.ffn,
@@ -1527,23 +1527,19 @@ impl WhisperApr {
         }
     }
 
-    /// Load SwiGLU FFN weights (Moonshine: gate, up, down projections)
-    fn load_swiglu_weights(
+    /// Load MLP FFN weights (Moonshine: fc1 → activation → fc2)
+    fn load_mlp_weights(
         reader: &format::AprReader,
         prefix: &str,
-        ffn: &mut model::lfm2::swiglu::SwiGluFfn,
+        ffn: &mut model::lfm2::mlp::MlpFfn,
     ) {
-        if let Ok(w) = reader.load_tensor(&format!("{prefix}.w_gate.weight")) {
-            let len = w.len().min(ffn.w_gate.len());
-            ffn.w_gate[..len].copy_from_slice(&w[..len]);
+        if let Ok(w) = reader.load_tensor(&format!("{prefix}.fc1.weight")) {
+            let len = w.len().min(ffn.fc1.len());
+            ffn.fc1[..len].copy_from_slice(&w[..len]);
         }
-        if let Ok(w) = reader.load_tensor(&format!("{prefix}.w_up.weight")) {
-            let len = w.len().min(ffn.w_up.len());
-            ffn.w_up[..len].copy_from_slice(&w[..len]);
-        }
-        if let Ok(w) = reader.load_tensor(&format!("{prefix}.w_down.weight")) {
-            let len = w.len().min(ffn.w_down.len());
-            ffn.w_down[..len].copy_from_slice(&w[..len]);
+        if let Ok(w) = reader.load_tensor(&format!("{prefix}.fc2.weight")) {
+            let len = w.len().min(ffn.fc2.len());
+            ffn.fc2[..len].copy_from_slice(&w[..len]);
         }
     }
 

@@ -1,27 +1,27 @@
 //! Moonshine encoder block
 //!
-//! Pre-RMSNorm + GQA self-attention + SwiGLU FFN with residual connections.
-//! RoPE is applied within the GQA forward pass.
+//! Pre-RMSNorm + MHA self-attention + GELU MLP FFN with residual connections.
+//! RoPE is applied within the attention forward pass.
 
 use crate::error::WhisperResult;
 use crate::model::lfm2::gqa::{GqaConfig, GroupedQueryAttention};
 use crate::model::lfm2::layer::RmsNorm;
+use crate::model::lfm2::mlp::{MlpActivation, MlpConfig, MlpFfn};
 use crate::model::lfm2::rope::RotaryEmbedding;
-use crate::model::lfm2::swiglu::{SwiGluConfig, SwiGluFfn};
 
 /// Single Moonshine encoder transformer block
 ///
-/// Architecture: Pre-RMSNorm → GQA self-attention → residual → Pre-RMSNorm → SwiGLU → residual
+/// Architecture: Pre-RMSNorm → MHA self-attention → residual → Pre-RMSNorm → GELU MLP → residual
 #[derive(Debug, Clone)]
 pub struct MoonshineEncoderBlock {
     /// Pre-attention RMS normalization
     pub ln1: RmsNorm,
-    /// Grouped query self-attention (with RoPE applied internally)
+    /// Multi-head self-attention (with RoPE applied internally)
     pub self_attn: GroupedQueryAttention,
     /// Pre-FFN RMS normalization
     pub ln2: RmsNorm,
-    /// SwiGLU feed-forward network
-    pub ffn: SwiGluFfn,
+    /// Standard MLP feed-forward network (fc1 → GELU → fc2)
+    pub ffn: MlpFfn,
 }
 
 impl MoonshineEncoderBlock {
@@ -30,11 +30,11 @@ impl MoonshineEncoderBlock {
     /// # Arguments
     /// * `d_model` - Hidden dimension (288 for tiny, 416 for base)
     /// * `n_q_heads` - Number of query attention heads (8)
-    /// * `n_kv_heads` - Number of key-value heads (2)
-    /// * `intermediate_size` - SwiGLU intermediate dimension (~2.67x d_model)
+    /// * `n_kv_heads` - Number of key-value heads (8, MHA)
+    /// * `intermediate_size` - FFN intermediate dimension (4x d_model)
     ///
     /// # Errors
-    /// Returns error if GQA or SwiGLU config validation fails
+    /// Returns error if attention or MLP config validation fails
     pub fn new(
         d_model: usize,
         n_q_heads: usize,
@@ -52,17 +52,18 @@ impl MoonshineEncoderBlock {
             dropout: 0.0,
         };
 
-        let swiglu_config = SwiGluConfig {
+        let mlp_config = MlpConfig {
             hidden_size: d_model,
             intermediate_size,
             bias: false,
+            activation: MlpActivation::Gelu,
         };
 
         Ok(Self {
             ln1: RmsNorm::new(d_model),
             self_attn: GroupedQueryAttention::new(gqa_config)?,
             ln2: RmsNorm::new(d_model),
-            ffn: SwiGluFfn::new(swiglu_config)?,
+            ffn: MlpFfn::new(mlp_config)?,
         })
     }
 
@@ -113,14 +114,14 @@ mod tests {
 
     #[test]
     fn test_moonshine_encoder_block_new() {
-        // Moonshine tiny: d=288, 8 Q heads, 2 KV heads, head_dim=36
-        let block = MoonshineEncoderBlock::new(288, 8, 2, 768);
+        // Moonshine tiny: d=288, 8 Q heads, 8 KV heads (MHA), 4x intermediate
+        let block = MoonshineEncoderBlock::new(288, 8, 8, 1152);
         assert!(block.is_ok());
     }
 
     #[test]
     fn test_moonshine_encoder_block_forward_shape() {
-        let block = MoonshineEncoderBlock::new(288, 8, 2, 768).expect("block creation");
+        let block = MoonshineEncoderBlock::new(288, 8, 8, 1152).expect("block creation");
         let rope = RotaryEmbedding::new(crate::model::lfm2::rope::RopeConfig {
             head_dim: 36, // 288 / 8
             base: 10000.0,
@@ -138,7 +139,7 @@ mod tests {
 
     #[test]
     fn test_moonshine_encoder_block_residual() {
-        let block = MoonshineEncoderBlock::new(288, 8, 2, 768).expect("block creation");
+        let block = MoonshineEncoderBlock::new(288, 8, 8, 1152).expect("block creation");
         let rope = RotaryEmbedding::new(crate::model::lfm2::rope::RopeConfig {
             head_dim: 36,
             base: 10000.0,
@@ -152,11 +153,9 @@ mod tests {
 
         let output = block.forward(&input, seq_len, &rope).expect("forward");
 
-        // With zero weights, FFN output is zero, attention output passes through
+        // With zero weights, MLP output is zero, attention output passes through
         // residual connections, so output should be close to input
-        // (RmsNorm normalizes, GQA with zero weights outputs zeros, residual adds back)
         assert_eq!(output.len(), input.len());
-        // Output should be finite
         assert!(output.iter().all(|v| v.is_finite()));
     }
 

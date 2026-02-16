@@ -1,35 +1,35 @@
 //! Moonshine decoder block
 //!
-//! Masked self-attention (GQA + RoPE) + cross-attention (GQA, no RoPE) + SwiGLU FFN.
+//! Masked MHA self-attention (RoPE) + cross-attention (no RoPE) + SiLU MLP FFN.
 //! Pre-RMSNorm before each sub-layer with residual connections.
 
 use crate::error::WhisperResult;
 use crate::model::LayerKVCache;
 use crate::model::lfm2::gqa::{GqaConfig, GroupedQueryAttention};
 use crate::model::lfm2::layer::RmsNorm;
+use crate::model::lfm2::mlp::{MlpActivation, MlpConfig, MlpFfn};
 use crate::model::lfm2::rope::RotaryEmbedding;
-use crate::model::lfm2::swiglu::{SwiGluConfig, SwiGluFfn};
 
 /// Single Moonshine decoder transformer block
 ///
 /// Architecture:
-/// 1. Pre-RMSNorm → masked GQA self-attention (with RoPE) → residual
-/// 2. Pre-RMSNorm → GQA cross-attention (Q from decoder, KV from encoder) → residual
-/// 3. Pre-RMSNorm → SwiGLU FFN → residual
+/// 1. Pre-RMSNorm → masked MHA self-attention (with RoPE) → residual
+/// 2. Pre-RMSNorm → MHA cross-attention (Q from decoder, KV from encoder) → residual
+/// 3. Pre-RMSNorm → SiLU MLP FFN → residual
 #[derive(Debug, Clone)]
 pub struct MoonshineDecoderBlock {
     /// Pre-self-attention RMS normalization
     pub ln1: RmsNorm,
-    /// Masked GQA self-attention (causal, with RoPE)
+    /// Masked MHA self-attention (causal, with RoPE)
     pub self_attn: GroupedQueryAttention,
     /// Pre-cross-attention RMS normalization
     pub ln_cross: RmsNorm,
-    /// GQA cross-attention (Q from decoder, KV from encoder, no RoPE, no causal mask)
+    /// MHA cross-attention (Q from decoder, KV from encoder, no RoPE, no causal mask)
     pub cross_attn: GroupedQueryAttention,
     /// Pre-FFN RMS normalization
     pub ln2: RmsNorm,
-    /// SwiGLU feed-forward network
-    pub ffn: SwiGluFfn,
+    /// Standard MLP feed-forward network (fc1 → SiLU → fc2)
+    pub ffn: MlpFfn,
 }
 
 impl MoonshineDecoderBlock {
@@ -38,11 +38,11 @@ impl MoonshineDecoderBlock {
     /// # Arguments
     /// * `d_model` - Hidden dimension (288 for tiny, 416 for base)
     /// * `n_q_heads` - Number of query attention heads (8)
-    /// * `n_kv_heads` - Number of key-value heads (2)
-    /// * `intermediate_size` - SwiGLU intermediate dimension
+    /// * `n_kv_heads` - Number of key-value heads (8, MHA)
+    /// * `intermediate_size` - FFN intermediate dimension (4x d_model)
     ///
     /// # Errors
-    /// Returns error if GQA or SwiGLU config validation fails
+    /// Returns error if attention or MLP config validation fails
     pub fn new(
         d_model: usize,
         n_q_heads: usize,
@@ -71,10 +71,11 @@ impl MoonshineDecoderBlock {
             dropout: 0.0,
         };
 
-        let swiglu_config = SwiGluConfig {
+        let mlp_config = MlpConfig {
             hidden_size: d_model,
             intermediate_size,
             bias: false,
+            activation: MlpActivation::Silu,
         };
 
         Ok(Self {
@@ -83,7 +84,7 @@ impl MoonshineDecoderBlock {
             ln_cross: RmsNorm::new(d_model),
             cross_attn: GroupedQueryAttention::new(cross_attn_config)?,
             ln2: RmsNorm::new(d_model),
-            ffn: SwiGluFfn::new(swiglu_config)?,
+            ffn: MlpFfn::new(mlp_config)?,
         })
     }
 
@@ -175,7 +176,7 @@ impl MoonshineDecoderBlock {
         // Residual connection
         add_vectors_inplace(&mut residual, &cross_out);
 
-        // 3. Pre-norm → SwiGLU FFN → residual
+        // 3. Pre-norm → SiLU MLP FFN → residual
         let normed2 = self.ln2.forward(&residual, 1)?;
         let ffn_out = self.ffn.forward(&normed2, 1)?;
         add_vectors_inplace(&mut residual, &ffn_out);
@@ -247,13 +248,14 @@ mod tests {
 
     #[test]
     fn test_moonshine_decoder_block_new() {
-        let block = MoonshineDecoderBlock::new(288, 8, 2, 768);
+        // Moonshine tiny: d=288, 8 Q heads, 8 KV heads (MHA), 4x intermediate
+        let block = MoonshineDecoderBlock::new(288, 8, 8, 1152);
         assert!(block.is_ok());
     }
 
     #[test]
     fn test_moonshine_decoder_block_forward_shape() {
-        let block = MoonshineDecoderBlock::new(288, 8, 2, 768).expect("block creation");
+        let block = MoonshineDecoderBlock::new(288, 8, 8, 1152).expect("block creation");
         let rope = RotaryEmbedding::new(crate::model::lfm2::rope::RopeConfig {
             head_dim: 36, // 288 / 8
             base: 10000.0,
@@ -262,8 +264,8 @@ mod tests {
         .expect("rope creation");
 
         let d_model = 288;
-        let dec_seq_len = 3; // 3 tokens generated so far
-        let enc_seq_len = 7; // 7 encoder frames from conv stem
+        let dec_seq_len = 3;
+        let enc_seq_len = 7;
 
         let decoder_input = vec![0.1_f32; dec_seq_len * d_model];
         let encoder_output = vec![0.2_f32; enc_seq_len * d_model];
@@ -276,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_moonshine_decoder_block_forward_cached_shape() {
-        let block = MoonshineDecoderBlock::new(288, 8, 2, 768).expect("block creation");
+        let block = MoonshineDecoderBlock::new(288, 8, 8, 1152).expect("block creation");
         let rope = RotaryEmbedding::new(crate::model::lfm2::rope::RopeConfig {
             head_dim: 36, // 288 / 8
             base: 10000.0,
@@ -285,7 +287,7 @@ mod tests {
         .expect("rope creation");
 
         let d_model = 288;
-        let kv_dim = 2 * 36; // num_kv_heads * head_dim = 72
+        let kv_dim = 8 * 36; // num_kv_heads * head_dim = 288 (MHA: kv_dim == d_model)
         let enc_seq_len = 7;
         let max_tokens = 100;
 
@@ -306,22 +308,20 @@ mod tests {
                     &rope,
                     &mut self_cache,
                     &mut cross_cache,
-                    pos > 0, // cross_attn_cached after first token
+                    pos > 0,
                 )
                 .expect("forward_cached");
             assert_eq!(out.len(), d_model);
             assert!(out.iter().all(|v| v.is_finite()));
         }
 
-        // Self-attention cache should have 3 entries
         assert_eq!(self_cache.len(), 3);
-        // Cross-attention cache should have enc_seq_len entries (set once)
         assert_eq!(cross_cache.len(), enc_seq_len);
     }
 
     #[test]
     fn test_moonshine_decoder_block_finite_output() {
-        let block = MoonshineDecoderBlock::new(288, 8, 2, 768).expect("block creation");
+        let block = MoonshineDecoderBlock::new(288, 8, 8, 1152).expect("block creation");
         let rope = RotaryEmbedding::new(crate::model::lfm2::rope::RopeConfig {
             head_dim: 36,
             base: 10000.0,
