@@ -1523,8 +1523,18 @@ mod tests {
                 cache_len: 3,
             },
             LayerType::Attention { use_gqa: true },
+            LayerType::Attention { use_gqa: false },
             LayerType::Ffn {
                 activation: FfnActivation::Swiglu,
+            },
+            LayerType::Ffn {
+                activation: FfnActivation::Gelu,
+            },
+            LayerType::Ffn {
+                activation: FfnActivation::Silu,
+            },
+            LayerType::Ffn {
+                activation: FfnActivation::Relu,
             },
         ];
 
