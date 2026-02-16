@@ -1201,7 +1201,7 @@ impl WhisperApr {
 
         // Load encoder block weights — dispatch Whisper vs Moonshine
         if !encoder.moonshine_blocks().is_empty() {
-            // Moonshine encoder: MHA + GELU MLP + RmsNorm
+            // Moonshine encoder: MHA + GELU MLP + LayerNorm(no bias)
             for layer_idx in 0..n_layers {
                 let progress = layer_idx as f32 / n_layers as f32;
                 tracker.update_phase_progress(progress);
@@ -1209,8 +1209,8 @@ impl WhisperApr {
 
                 let block = &mut encoder.moonshine_blocks_mut()[layer_idx];
 
-                // Pre-attention RMS norm
-                Self::load_rms_norm_weights(
+                // Pre-attention LayerNorm (weight-only)
+                Self::load_layernorm_nobias_weights(
                     reader,
                     &format!("encoder.blocks.{layer_idx}.ln1"),
                     &mut block.ln1,
@@ -1223,8 +1223,8 @@ impl WhisperApr {
                     &mut block.self_attn,
                 );
 
-                // Pre-FFN RMS norm
-                Self::load_rms_norm_weights(
+                // Pre-FFN LayerNorm (weight-only)
+                Self::load_layernorm_nobias_weights(
                     reader,
                     &format!("encoder.blocks.{layer_idx}.ln2"),
                     &mut block.ln2,
@@ -1311,7 +1311,7 @@ impl WhisperApr {
 
         // Load decoder block weights — dispatch Whisper vs Moonshine
         if !decoder.moonshine_blocks().is_empty() {
-            // Moonshine decoder: MHA self-attn + MHA cross-attn + SiLU MLP + RmsNorm
+            // Moonshine decoder: MHA self-attn + MHA cross-attn + SiLU gated MLP + LayerNorm(no bias)
             for layer_idx in 0..n_layers {
                 let progress = layer_idx as f32 / n_layers as f32;
                 tracker.update_phase_progress(progress);
@@ -1319,8 +1319,8 @@ impl WhisperApr {
 
                 let block = &mut decoder.moonshine_blocks_mut()[layer_idx];
 
-                // Pre-self-attention RMS norm
-                Self::load_rms_norm_weights(
+                // Pre-self-attention LayerNorm (weight-only)
+                Self::load_layernorm_nobias_weights(
                     reader,
                     &format!("decoder.blocks.{layer_idx}.ln1"),
                     &mut block.ln1,
@@ -1333,8 +1333,8 @@ impl WhisperApr {
                     &mut block.self_attn,
                 );
 
-                // Pre-cross-attention RMS norm
-                Self::load_rms_norm_weights(
+                // Pre-cross-attention LayerNorm (weight-only)
+                Self::load_layernorm_nobias_weights(
                     reader,
                     &format!("decoder.blocks.{layer_idx}.ln_cross"),
                     &mut block.ln_cross,
@@ -1347,8 +1347,8 @@ impl WhisperApr {
                     &mut block.cross_attn,
                 );
 
-                // Pre-FFN RMS norm
-                Self::load_rms_norm_weights(
+                // Pre-FFN LayerNorm (weight-only)
+                Self::load_layernorm_nobias_weights(
                     reader,
                     &format!("decoder.blocks.{layer_idx}.ln2"),
                     &mut block.ln2,
@@ -1362,9 +1362,9 @@ impl WhisperApr {
                 );
             }
 
-            // Load Moonshine final RMS norm
-            if let Some(rms) = decoder.ln_post_rms_mut() {
-                Self::load_rms_norm_weights(reader, "decoder.ln_post", rms);
+            // Load Moonshine final LayerNorm (weight-only)
+            if let Some(ln) = decoder.ln_post_rms_mut() {
+                Self::load_rms_norm_weights(reader, "decoder.ln_post", ln);
             }
         } else {
             // Whisper decoder: MHA + GELU + LayerNorm
@@ -1491,7 +1491,7 @@ impl WhisperApr {
         }
     }
 
-    /// Load RMS norm weights (Moonshine: single weight vector, no bias)
+    /// Load RMS norm weights (LFM2: single weight vector, no bias)
     fn load_rms_norm_weights(
         reader: &format::AprReader,
         prefix: &str,
@@ -1500,6 +1500,18 @@ impl WhisperApr {
         if let Ok(weight) = reader.load_tensor(&format!("{prefix}.weight")) {
             let len = weight.len().min(rms.weight.len());
             rms.weight[..len].copy_from_slice(&weight[..len]);
+        }
+    }
+
+    /// Load LayerNorm (no bias) weights (Moonshine: weight-only LayerNorm)
+    fn load_layernorm_nobias_weights(
+        reader: &format::AprReader,
+        prefix: &str,
+        ln: &mut model::lfm2::layer::LayerNormNoBias,
+    ) {
+        if let Ok(weight) = reader.load_tensor(&format!("{prefix}.weight")) {
+            let len = weight.len().min(ln.weight.len());
+            ln.weight[..len].copy_from_slice(&weight[..len]);
         }
     }
 
