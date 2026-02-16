@@ -499,19 +499,20 @@ impl Lfm2Config {
 
     /// Moonshine tiny configuration (Useful Sensors)
     ///
-    /// Variable-length ASR with GQA, SwiGLU, and RoPE.
+    /// Variable-length ASR with MHA, GELU/SiLU FFN, and RoPE.
     /// 27.1M params, 288-dim, 6 encoder + 6 decoder layers.
+    /// Matches `usefulsensors/moonshine-tiny` on HuggingFace.
     #[must_use]
     pub fn moonshine_tiny() -> Self {
-        let layer_types = vec![LayerType::Attention { use_gqa: true }; 6];
+        let layer_types = vec![LayerType::Attention { use_gqa: false }; 6];
 
         Self {
             hidden_size: 288,
             num_layers: 6,
             num_q_heads: 8,
-            num_kv_heads: 2,
-            intermediate_size: 768, // ~2.67x expansion for SwiGLU
-            vocab_size: 32768,      // SentencePiece
+            num_kv_heads: 8, // MHA (kv_heads = q_heads)
+            intermediate_size: 1152, // 4x expansion
+            vocab_size: 32768,       // SentencePiece
             rope_theta: 10_000.0,
             conv_dimension: 0,
             max_seq_len: 2048,
@@ -521,18 +522,19 @@ impl Lfm2Config {
 
     /// Moonshine base configuration (Useful Sensors)
     ///
-    /// Variable-length ASR with GQA, SwiGLU, and RoPE.
-    /// 61.5M params, 416-dim, 12 encoder + 6 decoder layers.
+    /// Variable-length ASR with MHA, GELU/SiLU FFN, and RoPE.
+    /// 61.5M params, 416-dim, 8 encoder + 8 decoder layers.
+    /// Matches `usefulsensors/moonshine-base` on HuggingFace.
     #[must_use]
     pub fn moonshine_base() -> Self {
-        let layer_types = vec![LayerType::Attention { use_gqa: true }; 12];
+        let layer_types = vec![LayerType::Attention { use_gqa: false }; 8];
 
         Self {
             hidden_size: 416,
-            num_layers: 12,
+            num_layers: 8,
             num_q_heads: 8,
-            num_kv_heads: 2,
-            intermediate_size: 1110, // ~2.67x expansion for SwiGLU
+            num_kv_heads: 8, // MHA (kv_heads = q_heads)
+            intermediate_size: 1664, // 4x expansion
             vocab_size: 32768,
             rope_theta: 10_000.0,
             conv_dimension: 0,
@@ -2048,14 +2050,14 @@ mod tests {
         assert_eq!(config.hidden_size, 288);
         assert_eq!(config.num_layers, 6);
         assert_eq!(config.num_q_heads, 8);
-        assert_eq!(config.num_kv_heads, 2, "Moonshine uses GQA 4:1");
-        assert_eq!(config.intermediate_size, 768);
+        assert_eq!(config.num_kv_heads, 8, "Moonshine uses MHA (kv_heads == q_heads)");
+        assert_eq!(config.intermediate_size, 1152);
         assert_eq!(config.vocab_size, 32768, "SentencePiece vocab");
-        assert_eq!(config.gqa_ratio(), 4);
+        assert_eq!(config.gqa_ratio(), 1);
         assert_eq!(config.layer_types.len(), 6);
 
         for layer_type in &config.layer_types {
-            assert!(matches!(layer_type, LayerType::Attention { use_gqa: true }));
+            assert!(matches!(layer_type, LayerType::Attention { use_gqa: false }));
         }
     }
 
@@ -2064,13 +2066,13 @@ mod tests {
         let config = Lfm2Config::moonshine_base();
 
         assert_eq!(config.hidden_size, 416);
-        assert_eq!(config.num_layers, 12);
+        assert_eq!(config.num_layers, 8);
         assert_eq!(config.num_q_heads, 8);
-        assert_eq!(config.num_kv_heads, 2);
-        assert_eq!(config.intermediate_size, 1110);
+        assert_eq!(config.num_kv_heads, 8);
+        assert_eq!(config.intermediate_size, 1664);
         assert_eq!(config.vocab_size, 32768);
-        assert_eq!(config.gqa_ratio(), 4);
-        assert_eq!(config.layer_types.len(), 12);
+        assert_eq!(config.gqa_ratio(), 1);
+        assert_eq!(config.layer_types.len(), 8);
     }
 
     #[test]

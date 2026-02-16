@@ -4,7 +4,7 @@
 //! to encoder outputs. Supports both Whisper and Moonshine architectures:
 //!
 //! - **Whisper**: Learned positional embeddings, standard MHA, GELU FFN
-//! - **Moonshine**: RoPE (no additive PE), GQA, SwiGLU FFN
+//! - **Moonshine**: RoPE (no additive PE), MHA, GELU/SiLU FFN
 //!
 //! # Architecture
 //!
@@ -1797,7 +1797,8 @@ impl Decoder {
             AttentionType::Gqa { kv_heads } => {
                 // Moonshine: GQA + SwiGLU + RoPE decoder blocks
                 let head_dim = d_model / n_heads;
-                let intermediate_size = (d_model * 8) / 3;
+                // HF Moonshine config: intermediate_size = 4 * hidden_size
+                let intermediate_size = d_model * 4;
                 let mut moon_blocks = Vec::with_capacity(n_layers);
                 for _ in 0..n_layers {
                     match MoonshineDecoderBlock::new(

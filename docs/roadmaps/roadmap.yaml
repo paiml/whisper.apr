@@ -1644,11 +1644,11 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'WAPR-MOONSHINE-011: Moonshine ONNX-to-APR weight conversion pipeline'
-  status: planned
+  status: inprogress
   priority: high
   assigned_to: null
   created: 2026-02-16T10:10:39Z
-  updated: 2026-02-16T10:10:39Z
+  updated: 2026-02-16T10:12:37.621398698+00:00
   spec: null
   acceptance_criteria:
   - Extend tools/convert.rs to parse Moonshine ONNX graphs and remap tensor names to APR format. Scaffolding exists but ONNX tensor extraction is incomplete. Blocks real model inference.
@@ -1703,6 +1703,23 @@ roadmap:
   spec: null
   acceptance_criteria:
   - Verify Moonshine produces identical output regardless of trailing silence padding. 1.5s audio with 0 padding == 1.5s with 28.5s padding. Requires WAPR-MOONSHINE-011.
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: PMAT-029
+  github_issue: null
+  item_type: task
+  title: 'WAPR-MOONSHINE-015: Fix ModelConfig to match actual HuggingFace Moonshine weights'
+  status: inprogress
+  priority: critical
+  assigned_to: null
+  created: 2026-02-16T10:14:29Z
+  updated: 2026-02-16T10:14:32.501922658+00:00
+  spec: null
+  acceptance_criteria:
+  - 'ModelConfig::moonshine_tiny() and moonshine_base() have wrong values vs usefulsensors/moonshine-{tiny,base} on HuggingFace. Discrepancies: kv_heads=8 (MHA not GQA), intermediate_size=1152/1664 (4x not 2.67x), base has 8/8 layers (not 12/6), encoder uses GELU (not SwiGLU), partial_rotary_factor=0.9/0.62, pad_head_dim_to_multiple_of=8. BLOCKS WAPR-MOONSHINE-011.'
   phases: []
   subtasks: []
   estimated_effort: null
