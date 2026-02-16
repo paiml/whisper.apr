@@ -65,99 +65,53 @@ pub fn map_gguf_whisper_tensor_name(name: &str) -> String {
     name.to_string()
 }
 
+/// GGUF → internal name mapping rules for self-attention components.
+const SELF_ATTN_RULES: &[(&str, &str)] = &[
+    ("attn_ln.", "self_attn_layer_norm."),
+    ("attn.query.", "self_attn.q_proj."),
+    ("attn.key.", "self_attn.k_proj."),
+    ("attn.value.", "self_attn.v_proj."),
+    ("attn.out.", "self_attn.out_proj."),
+];
+
+/// GGUF → internal name mapping rules for cross-attention components (decoder only).
+const CROSS_ATTN_RULES: &[(&str, &str)] = &[
+    ("cross_attn_ln.", "encoder_attn_layer_norm."),
+    ("cross_attn.query.", "encoder_attn.q_proj."),
+    ("cross_attn.key.", "encoder_attn.k_proj."),
+    ("cross_attn.value.", "encoder_attn.v_proj."),
+    ("cross_attn.out.", "encoder_attn.out_proj."),
+];
+
+/// GGUF → internal name mapping rules for FFN components.
+const FFN_RULES: &[(&str, &str)] = &[
+    ("mlp_ln.", "final_layer_norm."),
+    ("mlp.0.", "fc1."),
+    ("mlp.2.", "fc2."),
+];
+
+/// Apply a sequence of prefix-replacement mapping rules to a component string.
+///
+/// Returns the remapped string on first match, or the original if no rule matches.
+fn apply_mapping_rules(component: &str, rule_sets: &[&[(&str, &str)]]) -> String {
+    for rules in rule_sets {
+        for &(prefix, replacement) in *rules {
+            if let Some(suffix) = component.strip_prefix(prefix) {
+                return format!("{replacement}{suffix}");
+            }
+        }
+    }
+    component.to_string()
+}
+
 /// Map encoder block component from GGUF naming to internal naming.
 fn map_block_component(component: &str) -> String {
-    // Self-attention layernorm
-    if let Some(suffix) = component.strip_prefix("attn_ln.") {
-        return format!("self_attn_layer_norm.{suffix}");
-    }
-
-    // Self-attention projections
-    if let Some(suffix) = component.strip_prefix("attn.query.") {
-        return format!("self_attn.q_proj.{suffix}");
-    }
-    if let Some(suffix) = component.strip_prefix("attn.key.") {
-        return format!("self_attn.k_proj.{suffix}");
-    }
-    if let Some(suffix) = component.strip_prefix("attn.value.") {
-        return format!("self_attn.v_proj.{suffix}");
-    }
-    if let Some(suffix) = component.strip_prefix("attn.out.") {
-        return format!("self_attn.out_proj.{suffix}");
-    }
-
-    // FFN layernorm
-    if let Some(suffix) = component.strip_prefix("mlp_ln.") {
-        return format!("final_layer_norm.{suffix}");
-    }
-
-    // FFN layers
-    if let Some(suffix) = component.strip_prefix("mlp.0.") {
-        return format!("fc1.{suffix}");
-    }
-    if let Some(suffix) = component.strip_prefix("mlp.2.") {
-        return format!("fc2.{suffix}");
-    }
-
-    // Unknown: pass through
-    component.to_string()
+    apply_mapping_rules(component, &[SELF_ATTN_RULES, FFN_RULES])
 }
 
 /// Map decoder block component from GGUF naming to internal naming.
 fn map_decoder_block_component(component: &str) -> String {
-    // Self-attention layernorm
-    if let Some(suffix) = component.strip_prefix("attn_ln.") {
-        return format!("self_attn_layer_norm.{suffix}");
-    }
-
-    // Self-attention projections
-    if let Some(suffix) = component.strip_prefix("attn.query.") {
-        return format!("self_attn.q_proj.{suffix}");
-    }
-    if let Some(suffix) = component.strip_prefix("attn.key.") {
-        return format!("self_attn.k_proj.{suffix}");
-    }
-    if let Some(suffix) = component.strip_prefix("attn.value.") {
-        return format!("self_attn.v_proj.{suffix}");
-    }
-    if let Some(suffix) = component.strip_prefix("attn.out.") {
-        return format!("self_attn.out_proj.{suffix}");
-    }
-
-    // Cross-attention layernorm
-    if let Some(suffix) = component.strip_prefix("cross_attn_ln.") {
-        return format!("encoder_attn_layer_norm.{suffix}");
-    }
-
-    // Cross-attention projections
-    if let Some(suffix) = component.strip_prefix("cross_attn.query.") {
-        return format!("encoder_attn.q_proj.{suffix}");
-    }
-    if let Some(suffix) = component.strip_prefix("cross_attn.key.") {
-        return format!("encoder_attn.k_proj.{suffix}");
-    }
-    if let Some(suffix) = component.strip_prefix("cross_attn.value.") {
-        return format!("encoder_attn.v_proj.{suffix}");
-    }
-    if let Some(suffix) = component.strip_prefix("cross_attn.out.") {
-        return format!("encoder_attn.out_proj.{suffix}");
-    }
-
-    // FFN layernorm
-    if let Some(suffix) = component.strip_prefix("mlp_ln.") {
-        return format!("final_layer_norm.{suffix}");
-    }
-
-    // FFN layers
-    if let Some(suffix) = component.strip_prefix("mlp.0.") {
-        return format!("fc1.{suffix}");
-    }
-    if let Some(suffix) = component.strip_prefix("mlp.2.") {
-        return format!("fc2.{suffix}");
-    }
-
-    // Unknown: pass through
-    component.to_string()
+    apply_mapping_rules(component, &[SELF_ATTN_RULES, CROSS_ATTN_RULES, FFN_RULES])
 }
 
 /// Detect Whisper model configuration from GGUF tensor shapes.
@@ -288,37 +242,37 @@ fn generate_mel_filterbank_data(n_mels: u32, n_freqs: u32) -> Vec<f32> {
         .map(|i| mel_low + (mel_high - mel_low) * i as f64 / (n_points - 1) as f64)
         .collect();
     let hz_points: Vec<f64> = mel_points.iter().map(|&m| mel_to_hz(m)).collect();
-
-    // Convert Hz to FFT bin indices
     let bin_points: Vec<f64> = hz_points
         .iter()
         .map(|&hz| hz * n_fft as f64 / sample_rate)
         .collect();
 
     let mut data = vec![0.0f32; n_mels as usize * n_freqs as usize];
-
     for m in 0..n_mels as usize {
-        let left = bin_points[m];
-        let center = bin_points[m + 1];
-        let right = bin_points[m + 2];
-
-        // Slaney normalization factor
         let enorm = 2.0 / (hz_points[m + 2] - hz_points[m]);
-
-        for k in 0..n_freqs as usize {
-            let kf = k as f64;
-            let val = if kf >= left && kf < center && center > left {
-                enorm * (kf - left) / (center - left)
-            } else if kf >= center && kf <= right && right > center {
-                enorm * (right - kf) / (right - center)
-            } else {
-                0.0
-            };
-            data[m * n_freqs as usize + k] = val as f32;
-        }
+        fill_mel_band(
+            &mut data[m * n_freqs as usize..(m + 1) * n_freqs as usize],
+            bin_points[m],
+            bin_points[m + 1],
+            bin_points[m + 2],
+            enorm,
+        );
     }
-
     data
+}
+
+/// Fill a single mel band's frequency response (triangular filter with Slaney normalization).
+fn fill_mel_band(row: &mut [f32], left: f64, center: f64, right: f64, enorm: f64) {
+    for (k, val) in row.iter_mut().enumerate() {
+        let kf = k as f64;
+        *val = if kf >= left && kf < center && center > left {
+            (enorm * (kf - left) / (center - left)) as f32
+        } else if kf >= center && kf <= right && right > center {
+            (enorm * (right - kf) / (right - center)) as f32
+        } else {
+            0.0
+        };
+    }
 }
 
 /// Convert frequency in Hz to mel scale.
