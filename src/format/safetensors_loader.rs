@@ -773,6 +773,27 @@ mod tests {
     }
 
     #[test]
+    fn test_map_tensor_name_conv() {
+        assert_eq!(
+            map_tensor_name("model.layers.0.conv.weight"),
+            "layers.0.conv.weight"
+        );
+        assert_eq!(
+            map_tensor_name("model.layers.0.conv.bias"),
+            "layers.0.conv.bias"
+        );
+    }
+
+    #[test]
+    fn test_map_tensor_name_layer_unknown_suffix() {
+        // Unknown suffix within a layer passes through as-is
+        assert_eq!(
+            map_tensor_name("model.layers.0.some_new_thing.weight"),
+            "layers.0.some_new_thing.weight"
+        );
+    }
+
+    #[test]
     fn test_map_tensor_name_unknown() {
         // Unknown patterns pass through
         assert_eq!(
