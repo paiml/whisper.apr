@@ -110,7 +110,11 @@ impl MlpFfn {
         }
 
         // fc1: [seq_len, hidden_size] → [seq_len, intermediate_size]
-        let mut intermediate = linear(hidden_states, seq_len, &self.fc1, self.b1.as_deref(), h, i);
+        let mut intermediate = if cfg!(feature = "simd") {
+            crate::simd::matmul_raw(hidden_states, &self.fc1, self.b1.as_deref(), seq_len, h, i)
+        } else {
+            linear(hidden_states, seq_len, &self.fc1, self.b1.as_deref(), h, i)
+        };
 
         // Apply activation in-place
         match self.config.activation {
@@ -127,7 +131,11 @@ impl MlpFfn {
         }
 
         // fc2: [seq_len, intermediate_size] → [seq_len, hidden_size]
-        let output = linear(&intermediate, seq_len, &self.fc2, self.b2.as_deref(), i, h);
+        let output = if cfg!(feature = "simd") {
+            crate::simd::matmul_raw(&intermediate, &self.fc2, self.b2.as_deref(), seq_len, i, h)
+        } else {
+            linear(&intermediate, seq_len, &self.fc2, self.b2.as_deref(), i, h)
+        };
 
         Ok(output)
     }
@@ -200,14 +208,25 @@ impl GatedMlpFfn {
         }
 
         // fc1: [seq_len, hidden] → [seq_len, 2*intermediate]
-        let projected = linear(
-            hidden_states,
-            seq_len,
-            &self.fc1,
-            self.b1.as_deref(),
-            h,
-            2 * i,
-        );
+        let projected = if cfg!(feature = "simd") {
+            crate::simd::matmul_raw(
+                hidden_states,
+                &self.fc1,
+                self.b1.as_deref(),
+                seq_len,
+                h,
+                2 * i,
+            )
+        } else {
+            linear(
+                hidden_states,
+                seq_len,
+                &self.fc1,
+                self.b1.as_deref(),
+                h,
+                2 * i,
+            )
+        };
 
         // Chunk into value and gate, apply SiLU(gate) * value
         let mut gated = vec![0.0f32; seq_len * i];
@@ -220,7 +239,11 @@ impl GatedMlpFfn {
         }
 
         // fc2: [seq_len, intermediate] → [seq_len, hidden]
-        let output = linear(&gated, seq_len, &self.fc2, self.b2.as_deref(), i, h);
+        let output = if cfg!(feature = "simd") {
+            crate::simd::matmul_raw(&gated, &self.fc2, self.b2.as_deref(), seq_len, i, h)
+        } else {
+            linear(&gated, seq_len, &self.fc2, self.b2.as_deref(), i, h)
+        };
 
         Ok(output)
     }

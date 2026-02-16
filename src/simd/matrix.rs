@@ -83,6 +83,50 @@ pub fn matvec(a: &[f32], x: &[f32], rows: usize, cols: usize) -> Vec<f32> {
         .map_or_else(|_| vec![0.0; rows], |v| v.as_slice().to_vec())
 }
 
+/// SIMD-accelerated linear projection for raw weight slices
+///
+/// Computes `output = input @ weight^T + bias` where weight is stored as
+/// `[out_features, in_features]` row-major (standard PyTorch linear layer layout).
+///
+/// This is a convenience wrapper for modules that store weights as `Vec<f32>`
+/// (e.g. GQA, MLP) rather than `LinearWeights`. Delegates to trueno via
+/// transpose + matmul.
+#[must_use]
+pub fn matmul_raw(
+    input: &[f32],
+    weight: &[f32],
+    bias: Option<&[f32]>,
+    seq_len: usize,
+    in_features: usize,
+    out_features: usize,
+) -> Vec<f32> {
+    debug_assert_eq!(
+        input.len(),
+        seq_len * in_features,
+        "input dimensions mismatch"
+    );
+    debug_assert_eq!(
+        weight.len(),
+        out_features * in_features,
+        "weight dimensions mismatch"
+    );
+
+    // Weight is [out_features, in_features], transpose to [in_features, out_features]
+    let weight_t = transpose(weight, out_features, in_features);
+    // input [seq_len, in_features] @ weight_t [in_features, out_features] = [seq_len, out_features]
+    let mut output = matmul(input, &weight_t, seq_len, in_features, out_features);
+
+    if let Some(b) = bias {
+        for s in 0..seq_len {
+            for o in 0..out_features {
+                output[s * out_features + o] += b[o];
+            }
+        }
+    }
+
+    output
+}
+
 /// SIMD-accelerated matrix transpose
 #[must_use]
 pub fn transpose(a: &[f32], rows: usize, cols: usize) -> Vec<f32> {
@@ -211,5 +255,61 @@ mod tests {
         let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         let result = transpose(&a, 3, 2);
         assert!(vec_approx_eq(&result, &[1.0, 3.0, 5.0, 2.0, 4.0, 6.0]));
+    }
+
+    #[test]
+    fn test_matmul_raw_identity_weight() {
+        // Weight = identity [2, 2], input = [1, 2, 3, 4] as 2x2
+        // output = input @ I^T = input
+        let input = vec![1.0, 2.0, 3.0, 4.0];
+        let weight = vec![1.0, 0.0, 0.0, 1.0]; // [2, 2] identity
+        let result = matmul_raw(&input, &weight, None, 2, 2, 2);
+        assert!(vec_approx_eq(&result, &[1.0, 2.0, 3.0, 4.0]));
+    }
+
+    #[test]
+    fn test_matmul_raw_with_bias() {
+        let input = vec![1.0, 0.0]; // [1, 2]
+        let weight = vec![1.0, 0.0, 0.0, 1.0]; // [2, 2] identity
+        let bias = vec![10.0, 20.0];
+        let result = matmul_raw(&input, &weight, Some(&bias), 1, 2, 2);
+        assert!(vec_approx_eq(&result, &[11.0, 20.0]));
+    }
+
+    #[test]
+    fn test_matmul_raw_rectangular() {
+        // input [2, 3], weight [2, 3] (out_features=2, in_features=3)
+        // output = input @ weight^T = [2, 3] @ [3, 2] = [2, 2]
+        let input = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2x3
+        let weight = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0]; // 2x3: row0=[1,0,0], row1=[0,1,0]
+        let result = matmul_raw(&input, &weight, None, 2, 3, 2);
+        // Row 0: [1*1+2*0+3*0, 1*0+2*1+3*0] = [1, 2]
+        // Row 1: [4*1+5*0+6*0, 4*0+5*1+6*0] = [4, 5]
+        assert!(vec_approx_eq(&result, &[1.0, 2.0, 4.0, 5.0]));
+    }
+
+    #[test]
+    fn test_matmul_raw_matches_scalar() {
+        // Verify matmul_raw matches a scalar reference implementation
+        let input = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]; // [2, 3]
+        let weight = vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0]; // [2, 3]
+        let bias = vec![0.5, -0.5];
+
+        let result = matmul_raw(&input, &weight, Some(&bias), 2, 3, 2);
+
+        // Scalar reference: output[i,j] = sum_k input[i,k]*weight[j,k] + bias[j]
+        let mut expected = vec![0.0f32; 4];
+        for i in 0..2 {
+            for j in 0..2 {
+                let mut sum = 0.0f32;
+                for k in 0..3 {
+                    sum += input[i * 3 + k] * weight[j * 3 + k];
+                }
+                sum += bias[j];
+                expected[i * 2 + j] = sum;
+            }
+        }
+
+        assert!(vec_approx_eq(&result, &expected));
     }
 }
