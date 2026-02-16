@@ -837,6 +837,10 @@ These items were completed before implementation began:
 | WAPR-MOONSHINE-008 | 6 | Moonshine weight loading paths (GQA, SwiGLU, RmsNorm) | DONE |
 | WAPR-MOONSHINE-009 | 7 | Unit + integration tests for Moonshine (10 new tests) | DONE |
 | WAPR-MOONSHINE-010 | 8 | Incremental KV caching for GQA decoder (`forward_cached`, `new_gqa`) | DONE |
+| WAPR-MOONSHINE-011 | 9 | ONNX-to-APR weight conversion pipeline (`tools/convert.rs`) | TODO |
+| WAPR-MOONSHINE-012 | 10 | End-to-end numerical parity tests vs ONNX reference | TODO |
+| WAPR-MOONSHINE-013 | 10 | Model registry entries and download integration | TODO |
+| WAPR-MOONSHINE-014 | 10 | Variable-length correctness tests (padding invariance) | TODO |
 
 ### 17.3 Phase Progress
 
@@ -849,6 +853,8 @@ These items were completed before implementation began:
 - [x] Phase 6: Weight loading (WAPR-MOONSHINE-008)
 - [x] Phase 7: Tests (WAPR-MOONSHINE-009)
 - [x] Phase 8: Incremental KV caching for O(n) per-token decoding (WAPR-MOONSHINE-010)
+- [ ] Phase 9: ONNX weight conversion (WAPR-MOONSHINE-011) — blocks real inference
+- [ ] Phase 10: Parity validation and registry (WAPR-MOONSHINE-012, 013, 014)
 
 ### 17.4 Regression Gate
 
