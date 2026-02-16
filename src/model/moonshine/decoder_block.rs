@@ -7,7 +7,7 @@ use crate::error::WhisperResult;
 use crate::model::LayerKVCache;
 use crate::model::lfm2::gqa::{GqaConfig, GroupedQueryAttention};
 use crate::model::lfm2::layer::RmsNorm;
-use crate::model::lfm2::mlp::{MlpActivation, MlpConfig, MlpFfn};
+use crate::model::lfm2::mlp::GatedMlpFfn;
 use crate::model::lfm2::rope::RotaryEmbedding;
 
 /// Single Moonshine decoder transformer block
@@ -28,8 +28,8 @@ pub struct MoonshineDecoderBlock {
     pub cross_attn: GroupedQueryAttention,
     /// Pre-FFN RMS normalization
     pub ln2: RmsNorm,
-    /// Standard MLP feed-forward network (fc1 → SiLU → fc2)
-    pub ffn: MlpFfn,
+    /// Gated MLP feed-forward network (fc1[→2x] → SiLU(gate)*value → fc2)
+    pub ffn: GatedMlpFfn,
 }
 
 impl MoonshineDecoderBlock {
@@ -71,20 +71,13 @@ impl MoonshineDecoderBlock {
             dropout: 0.0,
         };
 
-        let mlp_config = MlpConfig {
-            hidden_size: d_model,
-            intermediate_size,
-            bias: false,
-            activation: MlpActivation::Silu,
-        };
-
         Ok(Self {
             ln1: RmsNorm::new(d_model),
             self_attn: GroupedQueryAttention::new(self_attn_config)?,
             ln_cross: RmsNorm::new(d_model),
             cross_attn: GroupedQueryAttention::new(cross_attn_config)?,
             ln2: RmsNorm::new(d_model),
-            ffn: MlpFfn::new(mlp_config)?,
+            ffn: GatedMlpFfn::new(d_model, intermediate_size)?,
         })
     }
 

@@ -2332,7 +2332,7 @@ impl Decoder {
 
     /// Create a new KV cache for this decoder
     ///
-    /// For Moonshine (GQA), uses `new_gqa()` with kv_dim-width caches.
+    /// For models with `AttentionType::Gqa`, uses `new_gqa()` with kv_dim-width caches.
     /// For Whisper (MHA), uses `new()` with d_model-width caches.
     #[must_use]
     pub fn create_kv_cache(&self) -> DecoderKVCache {
