@@ -1354,8 +1354,8 @@ impl WhisperApr {
                     &mut block.ln2,
                 );
 
-                // MLP FFN (fc1 → SiLU → fc2)
-                Self::load_mlp_weights(
+                // Gated MLP FFN (fc1[→2x] → SiLU gate → fc2)
+                Self::load_gated_mlp_weights(
                     reader,
                     &format!("decoder.blocks.{layer_idx}.ffn"),
                     &mut block.ffn,
@@ -1532,6 +1532,22 @@ impl WhisperApr {
         reader: &format::AprReader,
         prefix: &str,
         ffn: &mut model::lfm2::mlp::MlpFfn,
+    ) {
+        if let Ok(w) = reader.load_tensor(&format!("{prefix}.fc1.weight")) {
+            let len = w.len().min(ffn.fc1.len());
+            ffn.fc1[..len].copy_from_slice(&w[..len]);
+        }
+        if let Ok(w) = reader.load_tensor(&format!("{prefix}.fc2.weight")) {
+            let len = w.len().min(ffn.fc2.len());
+            ffn.fc2[..len].copy_from_slice(&w[..len]);
+        }
+    }
+
+    /// Load gated MLP FFN weights (Moonshine decoder: fc1[→2x] → SiLU gate → fc2)
+    fn load_gated_mlp_weights(
+        reader: &format::AprReader,
+        prefix: &str,
+        ffn: &mut model::lfm2::mlp::GatedMlpFfn,
     ) {
         if let Ok(w) = reader.load_tensor(&format!("{prefix}.fc1.weight")) {
             let len = w.len().min(ffn.fc1.len());

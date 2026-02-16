@@ -41,7 +41,7 @@ pub mod wasm_config;
 pub use conv::Conv1d;
 pub use gqa::GroupedQueryAttention;
 pub use layer::{Lfm2Layer, LoadStats, RmsNorm};
-pub use mlp::MlpFfn;
+pub use mlp::{GatedMlpFfn, MlpFfn};
 pub use model::{GenerationStats, Lfm2};
 pub use rope::RotaryEmbedding;
 pub use swiglu::SwiGluFfn;
