@@ -19,9 +19,11 @@ exclude = [
 ]
 
 [quality-gates]
-# Exclude coverage test files from complexity/duplication analysis
+# Exclude generated files, tests, demos, and examples from quality gate analysis
 exclude = [
     "**/*_generated.rs",
     "**/tests.rs",
     "**/test_*.rs",
+    "demos/**",
+    "examples/**",
 ]

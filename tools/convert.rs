@@ -187,6 +187,49 @@ impl TensorMapper {
 }
 
 /// Download model file from HuggingFace
+/// Generic file download with caching. If `show_progress` is true, displays a
+/// progress bar (useful for large model files).
+async fn download_cached_file(
+    client: &Client,
+    url: &str,
+    cache_file: &std::path::Path,
+    description: &str,
+    show_progress: bool,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if cache_file.exists() {
+        println!("Using cached {description}: {}", cache_file.display());
+        return Ok(cache_file.to_path_buf());
+    }
+
+    println!("Downloading {description}...");
+    let response = client.get(url).send().await?;
+
+    if show_progress {
+        let total_size = response.content_length().unwrap_or(0);
+        let pb = ProgressBar::new(total_size);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")?
+                .progress_chars("#>-"),
+        );
+        let bytes = response.bytes().await?;
+        pb.finish_with_message("Download complete");
+        if let Some(parent) = cache_file.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(cache_file, &bytes)?;
+    } else {
+        let bytes = response.bytes().await?;
+        if let Some(parent) = cache_file.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(cache_file, &bytes)?;
+    }
+
+    println!("Cached {description} to: {}", cache_file.display());
+    Ok(cache_file.to_path_buf())
+}
+
 async fn download_model(
     client: &Client,
     model_size: ModelSize,
@@ -194,35 +237,15 @@ async fn download_model(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let repo_name = model_size.hf_repo_name();
     let url = format!("{HF_REPO_BASE}/{repo_name}/resolve/main/model.safetensors");
-
     let cache_file = cache_dir.join(format!("{repo_name}.safetensors"));
-
-    // Check cache
-    if cache_file.exists() {
-        println!("Using cached model: {}", cache_file.display());
-        return Ok(cache_file);
-    }
-
-    println!("Downloading {} from HuggingFace...", repo_name);
-
-    let response = client.get(&url).send().await?;
-    let total_size = response.content_length().unwrap_or(0);
-
-    let pb = ProgressBar::new(total_size);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")?
-            .progress_chars("#>-"),
-    );
-
-    std::fs::create_dir_all(cache_dir)?;
-    let bytes = response.bytes().await?;
-    pb.finish_with_message("Download complete");
-
-    std::fs::write(&cache_file, &bytes)?;
-    println!("Cached to: {}", cache_file.display());
-
-    Ok(cache_file)
+    download_cached_file(
+        client,
+        &url,
+        &cache_file,
+        &format!("{repo_name} model"),
+        true,
+    )
+    .await
 }
 
 /// Download vocabulary from HuggingFace
@@ -233,23 +256,8 @@ async fn download_vocab(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let repo_name = model_size.hf_repo_name();
     let url = format!("{HF_REPO_BASE}/{repo_name}/resolve/main/vocab.json");
-
     let cache_file = cache_dir.join(format!("{repo_name}.vocab.json"));
-
-    // Check cache
-    if cache_file.exists() {
-        println!("Using cached vocab: {}", cache_file.display());
-        return Ok(cache_file);
-    }
-
-    println!("Downloading vocabulary...");
-    let response = client.get(&url).send().await?;
-    let bytes = response.bytes().await?;
-
-    std::fs::write(&cache_file, &bytes)?;
-    println!("Cached vocab to: {}", cache_file.display());
-
-    Ok(cache_file)
+    download_cached_file(client, &url, &cache_file, "vocabulary", false).await
 }
 
 /// Download merges.txt from HuggingFace
@@ -260,23 +268,8 @@ async fn download_merges(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let repo_name = model_size.hf_repo_name();
     let url = format!("{HF_REPO_BASE}/{repo_name}/resolve/main/merges.txt");
-
     let cache_file = cache_dir.join(format!("{repo_name}.merges.txt"));
-
-    // Check cache
-    if cache_file.exists() {
-        println!("Using cached merges: {}", cache_file.display());
-        return Ok(cache_file);
-    }
-
-    println!("Downloading merges...");
-    let response = client.get(&url).send().await?;
-    let bytes = response.bytes().await?;
-
-    std::fs::write(&cache_file, &bytes)?;
-    println!("Cached merges to: {}", cache_file.display());
-
-    Ok(cache_file)
+    download_cached_file(client, &url, &cache_file, "merges", false).await
 }
 
 /// Download added_tokens.json from HuggingFace (contains Whisper special tokens)
@@ -287,23 +280,8 @@ async fn download_added_tokens(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let repo_name = model_size.hf_repo_name();
     let url = format!("{HF_REPO_BASE}/{repo_name}/resolve/main/added_tokens.json");
-
     let cache_file = cache_dir.join(format!("{repo_name}.added_tokens.json"));
-
-    // Check cache
-    if cache_file.exists() {
-        println!("Using cached added_tokens: {}", cache_file.display());
-        return Ok(cache_file);
-    }
-
-    println!("Downloading added_tokens...");
-    let response = client.get(&url).send().await?;
-    let bytes = response.bytes().await?;
-
-    std::fs::write(&cache_file, &bytes)?;
-    println!("Cached added_tokens to: {}", cache_file.display());
-
-    Ok(cache_file)
+    download_cached_file(client, &url, &cache_file, "added_tokens", false).await
 }
 
 /// Download mel_filters.npz from OpenAI Whisper repository
@@ -313,21 +291,7 @@ async fn download_mel_filters(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let url = format!("{OPENAI_WHISPER_ASSETS}/mel_filters.npz");
     let cache_file = cache_dir.join("mel_filters.npz");
-
-    // Check cache
-    if cache_file.exists() {
-        println!("Using cached mel_filters: {}", cache_file.display());
-        return Ok(cache_file);
-    }
-
-    println!("Downloading mel_filters.npz from OpenAI...");
-    let response = client.get(&url).send().await?;
-    let bytes = response.bytes().await?;
-
-    std::fs::write(&cache_file, &bytes)?;
-    println!("Cached mel_filters to: {}", cache_file.display());
-
-    Ok(cache_file)
+    download_cached_file(client, &url, &cache_file, "mel_filters.npz", false).await
 }
 
 /// Parse mel filterbank from NPZ file
@@ -1007,35 +971,15 @@ async fn download_model_hf(
     cache_dir: &PathBuf,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let url = format!("https://huggingface.co/{org}/{repo_name}/resolve/main/model.safetensors");
-
     let cache_file = cache_dir.join(format!("{repo_name}.safetensors"));
-
-    // Check cache
-    if cache_file.exists() {
-        println!("Using cached model: {}", cache_file.display());
-        return Ok(cache_file);
-    }
-
-    println!("Downloading {org}/{repo_name} from HuggingFace...");
-
-    let response = client.get(&url).send().await?;
-    let total_size = response.content_length().unwrap_or(0);
-
-    let pb = ProgressBar::new(total_size);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")?
-            .progress_chars("#>-"),
-    );
-
-    std::fs::create_dir_all(cache_dir)?;
-    let bytes = response.bytes().await?;
-    pb.finish_with_message("Download complete");
-
-    std::fs::write(&cache_file, &bytes)?;
-    println!("Cached to: {}", cache_file.display());
-
-    Ok(cache_file)
+    download_cached_file(
+        client,
+        &url,
+        &cache_file,
+        &format!("{org}/{repo_name} model"),
+        true,
+    )
+    .await
 }
 
 /// Load and parse Moonshine tensors from SafeTensors file
@@ -1115,20 +1059,7 @@ async fn download_moonshine_tokenizer(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let url = format!("https://huggingface.co/{org}/{repo_name}/resolve/main/tokenizer.json");
     let cache_file = cache_dir.join(format!("{repo_name}-tokenizer.json"));
-
-    if cache_file.exists() {
-        println!("Using cached tokenizer: {}", cache_file.display());
-        return Ok(cache_file);
-    }
-
-    println!("Downloading tokenizer.json from {org}/{repo_name}...");
-    let response = client.get(&url).send().await?;
-    let bytes = response.bytes().await?;
-    std::fs::create_dir_all(cache_dir)?;
-    std::fs::write(&cache_file, &bytes)?;
-    println!("Cached tokenizer to: {}", cache_file.display());
-
-    Ok(cache_file)
+    download_cached_file(client, &url, &cache_file, "tokenizer.json", false).await
 }
 
 /// Parse Moonshine tokenizer.json into a Vocabulary for APR embedding
