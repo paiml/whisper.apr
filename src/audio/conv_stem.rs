@@ -360,6 +360,92 @@ mod tests {
     }
 
     // =========================================================================
+    // output_frames edge cases (WAPR-MOONSHINE-014)
+    // =========================================================================
+
+    #[test]
+    fn test_output_frames_boundary_conditions() {
+        // 0 samples → 0 frames
+        assert_eq!(ConvStem::output_frames(0), 0);
+        // 126 samples < conv1 kernel (127) → 0 frames
+        assert_eq!(ConvStem::output_frames(126), 0);
+        // 127 samples = conv1 kernel → conv1 produces 1 output,
+        // but that's < conv2 kernel (7), so still 0 final frames
+        assert_eq!(ConvStem::output_frames(127), 0);
+        // 128 samples → conv1 produces 1 output, still < 7 for conv2
+        assert_eq!(ConvStem::output_frames(128), 0);
+        // First non-zero: need conv1 to produce ≥7 outputs,
+        // then conv2 to produce ≥3, then conv3 to produce ≥1
+        // conv1 ≥ 7: (n - 127) / 64 + 1 ≥ 7 → n ≥ 127 + 6*64 = 511
+        // conv2 output from 7: (7 - 7)/3 + 1 = 1 → < 3 for conv3
+        // conv2 ≥ 3 needs conv1 ≥ 13: n ≥ 127 + 12*64 = 895
+        // conv3 from 3: (3 - 3)/2 + 1 = 1 ✓
+        let first_nonzero = ConvStem::output_frames(895);
+        assert_eq!(first_nonzero, 1, "895 samples should produce exactly 1 frame");
+        assert_eq!(
+            ConvStem::output_frames(894),
+            0,
+            "894 samples should still produce 0 frames"
+        );
+    }
+
+    #[test]
+    fn test_output_frames_monotonicity() {
+        // output_frames(n) <= output_frames(n+1) for all n in [0, 100_000]
+        let mut prev = ConvStem::output_frames(0);
+        for n in 1..=100_000 {
+            let curr = ConvStem::output_frames(n);
+            assert!(
+                curr >= prev,
+                "Monotonicity violated: output_frames({}) = {} < output_frames({}) = {}",
+                n,
+                curr,
+                n - 1,
+                prev
+            );
+            prev = curr;
+        }
+    }
+
+    #[test]
+    fn test_output_frames_known_durations() {
+        // Pre-computed expected values via the formula:
+        // conv1: (n - 127) / 64 + 1
+        // conv2: (conv1 - 7) / 3 + 1
+        // conv3: (conv2 - 3) / 2 + 1
+
+        // 1s = 16,000 samples
+        // conv1: (16000 - 127)/64 + 1 = 248 + 1 = 249
+        // conv2: (249 - 7)/3 + 1 = 80 + 1 = 81
+        // conv3: (81 - 3)/2 + 1 = 39 + 1 = 40
+        assert_eq!(ConvStem::output_frames(16_000), 40);
+
+        // 1.5s = 24,000 samples
+        // conv1: (24000 - 127)/64 + 1 = 372 + 1 = 373
+        // conv2: (373 - 7)/3 + 1 = 122 + 1 = 123
+        // conv3: (123 - 3)/2 + 1 = 60 + 1 = 61
+        assert_eq!(ConvStem::output_frames(24_000), 61);
+
+        // 3s = 48,000 samples
+        // conv1: (48000 - 127)/64 + 1 = 747 + 1 = 748
+        // conv2: (748 - 7)/3 + 1 = 247 + 1 = 248
+        // conv3: (248 - 3)/2 + 1 = 122 + 1 = 123
+        assert_eq!(ConvStem::output_frames(48_000), 123);
+
+        // 10s = 160,000 samples
+        // conv1: (160000 - 127)/64 + 1 = 2497 + 1 = 2498
+        // conv2: (2498 - 7)/3 + 1 = 830 + 1 = 831
+        // conv3: (831 - 3)/2 + 1 = 414 + 1 = 415
+        assert_eq!(ConvStem::output_frames(160_000), 415);
+
+        // 30s = 480,000 samples
+        // conv1: (480000 - 127)/64 + 1 = 7497 + 1 = 7498
+        // conv2: (7498 - 7)/3 + 1 = 2497 + 1 = 2498
+        // conv3: (2498 - 3)/2 + 1 = 1247 + 1 = 1248
+        assert_eq!(ConvStem::output_frames(480_000), 1248);
+    }
+
+    // =========================================================================
     // GroupNorm Tests
     // =========================================================================
 

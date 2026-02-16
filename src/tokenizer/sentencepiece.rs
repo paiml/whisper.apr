@@ -136,9 +136,10 @@ impl SentencePieceTokenizer {
             if id <= special_tokens::UNK {
                 continue;
             }
-            text.push_str(piece);
+            // SentencePiece uses U+2581 (▁) as word boundary marker → space
+            text.push_str(&piece.replace('\u{2581}', " "));
         }
-        Ok(text)
+        Ok(text.trim_start().to_string())
     }
 
     /// Get vocabulary size

@@ -1101,6 +1101,85 @@ fn load_moonshine_tensors(
     Ok(result)
 }
 
+/// Download Moonshine tokenizer.json from HuggingFace
+async fn download_moonshine_tokenizer(
+    client: &Client,
+    org: &str,
+    repo_name: &str,
+    cache_dir: &PathBuf,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let url = format!("https://huggingface.co/{org}/{repo_name}/resolve/main/tokenizer.json");
+    let cache_file = cache_dir.join(format!("{repo_name}-tokenizer.json"));
+
+    if cache_file.exists() {
+        println!("Using cached tokenizer: {}", cache_file.display());
+        return Ok(cache_file);
+    }
+
+    println!("Downloading tokenizer.json from {org}/{repo_name}...");
+    let response = client.get(&url).send().await?;
+    let bytes = response.bytes().await?;
+    std::fs::create_dir_all(cache_dir)?;
+    std::fs::write(&cache_file, &bytes)?;
+    println!("Cached tokenizer to: {}", cache_file.display());
+
+    Ok(cache_file)
+}
+
+/// Parse Moonshine tokenizer.json into a Vocabulary for APR embedding
+fn parse_moonshine_vocabulary(
+    tokenizer_path: &PathBuf,
+) -> Result<Vocabulary, Box<dyn std::error::Error>> {
+    let json_str = std::fs::read_to_string(tokenizer_path)?;
+    let json: Value = serde_json::from_str(&json_str)?;
+
+    // Extract model.vocab: { piece_string: token_id }
+    let vocab_obj = json
+        .get("model")
+        .and_then(|m| m.get("vocab"))
+        .and_then(|v| v.as_object())
+        .ok_or("Missing model.vocab in tokenizer.json")?;
+
+    // Build (id → piece) mapping
+    let mut id_to_piece: HashMap<u32, String> = HashMap::new();
+    for (piece, id_val) in vocab_obj {
+        if let Some(id) = id_val.as_u64() {
+            id_to_piece.insert(id as u32, piece.clone());
+        }
+    }
+
+    // Also include added_tokens (sentinel tokens etc.)
+    if let Some(added) = json.get("added_tokens").and_then(|a| a.as_array()) {
+        for token in added {
+            if let (Some(id), Some(content)) = (
+                token.get("id").and_then(|i| i.as_u64()),
+                token.get("content").and_then(|c| c.as_str()),
+            ) {
+                id_to_piece
+                    .entry(id as u32)
+                    .or_insert_with(|| content.to_string());
+            }
+        }
+    }
+
+    let max_id = id_to_piece.keys().copied().max().unwrap_or(0);
+    println!(
+        "Parsed tokenizer.json: {} vocab entries, max_id={}",
+        id_to_piece.len(),
+        max_id
+    );
+
+    // Build Vocabulary: each token's piece string stored as UTF-8 bytes
+    let mut vocab = Vocabulary::new();
+    for id in 0..=max_id {
+        let piece = id_to_piece.get(&id).cloned().unwrap_or_default();
+        let bytes = piece.into_bytes();
+        let _assigned = vocab.add_token(bytes);
+    }
+
+    Ok(vocab)
+}
+
 /// Moonshine SafeTensors → APR conversion
 ///
 /// Downloads Moonshine SafeTensors models from HuggingFace
@@ -1114,7 +1193,7 @@ fn load_moonshine_tensors(
 ///
 /// Moonshine differences from Whisper:
 /// - No mel filterbank (learned conv stem)
-/// - SentencePiece tokenizer (embedded separately)
+/// - SentencePiece vocabulary (embedded from tokenizer.json)
 /// - `proj_out.weight` is tied to `embed_tokens.weight`
 async fn convert_moonshine(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
@@ -1146,11 +1225,30 @@ async fn convert_moonshine(args: CliArgs) -> Result<(), Box<dyn std::error::Erro
         }
     }
 
+    // Download and parse SentencePiece vocabulary from tokenizer.json
+    let vocab = match download_moonshine_tokenizer(&client, org, repo_name, &args.cache_dir).await
+    {
+        Ok(tokenizer_path) => match parse_moonshine_vocabulary(&tokenizer_path) {
+            Ok(v) => {
+                println!("Embedding vocabulary ({} tokens)...", v.len());
+                Some(v)
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to parse tokenizer: {e}");
+                None
+            }
+        },
+        Err(e) => {
+            eprintln!("Warning: Failed to download tokenizer: {e}");
+            None
+        }
+    };
+
     // Convert to APR format
-    // Moonshine has no mel filterbank and no Whisper vocabulary
+    // Moonshine has no mel filterbank but DOES have SentencePiece vocabulary
     let apr_bytes = match args.quantize {
-        QuantizeType::None => convert_to_apr_f32(tensors, args.model_size, None, None)?,
-        QuantizeType::Int8 => convert_to_apr_int8(tensors, args.model_size, None, None)?,
+        QuantizeType::None => convert_to_apr_f32(tensors, args.model_size, vocab, None)?,
+        QuantizeType::Int8 => convert_to_apr_int8(tensors, args.model_size, vocab, None)?,
     };
 
     // Write output

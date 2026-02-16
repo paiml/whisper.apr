@@ -1644,7 +1644,7 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'WAPR-MOONSHINE-011: Moonshine ONNX-to-APR weight conversion pipeline'
-  status: inprogress
+  status: completed
   priority: high
   assigned_to: null
   created: 2026-02-16T10:10:39Z
@@ -1661,7 +1661,7 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'WAPR-MOONSHINE-012: End-to-end numerical parity tests vs ONNX reference'
-  status: inprogress
+  status: completed
   priority: high
   assigned_to: null
   created: 2026-02-16T10:10:45Z
@@ -1695,7 +1695,7 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'WAPR-MOONSHINE-014: Variable-length correctness tests (padding invariance)'
-  status: planned
+  status: completed
   priority: low
   assigned_to: null
   created: 2026-02-16T10:10:48Z
