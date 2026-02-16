@@ -1448,6 +1448,9 @@ pub enum ModelSize {
     Medium,
     /// Whisper large model (1.5B params)
     Large,
+    /// Whisper large v3 turbo model (809M params, 32 enc + 4 dec layers)
+    #[value(name = "large-v3-turbo")]
+    LargeV3Turbo,
     /// Moonshine tiny model (27M params, faster for short audio)
     MoonshineTiny,
     /// Moonshine base model (62M params, faster for short audio)
@@ -1470,6 +1473,7 @@ impl std::fmt::Display for ModelSize {
             Self::Small => write!(f, "small"),
             Self::Medium => write!(f, "medium"),
             Self::Large => write!(f, "large"),
+            Self::LargeV3Turbo => write!(f, "large-v3-turbo"),
             Self::MoonshineTiny => write!(f, "moonshine-tiny"),
             Self::MoonshineBase => write!(f, "moonshine-base"),
         }
@@ -1895,6 +1899,7 @@ mod tests {
         assert_eq!(ModelSize::Small.to_string(), "small");
         assert_eq!(ModelSize::Medium.to_string(), "medium");
         assert_eq!(ModelSize::Large.to_string(), "large");
+        assert_eq!(ModelSize::LargeV3Turbo.to_string(), "large-v3-turbo");
     }
 
     #[test]

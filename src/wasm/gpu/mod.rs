@@ -47,6 +47,7 @@ pub fn recommended_backend_for_model(model_type: &str) -> String {
         "small" | "small.en" => 244_000_000,
         "medium" | "medium.en" => 769_000_000,
         "large" | "large-v2" | "large-v3" => 1_550_000_000,
+        "large-v3-turbo" => 809_000_000,
         _ => 39_000_000, // tiny and unknown default to smallest
     };
 

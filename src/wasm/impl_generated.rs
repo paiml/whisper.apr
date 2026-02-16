@@ -269,9 +269,10 @@ impl WhisperAprWasm {
             "small" => ModelConfig::small(),
             "medium" => ModelConfig::medium(),
             "large" => ModelConfig::large(),
+            "large-v3-turbo" => ModelConfig::large_v3_turbo(),
             _ => {
                 return Err(JsValue::from_str(&format!(
-                    "Unknown model type: {model_type}. Use 'tiny', 'base', 'small', 'medium', or 'large'"
+                    "Unknown model type: {model_type}. Use 'tiny', 'base', 'small', 'medium', 'large', or 'large-v3-turbo'"
                 )))
             }
         };
@@ -486,6 +487,7 @@ impl ModelMemoryInfo {
             "small" => ModelConfig::small(),
             "medium" => ModelConfig::medium(),
             "large" => ModelConfig::large(),
+            "large-v3-turbo" => ModelConfig::large_v3_turbo(),
             _ => return None,
         };
 

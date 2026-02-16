@@ -36,6 +36,8 @@ pub enum ModelType {
     LargeV2,
     /// Large v3 model (~1.5B parameters, ~3GB WASM)
     LargeV3,
+    /// Large v3 turbo model (~809M parameters, 32 enc + 4 dec layers)
+    LargeV3Turbo,
 }
 
 /// Decoding strategy for transcription
@@ -1074,6 +1076,7 @@ impl WhisperApr {
             ModelType::Large | ModelType::LargeV1 | ModelType::LargeV2 | ModelType::LargeV3 => {
                 1_550_000_000
             }
+            ModelType::LargeV3Turbo => 809_000_000,
         };
         params * 4 // 4 bytes per f32 parameter
     }

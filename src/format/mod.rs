@@ -47,6 +47,8 @@ pub mod apr2;
 pub mod checksum;
 mod compress;
 pub mod export;
+#[cfg(feature = "cli")]
+pub mod gguf_loader;
 pub mod safetensors_loader;
 pub mod validation;
 
@@ -64,6 +66,8 @@ pub use apr2::{
 };
 pub use checksum::{crc32, Crc32};
 pub use compress::Decompressor;
+#[cfg(feature = "cli")]
+pub use gguf_loader::{load_gguf_whisper, map_gguf_whisper_tensor_name};
 #[cfg(feature = "cli")]
 pub use safetensors_loader::SafeTensorsLoader;
 pub use safetensors_loader::{

@@ -55,6 +55,7 @@ fn get_hf_repo_id(size: ModelSize) -> &'static str {
         ModelSize::Small => "openai/whisper-small",
         ModelSize::Medium => "openai/whisper-medium",
         ModelSize::Large => "openai/whisper-large-v3",
+        ModelSize::LargeV3Turbo => "openai/whisper-large-v3-turbo",
         ModelSize::MoonshineTiny => "usefulsensors/moonshine-tiny",
         ModelSize::MoonshineBase => "usefulsensors/moonshine-base",
     }
@@ -68,6 +69,7 @@ fn get_model_filename(size: ModelSize) -> &'static str {
         ModelSize::Small => "small.apr",
         ModelSize::Medium => "medium.apr",
         ModelSize::Large => "large.apr",
+        ModelSize::LargeV3Turbo => "large-v3-turbo.apr",
         ModelSize::MoonshineTiny => "moonshine-tiny.apr",
         ModelSize::MoonshineBase => "moonshine-base.apr",
     }
@@ -249,6 +251,7 @@ fn convert_safetensors_to_apr(
         ModelSize::Small => ModelConfig::small(),
         ModelSize::Medium => ModelConfig::medium(),
         ModelSize::Large => ModelConfig::large(),
+        ModelSize::LargeV3Turbo => ModelConfig::large_v3_turbo(),
         ModelSize::MoonshineTiny => ModelConfig::moonshine_tiny(),
         ModelSize::MoonshineBase => ModelConfig::moonshine_base(),
     };
@@ -704,9 +707,23 @@ fn load_mel_filters_from_preprocessor(
     })
 }
 
-/// Load a model from a file path
+/// GGUF magic bytes: "GGUF" in little-endian = 0x46554747
+const GGUF_MAGIC: u32 = 0x4655_4747;
+
+/// Load a model from a file path, auto-detecting APR vs GGUF format.
 fn load_model_from_path(path: &std::path::Path) -> ModelLoaderResult<WhisperApr> {
     let bytes = fs::read(path)?;
+
+    // Check for GGUF magic in first 4 bytes
+    if bytes.len() >= 4 {
+        let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        if magic == GGUF_MAGIC {
+            let apr_bytes =
+                crate::format::load_gguf_whisper(path).map_err(ModelLoaderError::ModelLoad)?;
+            return WhisperApr::load_from_apr(&apr_bytes).map_err(ModelLoaderError::from);
+        }
+    }
+
     WhisperApr::load_from_apr(&bytes).map_err(ModelLoaderError::from)
 }
 
@@ -776,6 +793,10 @@ mod tests {
         assert_eq!(get_hf_repo_id(ModelSize::Small), "openai/whisper-small");
         assert_eq!(get_hf_repo_id(ModelSize::Large), "openai/whisper-large-v3");
         assert_eq!(
+            get_hf_repo_id(ModelSize::LargeV3Turbo),
+            "openai/whisper-large-v3-turbo"
+        );
+        assert_eq!(
             get_hf_repo_id(ModelSize::MoonshineTiny),
             "usefulsensors/moonshine-tiny"
         );
@@ -791,6 +812,10 @@ mod tests {
         assert_eq!(get_model_filename(ModelSize::Small), "small.apr");
         assert_eq!(get_model_filename(ModelSize::Medium), "medium.apr");
         assert_eq!(
+            get_model_filename(ModelSize::LargeV3Turbo),
+            "large-v3-turbo.apr"
+        );
+        assert_eq!(
             get_model_filename(ModelSize::MoonshineTiny),
             "moonshine-tiny.apr"
         );
@@ -798,6 +823,14 @@ mod tests {
             get_model_filename(ModelSize::MoonshineBase),
             "moonshine-base.apr"
         );
+    }
+
+    #[test]
+    fn test_gguf_magic_constant() {
+        // "GGUF" in little-endian bytes
+        let bytes = b"GGUF";
+        let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        assert_eq!(magic, GGUF_MAGIC);
     }
 
     #[test]

@@ -48,6 +48,7 @@ enum ModelSize {
     Small,
     Medium,
     Large,
+    LargeV3Turbo,
     MoonshineTiny,
     MoonshineBase,
 }
@@ -60,6 +61,7 @@ impl ModelSize {
             "small" => Some(Self::Small),
             "medium" => Some(Self::Medium),
             "large" | "large-v3" => Some(Self::Large),
+            "large-v3-turbo" | "large_v3_turbo" => Some(Self::LargeV3Turbo),
             "moonshine-tiny" | "moonshine_tiny" => Some(Self::MoonshineTiny),
             "moonshine-base" | "moonshine_base" => Some(Self::MoonshineBase),
             _ => None,
@@ -77,6 +79,7 @@ impl ModelSize {
             Self::Small => "whisper-small",
             Self::Medium => "whisper-medium",
             Self::Large => "whisper-large-v3",
+            Self::LargeV3Turbo => "whisper-large-v3-turbo",
             Self::MoonshineTiny => "moonshine-tiny",
             Self::MoonshineBase => "moonshine-base",
         }
@@ -96,6 +99,7 @@ impl ModelSize {
             Self::Small => ModelConfig::small(),
             Self::Medium => ModelConfig::medium(),
             Self::Large => ModelConfig::large(),
+            Self::LargeV3Turbo => ModelConfig::large_v3_turbo(),
             Self::MoonshineTiny => ModelConfig::moonshine_tiny(),
             Self::MoonshineBase => ModelConfig::moonshine_base(),
         }
@@ -851,11 +855,12 @@ USAGE:
     whisper-convert <MODEL> [OPTIONS]
 
 WHISPER MODELS (OpenAI, SafeTensors):
-    tiny        39M parameters (fastest, lowest quality)
-    base        74M parameters
-    small       244M parameters
-    medium      769M parameters
-    large       1.5B parameters (slowest, highest quality)
+    tiny            39M parameters (fastest, lowest quality)
+    base            74M parameters
+    small           244M parameters
+    medium          769M parameters
+    large           1.5B parameters (slowest, highest quality)
+    large-v3-turbo  809M parameters (32 enc + 4 dec layers)
 
 MOONSHINE MODELS (Useful Sensors, ONNX):
     moonshine-tiny   27.1M parameters (default, fastest for short audio)
@@ -1226,8 +1231,7 @@ async fn convert_moonshine(args: CliArgs) -> Result<(), Box<dyn std::error::Erro
     }
 
     // Download and parse SentencePiece vocabulary from tokenizer.json
-    let vocab = match download_moonshine_tokenizer(&client, org, repo_name, &args.cache_dir).await
-    {
+    let vocab = match download_moonshine_tokenizer(&client, org, repo_name, &args.cache_dir).await {
         Ok(tokenizer_path) => match parse_moonshine_vocabulary(&tokenizer_path) {
             Ok(v) => {
                 println!("Embedding vocabulary ({} tokens)...", v.len());
@@ -1326,7 +1330,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse mel filterbank (use n_mels from model config)
     // Large-v3 uses 128 mel bands, all others use 80
     let n_mels = match args.model_size {
-        ModelSize::Large => 128,
+        ModelSize::Large | ModelSize::LargeV3Turbo => 128,
         _ => 80,
     };
     let filterbank = parse_mel_filterbank(&mel_filters_path, n_mels)?;
