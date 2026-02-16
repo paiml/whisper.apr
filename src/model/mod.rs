@@ -7,6 +7,7 @@ mod decoder;
 pub mod download;
 mod encoder;
 pub mod lfm2;
+pub mod moonshine;
 pub mod quantized;
 
 pub use attention::{
@@ -18,6 +19,7 @@ pub use decoder::{
     StreamingCacheStats, StreamingKVCache,
 };
 pub use encoder::{Conv1d, ConvFrontend, Encoder, EncoderBlock, FeedForward, LayerNorm};
+pub use moonshine::{MoonshineDecoderBlock, MoonshineEncoderBlock};
 pub use quantized::{QuantizedLinear, QuantizedTensor};
 
 // Conditional exports for realizar-inference feature

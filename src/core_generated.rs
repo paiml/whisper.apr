@@ -274,8 +274,8 @@ pub struct WhisperApr {
     encoder: model::Encoder,
     /// Text decoder
     decoder: model::Decoder,
-    /// BPE tokenizer
-    tokenizer: tokenizer::BpeTokenizer,
+    /// Tokenizer (BPE for Whisper, SentencePiece for Moonshine)
+    tokenizer: tokenizer::Tokenizer,
     /// Mel filterbank (None for Moonshine models)
     mel_filters: Option<audio::MelFilterbank>,
     /// Learned conv stem for Moonshine (None for Whisper models)
@@ -295,7 +295,13 @@ impl WhisperApr {
     pub fn from_config(config: model::ModelConfig) -> Self {
         let encoder = model::Encoder::new(&config);
         let decoder = model::Decoder::new(&config);
-        let tokenizer = tokenizer::BpeTokenizer::with_base_tokens();
+        let tokenizer = if config.model_family == format::ModelFamily::Moonshine {
+            tokenizer::Tokenizer::SentencePiece(
+                tokenizer::SentencePieceTokenizer::moonshine_default(),
+            )
+        } else {
+            tokenizer::Tokenizer::Bpe(tokenizer::BpeTokenizer::with_base_tokens())
+        };
 
         // Dispatch audio frontend based on model config
         let (mel_filters, conv_stem) = match config.audio_frontend {
@@ -432,25 +438,14 @@ impl WhisperApr {
             None
         };
 
-        // 1. Compute mel spectrogram
-        #[cfg(feature = "std")]
-        let start_mel = if options.profile {
-            Some(std::time::Instant::now())
-        } else {
-            None
-        };
-        let mel = self.compute_mel(audio)?;
-        #[cfg(feature = "std")]
-        let mel_ms = start_mel.map(|s| s.elapsed().as_secs_f64() * 1000.0);
-
-        // 2. Encode audio features
+        // 1-2. Compute audio features (mel + encode for Whisper, ConvStem + encode for Moonshine)
         #[cfg(feature = "std")]
         let start_enc = if options.profile {
             Some(std::time::Instant::now())
         } else {
             None
         };
-        let audio_features = self.encode(&mel)?;
+        let audio_features = self.compute_features(audio)?;
         #[cfg(feature = "std")]
         let enc_ms = start_enc.map(|s| s.elapsed().as_secs_f64() * 1000.0);
 
@@ -494,9 +489,6 @@ impl WhisperApr {
         #[cfg(feature = "std")]
         let profiling = if options.profile {
             let mut breakdown = std::collections::HashMap::new();
-            if let Some(ms) = mel_ms {
-                breakdown.insert("audio_ms".to_string(), ms);
-            }
             if let Some(ms) = enc_ms {
                 breakdown.insert("encoder_ms".to_string(), ms);
             }
@@ -676,6 +668,39 @@ impl WhisperApr {
         merged
     }
 
+    /// Compute audio features (model-family-aware audio frontend)
+    ///
+    /// For Whisper: mel spectrogram (30s padded, 3000 frames x 80 mels)
+    /// For Moonshine: learned ConvStem on variable-length audio
+    ///
+    /// # Errors
+    /// Returns error if audio processing fails
+    fn compute_features(&self, audio: &[f32]) -> WhisperResult<Vec<f32>> {
+        match self.config.audio_frontend {
+            model::AudioFrontend::MelFilterbank => {
+                let mel = self.compute_mel(audio)?;
+                self.encode(&mel)
+            }
+            model::AudioFrontend::LearnedConv => {
+                let stem = self.conv_stem.as_ref().ok_or_else(|| {
+                    WhisperError::Model("Moonshine requires ConvStem".into())
+                })?;
+                let stem_out = stem.forward(audio)?;
+                // Pass ConvStem output through encoder blocks
+                self.encoder.forward(&stem_out)
+            }
+        }
+    }
+
+    /// Get the end-of-transcription token ID for the current model
+    fn eot_token(&self) -> u32 {
+        if self.config.model_family == format::ModelFamily::Moonshine {
+            2 // SentencePiece EOS token
+        } else {
+            tokenizer::special_tokens::EOT
+        }
+    }
+
     /// Compute mel spectrogram from audio
     ///
     /// Pads or truncates audio to exactly 30 seconds (480,000 samples at 16kHz)
@@ -736,6 +761,12 @@ impl WhisperApr {
     /// Uses dynamic token lookup based on vocabulary size to support both
     /// English-only models (tiny.en, etc.) and multilingual models.
     fn get_initial_tokens(&self, language: &str, task: Task) -> Vec<u32> {
+        // Moonshine: just BOS token (SentencePiece token 1)
+        if self.config.model_family == format::ModelFamily::Moonshine {
+            return vec![1]; // SentencePiece BOS
+        }
+
+        // Whisper: SOT + language + task tokens
         use tokenizer::special_tokens::{self, SpecialTokens};
 
         // Get correct special tokens for this model's vocabulary size
@@ -820,12 +851,10 @@ impl WhisperApr {
 
         let n_vocab = self.config.n_vocab as usize;
         let max_tokens = self.config.n_text_ctx as usize;
-        let d_model = self.config.n_text_state as usize;
-        let n_layers = self.config.n_text_layer as usize;
 
         // Create KV cache for incremental decoding (O(n) instead of O(n²))
-        // DecoderKVCache::new(n_layers, d_model, max_len)
-        let cache = RefCell::new(model::DecoderKVCache::new(n_layers, d_model, max_tokens));
+        // Uses decoder's create_kv_cache() which dispatches GQA vs MHA automatically
+        let cache = RefCell::new(self.decoder.create_kv_cache());
         let processed_count = RefCell::new(0usize);
 
         // Create Whisper token suppressor using realizar's LogitProcessor architecture
@@ -853,73 +882,9 @@ impl WhisperApr {
             // Suppresses: SOT, language tokens, task tokens, timestamps (if disabled)
             suppressor.apply(&mut logits);
 
-            // ---- N-gram repetition suppression ----
-            // Collect text-only tokens (skip special/timestamp tokens)
-            let eot_id = tokenizer::special_tokens::EOT;
-            let text_tokens: Vec<u32> = tokens.iter().copied().filter(|&t| t < eot_id).collect();
-
-            // (1) Token-level penalty: penalize recently-seen tokens
-            let window_start = if text_tokens.len() > 50 {
-                text_tokens.len() - 50
-            } else {
-                0
-            };
-            for &prev_tok in &text_tokens[window_start..] {
-                if (prev_tok as usize) < n_vocab {
-                    logits[prev_tok as usize] -= 2.0;
-                }
-            }
-
-            // (2) Trigram blocking: if (prev2, prev1, X) already appeared, suppress X
-            if text_tokens.len() >= 3 {
-                let prev2 = text_tokens[text_tokens.len() - 2];
-                let prev1 = text_tokens[text_tokens.len() - 1];
-                for w in text_tokens[..text_tokens.len() - 2].windows(3) {
-                    if w[0] == prev2 && w[1] == prev1 {
-                        let completing = w[2] as usize;
-                        if completing < n_vocab {
-                            logits[completing] -= 10.0;
-                        }
-                    }
-                }
-            }
-
-            // (3) Degenerate loop kill: force EOT if any 4-gram repeats 3+ times
-            if text_tokens.len() >= 12 {
-                let mut fourgram_counts = std::collections::HashMap::<[u32; 4], u32>::new();
-                for w in text_tokens.windows(4) {
-                    *fourgram_counts.entry([w[0], w[1], w[2], w[3]]).or_insert(0) += 1;
-                }
-                if fourgram_counts.values().any(|&c| c >= 3) {
-                    if (eot_id as usize) < n_vocab {
-                        logits[eot_id as usize] = 100.0;
-                    }
-                }
-            }
-
-            // (4) Unigram frequency cap: if any token dominates recent output, suppress it
-            // In hallucinated filler, common words ("so","the","is") appear at 10%+ frequency
-            // In real speech these appear at ~5-7%
-            if text_tokens.len() >= 80 {
-                let window = &text_tokens[text_tokens.len() - 80..];
-                let mut freq = std::collections::HashMap::<u32, u32>::new();
-                for &t in window {
-                    *freq.entry(t).or_insert(0) += 1;
-                }
-                for (&tok, &count) in &freq {
-                    if count >= 8 && (tok as usize) < n_vocab {
-                        // 8/80 = 10% - apply escalating penalty
-                        logits[tok as usize] -= (count as f32 - 7.0) * 3.0;
-                    }
-                }
-                // If vocabulary diversity is very low, force EOT
-                let unique_ratio = freq.len() as f32 / 80.0;
-                if unique_ratio < 0.35 {
-                    if (eot_id as usize) < n_vocab {
-                        logits[eot_id as usize] = 100.0;
-                    }
-                }
-            }
+            // N-gram repetition suppression (prevents hallucinated loops)
+            let eot_id = self.eot_token();
+            Self::suppress_repetitions(&mut logits, tokens, eot_id, n_vocab);
 
             Ok(logits)
         };
@@ -949,6 +914,73 @@ impl WhisperApr {
         }
     }
 
+    /// Apply n-gram repetition suppression to logits
+    ///
+    /// Prevents hallucinated loops by penalizing repeated tokens, blocking
+    /// trigram completions, forcing EOT on degenerate 4-gram loops, and
+    /// capping unigram frequency in recent output.
+    fn suppress_repetitions(logits: &mut [f32], tokens: &[u32], eot_id: u32, n_vocab: usize) {
+        let text_tokens: Vec<u32> = tokens.iter().copied().filter(|&t| t < eot_id).collect();
+
+        // Token-level penalty: penalize recently-seen tokens
+        let window_start = text_tokens.len().saturating_sub(50);
+        for &prev_tok in &text_tokens[window_start..] {
+            if (prev_tok as usize) < n_vocab {
+                logits[prev_tok as usize] -= 2.0;
+            }
+        }
+
+        // Trigram blocking: if (prev2, prev1, X) already appeared, suppress X
+        if text_tokens.len() >= 3 {
+            let prev2 = text_tokens[text_tokens.len() - 2];
+            let prev1 = text_tokens[text_tokens.len() - 1];
+            for w in text_tokens[..text_tokens.len() - 2].windows(3) {
+                if w[0] == prev2 && w[1] == prev1 && (w[2] as usize) < n_vocab {
+                    logits[w[2] as usize] -= 10.0;
+                }
+            }
+        }
+
+        Self::suppress_degenerate_loops(logits, &text_tokens, eot_id, n_vocab);
+    }
+
+    /// Detect and suppress degenerate repetition loops (4-gram and unigram frequency)
+    fn suppress_degenerate_loops(
+        logits: &mut [f32],
+        text_tokens: &[u32],
+        eot_id: u32,
+        n_vocab: usize,
+    ) {
+        // Force EOT if any 4-gram repeats 3+ times
+        if text_tokens.len() >= 12 {
+            let mut fourgram_counts = std::collections::HashMap::<[u32; 4], u32>::new();
+            for w in text_tokens.windows(4) {
+                *fourgram_counts.entry([w[0], w[1], w[2], w[3]]).or_insert(0) += 1;
+            }
+            if fourgram_counts.values().any(|&c| c >= 3) && (eot_id as usize) < n_vocab {
+                logits[eot_id as usize] = 100.0;
+                return;
+            }
+        }
+
+        // Unigram frequency cap: suppress tokens dominating recent output
+        if text_tokens.len() >= 80 {
+            let window = &text_tokens[text_tokens.len() - 80..];
+            let mut freq = std::collections::HashMap::<u32, u32>::new();
+            for &t in window {
+                *freq.entry(t).or_insert(0) += 1;
+            }
+            for (&tok, &count) in &freq {
+                if count >= 8 && (tok as usize) < n_vocab {
+                    logits[tok as usize] -= (count as f32 - 7.0) * 3.0;
+                }
+            }
+            if freq.len() as f32 / 80.0 < 0.35 && (eot_id as usize) < n_vocab {
+                logits[eot_id as usize] = 100.0;
+            }
+        }
+    }
+
     /// Set resampler for non-16kHz audio
     ///
     /// # Errors
@@ -974,7 +1006,7 @@ impl WhisperApr {
 
     /// Get the tokenizer
     #[must_use]
-    pub const fn tokenizer(&self) -> &tokenizer::BpeTokenizer {
+    pub const fn tokenizer(&self) -> &tokenizer::Tokenizer {
         &self.tokenizer
     }
 
@@ -1079,10 +1111,10 @@ impl WhisperApr {
         // Phase 4: Loading vocabulary
         callback(&tracker.to_progress());
         // Load vocab from APR if available, otherwise fall back to base tokens
-        let tokenizer = reader.read_vocabulary().map_or_else(
+        let tokenizer = tokenizer::Tokenizer::Bpe(reader.read_vocabulary().map_or_else(
             tokenizer::BpeTokenizer::with_base_tokens,
             tokenizer::BpeTokenizer::from_vocabulary,
-        );
+        ));
         tracker.next_phase();
 
         // Phase 5: Initializing audio frontend
@@ -1167,41 +1199,81 @@ impl WhisperApr {
             target[..len].copy_from_slice(&pe[..len]);
         }
 
-        // Load encoder block weights (HuggingFace naming: encoder.layers.N.*)
-        for layer_idx in 0..n_layers {
-            let progress = layer_idx as f32 / n_layers as f32;
-            tracker.update_phase_progress(progress);
-            callback(&tracker.to_progress());
+        // Load encoder block weights — dispatch Whisper vs Moonshine
+        if !encoder.moonshine_blocks().is_empty() {
+            // Moonshine encoder: GQA + SwiGLU + RmsNorm
+            for layer_idx in 0..n_layers {
+                let progress = layer_idx as f32 / n_layers as f32;
+                tracker.update_phase_progress(progress);
+                callback(&tracker.to_progress());
 
-            let block = &mut encoder.blocks_mut()[layer_idx];
+                let block = &mut encoder.moonshine_blocks_mut()[layer_idx];
 
-            // Self-attention layer norm (before attention)
-            Self::load_layer_norm_weights(
-                reader,
-                &format!("encoder.layers.{layer_idx}.self_attn_layer_norm"),
-                &mut block.ln1,
-            );
+                // Pre-attention RMS norm
+                Self::load_rms_norm_weights(
+                    reader,
+                    &format!("encoder.blocks.{layer_idx}.ln1"),
+                    &mut block.ln1,
+                );
 
-            // Self-attention
-            Self::load_attention_weights(
-                reader,
-                &format!("encoder.layers.{layer_idx}.self_attn"),
-                &mut block.self_attn,
-            );
+                // GQA self-attention
+                Self::load_gqa_weights(
+                    reader,
+                    &format!("encoder.blocks.{layer_idx}.attn"),
+                    &mut block.self_attn,
+                );
 
-            // Final layer norm (before FFN)
-            Self::load_layer_norm_weights(
-                reader,
-                &format!("encoder.layers.{layer_idx}.final_layer_norm"),
-                &mut block.ln2,
-            );
+                // Pre-FFN RMS norm
+                Self::load_rms_norm_weights(
+                    reader,
+                    &format!("encoder.blocks.{layer_idx}.ln2"),
+                    &mut block.ln2,
+                );
 
-            // Feed-forward network
-            Self::load_ffn_weights(
-                reader,
-                &format!("encoder.layers.{layer_idx}"),
-                &mut block.ffn,
-            );
+                // SwiGLU FFN
+                Self::load_swiglu_weights(
+                    reader,
+                    &format!("encoder.blocks.{layer_idx}.ffn"),
+                    &mut block.ffn,
+                );
+            }
+        } else {
+            // Whisper encoder: MHA + GELU + LayerNorm (HuggingFace naming: encoder.layers.N.*)
+            for layer_idx in 0..n_layers {
+                let progress = layer_idx as f32 / n_layers as f32;
+                tracker.update_phase_progress(progress);
+                callback(&tracker.to_progress());
+
+                let block = &mut encoder.blocks_mut()[layer_idx];
+
+                // Self-attention layer norm (before attention)
+                Self::load_layer_norm_weights(
+                    reader,
+                    &format!("encoder.layers.{layer_idx}.self_attn_layer_norm"),
+                    &mut block.ln1,
+                );
+
+                // Self-attention
+                Self::load_attention_weights(
+                    reader,
+                    &format!("encoder.layers.{layer_idx}.self_attn"),
+                    &mut block.self_attn,
+                );
+
+                // Final layer norm (before FFN)
+                Self::load_layer_norm_weights(
+                    reader,
+                    &format!("encoder.layers.{layer_idx}.final_layer_norm"),
+                    &mut block.ln2,
+                );
+
+                // Feed-forward network
+                Self::load_ffn_weights(
+                    reader,
+                    &format!("encoder.layers.{layer_idx}"),
+                    &mut block.ffn,
+                );
+            }
         }
 
         // Load encoder final layer norm
@@ -1237,59 +1309,118 @@ impl WhisperApr {
             target[..len].copy_from_slice(&pe[..len]);
         }
 
-        // Load decoder block weights
-        for layer_idx in 0..n_layers {
-            let progress = layer_idx as f32 / n_layers as f32;
-            tracker.update_phase_progress(progress);
-            callback(&tracker.to_progress());
+        // Load decoder block weights — dispatch Whisper vs Moonshine
+        if !decoder.moonshine_blocks().is_empty() {
+            // Moonshine decoder: GQA self-attn + GQA cross-attn + SwiGLU + RmsNorm
+            for layer_idx in 0..n_layers {
+                let progress = layer_idx as f32 / n_layers as f32;
+                tracker.update_phase_progress(progress);
+                callback(&tracker.to_progress());
 
-            let block = &mut decoder.blocks_mut()[layer_idx];
+                let block = &mut decoder.moonshine_blocks_mut()[layer_idx];
 
-            // Layer norm 1 (before self-attention)
-            Self::load_layer_norm_weights(
-                reader,
-                &format!("decoder.layers.{layer_idx}.self_attn_layer_norm"),
-                &mut block.ln1,
-            );
+                // Pre-self-attention RMS norm
+                Self::load_rms_norm_weights(
+                    reader,
+                    &format!("decoder.blocks.{layer_idx}.ln1"),
+                    &mut block.ln1,
+                );
 
-            // Self-attention
-            Self::load_attention_weights(
-                reader,
-                &format!("decoder.layers.{layer_idx}.self_attn"),
-                &mut block.self_attn,
-            );
+                // GQA self-attention (causal, with RoPE)
+                Self::load_gqa_weights(
+                    reader,
+                    &format!("decoder.blocks.{layer_idx}.attn"),
+                    &mut block.self_attn,
+                );
 
-            // Layer norm 2 (before cross-attention)
-            Self::load_layer_norm_weights(
-                reader,
-                &format!("decoder.layers.{layer_idx}.encoder_attn_layer_norm"),
-                &mut block.ln2,
-            );
+                // Pre-cross-attention RMS norm
+                Self::load_rms_norm_weights(
+                    reader,
+                    &format!("decoder.blocks.{layer_idx}.ln_cross"),
+                    &mut block.ln_cross,
+                );
 
-            // Cross-attention
-            Self::load_attention_weights(
-                reader,
-                &format!("decoder.layers.{layer_idx}.encoder_attn"),
-                &mut block.cross_attn,
-            );
+                // GQA cross-attention (Q from decoder, KV from encoder)
+                Self::load_gqa_weights(
+                    reader,
+                    &format!("decoder.blocks.{layer_idx}.cross_attn"),
+                    &mut block.cross_attn,
+                );
 
-            // Layer norm 3 (before FFN)
-            Self::load_layer_norm_weights(
-                reader,
-                &format!("decoder.layers.{layer_idx}.final_layer_norm"),
-                &mut block.ln3,
-            );
+                // Pre-FFN RMS norm
+                Self::load_rms_norm_weights(
+                    reader,
+                    &format!("decoder.blocks.{layer_idx}.ln2"),
+                    &mut block.ln2,
+                );
 
-            // Feed-forward network
-            Self::load_ffn_weights(
-                reader,
-                &format!("decoder.layers.{layer_idx}"),
-                &mut block.ffn,
-            );
+                // SwiGLU FFN
+                Self::load_swiglu_weights(
+                    reader,
+                    &format!("decoder.blocks.{layer_idx}.ffn"),
+                    &mut block.ffn,
+                );
+            }
+
+            // Load Moonshine final RMS norm
+            if let Some(rms) = decoder.ln_post_rms_mut() {
+                Self::load_rms_norm_weights(reader, "decoder.ln_post", rms);
+            }
+        } else {
+            // Whisper decoder: MHA + GELU + LayerNorm
+            for layer_idx in 0..n_layers {
+                let progress = layer_idx as f32 / n_layers as f32;
+                tracker.update_phase_progress(progress);
+                callback(&tracker.to_progress());
+
+                let block = &mut decoder.blocks_mut()[layer_idx];
+
+                // Layer norm 1 (before self-attention)
+                Self::load_layer_norm_weights(
+                    reader,
+                    &format!("decoder.layers.{layer_idx}.self_attn_layer_norm"),
+                    &mut block.ln1,
+                );
+
+                // Self-attention
+                Self::load_attention_weights(
+                    reader,
+                    &format!("decoder.layers.{layer_idx}.self_attn"),
+                    &mut block.self_attn,
+                );
+
+                // Layer norm 2 (before cross-attention)
+                Self::load_layer_norm_weights(
+                    reader,
+                    &format!("decoder.layers.{layer_idx}.encoder_attn_layer_norm"),
+                    &mut block.ln2,
+                );
+
+                // Cross-attention
+                Self::load_attention_weights(
+                    reader,
+                    &format!("decoder.layers.{layer_idx}.encoder_attn"),
+                    &mut block.cross_attn,
+                );
+
+                // Layer norm 3 (before FFN)
+                Self::load_layer_norm_weights(
+                    reader,
+                    &format!("decoder.layers.{layer_idx}.final_layer_norm"),
+                    &mut block.ln3,
+                );
+
+                // Feed-forward network
+                Self::load_ffn_weights(
+                    reader,
+                    &format!("decoder.layers.{layer_idx}"),
+                    &mut block.ffn,
+                );
+            }
+
+            // Load Whisper final layer norm
+            Self::load_layer_norm_weights(reader, "decoder.layer_norm", decoder.ln_post_mut());
         }
-
-        // Load final layer norm
-        Self::load_layer_norm_weights(reader, "decoder.layer_norm", decoder.ln_post_mut());
 
         // Finalize decoder - recompute cached transpose for token embeddings
         decoder.finalize_weights();
@@ -1360,6 +1491,62 @@ impl WhisperApr {
         }
     }
 
+    /// Load RMS norm weights (Moonshine: single weight vector, no bias)
+    fn load_rms_norm_weights(
+        reader: &format::AprReader,
+        prefix: &str,
+        rms: &mut model::lfm2::layer::RmsNorm,
+    ) {
+        if let Ok(weight) = reader.load_tensor(&format!("{prefix}.weight")) {
+            let len = weight.len().min(rms.weight.len());
+            rms.weight[..len].copy_from_slice(&weight[..len]);
+        }
+    }
+
+    /// Load GQA attention weights (Moonshine: q, k, v, o projections)
+    fn load_gqa_weights(
+        reader: &format::AprReader,
+        prefix: &str,
+        gqa: &mut model::lfm2::gqa::GroupedQueryAttention,
+    ) {
+        if let Ok(w) = reader.load_tensor(&format!("{prefix}.q.weight")) {
+            let len = w.len().min(gqa.w_q.len());
+            gqa.w_q[..len].copy_from_slice(&w[..len]);
+        }
+        if let Ok(w) = reader.load_tensor(&format!("{prefix}.k.weight")) {
+            let len = w.len().min(gqa.w_k.len());
+            gqa.w_k[..len].copy_from_slice(&w[..len]);
+        }
+        if let Ok(w) = reader.load_tensor(&format!("{prefix}.v.weight")) {
+            let len = w.len().min(gqa.w_v.len());
+            gqa.w_v[..len].copy_from_slice(&w[..len]);
+        }
+        if let Ok(w) = reader.load_tensor(&format!("{prefix}.o.weight")) {
+            let len = w.len().min(gqa.w_o.len());
+            gqa.w_o[..len].copy_from_slice(&w[..len]);
+        }
+    }
+
+    /// Load SwiGLU FFN weights (Moonshine: gate, up, down projections)
+    fn load_swiglu_weights(
+        reader: &format::AprReader,
+        prefix: &str,
+        ffn: &mut model::lfm2::swiglu::SwiGluFfn,
+    ) {
+        if let Ok(w) = reader.load_tensor(&format!("{prefix}.w_gate.weight")) {
+            let len = w.len().min(ffn.w_gate.len());
+            ffn.w_gate[..len].copy_from_slice(&w[..len]);
+        }
+        if let Ok(w) = reader.load_tensor(&format!("{prefix}.w_up.weight")) {
+            let len = w.len().min(ffn.w_up.len());
+            ffn.w_up[..len].copy_from_slice(&w[..len]);
+        }
+        if let Ok(w) = reader.load_tensor(&format!("{prefix}.w_down.weight")) {
+            let len = w.len().min(ffn.w_down.len());
+            ffn.w_down[..len].copy_from_slice(&w[..len]);
+        }
+    }
+
     /// Get mutable encoder reference (for testing/loading)
     pub fn encoder_mut(&mut self) -> &mut model::Encoder {
         &mut self.encoder
@@ -1394,11 +1581,19 @@ impl WhisperApr {
         let mel_filters = self.mel_filters.ok_or_else(|| {
             WhisperError::Audio("CUDA requires mel filterbank (Whisper model)".into())
         })?;
+        let bpe_tokenizer = match self.tokenizer {
+            tokenizer::Tokenizer::Bpe(bpe) => bpe,
+            tokenizer::Tokenizer::SentencePiece(_) => {
+                return Err(WhisperError::Model(
+                    "CUDA backend requires Whisper BPE tokenizer".into(),
+                ));
+            }
+        };
         cuda::WhisperCuda::new_with_components(
             self.encoder,
             self.decoder,
             self.config,
-            self.tokenizer,
+            bpe_tokenizer,
             mel_filters,
             device_ordinal,
         )
@@ -4688,5 +4883,294 @@ mod tests {
         // 5 second overlap = 10-15 words of context
         let expected_overlap_words = overlap_seconds * 2.5;
         assert!(expected_overlap_words >= 10.0);
+    }
+
+    // =========================================================================
+    // Moonshine Integration Tests
+    // =========================================================================
+
+    #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
+    fn test_moonshine_tiny_constructs() {
+        let model = WhisperApr::moonshine_tiny();
+        assert_eq!(model.config.n_audio_state, 288);
+        assert_eq!(model.config.n_text_state, 288);
+        assert_eq!(model.config.n_audio_layer, 6);
+        assert_eq!(model.config.n_text_layer, 6);
+        assert_eq!(model.config.n_audio_head, 8);
+        assert_eq!(model.config.n_text_head, 8);
+    }
+
+    #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
+    fn test_moonshine_tiny_encoder_has_moonshine_blocks() {
+        let model = WhisperApr::moonshine_tiny();
+        // Encoder should have Moonshine blocks, not Whisper blocks
+        assert!(model.encoder.moonshine_blocks().len() > 0);
+        assert!(model.encoder.blocks().is_empty());
+        assert!(model.encoder.rope().is_some());
+    }
+
+    #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
+    fn test_moonshine_tiny_decoder_has_moonshine_blocks() {
+        let model = WhisperApr::moonshine_tiny();
+        // Decoder should have Moonshine blocks, not Whisper blocks
+        assert!(model.decoder.moonshine_blocks().len() > 0);
+        assert!(model.decoder.blocks().is_empty());
+        assert!(model.decoder.rope().is_some());
+    }
+
+    #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
+    fn test_moonshine_tiny_has_sentencepiece_tokenizer() {
+        let model = WhisperApr::moonshine_tiny();
+        match model.tokenizer() {
+            tokenizer::Tokenizer::SentencePiece(_) => {} // expected
+            tokenizer::Tokenizer::Bpe(_) => panic!("Moonshine should use SentencePiece tokenizer"),
+        }
+    }
+
+    #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
+    fn test_moonshine_tiny_has_conv_stem() {
+        let model = WhisperApr::moonshine_tiny();
+        assert!(model.conv_stem.is_some());
+        assert!(model.mel_filters.is_none());
+    }
+
+    #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
+    fn test_moonshine_tiny_initial_tokens() {
+        let model = WhisperApr::moonshine_tiny();
+        let tokens = model.get_initial_tokens("en", crate::Task::Transcribe);
+        // Moonshine: just BOS token (SentencePiece token 1)
+        assert_eq!(tokens, vec![1]);
+    }
+
+    #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
+    fn test_moonshine_tiny_eot_token() {
+        let model = WhisperApr::moonshine_tiny();
+        assert_eq!(model.eot_token(), 2); // SentencePiece EOS
+    }
+
+    #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
+    fn test_moonshine_encoder_forward_shape() {
+        let model = WhisperApr::moonshine_tiny();
+        let d_model = 288;
+        let seq_len = 7; // variable-length input
+
+        // Simulate ConvStem output: [seq_len, d_model]
+        let features = vec![0.1_f32; seq_len * d_model];
+        let output = model.encoder.forward(&features).expect("encoder forward");
+
+        // Output should have same shape (seq_len preserved through transformer blocks)
+        assert_eq!(output.len(), seq_len * d_model);
+        assert!(output.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
+    fn test_moonshine_decoder_forward_shape() {
+        let model = WhisperApr::moonshine_tiny();
+        let d_model = 288;
+        let n_vocab = model.config.n_vocab as usize;
+
+        // Simulate encoder output
+        let enc_seq_len = 7;
+        let encoder_output = vec![0.1_f32; enc_seq_len * d_model];
+
+        // Decode 2 tokens
+        let tokens = vec![1_u32, 100];
+        let logits = model
+            .decoder
+            .forward(&tokens, &encoder_output)
+            .expect("decoder forward");
+
+        // Output: [seq_len, n_vocab]
+        assert_eq!(logits.len(), tokens.len() * n_vocab);
+        assert!(logits.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
+    fn test_moonshine_variable_length_input() {
+        let model = WhisperApr::moonshine_tiny();
+        let d_model = 288;
+
+        // Test different sequence lengths (Moonshine supports variable-length)
+        for seq_len in [3, 7, 15, 31] {
+            let features = vec![0.1_f32; seq_len * d_model];
+            let output = model
+                .encoder
+                .forward(&features)
+                .expect("encoder forward");
+            assert_eq!(
+                output.len(),
+                seq_len * d_model,
+                "seq_len={seq_len} output mismatch"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
+    fn test_whisper_tiny_unaffected() {
+        // Verify Whisper models still work correctly after Moonshine changes
+        let model = WhisperApr::tiny();
+        assert!(model.encoder.blocks().len() > 0);
+        assert!(model.encoder.moonshine_blocks().is_empty());
+        assert!(model.encoder.rope().is_none());
+        assert!(model.decoder.blocks().len() > 0);
+        assert!(model.decoder.moonshine_blocks().is_empty());
+        assert!(model.decoder.rope().is_none());
+        assert!(model.mel_filters.is_some());
+        assert!(model.conv_stem.is_none());
+        match model.tokenizer() {
+            tokenizer::Tokenizer::Bpe(_) => {} // expected
+            tokenizer::Tokenizer::SentencePiece(_) => {
+                panic!("Whisper should use BPE tokenizer")
+            }
+        }
+    }
+
+    // ========================================================================
+    // Falsification tests: would have caught bugs found during systematic review
+    // ========================================================================
+
+    #[test]
+    fn test_moonshine_encoder_uses_rmsnorm_final() {
+        // Regression: encoder must use RmsNorm (not LayerNorm) for Moonshine
+        let config = model::ModelConfig::moonshine_tiny();
+        let encoder = model::Encoder::new(&config);
+        assert!(
+            encoder.ln_post_rms().is_some(),
+            "Moonshine encoder must use RmsNorm for final layer norm"
+        );
+    }
+
+    #[test]
+    fn test_whisper_encoder_uses_layernorm_final() {
+        // Regression: Whisper should still use LayerNorm, not RmsNorm
+        let config = model::ModelConfig::tiny();
+        let encoder = model::Encoder::new(&config);
+        assert!(
+            encoder.ln_post_rms().is_none(),
+            "Whisper encoder must use LayerNorm, not RmsNorm"
+        );
+    }
+
+    #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
+    fn test_moonshine_decoder_forward_one_sets_cross_attn_cached() {
+        // Regression: forward_one must set cross_attn_cached=true for Moonshine
+        let model = WhisperApr::moonshine_tiny();
+        let d_model = 288;
+        let n_layers = model.decoder.n_layers();
+        let max_len = model.decoder.max_len();
+        let enc_seq_len = 7;
+        let encoder_output = vec![0.1_f32; enc_seq_len * d_model];
+
+        let mut cache = model::DecoderKVCache::new(n_layers, d_model, max_len);
+        assert!(!cache.cross_attn_cached);
+
+        // Process one token
+        let _logits = model
+            .decoder
+            .forward_one(1, &encoder_output, &mut cache)
+            .expect("forward_one");
+
+        assert!(
+            cache.cross_attn_cached,
+            "cross_attn_cached must be true after forward_one for Moonshine"
+        );
+    }
+
+    #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
+    fn test_moonshine_decoder_forward_one_cache_has_layers() {
+        // Regression: cache must have layers even for fallback decoder
+        let config = model::ModelConfig::moonshine_tiny();
+        let decoder = model::Decoder::new(&config);
+
+        // Verify that a valid Moonshine decoder has cache layers
+        let cache = model::DecoderKVCache::new(
+            decoder.n_layers(),
+            decoder.d_model(),
+            decoder.max_len(),
+        );
+        assert!(
+            !cache.self_attn_cache.is_empty(),
+            "Moonshine decoder cache must have at least 1 layer"
+        );
+    }
+
+    #[test]
+    fn test_moonshine_decoder_is_finalized() {
+        // Regression: is_finalized must handle empty-block case correctly
+        let config = model::ModelConfig::moonshine_tiny();
+        let decoder = model::Decoder::new(&config);
+        // Moonshine blocks don't have finalization — should report as finalized
+        assert!(
+            decoder.is_finalized(),
+            "Moonshine decoder should be considered finalized"
+        );
+    }
+
+    #[test]
+    fn test_whisper_decoder_is_finalized_initially_false() {
+        // Whisper decoder has blocks that need finalization
+        let config = model::ModelConfig::tiny();
+        let decoder = model::Decoder::new(&config);
+        // Whisper blocks need finalize_weights() to be called
+        assert!(
+            !decoder.is_finalized(),
+            "Whisper decoder should NOT be finalized before finalize_weights()"
+        );
+    }
+
+    #[test]
+    #[ignore = "Allocates large model - run with --ignored"]
+    fn test_moonshine_decoder_forward_traced() {
+        // Regression: forward_traced must produce traces for Moonshine blocks
+        let model = WhisperApr::moonshine_tiny();
+        let d_model = 288;
+        let enc_seq_len = 7;
+        let encoder_output = vec![0.1_f32; enc_seq_len * d_model];
+
+        let (logits, trace) = model
+            .decoder
+            .forward_traced(&[1, 2], &encoder_output)
+            .expect("forward_traced");
+
+        // Should have layer traces for Moonshine blocks
+        let layer_traces: Vec<_> = trace
+            .iter()
+            .filter(|(name, _)| name.starts_with("layer_"))
+            .collect();
+        assert!(
+            !layer_traces.is_empty(),
+            "forward_traced must produce layer traces for Moonshine"
+        );
+
+        assert!(!logits.is_empty());
+        assert!(logits.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn test_moonshine_encoder_forward_batch_uses_forward() {
+        // Regression: forward_batch must dispatch correctly for non-mel frontends
+        let config = model::ModelConfig::moonshine_tiny();
+        let encoder = model::Encoder::new(&config);
+        let d_model = 288;
+
+        // forward_batch with already-projected features (Moonshine path)
+        let batch = vec![vec![0.1_f32; 7 * d_model], vec![0.1_f32; 5 * d_model]];
+        let results = encoder.forward_batch(&batch).expect("forward_batch");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].len(), 7 * d_model);
+        assert_eq!(results[1].len(), 5 * d_model);
     }
 }

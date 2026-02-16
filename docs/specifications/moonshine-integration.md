@@ -1,9 +1,9 @@
 # Moonshine Integration Specification
 
 **Document:** WAPR-MOONSHINE-001
-**Status:** Draft
-**Version:** 1.0.0
-**Date:** 2026-02-13
+**Status:** In Progress
+**Version:** 1.1.0
+**Date:** 2026-02-16 (updated from 2026-02-13 draft)
 **License:** Moonshine is MIT-licensed (Useful Sensors, Inc.)
 
 ---
@@ -791,3 +791,70 @@ Same approach as `docs/specifications/whisper-apr-cpp-parity.md`:
 | `src/tokenizer/sentencepiece.rs` | CREATE | SentencePiece tokenizer for Moonshine's 32K vocab |
 | `src/audio/conv_stem.rs` | CREATE | Learned conv stem (wraps 3x Conv1d) |
 | `tools/whisper-convert/` | MODIFY | Add Moonshine ONNX -> APR conversion path |
+
+---
+
+## 17. Implementation Status
+
+### 17.1 Pre-existing Scaffolding (Complete)
+
+These items were completed before implementation began:
+
+| Component | File | Status |
+|-----------|------|--------|
+| `ModelFamily::Moonshine = 3` | `src/format/apr2_generated.rs` | DONE |
+| `AudioFrontend` enum | `src/model/mod.rs:38` | DONE |
+| `PositionalEncoding` enum | `src/model/mod.rs:47` | DONE |
+| `AttentionType` enum | `src/model/mod.rs:56` | DONE |
+| `ModelConfig::moonshine_tiny()` | `src/model/mod.rs:224` | DONE |
+| `ModelConfig::moonshine_base()` | `src/model/mod.rs:249` | DONE |
+| `ModelConfig::is_moonshine()` | `src/model/mod.rs:272` | DONE |
+| `ConvStem` struct | `src/audio/conv_stem.rs` | DONE |
+| `SentencePieceTokenizer` | `src/tokenizer/sentencepiece.rs` | DONE |
+| `Tokenizer` enum (Bpe/SentencePiece) | `src/tokenizer/mod.rs:220` | DONE |
+| `RmsNorm` | `src/model/lfm2/layer.rs:268` | DONE (reuse) |
+| `GroupedQueryAttention` | `src/model/lfm2/gqa.rs:89` | DONE (reuse) |
+| `SwiGluFfn` | `src/model/lfm2/swiglu.rs:67` | DONE (reuse) |
+| `RotaryEmbedding` | `src/model/lfm2/rope.rs:76` | DONE (reuse) |
+| `KvCache` (GQA) | `src/model/lfm2/gqa.rs:308` | DONE (reuse) |
+| `WhisperApr.conv_stem` field | `src/core_generated.rs:282` | DONE |
+| `WhisperApr.mel_filters` as `Option` | `src/core_generated.rs:280` | DONE |
+| Encoder conditional conv_frontend | `src/model/encoder/mod.rs:72` | DONE |
+| Encoder conditional positional_embedding | `src/model/encoder/mod.rs:82` | DONE |
+| Decoder stores `positional_encoding` | `src/model/decoder_generated.rs:1724` | DONE |
+| Decoder stores `attention_type` | `src/model/decoder_generated.rs:1726` | DONE |
+
+### 17.2 PMAT Work Tickets
+
+| Ticket | Phase | Description | Status |
+|--------|-------|-------------|--------|
+| WAPR-MOONSHINE-002 | 1 | Create `MoonshineEncoderBlock` and `MoonshineDecoderBlock` | DONE |
+| WAPR-MOONSHINE-003 | 1 | Add `forward_cross_attention()` to GQA | DONE |
+| WAPR-MOONSHINE-004 | 2 | Encoder parallel block dispatch | DONE |
+| WAPR-MOONSHINE-005 | 3 | Decoder parallel block dispatch | DONE |
+| WAPR-MOONSHINE-006 | 4 | Tokenizer field migration (`BpeTokenizer` → `Tokenizer`) | DONE |
+| WAPR-MOONSHINE-007 | 5 | Transcription pipeline dispatch (compute_features, eot_token) | DONE |
+| WAPR-MOONSHINE-008 | 6 | Moonshine weight loading paths (GQA, SwiGLU, RmsNorm) | DONE |
+| WAPR-MOONSHINE-009 | 7 | Unit + integration tests for Moonshine (10 new tests) | DONE |
+| WAPR-MOONSHINE-010 | 8 | Incremental KV caching for GQA decoder (`forward_cached`, `new_gqa`) | DONE |
+
+### 17.3 Phase Progress
+
+- [x] Phase 0: Scaffolding (config, enums, ConvStem, tokenizer) — pre-existing
+- [x] Phase 1: Moonshine encoder/decoder blocks (WAPR-MOONSHINE-002, WAPR-MOONSHINE-003)
+- [x] Phase 2: Encoder block dispatch (WAPR-MOONSHINE-004)
+- [x] Phase 3: Decoder block dispatch (WAPR-MOONSHINE-005)
+- [x] Phase 4: Tokenizer field migration (WAPR-MOONSHINE-006)
+- [x] Phase 5: Transcription pipeline dispatch (WAPR-MOONSHINE-007)
+- [x] Phase 6: Weight loading (WAPR-MOONSHINE-008)
+- [x] Phase 7: Tests (WAPR-MOONSHINE-009)
+- [x] Phase 8: Incremental KV caching for O(n) per-token decoding (WAPR-MOONSHINE-010)
+
+### 17.4 Regression Gate
+
+After each phase:
+```bash
+cargo check                    # Compilation
+cargo test --lib               # Unit tests (regression)
+cargo clippy -- -D warnings    # Lint
+```

@@ -72,7 +72,7 @@ impl RopeConfig {
 /// Rotary Position Embedding layer
 ///
 /// Precomputes sin/cos tables for efficient position encoding.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RotaryEmbedding {
     /// Configuration
     pub config: RopeConfig,
