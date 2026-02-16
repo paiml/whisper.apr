@@ -150,80 +150,89 @@ pub fn map_tensor_name(hf_name: &str) -> String {
 #[must_use]
 pub fn map_moonshine_tensor_name(hf_name: &str) -> String {
     // Direct mappings (non-layer tensors)
-    match hf_name {
-        // Encoder conv stem
-        "model.encoder.conv1.weight" => return "encoder.conv1.weight".into(),
-        "model.encoder.conv2.weight" => return "encoder.conv2.weight".into(),
-        "model.encoder.conv2.bias" => return "encoder.conv2.bias".into(),
-        "model.encoder.conv3.weight" => return "encoder.conv3.weight".into(),
-        "model.encoder.conv3.bias" => return "encoder.conv3.bias".into(),
-        "model.encoder.groupnorm.weight" => return "encoder.groupnorm.weight".into(),
-        "model.encoder.groupnorm.bias" => return "encoder.groupnorm.bias".into(),
-        "model.encoder.layer_norm.weight" => return "encoder.layer_norm.weight".into(),
-        // Decoder embeddings and final norm
-        "model.decoder.embed_tokens.weight" => return "decoder.token_embedding.weight".into(),
-        "model.decoder.norm.weight" => return "decoder.ln_post.weight".into(),
-        // Output projection (tied to embed_tokens, may not exist in SafeTensors)
-        "proj_out.weight" => return "decoder.proj_out.weight".into(),
-        _ => {}
+    if let Some(mapped) = map_moonshine_direct(hf_name) {
+        return mapped;
     }
 
     // Encoder layer patterns: model.encoder.layers.{n}.suffix
-    if let Some(rest) = hf_name.strip_prefix("model.encoder.layers.") {
-        if let Some(dot_pos) = rest.find('.') {
-            let layer_num = &rest[..dot_pos];
-            let suffix = &rest[dot_pos + 1..];
-
-            let mapped = match suffix {
-                "input_layernorm.weight" => "ln1.weight",
-                "self_attn.q_proj.weight" => "attn.q.weight",
-                "self_attn.k_proj.weight" => "attn.k.weight",
-                "self_attn.v_proj.weight" => "attn.v.weight",
-                "self_attn.o_proj.weight" => "attn.o.weight",
-                "post_attention_layernorm.weight" => "ln2.weight",
-                "mlp.fc1.weight" => "ffn.fc1.weight",
-                "mlp.fc1.bias" => "ffn.fc1.bias",
-                "mlp.fc2.weight" => "ffn.fc2.weight",
-                "mlp.fc2.bias" => "ffn.fc2.bias",
-                other => other,
-            };
-            return format!("encoder.blocks.{layer_num}.{mapped}");
-        }
+    if let Some((layer_num, suffix)) = split_layer_suffix(hf_name, "model.encoder.layers.") {
+        let mapped = map_moonshine_encoder_suffix(suffix);
+        return format!("encoder.blocks.{layer_num}.{mapped}");
     }
 
     // Decoder layer patterns: model.decoder.layers.{n}.suffix
-    if let Some(rest) = hf_name.strip_prefix("model.decoder.layers.") {
-        if let Some(dot_pos) = rest.find('.') {
-            let layer_num = &rest[..dot_pos];
-            let suffix = &rest[dot_pos + 1..];
-
-            let mapped = match suffix {
-                // Self-attention
-                "input_layernorm.weight" => "ln1.weight",
-                "self_attn.q_proj.weight" => "attn.q.weight",
-                "self_attn.k_proj.weight" => "attn.k.weight",
-                "self_attn.v_proj.weight" => "attn.v.weight",
-                "self_attn.o_proj.weight" => "attn.o.weight",
-                // Cross-attention
-                "post_attention_layernorm.weight" => "ln_cross.weight",
-                "encoder_attn.q_proj.weight" => "cross_attn.q.weight",
-                "encoder_attn.k_proj.weight" => "cross_attn.k.weight",
-                "encoder_attn.v_proj.weight" => "cross_attn.v.weight",
-                "encoder_attn.o_proj.weight" => "cross_attn.o.weight",
-                // FFN
-                "final_layernorm.weight" => "ln2.weight",
-                "mlp.fc1.weight" => "ffn.fc1.weight",
-                "mlp.fc1.bias" => "ffn.fc1.bias",
-                "mlp.fc2.weight" => "ffn.fc2.weight",
-                "mlp.fc2.bias" => "ffn.fc2.bias",
-                other => other,
-            };
-            return format!("decoder.blocks.{layer_num}.{mapped}");
-        }
+    if let Some((layer_num, suffix)) = split_layer_suffix(hf_name, "model.decoder.layers.") {
+        let mapped = map_moonshine_decoder_suffix(suffix);
+        return format!("decoder.blocks.{layer_num}.{mapped}");
     }
 
     // Unknown pattern - pass through
     hf_name.to_string()
+}
+
+/// Direct (non-layer) Moonshine tensor name mappings.
+fn map_moonshine_direct(hf_name: &str) -> Option<String> {
+    let mapped = match hf_name {
+        "model.encoder.conv1.weight" => "encoder.conv1.weight",
+        "model.encoder.conv2.weight" => "encoder.conv2.weight",
+        "model.encoder.conv2.bias" => "encoder.conv2.bias",
+        "model.encoder.conv3.weight" => "encoder.conv3.weight",
+        "model.encoder.conv3.bias" => "encoder.conv3.bias",
+        "model.encoder.groupnorm.weight" => "encoder.groupnorm.weight",
+        "model.encoder.groupnorm.bias" => "encoder.groupnorm.bias",
+        "model.encoder.layer_norm.weight" => "encoder.layer_norm.weight",
+        "model.decoder.embed_tokens.weight" => "decoder.token_embedding.weight",
+        "model.decoder.norm.weight" => "decoder.ln_post.weight",
+        "proj_out.weight" => "decoder.proj_out.weight",
+        _ => return None,
+    };
+    Some(mapped.into())
+}
+
+/// Split `prefix{layer_num}.{suffix}` into `(layer_num, suffix)`.
+fn split_layer_suffix<'a>(name: &'a str, prefix: &str) -> Option<(&'a str, &'a str)> {
+    let rest = name.strip_prefix(prefix)?;
+    let dot_pos = rest.find('.')?;
+    Some((&rest[..dot_pos], &rest[dot_pos + 1..]))
+}
+
+/// Map Moonshine encoder layer suffix to internal naming.
+fn map_moonshine_encoder_suffix(suffix: &str) -> &str {
+    match suffix {
+        "input_layernorm.weight" => "ln1.weight",
+        "self_attn.q_proj.weight" => "attn.q.weight",
+        "self_attn.k_proj.weight" => "attn.k.weight",
+        "self_attn.v_proj.weight" => "attn.v.weight",
+        "self_attn.o_proj.weight" => "attn.o.weight",
+        "post_attention_layernorm.weight" => "ln2.weight",
+        "mlp.fc1.weight" => "ffn.fc1.weight",
+        "mlp.fc1.bias" => "ffn.fc1.bias",
+        "mlp.fc2.weight" => "ffn.fc2.weight",
+        "mlp.fc2.bias" => "ffn.fc2.bias",
+        other => other,
+    }
+}
+
+/// Map Moonshine decoder layer suffix to internal naming.
+fn map_moonshine_decoder_suffix(suffix: &str) -> &str {
+    match suffix {
+        "input_layernorm.weight" => "ln1.weight",
+        "self_attn.q_proj.weight" => "attn.q.weight",
+        "self_attn.k_proj.weight" => "attn.k.weight",
+        "self_attn.v_proj.weight" => "attn.v.weight",
+        "self_attn.o_proj.weight" => "attn.o.weight",
+        "post_attention_layernorm.weight" => "ln_cross.weight",
+        "encoder_attn.q_proj.weight" => "cross_attn.q.weight",
+        "encoder_attn.k_proj.weight" => "cross_attn.k.weight",
+        "encoder_attn.v_proj.weight" => "cross_attn.v.weight",
+        "encoder_attn.o_proj.weight" => "cross_attn.o.weight",
+        "final_layernorm.weight" => "ln2.weight",
+        "mlp.fc1.weight" => "ffn.fc1.weight",
+        "mlp.fc1.bias" => "ffn.fc1.bias",
+        "mlp.fc2.weight" => "ffn.fc2.weight",
+        "mlp.fc2.bias" => "ffn.fc2.bias",
+        other => other,
+    }
 }
 
 /// SafeTensors file loader

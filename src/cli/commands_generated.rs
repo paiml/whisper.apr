@@ -2423,23 +2423,18 @@ fn run_selftest_transcription(
         println!("  Transcription: \"{text}\"");
     }
 
-    if let Some(expected) = expect {
-        let expected_lower = expected.to_lowercase();
-        if text.contains(&expected_lower) {
-            if !global.quiet {
-                println!("  Expected \"{expected}\" found in output");
-            }
-            Ok(true)
-        } else {
-            if !global.quiet {
-                println!("  Expected \"{expected}\" NOT found in output");
-            }
-            Ok(false)
-        }
-    } else {
+    let Some(expected) = expect else {
         // No expectation — pass if transcription produced any text
-        Ok(!text.is_empty())
+        return Ok(!text.is_empty());
+    };
+
+    let expected_lower = expected.to_lowercase();
+    let found = text.contains(&expected_lower);
+    let verdict = if found { "found" } else { "NOT found" };
+    if !global.quiet {
+        println!("  Expected \"{expected}\" {verdict} in output");
     }
+    Ok(found)
 }
 
 /// Run model command

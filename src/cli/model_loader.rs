@@ -113,40 +113,24 @@ fn download_model(size: ModelSize, verbose: bool) -> ModelLoaderResult<PathBuf> 
     let repo_id = get_hf_repo_id(size);
     let cache_path = get_model_cache_path(size);
 
-    if verbose {
-        eprintln!("[INFO] Downloading model from HuggingFace: {repo_id}");
-    }
+    log_verbose(
+        verbose,
+        &format!("Downloading model from HuggingFace: {repo_id}"),
+    );
 
     // Ensure cache directory exists
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    // Use hf_hub to download
     let api = Api::new().map_err(|e| ModelLoaderError::Download(e.to_string()))?;
     let repo = api.model(repo_id.to_string());
 
-    // Download model.safetensors
-    let safetensors_path = repo
-        .get("model.safetensors")
-        .map_err(|e| ModelLoaderError::Download(format!("Failed to download model: {e}")))?;
-
-    if verbose {
-        eprintln!(
-            "[INFO] Downloaded safetensors to: {}",
-            safetensors_path.display()
-        );
-    }
+    let safetensors_path = download_hf_file(&repo, "model.safetensors", "model", verbose)?;
 
     // Moonshine uses SafeTensors with different tensor naming and no mel/vocab
     if size.is_moonshine() {
-        // Download tokenizer.json for BPE vocabulary
-        let tokenizer_path = repo.get("tokenizer.json").map_err(|e| {
-            ModelLoaderError::Download(format!("Failed to download tokenizer: {e}"))
-        })?;
-        if verbose {
-            eprintln!("[INFO] Downloaded tokenizer.json");
-        }
+        let tokenizer_path = download_hf_file(&repo, "tokenizer.json", "tokenizer", verbose)?;
         convert_moonshine_safetensors_to_apr(
             &safetensors_path,
             &tokenizer_path,
@@ -157,25 +141,14 @@ fn download_model(size: ModelSize, verbose: bool) -> ModelLoaderResult<PathBuf> 
         return Ok(cache_path);
     }
 
-    // Download vocab.json for tokenizer
-    let vocab_path = repo
-        .get("vocab.json")
-        .map_err(|e| ModelLoaderError::Download(format!("Failed to download vocab: {e}")))?;
+    let vocab_path = download_hf_file(&repo, "vocab.json", "vocab", verbose)?;
+    let preprocessor_path = download_hf_file(
+        &repo,
+        "preprocessor_config.json",
+        "preprocessor_config",
+        verbose,
+    )?;
 
-    if verbose {
-        eprintln!("[INFO] Downloaded vocab.json");
-    }
-
-    // Download preprocessor_config.json for mel filters
-    let preprocessor_path = repo.get("preprocessor_config.json").map_err(|e| {
-        ModelLoaderError::Download(format!("Failed to download preprocessor_config: {e}"))
-    })?;
-
-    if verbose {
-        eprintln!("[INFO] Downloaded preprocessor_config.json");
-    }
-
-    // Convert safetensors to .apr format with vocabulary and mel filters
     convert_safetensors_to_apr(
         &safetensors_path,
         &vocab_path,
@@ -186,6 +159,27 @@ fn download_model(size: ModelSize, verbose: bool) -> ModelLoaderResult<PathBuf> 
     )?;
 
     Ok(cache_path)
+}
+
+/// Download a single file from a HuggingFace repo with optional verbose logging.
+fn download_hf_file(
+    repo: &hf_hub::api::sync::ApiRepo,
+    filename: &str,
+    label: &str,
+    verbose: bool,
+) -> ModelLoaderResult<PathBuf> {
+    let path = repo
+        .get(filename)
+        .map_err(|e| ModelLoaderError::Download(format!("Failed to download {label}: {e}")))?;
+    log_verbose(verbose, &format!("Downloaded {filename}"));
+    Ok(path)
+}
+
+/// Print an info message to stderr when verbose mode is enabled.
+fn log_verbose(verbose: bool, msg: &str) {
+    if verbose {
+        eprintln!("[INFO] {msg}");
+    }
 }
 
 /// Convert a safetensors tensor view to f32 data, returning None for unsupported dtypes
@@ -389,12 +383,15 @@ fn embed_moonshine_vocab(
     }
 }
 
+/// Shape + data pair extracted during Moonshine tensor conversion.
+type TensorShapeData = (Vec<usize>, Vec<f32>);
+
 /// Convert all Moonshine tensors, returning (has_proj_out, embed_tokens_data)
 fn convert_moonshine_tensors(
     tensors: &safetensors::SafeTensors<'_>,
     writer: &mut crate::format::AprWriter,
     verbose: bool,
-) -> (bool, Option<(Vec<usize>, Vec<f32>)>) {
+) -> (bool, Option<TensorShapeData>) {
     use crate::format::map_moonshine_tensor_name;
 
     let mut embed_tokens_data: Option<(Vec<usize>, Vec<f32>)> = None;

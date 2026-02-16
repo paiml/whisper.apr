@@ -131,25 +131,19 @@ pub(super) fn run_parity(
             continue;
         }
 
-        // Compute relative L2 difference
-        let l2_ref = ref_snap.l2 as f64;
-        let l2_ours = our_snap.l2 as f64;
-
-        let (rel_diff, passed) = if l2_ref.abs() < args.abs_tolerance {
-            // Near-zero reference: use absolute tolerance
-            let abs_diff = (l2_ours - l2_ref).abs();
-            (abs_diff, abs_diff < args.abs_tolerance)
-        } else {
-            let rel = (l2_ours - l2_ref).abs() / l2_ref;
-            (rel, rel < args.tolerance)
-        };
+        let (rel_diff, passed) = compute_l2_diff(
+            our_snap.l2 as f64,
+            ref_snap.l2 as f64,
+            args.tolerance,
+            args.abs_tolerance,
+        );
 
         if passed {
             println!(
                 "  PASS  {:<40} L2: {:.4} vs {:.4}  ({:.3}%)",
                 ref_snap.name,
-                l2_ours,
-                l2_ref,
+                our_snap.l2,
+                ref_snap.l2,
                 rel_diff * 100.0
             );
             pass_count += 1;
@@ -163,8 +157,8 @@ pub(super) fn run_parity(
             println!(
                 "  FAIL  {:<40} L2: {:.4} vs {:.4}  ({:.1}%){marker}",
                 ref_snap.name,
-                l2_ours,
-                l2_ref,
+                our_snap.l2,
+                ref_snap.l2,
                 rel_diff * 100.0
             );
             fail_count += 1;
@@ -185,6 +179,20 @@ pub(super) fn run_parity(
     Ok(CommandResult::success(format!(
         "Parity {status}: {pass_count} pass, {fail_count} fail"
     )))
+}
+
+/// Compute relative L2 difference between two checkpoints.
+///
+/// Returns `(relative_diff, passed)`. Uses absolute tolerance when the
+/// reference L2 is near zero, and relative tolerance otherwise.
+fn compute_l2_diff(l2_ours: f64, l2_ref: f64, tolerance: f64, abs_tolerance: f64) -> (f64, bool) {
+    if l2_ref.abs() < abs_tolerance {
+        let abs_diff = (l2_ours - l2_ref).abs();
+        (abs_diff, abs_diff < abs_tolerance)
+    } else {
+        let rel = (l2_ours - l2_ref).abs() / l2_ref;
+        (rel, rel < tolerance)
+    }
 }
 
 /// Known reference configurations for model families
@@ -302,10 +310,8 @@ pub(super) fn run_config_check(
     let ref_name = args.reference.clone().unwrap_or_else(|| {
         let family = format!("{:?}", config.model_family).to_lowercase();
         let size = match config.n_audio_state {
-            288 => "tiny",
-            384 => "tiny",
-            416 => "base",
-            512 => "base",
+            288 | 384 => "tiny",
+            416 | 512 => "base",
             _ => "unknown",
         };
         format!("{family}-{size}")
