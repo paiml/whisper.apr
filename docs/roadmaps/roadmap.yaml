@@ -1608,3 +1608,35 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: WAPR-KAIZEN-002
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-KAIZEN-002'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-02-14T12:36:50.737048101+00:00
+  updated: 2026-02-14T12:36:50.737048101+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
+- id: WAPR-MOONSHINE-002
+  github_issue: null
+  item_type: task
+  title: 'New task: WAPR-MOONSHINE-002'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-02-16T09:29:29.959190675+00:00
+  updated: 2026-02-16T09:29:29.959190675+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null

@@ -28,6 +28,9 @@
 
 use crate::error::{WhisperError, WhisperResult};
 use crate::model::encoder::{FeedForward, LayerNorm};
+use crate::model::lfm2::layer::RmsNorm;
+use crate::model::lfm2::rope::{RopeConfig, RotaryEmbedding};
+use crate::model::moonshine::MoonshineDecoderBlock;
 use crate::model::{AttentionType, ModelConfig, MultiHeadAttention, PositionalEncoding};
 use trueno::Matrix;
 
@@ -666,10 +669,12 @@ pub struct DecoderKVCache {
     pub max_len: usize,
     /// Whether cross-attention cache is populated
     pub cross_attn_cached: bool,
+    /// Current decode position for RoPE offset (Moonshine GQA incremental path)
+    pub seq_position: usize,
 }
 
 impl DecoderKVCache {
-    /// Create a new decoder KV cache
+    /// Create a new decoder KV cache (Whisper MHA: K/V width = d_model)
     #[must_use]
     pub fn new(n_layers: usize, d_model: usize, max_len: usize) -> Self {
         let self_attn_cache = (0..n_layers)
@@ -686,6 +691,38 @@ impl DecoderKVCache {
             d_model,
             max_len,
             cross_attn_cached: false,
+            seq_position: 0,
+        }
+    }
+
+    /// Create a GQA-aware decoder KV cache (Moonshine: K/V width = kv_dim)
+    ///
+    /// GQA uses fewer KV heads than query heads, so K/V dimension is
+    /// `num_kv_heads * head_dim` instead of `d_model`. This saves significant
+    /// memory for GQA models (e.g., 72 vs 288 for Moonshine tiny).
+    ///
+    /// # Arguments
+    /// * `n_layers` - Number of decoder layers
+    /// * `kv_dim` - K/V projection dimension (`num_kv_heads * head_dim`)
+    /// * `d_model` - Full hidden dimension (stored for seq_len tracking)
+    /// * `max_len` - Maximum decode tokens
+    #[must_use]
+    pub fn new_gqa(n_layers: usize, kv_dim: usize, d_model: usize, max_len: usize) -> Self {
+        let self_attn_cache = (0..n_layers)
+            .map(|_| LayerKVCache::new(kv_dim, max_len))
+            .collect();
+        let cross_attn_cache = (0..n_layers)
+            .map(|_| LayerKVCache::new(kv_dim, max_len * 4))
+            .collect();
+
+        Self {
+            self_attn_cache,
+            cross_attn_cache,
+            n_layers,
+            d_model,
+            max_len,
+            cross_attn_cached: false,
+            seq_position: 0,
         }
     }
 
@@ -710,6 +747,7 @@ impl DecoderKVCache {
             cache.clear();
         }
         self.cross_attn_cached = false;
+        self.seq_position = 0;
     }
 
     /// Clear only self-attention cache (keep cross-attention for same audio)
@@ -1704,10 +1742,16 @@ pub struct Decoder {
     d_model: usize,
     /// Number of attention heads
     n_heads: usize,
-    /// Decoder blocks
+    /// Whisper decoder blocks (MHA + GELU + LayerNorm)
     blocks: Vec<DecoderBlock>,
-    /// Final layer norm
+    /// Moonshine decoder blocks (GQA + SwiGLU + RmsNorm + RoPE)
+    moonshine_blocks: Vec<MoonshineDecoderBlock>,
+    /// Rotary positional embedding for Moonshine decoder (None for Whisper)
+    rope: Option<RotaryEmbedding>,
+    /// Final layer norm (Whisper — learned affine LayerNorm)
     ln_post: LayerNorm,
+    /// Final layer norm (Moonshine — RMS normalization)
+    ln_post_rms: Option<RmsNorm>,
     /// Token embeddings (n_vocab x d_model)
     token_embedding: Vec<f32>,
     /// Transposed token embeddings for fast projection (d_model x n_vocab)
@@ -1741,10 +1785,46 @@ impl Decoder {
         let n_vocab = config.n_vocab as usize;
         let max_len = config.n_text_ctx as usize;
 
-        // Create decoder blocks
-        let blocks: Vec<DecoderBlock> = (0..n_layers)
-            .map(|_| DecoderBlock::new(d_model, n_heads, d_ff))
-            .collect();
+        // Dispatch block creation based on attention type
+        let (blocks, moon_blocks, rope, ln_post_rms) = match config.attention_type {
+            AttentionType::Mha => {
+                // Whisper: standard MHA decoder blocks
+                let blocks: Vec<DecoderBlock> = (0..n_layers)
+                    .map(|_| DecoderBlock::new(d_model, n_heads, d_ff))
+                    .collect();
+                (blocks, Vec::new(), None, None)
+            }
+            AttentionType::Gqa { kv_heads } => {
+                // Moonshine: GQA + SwiGLU + RoPE decoder blocks
+                let head_dim = d_model / n_heads;
+                let intermediate_size = (d_model * 8) / 3;
+                let mut moon_blocks = Vec::with_capacity(n_layers);
+                for _ in 0..n_layers {
+                    match MoonshineDecoderBlock::new(
+                        d_model,
+                        n_heads,
+                        kv_heads as usize,
+                        intermediate_size,
+                    ) {
+                        Ok(block) => moon_blocks.push(block),
+                        Err(_) => return Self::fallback_decoder(config),
+                    }
+                }
+                let Ok(rope_emb) = RotaryEmbedding::new(RopeConfig {
+                    head_dim,
+                    base: 10000.0,
+                    max_seq_len: 2048,
+                }) else {
+                    return Self::fallback_decoder(config);
+                };
+                (
+                    Vec::new(),
+                    moon_blocks,
+                    Some(rope_emb),
+                    Some(RmsNorm::new(d_model)),
+                )
+            }
+        };
 
         // Create learned positional embeddings (initialized to zeros, will be loaded)
         // For Moonshine (RoPE), these remain zero — RoPE is applied inside attention layers
@@ -1764,10 +1844,42 @@ impl Decoder {
             d_model,
             n_heads,
             blocks,
+            moonshine_blocks: moon_blocks,
+            rope,
             ln_post: LayerNorm::new(d_model),
+            ln_post_rms,
             token_embedding,
             token_embedding_transposed,
             positional_embedding,
+            n_vocab,
+            max_len,
+            positional_encoding: config.positional_encoding,
+            attention_type: config.attention_type,
+        }
+    }
+
+    /// Fallback decoder when Moonshine block creation fails
+    fn fallback_decoder(config: &ModelConfig) -> Self {
+        let d_model = config.n_text_state as usize;
+        let n_vocab = config.n_vocab as usize;
+        let max_len = config.n_text_ctx as usize;
+        let token_embedding = vec![0.0_f32; n_vocab * d_model];
+        let transposed_data = crate::simd::transpose(&token_embedding, n_vocab, d_model);
+        let token_embedding_transposed = Matrix::from_vec(d_model, n_vocab, transposed_data)
+            .unwrap_or_else(|_| Matrix::zeros(d_model, n_vocab));
+
+        Self {
+            n_layers: 0,
+            d_model,
+            n_heads: config.n_text_head as usize,
+            blocks: Vec::new(),
+            moonshine_blocks: Vec::new(),
+            rope: None,
+            ln_post: LayerNorm::new(d_model),
+            ln_post_rms: None,
+            token_embedding,
+            token_embedding_transposed,
+            positional_embedding: vec![0.0_f32; max_len * d_model],
             n_vocab,
             max_len,
             positional_encoding: config.positional_encoding,
@@ -1789,10 +1901,12 @@ impl Decoder {
     /// Call this after loading all weights to optimize SIMD matmul performance.
     /// This also recomputes the cached token embedding transpose.
     pub fn finalize_weights(&mut self) {
-        // Finalize all decoder blocks
+        // Finalize Whisper decoder blocks (MHA weight transposition)
         for block in &mut self.blocks {
             block.finalize_weights();
         }
+        // Moonshine decoder blocks use GQA/SwiGLU which don't have weight finalization;
+        // no additional work needed for moonshine_blocks.
         // Recompute embedding transpose
         self.update_embedding_transpose();
     }
@@ -1800,7 +1914,12 @@ impl Decoder {
     /// Check if all decoder weights have been finalized
     #[must_use]
     pub fn is_finalized(&self) -> bool {
-        self.blocks.iter().all(DecoderBlock::is_finalized)
+        if self.moonshine_blocks.is_empty() {
+            self.blocks.iter().all(DecoderBlock::is_finalized)
+        } else {
+            // Moonshine blocks don't have finalization — always ready after weight loading
+            true
+        }
     }
 
     /// Initialize fused FFN for all decoder blocks (validation only)
@@ -1860,25 +1979,38 @@ impl Decoder {
         // Embed tokens
         let mut x = self.embed_tokens(tokens)?;
 
-        // Add positional embeddings (Whisper only; Moonshine uses RoPE in attention layers)
-        if self.positional_encoding == PositionalEncoding::Sinusoidal {
+        let enc_seq_len = encoder_output.len() / self.d_model;
+
+        if self.rope.is_some() {
+            // Moonshine path: GQA + SwiGLU + RoPE
+            let rope = self.rope.as_ref().ok_or_else(|| {
+                WhisperError::Model("Moonshine decoder requires RoPE".into())
+            })?;
+
+            for block in &self.moonshine_blocks {
+                x = block.forward(&x, encoder_output, seq_len, enc_seq_len, rope)?;
+            }
+
+            // Final RMS norm (Moonshine)
+            if let Some(ref rms) = self.ln_post_rms {
+                x = rms.forward(&x, seq_len)?;
+            }
+        } else {
+            // Whisper path: sinusoidal PE + MHA + GELU
             for pos in 0..seq_len {
                 for d in 0..self.d_model {
-                    x[pos * self.d_model + d] += self.positional_embedding[pos * self.d_model + d];
+                    x[pos * self.d_model + d] +=
+                        self.positional_embedding[pos * self.d_model + d];
                 }
             }
+
+            let causal_mask = MultiHeadAttention::causal_mask(seq_len);
+            for block in &self.blocks {
+                x = block.forward(&x, encoder_output, Some(&causal_mask))?;
+            }
+
+            x = self.ln_post.forward(&x)?;
         }
-
-        // Create causal mask
-        let causal_mask = MultiHeadAttention::causal_mask(seq_len);
-
-        // Pass through decoder blocks
-        for block in &self.blocks {
-            x = block.forward(&x, encoder_output, Some(&causal_mask))?;
-        }
-
-        // Final layer norm
-        let x = self.ln_post.forward(&x)?;
 
         // Project to vocabulary (x @ embedding.T)
         Ok(self.project_to_vocab(&x, seq_len))
@@ -1931,22 +2063,44 @@ impl Decoder {
         let l2_pos_emb: f32 = x.iter().map(|v| v * v).sum::<f32>().sqrt();
         trace.push(("after_pos_emb".to_string(), l2_pos_emb));
 
-        // Create causal mask
-        let causal_mask = MultiHeadAttention::causal_mask(seq_len);
+        if self.rope.is_some() {
+            // Moonshine path: GQA + SwiGLU + RoPE with tracing
+            let rope = self.rope.as_ref().ok_or_else(|| {
+                WhisperError::Model("Moonshine decoder requires RoPE".into())
+            })?;
+            let enc_seq_len = encoder_output.len() / self.d_model;
 
-        // Pass through decoder blocks - track last position L2
-        for (layer_idx, block) in self.blocks.iter().enumerate() {
-            x = block.forward(&x, encoder_output, Some(&causal_mask))?;
-            let l2: f32 = x.iter().map(|v| v * v).sum::<f32>().sqrt();
-            // Also track just last position's L2
-            let last_start = (seq_len - 1) * self.d_model;
-            let last_l2: f32 = x[last_start..last_start + self.d_model]
-                .iter()
-                .map(|v| v * v)
-                .sum::<f32>()
-                .sqrt();
-            trace.push((format!("layer_{layer_idx}"), l2));
-            trace.push((format!("layer_{layer_idx}_last"), last_l2));
+            for (layer_idx, block) in self.moonshine_blocks.iter().enumerate() {
+                x = block.forward(&x, encoder_output, seq_len, enc_seq_len, rope)?;
+                let l2: f32 = x.iter().map(|v| v * v).sum::<f32>().sqrt();
+                let last_start = (seq_len - 1) * self.d_model;
+                let last_l2: f32 = x[last_start..last_start + self.d_model]
+                    .iter()
+                    .map(|v| v * v)
+                    .sum::<f32>()
+                    .sqrt();
+                trace.push((format!("layer_{layer_idx}"), l2));
+                trace.push((format!("layer_{layer_idx}_last"), last_l2));
+            }
+        } else {
+            // Whisper path: sinusoidal PE + MHA + GELU
+            // Create causal mask
+            let causal_mask = MultiHeadAttention::causal_mask(seq_len);
+
+            // Pass through decoder blocks - track last position L2
+            for (layer_idx, block) in self.blocks.iter().enumerate() {
+                x = block.forward(&x, encoder_output, Some(&causal_mask))?;
+                let l2: f32 = x.iter().map(|v| v * v).sum::<f32>().sqrt();
+                // Also track just last position's L2
+                let last_start = (seq_len - 1) * self.d_model;
+                let last_l2: f32 = x[last_start..last_start + self.d_model]
+                    .iter()
+                    .map(|v| v * v)
+                    .sum::<f32>()
+                    .sqrt();
+                trace.push((format!("layer_{layer_idx}"), l2));
+                trace.push((format!("layer_{layer_idx}_last"), last_l2));
+            }
         }
 
         // Final layer norm - trace statistics for last position
@@ -1963,22 +2117,27 @@ impl Decoder {
         trace.push(("ln_var".to_string(), variance));
         trace.push(("ln_std".to_string(), std));
 
-        // Layer norm weight statistics
-        let ln_w_l2: f32 = self
-            .ln_post
-            .weight
-            .iter()
-            .map(|v| v * v)
-            .sum::<f32>()
-            .sqrt();
-        let ln_w_mean: f32 =
-            self.ln_post.weight.iter().sum::<f32>() / self.ln_post.weight.len() as f32;
-        let ln_b_l2: f32 = self.ln_post.bias.iter().map(|v| v * v).sum::<f32>().sqrt();
-        trace.push(("ln_weight_l2".to_string(), ln_w_l2));
-        trace.push(("ln_weight_mean".to_string(), ln_w_mean));
-        trace.push(("ln_bias_l2".to_string(), ln_b_l2));
+        // Apply final norm: RmsNorm for Moonshine, LayerNorm for Whisper
+        if let Some(ref rms) = self.ln_post_rms {
+            x = rms.forward(&x, seq_len)?;
+        } else {
+            // Layer norm weight statistics (Whisper only — LayerNorm has bias)
+            let ln_w_l2: f32 = self
+                .ln_post
+                .weight
+                .iter()
+                .map(|v| v * v)
+                .sum::<f32>()
+                .sqrt();
+            let ln_w_mean: f32 =
+                self.ln_post.weight.iter().sum::<f32>() / self.ln_post.weight.len() as f32;
+            let ln_b_l2: f32 = self.ln_post.bias.iter().map(|v| v * v).sum::<f32>().sqrt();
+            trace.push(("ln_weight_l2".to_string(), ln_w_l2));
+            trace.push(("ln_weight_mean".to_string(), ln_w_mean));
+            trace.push(("ln_bias_l2".to_string(), ln_b_l2));
 
-        let x = self.ln_post.forward(&x)?;
+            x = self.ln_post.forward(&x)?;
+        }
         let l2_post_ln: f32 = x.iter().map(|v| v * v).sum::<f32>().sqrt();
         trace.push(("post_ln".to_string(), l2_post_ln));
 
@@ -2127,6 +2286,34 @@ impl Decoder {
         &mut self.blocks
     }
 
+    /// Get Moonshine decoder blocks reference
+    #[must_use]
+    pub fn moonshine_blocks(&self) -> &[MoonshineDecoderBlock] {
+        &self.moonshine_blocks
+    }
+
+    /// Get mutable Moonshine decoder blocks reference (for loading weights)
+    pub fn moonshine_blocks_mut(&mut self) -> &mut [MoonshineDecoderBlock] {
+        &mut self.moonshine_blocks
+    }
+
+    /// Get RoPE reference (Moonshine only, None for Whisper)
+    #[must_use]
+    pub fn rope(&self) -> Option<&RotaryEmbedding> {
+        self.rope.as_ref()
+    }
+
+    /// Get Moonshine final RMS norm reference
+    #[must_use]
+    pub fn ln_post_rms(&self) -> Option<&RmsNorm> {
+        self.ln_post_rms.as_ref()
+    }
+
+    /// Get mutable Moonshine final RMS norm reference (for loading weights)
+    pub fn ln_post_rms_mut(&mut self) -> Option<&mut RmsNorm> {
+        self.ln_post_rms.as_mut()
+    }
+
     /// Get layer norm reference
     #[must_use]
     pub fn ln_post(&self) -> &crate::model::encoder::LayerNorm {
@@ -2143,9 +2330,21 @@ impl Decoder {
     // =========================================================================
 
     /// Create a new KV cache for this decoder
+    ///
+    /// For Moonshine (GQA), uses `new_gqa()` with kv_dim-width caches.
+    /// For Whisper (MHA), uses `new()` with d_model-width caches.
     #[must_use]
     pub fn create_kv_cache(&self) -> DecoderKVCache {
-        DecoderKVCache::new(self.n_layers, self.d_model, self.max_len)
+        match self.attention_type {
+            AttentionType::Gqa { kv_heads } => {
+                let head_dim = self.d_model / self.n_heads;
+                let kv_dim = kv_heads as usize * head_dim;
+                DecoderKVCache::new_gqa(self.n_layers, kv_dim, self.d_model, self.max_len)
+            }
+            AttentionType::Mha => {
+                DecoderKVCache::new(self.n_layers, self.d_model, self.max_len)
+            }
+        }
     }
 
     /// Create a new paged KV cache for this decoder
@@ -2198,6 +2397,13 @@ impl Decoder {
         cache: &mut PagedDecoderKVCache,
         seq_id: crate::realizar_inference::SeqId,
     ) -> WhisperResult<Vec<f32>> {
+        // Moonshine uses full-recompute in forward_one; paged cache is Whisper-only
+        if self.rope.is_some() {
+            return Err(WhisperError::Model(
+                "forward_one_paged is not supported for Moonshine; use forward_one instead".into(),
+            ));
+        }
+
         let pos = cache.seq_len(seq_id);
 
         if pos >= self.max_len {
@@ -2218,15 +2424,13 @@ impl Decoder {
         let emb_start = (token as usize) * self.d_model;
         let mut x: Vec<f32> = self.token_embedding[emb_start..emb_start + self.d_model].to_vec();
 
-        // Add positional embedding for current position (Whisper only; Moonshine uses RoPE)
-        if self.positional_encoding == PositionalEncoding::Sinusoidal {
-            let pos_start = pos * self.d_model;
-            for (x_val, pos_emb) in x
-                .iter_mut()
-                .zip(&self.positional_embedding[pos_start..pos_start + self.d_model])
-            {
-                *x_val += pos_emb;
-            }
+        // Add positional embedding for current position
+        let pos_start = pos * self.d_model;
+        for (x_val, pos_emb) in x
+            .iter_mut()
+            .zip(&self.positional_embedding[pos_start..pos_start + self.d_model])
+        {
+            *x_val += pos_emb;
         }
 
         // Pass through decoder blocks with paged cache
@@ -2414,29 +2618,56 @@ impl Decoder {
         let emb_start = (token as usize) * self.d_model;
         let mut x: Vec<f32> = self.token_embedding[emb_start..emb_start + self.d_model].to_vec();
 
-        // Add positional embedding for current position (Whisper only; Moonshine uses RoPE)
-        if self.positional_encoding == PositionalEncoding::Sinusoidal {
+        if self.rope.is_some() {
+            // Moonshine path: incremental GQA with KV cache (WAPR-MOONSHINE-002)
+            let rope = self.rope.as_ref().ok_or_else(|| {
+                WhisperError::Model("Moonshine decoder requires RoPE".into())
+            })?;
+            let pos = cache.seq_position;
+            let enc_seq_len = encoder_output.len() / self.d_model;
+
+            for (layer_idx, block) in self.moonshine_blocks.iter().enumerate() {
+                x = block.forward_cached(
+                    &x,
+                    encoder_output,
+                    enc_seq_len,
+                    pos,
+                    rope,
+                    &mut cache.self_attn_cache[layer_idx],
+                    &mut cache.cross_attn_cache[layer_idx],
+                    cache.cross_attn_cached,
+                )?;
+            }
+            if !cache.cross_attn_cached {
+                cache.cross_attn_cached = true;
+            }
+            cache.seq_position += 1;
+
+            // Final RMS norm (Moonshine)
+            if let Some(ref rms) = self.ln_post_rms {
+                x = rms.forward(&x, 1)?;
+            }
+
+            // Project to vocabulary
+            Ok(self.project_to_vocab(&x, 1))
+        } else {
+            // Whisper path: sinusoidal PE + cached MHA + GELU
             let pos_start = pos * self.d_model;
             for d in 0..self.d_model {
                 x[d] += self.positional_embedding[pos_start + d];
             }
+
+            for (layer_idx, block) in self.blocks.iter().enumerate() {
+                x = self.forward_block_cached(block, &x, encoder_output, layer_idx, cache)?;
+            }
+
+            if !cache.cross_attn_cached {
+                cache.cross_attn_cached = true;
+            }
+
+            let x = self.ln_post.forward(&x)?;
+            Ok(self.project_to_vocab(&x, 1))
         }
-
-        // Pass through decoder blocks with cache
-        for (layer_idx, block) in self.blocks.iter().enumerate() {
-            x = self.forward_block_cached(block, &x, encoder_output, layer_idx, cache)?;
-        }
-
-        // Mark cross-attention as cached after first complete pass
-        if !cache.cross_attn_cached {
-            cache.cross_attn_cached = true;
-        }
-
-        // Final layer norm
-        let x = self.ln_post.forward(&x)?;
-
-        // Project to vocabulary
-        Ok(self.project_to_vocab(&x, 1))
     }
 
     /// Forward pass for a single token, returning hidden state before output projection.
@@ -2480,8 +2711,38 @@ impl Decoder {
         let emb_start = (token as usize) * self.d_model;
         let mut x: Vec<f32> = self.token_embedding[emb_start..emb_start + self.d_model].to_vec();
 
-        // Add positional embedding for current position (Whisper only; Moonshine uses RoPE)
-        if self.positional_encoding == PositionalEncoding::Sinusoidal {
+        if self.rope.is_some() {
+            // Moonshine path: incremental GQA with KV cache (WAPR-MOONSHINE-002)
+            let rope = self.rope.as_ref().ok_or_else(|| {
+                WhisperError::Model("Moonshine decoder requires RoPE".into())
+            })?;
+            let moon_pos = cache.seq_position;
+            let enc_seq_len = encoder_output.len() / self.d_model;
+
+            for (layer_idx, block) in self.moonshine_blocks.iter().enumerate() {
+                x = block.forward_cached(
+                    &x,
+                    encoder_output,
+                    enc_seq_len,
+                    moon_pos,
+                    rope,
+                    &mut cache.self_attn_cache[layer_idx],
+                    &mut cache.cross_attn_cache[layer_idx],
+                    cache.cross_attn_cached,
+                )?;
+            }
+            if !cache.cross_attn_cached {
+                cache.cross_attn_cached = true;
+            }
+            cache.seq_position += 1;
+
+            // Final RMS norm (no output projection - done on GPU)
+            if let Some(ref rms) = self.ln_post_rms {
+                x = rms.forward(&x, 1)?;
+            }
+            Ok(x)
+        } else {
+            // Whisper path: sinusoidal PE + cached MHA
             let pos_start = pos * self.d_model;
             for (x_elem, pos_emb) in x
                 .iter_mut()
@@ -2489,20 +2750,18 @@ impl Decoder {
             {
                 *x_elem += pos_emb;
             }
-        }
 
-        // Pass through decoder blocks with cache
-        for (layer_idx, block) in self.blocks.iter().enumerate() {
-            x = self.forward_block_cached(block, &x, encoder_output, layer_idx, cache)?;
-        }
+            for (layer_idx, block) in self.blocks.iter().enumerate() {
+                x = self.forward_block_cached(block, &x, encoder_output, layer_idx, cache)?;
+            }
 
-        // Mark cross-attention as cached after first complete pass
-        if !cache.cross_attn_cached {
-            cache.cross_attn_cached = true;
-        }
+            if !cache.cross_attn_cached {
+                cache.cross_attn_cached = true;
+            }
 
-        // Final layer norm (but no output projection - that's done on GPU)
-        self.ln_post.forward(&x)
+            // Final layer norm (no output projection - done on GPU)
+            self.ln_post.forward(&x)
+        }
     }
 
     /// Forward pass for a single token with KV cache using fused FFN
@@ -2528,6 +2787,13 @@ impl Decoder {
         encoder_output: &[f32],
         cache: &mut DecoderKVCache,
     ) -> WhisperResult<Vec<f32>> {
+        // Moonshine uses SwiGLU (not GELU), fused FFN is Whisper-only
+        if self.rope.is_some() {
+            return Err(WhisperError::Model(
+                "forward_one_fused is not supported for Moonshine; use forward_one instead".into(),
+            ));
+        }
+
         let pos = cache.seq_len();
 
         if pos >= self.max_len {
@@ -2548,12 +2814,10 @@ impl Decoder {
         let emb_start = (token as usize) * self.d_model;
         let mut x: Vec<f32> = self.token_embedding[emb_start..emb_start + self.d_model].to_vec();
 
-        // Add positional embedding for current position (Whisper only; Moonshine uses RoPE)
-        if self.positional_encoding == PositionalEncoding::Sinusoidal {
-            let pos_start = pos * self.d_model;
-            for d in 0..self.d_model {
-                x[d] += self.positional_embedding[pos_start + d];
-            }
+        // Add positional embedding for current position
+        let pos_start = pos * self.d_model;
+        for d in 0..self.d_model {
+            x[d] += self.positional_embedding[pos_start + d];
         }
 
         // Pass through decoder blocks with cache (using fused FFN)

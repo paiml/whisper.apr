@@ -20,8 +20,11 @@ pub use block::EncoderBlock;
 pub use conv::{Conv1d, ConvFrontend};
 pub use layers::{FeedForward, LayerNorm};
 
-use super::{AudioFrontend, ModelConfig, PositionalEncoding};
+use super::moonshine::MoonshineEncoderBlock;
+use super::{AttentionType, AudioFrontend, ModelConfig, PositionalEncoding};
 use crate::error::{WhisperError, WhisperResult};
+use crate::model::lfm2::layer::RmsNorm;
+use crate::model::lfm2::rope::{RopeConfig, RotaryEmbedding};
 
 /// Transformer encoder for audio features
 ///
@@ -39,10 +42,16 @@ pub struct Encoder {
     n_mels: usize,
     /// Convolutional frontend (Whisper only; None for Moonshine)
     conv_frontend: Option<ConvFrontend>,
-    /// Encoder blocks
+    /// Whisper encoder blocks (empty for Moonshine)
     blocks: Vec<EncoderBlock>,
-    /// Final layer norm
+    /// Moonshine encoder blocks (empty for Whisper)
+    moonshine_blocks: Vec<MoonshineEncoderBlock>,
+    /// Rotary position embedding (Moonshine only; None for Whisper)
+    rope: Option<RotaryEmbedding>,
+    /// Final layer norm (Whisper — learned affine LayerNorm)
     ln_post: LayerNorm,
+    /// Final layer norm (Moonshine — RMS normalization)
+    ln_post_rms: Option<RmsNorm>,
     /// Sinusoidal positional embeddings (Whisper only; empty for Moonshine/RoPE)
     positional_embedding: Vec<f32>,
     /// Maximum sequence length (0 = variable for Moonshine)
@@ -74,14 +83,54 @@ impl Encoder {
             AudioFrontend::LearnedConv => None,
         };
 
-        let blocks: Vec<EncoderBlock> = (0..n_layers)
-            .map(|_| EncoderBlock::new(d_model, n_heads, d_ff))
-            .collect();
+        // Dispatch block creation based on attention type
+        let (blocks, moonshine_blocks, rope) = match config.attention_type {
+            AttentionType::Mha => {
+                // Whisper: standard MHA + GELU blocks
+                let whisper_blocks: Vec<EncoderBlock> = (0..n_layers)
+                    .map(|_| EncoderBlock::new(d_model, n_heads, d_ff))
+                    .collect();
+                (whisper_blocks, Vec::new(), None)
+            }
+            AttentionType::Gqa { kv_heads } => {
+                // Moonshine: GQA + SwiGLU blocks with RoPE
+                let head_dim = d_model / n_heads;
+                // SwiGLU intermediate: ~2.67x hidden_size for Moonshine
+                let intermediate_size = (d_model * 8) / 3;
+                let mut moon_blocks = Vec::with_capacity(n_layers);
+                for _ in 0..n_layers {
+                    match MoonshineEncoderBlock::new(
+                        d_model,
+                        n_heads,
+                        kv_heads as usize,
+                        intermediate_size,
+                    ) {
+                        Ok(block) => moon_blocks.push(block),
+                        Err(_) => return Self::fallback_encoder(config),
+                    }
+                }
+                let Ok(rope_emb) = RotaryEmbedding::new(RopeConfig {
+                    head_dim,
+                    base: 10000.0,
+                    max_seq_len: 2048,
+                }) else {
+                    return Self::fallback_encoder(config);
+                };
+                (Vec::new(), moon_blocks, Some(rope_emb))
+            }
+        };
 
         // Whisper: fixed sinusoidal PE; Moonshine: RoPE applied within each attention layer
         let positional_embedding = match config.positional_encoding {
             PositionalEncoding::Sinusoidal => Self::create_positional_embedding(max_len, d_model),
             PositionalEncoding::Rotary => Vec::new(),
+        };
+
+        // Moonshine uses RmsNorm for final norm; Whisper uses LayerNorm
+        let ln_post_rms = if rope.is_some() {
+            Some(RmsNorm::new(d_model))
+        } else {
+            None
         };
 
         Self {
@@ -91,8 +140,33 @@ impl Encoder {
             n_mels,
             conv_frontend,
             blocks,
+            moonshine_blocks,
+            rope,
             ln_post: LayerNorm::new(d_model),
+            ln_post_rms,
             positional_embedding,
+            max_len,
+            audio_frontend: config.audio_frontend,
+            positional_encoding: config.positional_encoding,
+        }
+    }
+
+    /// Fallback encoder when Moonshine block creation fails (should not happen with valid config)
+    fn fallback_encoder(config: &ModelConfig) -> Self {
+        let d_model = config.n_audio_state as usize;
+        let max_len = config.n_audio_ctx as usize;
+        Self {
+            n_layers: config.n_audio_layer as usize,
+            d_model,
+            n_heads: config.n_audio_head as usize,
+            n_mels: config.n_mels as usize,
+            conv_frontend: None,
+            blocks: Vec::new(),
+            moonshine_blocks: Vec::new(),
+            rope: None,
+            ln_post: LayerNorm::new(d_model),
+            ln_post_rms: None,
+            positional_embedding: Vec::new(),
             max_len,
             audio_frontend: config.audio_frontend,
             positional_encoding: config.positional_encoding,
@@ -144,18 +218,28 @@ impl Encoder {
 
         let mut x = features.to_vec();
 
-        // Add positional embeddings (Whisper sinusoidal only; Moonshine uses RoPE per-block)
-        if self.positional_encoding == PositionalEncoding::Sinusoidal {
-            for pos in 0..seq_len {
-                for d in 0..self.d_model {
-                    x[pos * self.d_model + d] += self.positional_embedding[pos * self.d_model + d];
+        // Dispatch based on model type
+        if self.rope.is_some() {
+            // Moonshine path: GQA + SwiGLU with RoPE per-block
+            let rope = self.rope.as_ref().ok_or_else(|| {
+                WhisperError::Model("Moonshine encoder requires RoPE".into())
+            })?;
+            for block in &self.moonshine_blocks {
+                x = block.forward(&x, seq_len, rope)?;
+            }
+        } else {
+            // Whisper path: sinusoidal PE + MHA + GELU
+            if self.positional_encoding == PositionalEncoding::Sinusoidal {
+                for pos in 0..seq_len {
+                    for d in 0..self.d_model {
+                        x[pos * self.d_model + d] +=
+                            self.positional_embedding[pos * self.d_model + d];
+                    }
                 }
             }
-        }
-
-        // Pass through encoder blocks
-        for block in &self.blocks {
-            x = block.forward(&x)?;
+            for block in &self.blocks {
+                x = block.forward(&x)?;
+            }
         }
 
         debug_assert!(
@@ -163,8 +247,12 @@ impl Encoder {
             "encoder output must be finite before final layer norm"
         );
 
-        // Final layer norm
-        self.ln_post.forward(&x)
+        // Final layer norm: RmsNorm for Moonshine, LayerNorm for Whisper
+        if let Some(ref rms) = self.ln_post_rms {
+            rms.forward(&x, seq_len)
+        } else {
+            self.ln_post.forward(&x)
+        }
     }
 
     /// Get number of layers
@@ -241,6 +329,34 @@ impl Encoder {
         self.conv_frontend.as_mut()
     }
 
+    /// Get Moonshine encoder blocks reference
+    #[must_use]
+    pub fn moonshine_blocks(&self) -> &[MoonshineEncoderBlock] {
+        &self.moonshine_blocks
+    }
+
+    /// Get mutable Moonshine encoder blocks reference
+    pub fn moonshine_blocks_mut(&mut self) -> &mut [MoonshineEncoderBlock] {
+        &mut self.moonshine_blocks
+    }
+
+    /// Get RoPE embedding reference (Moonshine only)
+    #[must_use]
+    pub fn rope(&self) -> Option<&RotaryEmbedding> {
+        self.rope.as_ref()
+    }
+
+    /// Get RMS layer norm reference (Moonshine only)
+    #[must_use]
+    pub fn ln_post_rms(&self) -> Option<&RmsNorm> {
+        self.ln_post_rms.as_ref()
+    }
+
+    /// Get mutable RMS layer norm reference (Moonshine only)
+    pub fn ln_post_rms_mut(&mut self) -> Option<&mut RmsNorm> {
+        self.ln_post_rms.as_mut()
+    }
+
     /// Forward pass from raw mel spectrogram (Whisper path only)
     ///
     /// # Errors
@@ -275,12 +391,21 @@ impl Encoder {
         self.positional_encoding
     }
 
-    /// Forward pass for a batch of mel spectrograms
+    /// Forward pass for a batch of feature sequences
+    ///
+    /// For Whisper: input is mel spectrograms (processed through conv frontend + encoder)
+    /// For Moonshine: input is pre-projected features (processed through encoder blocks)
     pub fn forward_batch(&self, batch: &[Vec<f32>]) -> WhisperResult<Vec<Vec<f32>>> {
         let mut results = Vec::with_capacity(batch.len());
 
-        for mel in batch {
-            let encoded = self.forward_mel(mel)?;
+        for features in batch {
+            let encoded = if self.conv_frontend.is_some() {
+                // Whisper: route through mel → conv frontend → encoder
+                self.forward_mel(features)?
+            } else {
+                // Moonshine: features already projected to d_model, go straight through encoder blocks
+                self.forward(features)?
+            };
             results.push(encoded);
         }
 
@@ -323,6 +448,8 @@ impl Encoder {
         for block in &mut self.blocks {
             block.finalize_weights();
         }
+        // Moonshine blocks use GQA/SwiGLU which don't have weight finalization;
+        // no additional work needed for moonshine_blocks.
     }
 }
 

@@ -264,7 +264,7 @@ fn try_load_tensor(
 }
 
 /// RMS Normalization
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RmsNorm {
     /// Learnable scale parameter
     pub weight: Vec<f32>,

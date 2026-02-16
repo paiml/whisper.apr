@@ -131,7 +131,7 @@ checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 
 [[package]]
 name = "aprender"
-version = "0.25.7"
+version = "0.25.8"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -491,7 +491,7 @@ checksum = "fe6d2e5af09e8c8ad56c969f2157a3d4238cebc7c55f0a517728c38f7b200f81"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.1.14",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]
@@ -4264,7 +4264,7 @@ dependencies = [
 
 [[package]]
 name = "trueno"
-version = "0.14.5"
+version = "0.14.6"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -5095,7 +5095,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

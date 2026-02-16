@@ -63,7 +63,7 @@ impl SwiGluConfig {
 /// SwiGLU Feed-Forward Network layer
 ///
 /// Implements the gated FFN used in LFM2 and other modern LLMs.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SwiGluFfn {
     /// Configuration
     pub config: SwiGluConfig,
