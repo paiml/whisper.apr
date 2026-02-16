@@ -1678,11 +1678,11 @@ roadmap:
   github_issue: null
   item_type: task
   title: 'WAPR-MOONSHINE-013: Model registry and download integration'
-  status: inprogress
+  status: completed
   priority: medium
   assigned_to: null
   created: 2026-02-16T10:10:46Z
-  updated: 2026-02-16T11:39:28.944225864+00:00
+  updated: 2026-02-16T11:43:37.783218556+00:00
   spec: null
   acceptance_criteria:
   - Add Moonshine entries to MODELS registry in src/model/download.rs. Wire up CLI --model moonshine-tiny/moonshine-base flags. Default model resolution.
