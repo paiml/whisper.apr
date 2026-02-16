@@ -66,7 +66,9 @@ pub use checksum::{crc32, Crc32};
 pub use compress::Decompressor;
 #[cfg(feature = "cli")]
 pub use safetensors_loader::SafeTensorsLoader;
-pub use safetensors_loader::{map_tensor_name, ConversionStats, WeightMapping};
+pub use safetensors_loader::{
+    map_moonshine_tensor_name, map_tensor_name, ConversionStats, WeightMapping,
+};
 pub use validation::{
     quick_validate, validate_apr_bytes, AprValidator, TensorStats, ValidationCheck,
     ValidationReport,

@@ -994,63 +994,190 @@ fn parse_args() -> Result<CliArgs, Box<dyn std::error::Error>> {
     })
 }
 
-/// Moonshine SafeTensors → APR conversion (stub)
+/// Download model SafeTensors file from HuggingFace (any org)
+async fn download_model_hf(
+    client: &Client,
+    org: &str,
+    repo_name: &str,
+    cache_dir: &PathBuf,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let url = format!(
+        "https://huggingface.co/{org}/{repo_name}/resolve/main/model.safetensors"
+    );
+
+    let cache_file = cache_dir.join(format!("{repo_name}.safetensors"));
+
+    // Check cache
+    if cache_file.exists() {
+        println!("Using cached model: {}", cache_file.display());
+        return Ok(cache_file);
+    }
+
+    println!("Downloading {org}/{repo_name} from HuggingFace...");
+
+    let response = client.get(&url).send().await?;
+    let total_size = response.content_length().unwrap_or(0);
+
+    let pb = ProgressBar::new(total_size);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")?
+            .progress_chars("#>-"),
+    );
+
+    std::fs::create_dir_all(cache_dir)?;
+    let bytes = response.bytes().await?;
+    pb.finish_with_message("Download complete");
+
+    std::fs::write(&cache_file, &bytes)?;
+    println!("Cached to: {}", cache_file.display());
+
+    Ok(cache_file)
+}
+
+/// Load and parse Moonshine tensors from SafeTensors file
+///
+/// Uses `map_moonshine_tensor_name()` from the library to map HuggingFace
+/// tensor names to internal format.
+fn load_moonshine_tensors(
+    safetensors_path: &PathBuf,
+) -> Result<Vec<ParsedTensor>, Box<dyn std::error::Error>> {
+    use whisper_apr::format::safetensors_loader::map_moonshine_tensor_name;
+
+    println!("Loading Moonshine SafeTensors...");
+    let data = std::fs::read(safetensors_path)?;
+    let tensors = SafeTensors::deserialize(&data)?;
+
+    println!("Parsing {} tensors...", tensors.names().len());
+    let pb = ProgressBar::new(tensors.names().len() as u64);
+
+    let mut result = Vec::new();
+
+    for name in tensors.names() {
+        let tensor = tensors.tensor(name)?;
+        let apr_name = map_moonshine_tensor_name(name);
+
+        // Convert tensor data to f32
+        let f32_data: Vec<f32> = match tensor.dtype() {
+            safetensors::Dtype::F32 => tensor
+                .data()
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect(),
+            safetensors::Dtype::F16 => tensor
+                .data()
+                .chunks_exact(2)
+                .map(|b| {
+                    let bits = u16::from_le_bytes([b[0], b[1]]);
+                    half_to_f32(bits)
+                })
+                .collect(),
+            safetensors::Dtype::BF16 => tensor
+                .data()
+                .chunks_exact(2)
+                .map(|b| {
+                    let bits = u16::from_le_bytes([b[0], b[1]]);
+                    bf16_to_f32(bits)
+                })
+                .collect(),
+            dtype => {
+                eprintln!(
+                    "Warning: Unsupported dtype {:?} for {}, skipping",
+                    dtype, name
+                );
+                pb.inc(1);
+                continue;
+            }
+        };
+
+        let shape: Vec<usize> = tensor.shape().iter().copied().collect();
+        result.push(ParsedTensor {
+            name: apr_name,
+            shape,
+            data: f32_data,
+        });
+        pb.inc(1);
+    }
+
+    pb.finish_with_message("Parsing complete");
+    Ok(result)
+}
+
+/// Moonshine SafeTensors → APR conversion
 ///
 /// Downloads Moonshine SafeTensors models from HuggingFace
 /// (usefulsensors/moonshine-tiny or usefulsensors/moonshine-base)
 /// and converts them to .apr format.
 ///
-/// Tensor name mapping is defined by the aprender model family contract:
+/// Tensor name mapping uses `map_moonshine_tensor_name()` from the library,
+/// which maps all 160 HuggingFace tensor names to internal format.
+/// The mapping is defined by the aprender model family contract:
 /// `aprender/contracts/model-families/moonshine.yaml`
 ///
-/// # SafeTensors Tensor Inventory (160 tensors for tiny)
-///
-/// | HF Tensor Pattern                                        | Count |
-/// |----------------------------------------------------------|-------|
-/// | `model.encoder.conv{1,2,3}.{weight,bias}`               | 5     |
-/// | `model.encoder.groupnorm.{weight,bias}`                  | 2     |
-/// | `model.encoder.layer_norm.weight`                        | 1     |
-/// | `model.encoder.layers.{n}.self_attn.{q,k,v,o}_proj.weight` | 4/layer |
-/// | `model.encoder.layers.{n}.{input,post_attention}_layernorm.weight` | 2/layer |
-/// | `model.encoder.layers.{n}.mlp.fc{1,2}.{weight,bias}`    | 4/layer |
-/// | `model.decoder.embed_tokens.weight`                      | 1     |
-/// | `model.decoder.norm.weight`                              | 1     |
-/// | `model.decoder.layers.{n}.self_attn.{q,k,v,o}_proj.weight` | 4/layer |
-/// | `model.decoder.layers.{n}.encoder_attn.{q,k,v,o}_proj.weight` | 4/layer |
-/// | `model.decoder.layers.{n}.{input,post_attention,final}_layernorm.weight` | 3/layer |
-/// | `model.decoder.layers.{n}.mlp.fc{1,2}.{weight,bias}`    | 4/layer |
-///
-/// proj_out.weight is tied to embed_tokens.weight.
-///
-/// # Status: Stub — aprender contract ready, converter pending
+/// Moonshine differences from Whisper:
+/// - No mel filterbank (learned conv stem)
+/// - SentencePiece tokenizer (embedded separately)
+/// - `proj_out.weight` is tied to `embed_tokens.weight`
 async fn convert_moonshine(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let repo = format!(
-        "https://huggingface.co/{}/{}",
-        args.model_size.hf_org(),
-        args.model_size.hf_repo_name()
+    let client = Client::new();
+    let org = args.model_size.hf_org();
+    let repo_name = args.model_size.hf_repo_name();
+
+    // Download SafeTensors
+    let safetensors_path = download_model_hf(&client, org, repo_name, &args.cache_dir).await?;
+
+    // Load and map tensors
+    let tensors = load_moonshine_tensors(&safetensors_path)?;
+    let n_tensors = tensors.len();
+
+    // Handle tied embeddings: proj_out.weight = embed_tokens.weight
+    // If no proj_out tensor exists, clone embed_tokens for the output projection
+    let has_proj_out = tensors.iter().any(|t| t.name == "decoder.proj_out.weight");
+    let mut tensors = tensors;
+    if !has_proj_out {
+        if let Some(embed) = tensors
+            .iter()
+            .find(|t| t.name == "decoder.token_embedding.weight")
+        {
+            println!("Tied embeddings: cloning embed_tokens → proj_out");
+            tensors.push(ParsedTensor {
+                name: "decoder.proj_out.weight".to_string(),
+                shape: embed.shape.clone(),
+                data: embed.data.clone(),
+            });
+        }
+    }
+
+    // Convert to APR format
+    // Moonshine has no mel filterbank and no Whisper vocabulary
+    let apr_bytes = match args.quantize {
+        QuantizeType::None => {
+            convert_to_apr_f32(tensors, args.model_size, None, None)?
+        }
+        QuantizeType::Int8 => {
+            convert_to_apr_int8(tensors, args.model_size, None, None)?
+        }
+    };
+
+    // Write output
+    std::fs::write(&args.output_path, &apr_bytes)?;
+    println!(
+        "\n✅ Successfully wrote: {} ({} tensors)",
+        args.output_path.display(),
+        n_tensors
+    );
+    println!("   Size: {:.2} MB", apr_bytes.len() as f64 / 1_000_000.0);
+
+    let config = args.model_size.to_model_config();
+    println!(
+        "   Config: {}d, {}+{} layers, {} vocab",
+        config.n_audio_state,
+        config.n_audio_layer,
+        config.n_text_layer,
+        config.n_vocab
     );
 
-    eprintln!("Moonshine SafeTensors → APR conversion is not yet implemented.");
-    eprintln!();
-    eprintln!("Source: {repo}");
-    eprintln!("Target: {}", args.output_path.display());
-    eprintln!();
-    eprintln!("Tensor name mapping is defined in aprender:");
-    eprintln!("  aprender/contracts/model-families/moonshine.yaml");
-    eprintln!();
-    eprintln!("Config that will be used:");
-    let config = args.model_size.to_model_config();
-    eprintln!("  n_audio_state: {}", config.n_audio_state);
-    eprintln!("  n_audio_layer: {}", config.n_audio_layer);
-    eprintln!("  n_text_state:  {}", config.n_text_state);
-    eprintln!("  n_text_layer:  {}", config.n_text_layer);
-    eprintln!("  n_vocab:       {}", config.n_vocab);
-
-    Err(
-        "Moonshine SafeTensors conversion not yet implemented — aprender contract ready, \
-         converter pending (Refs WAPR-MOONSHINE-011)"
-            .into(),
-    )
+    Ok(())
 }
 
 #[tokio::main]
