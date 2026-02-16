@@ -89,8 +89,9 @@ pub fn matvec(a: &[f32], x: &[f32], rows: usize, cols: usize) -> Vec<f32> {
 /// `[out_features, in_features]` row-major (standard PyTorch linear layer layout).
 ///
 /// This is a convenience wrapper for modules that store weights as `Vec<f32>`
-/// (e.g. GQA, MLP) rather than `LinearWeights`. Delegates to trueno via
-/// transpose + matmul.
+/// (e.g. GQA, MLP) rather than `LinearWeights`. For single-token inference
+/// (seq_len=1), uses tiled matvec directly — no transpose or copy overhead.
+/// For batch inference, delegates to trueno via transpose + matmul.
 #[must_use]
 pub fn matmul_raw(
     input: &[f32],
@@ -111,6 +112,19 @@ pub fn matmul_raw(
         "weight dimensions mismatch"
     );
 
+    // Single-token fast path: use tiled_matvec (no transpose, no Matrix construction)
+    // Weight is already [out_features, in_features] — perfect for matvec: y = W @ x
+    if seq_len == 1 {
+        let mut output = super::tiled_matvec(weight, input, out_features, in_features);
+        if let Some(b) = bias {
+            for (o, &bv) in output.iter_mut().zip(b.iter()) {
+                *o += bv;
+            }
+        }
+        return output;
+    }
+
+    // Batch path: transpose + matmul via trueno
     // Weight is [out_features, in_features], transpose to [in_features, out_features]
     let weight_t = transpose(weight, out_features, in_features);
     // input [seq_len, in_features] @ weight_t [in_features, out_features] = [seq_len, out_features]

@@ -951,43 +951,92 @@ impl GroupedQueryAttention {
             )));
         }
 
-        // Scale uses ORIGINAL head_dim (matching HuggingFace)
-        let scale = 1.0 / (head_dim as f32).sqrt();
         let mut output = vec![0.0_f32; q_total];
 
-        for q_head in 0..num_q_heads {
-            let kv_head = q_head / gqa_ratio;
-            let q_offset = q_head * padded_hd;
-            let q_vec = &q[q_offset..q_offset + padded_hd];
+        if cfg!(feature = "simd") {
+            // Pre-extract K/V per KV head from cache into contiguous buffers
+            let k_heads: Vec<Vec<f32>> = (0..self.config.num_kv_heads)
+                .map(|kv_head| {
+                    Self::extract_head(k_cache, cache_len, kv_padded_dim, kv_head, padded_hd)
+                })
+                .collect();
+            let v_heads: Vec<Vec<f32>> = (0..self.config.num_kv_heads)
+                .map(|kv_head| {
+                    Self::extract_head(v_cache, cache_len, kv_padded_dim, kv_head, padded_hd)
+                })
+                .collect();
 
-            // Compute scores against all cached keys
-            let mut scores = Vec::with_capacity(cache_len);
-            for pos in 0..cache_len {
-                let k_offset = pos * kv_padded_dim + kv_head * padded_hd;
-                let k_vec = &k_cache[k_offset..k_offset + padded_hd];
-                let score: f32 = q_vec.iter().zip(k_vec).map(|(qi, ki)| qi * ki).sum();
-                scores.push(score * scale);
-            }
-
-            // Softmax
-            let max_score = scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-            let exp_scores: Vec<f32> = scores.iter().map(|s| (s - max_score).exp()).collect();
-            let sum_exp: f32 = exp_scores.iter().sum();
-            let attn_weights: Vec<f32> = if sum_exp > 0.0 {
-                exp_scores.iter().map(|e| e / sum_exp).collect()
+            // Scale correction for padded heads (precomputed once)
+            let needs_correction = padded_hd != head_dim;
+            let correction = if needs_correction {
+                (padded_hd as f32 / head_dim as f32).sqrt()
             } else {
-                vec![1.0 / cache_len as f32; cache_len]
+                1.0
             };
 
-            // Weighted sum of cached values
-            let out_offset = q_head * padded_hd;
-            for (pos, &weight) in attn_weights.iter().enumerate() {
-                if weight.abs() < 1e-10 {
-                    continue;
+            for q_head in 0..num_q_heads {
+                let kv_head = q_head / gqa_ratio;
+                let q_offset = q_head * padded_hd;
+
+                // SIMD single-query attention per head
+                let head_out = if needs_correction {
+                    let mut q_corrected = q[q_offset..q_offset + padded_hd].to_vec();
+                    for val in &mut q_corrected {
+                        *val *= correction;
+                    }
+                    crate::simd::scaled_dot_product_attention_single(
+                        &q_corrected,
+                        &k_heads[kv_head],
+                        &v_heads[kv_head],
+                        padded_hd,
+                        None,
+                    )
+                } else {
+                    crate::simd::scaled_dot_product_attention_single(
+                        &q[q_offset..q_offset + padded_hd],
+                        &k_heads[kv_head],
+                        &v_heads[kv_head],
+                        padded_hd,
+                        None,
+                    )
+                };
+
+                output[q_offset..q_offset + padded_hd].copy_from_slice(&head_out);
+            }
+        } else {
+            // Scalar fallback
+            let scale = 1.0 / (head_dim as f32).sqrt();
+            for q_head in 0..num_q_heads {
+                let kv_head = q_head / gqa_ratio;
+                let q_offset = q_head * padded_hd;
+                let q_vec = &q[q_offset..q_offset + padded_hd];
+
+                let mut scores = Vec::with_capacity(cache_len);
+                for pos in 0..cache_len {
+                    let k_offset = pos * kv_padded_dim + kv_head * padded_hd;
+                    let k_vec = &k_cache[k_offset..k_offset + padded_hd];
+                    let score: f32 = q_vec.iter().zip(k_vec).map(|(qi, ki)| qi * ki).sum();
+                    scores.push(score * scale);
                 }
-                let v_offset = pos * kv_padded_dim + kv_head * padded_hd;
-                for d in 0..padded_hd {
-                    output[out_offset + d] += weight * v_cache[v_offset + d];
+
+                let max_score = scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                let exp_scores: Vec<f32> = scores.iter().map(|s| (s - max_score).exp()).collect();
+                let sum_exp: f32 = exp_scores.iter().sum();
+                let attn_weights: Vec<f32> = if sum_exp > 0.0 {
+                    exp_scores.iter().map(|e| e / sum_exp).collect()
+                } else {
+                    vec![1.0 / cache_len as f32; cache_len]
+                };
+
+                let out_offset = q_head * padded_hd;
+                for (pos, &weight) in attn_weights.iter().enumerate() {
+                    if weight.abs() < 1e-10 {
+                        continue;
+                    }
+                    let v_offset = pos * kv_padded_dim + kv_head * padded_hd;
+                    for d in 0..padded_hd {
+                        output[out_offset + d] += weight * v_cache[v_offset + d];
+                    }
                 }
             }
         }
