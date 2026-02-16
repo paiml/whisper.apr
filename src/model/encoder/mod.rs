@@ -95,8 +95,8 @@ impl Encoder {
             AttentionType::Gqa { kv_heads } => {
                 // Moonshine: GQA + SwiGLU blocks with RoPE
                 let head_dim = d_model / n_heads;
-                // SwiGLU intermediate: ~2.67x hidden_size for Moonshine
-                let intermediate_size = (d_model * 8) / 3;
+                // HF Moonshine config: intermediate_size = 4 * hidden_size
+                let intermediate_size = d_model * 4;
                 let mut moon_blocks = Vec::with_capacity(n_layers);
                 for _ in 0..n_layers {
                     match MoonshineEncoderBlock::new(

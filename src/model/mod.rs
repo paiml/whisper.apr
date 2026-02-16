@@ -221,7 +221,8 @@ impl ModelConfig {
 
     /// Create configuration for Moonshine tiny model (27.1M params)
     ///
-    /// Variable-length ASR with GQA, SwiGLU, RoPE, and learned conv stem.
+    /// Variable-length ASR with MHA, RoPE, GELU encoder / SiLU decoder,
+    /// and learned conv stem. Matches `usefulsensors/moonshine-tiny` on HuggingFace.
     #[must_use]
     pub const fn moonshine_tiny() -> Self {
         Self {
@@ -238,15 +239,18 @@ impl ModelConfig {
             n_mels: 0, // no mel filterbank
             audio_frontend: AudioFrontend::LearnedConv,
             positional_encoding: PositionalEncoding::Rotary,
-            ffn_activation: FfnActivation::Swiglu,
-            attention_type: AttentionType::Gqa { kv_heads: 2 },
+            ffn_activation: FfnActivation::Gelu,
+            // HF config: kv_heads=8 (MHA). Use Gqa{8} to route through
+            // RoPE-capable block path (GQA with kv_heads=q_heads = MHA).
+            attention_type: AttentionType::Gqa { kv_heads: 8 },
             model_family: ModelFamily::Moonshine,
         }
     }
 
     /// Create configuration for Moonshine base model (61.5M params)
     ///
-    /// Variable-length ASR with GQA, SwiGLU, RoPE, and learned conv stem.
+    /// Variable-length ASR with MHA, RoPE, GELU encoder / SiLU decoder,
+    /// and learned conv stem. Matches `usefulsensors/moonshine-base` on HuggingFace.
     #[must_use]
     pub const fn moonshine_base() -> Self {
         Self {
@@ -255,16 +259,18 @@ impl ModelConfig {
             n_audio_ctx: 0, // variable length
             n_audio_state: 416,
             n_audio_head: 8,
-            n_audio_layer: 12,
+            n_audio_layer: 8,
             n_text_ctx: 448,
             n_text_state: 416,
             n_text_head: 8,
-            n_text_layer: 6,
+            n_text_layer: 8,
             n_mels: 0, // no mel filterbank
             audio_frontend: AudioFrontend::LearnedConv,
             positional_encoding: PositionalEncoding::Rotary,
-            ffn_activation: FfnActivation::Swiglu,
-            attention_type: AttentionType::Gqa { kv_heads: 2 },
+            ffn_activation: FfnActivation::Gelu,
+            // HF config: kv_heads=8 (MHA). Use Gqa{8} to route through
+            // RoPE-capable block path (GQA with kv_heads=q_heads = MHA).
+            attention_type: AttentionType::Gqa { kv_heads: 8 },
             model_family: ModelFamily::Moonshine,
         }
     }
@@ -809,8 +815,8 @@ mod tests {
         assert!(!config.is_whisper());
         assert_eq!(config.audio_frontend, AudioFrontend::LearnedConv);
         assert_eq!(config.positional_encoding, PositionalEncoding::Rotary);
-        assert_eq!(config.ffn_activation, crate::format::FfnActivation::Swiglu);
-        assert_eq!(config.attention_type, AttentionType::Gqa { kv_heads: 2 });
+        assert_eq!(config.ffn_activation, crate::format::FfnActivation::Gelu);
+        assert_eq!(config.attention_type, AttentionType::Gqa { kv_heads: 8 });
     }
 
     #[test]
@@ -818,8 +824,8 @@ mod tests {
         let config = ModelConfig::moonshine_base();
         assert_eq!(config.n_audio_state, 416);
         assert_eq!(config.n_audio_head, 8);
-        assert_eq!(config.n_audio_layer, 12);
-        assert_eq!(config.n_text_layer, 6);
+        assert_eq!(config.n_audio_layer, 8);
+        assert_eq!(config.n_text_layer, 8);
         assert_eq!(config.n_vocab, 32768);
         assert!(config.is_moonshine());
     }
