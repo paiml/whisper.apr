@@ -434,13 +434,8 @@ fn test_moonshine_multi_padding_similarity() {
     for (i, text) in all_texts.iter().enumerate() {
         let word_count = text.split_whitespace().count();
         let has_hallucination = detect_repetitive_pattern(text, 3, 3);
-        println!(
-            "Variant {i}: '{text}' ({word_count} words, hallucination={has_hallucination})"
-        );
-        assert!(
-            word_count >= 2,
-            "Variant {i} has too few words: '{text}'"
-        );
+        println!("Variant {i}: '{text}' ({word_count} words, hallucination={has_hallucination})");
+        assert!(word_count >= 2, "Variant {i} has too few words: '{text}'");
         assert!(
             !has_hallucination,
             "Variant {i} has hallucination: '{text}'"
@@ -467,11 +462,7 @@ fn test_moonshine_segment_boundary_stability() {
 
     let start_tolerance = 0.05; // 50ms for start boundary jitter
 
-    let padding_durations = [
-        (1.0, 16_000usize),
-        (5.0, 80_000),
-        (28.5, 456_000),
-    ];
+    let padding_durations = [(1.0, 16_000usize), (5.0, 80_000), (28.5, 456_000)];
 
     for (dur_secs, pad_samples) in &padding_durations {
         let mut padded = samples.clone();
@@ -528,11 +519,7 @@ fn test_moonshine_token_sequence_similarity() {
         .flat_map(|s| s.tokens.iter().copied())
         .collect();
 
-    let padding_durations = [
-        (0.5, 8_000usize),
-        (1.0, 16_000),
-        (5.0, 80_000),
-    ];
+    let padding_durations = [(0.5, 8_000usize), (1.0, 16_000), (5.0, 80_000)];
 
     for (dur_secs, pad_samples) in &padding_durations {
         let mut padded = samples.clone();
@@ -827,9 +814,7 @@ fn test_moonshine_conv_stem_output_prefix_stability() {
         }
     }
 
-    println!(
-        "Prefix stability: {safe_frames}/{base_frames} safe frames, max_diff={max_diff:.6}"
-    );
+    println!("Prefix stability: {safe_frames}/{base_frames} safe frames, max_diff={max_diff:.6}");
 
     // Prefix should be nearly identical (allow small floating-point differences)
     assert!(

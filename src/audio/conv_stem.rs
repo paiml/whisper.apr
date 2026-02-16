@@ -381,7 +381,10 @@ mod tests {
         // conv2 ≥ 3 needs conv1 ≥ 13: n ≥ 127 + 12*64 = 895
         // conv3 from 3: (3 - 3)/2 + 1 = 1 ✓
         let first_nonzero = ConvStem::output_frames(895);
-        assert_eq!(first_nonzero, 1, "895 samples should produce exactly 1 frame");
+        assert_eq!(
+            first_nonzero, 1,
+            "895 samples should produce exactly 1 frame"
+        );
         assert_eq!(
             ConvStem::output_frames(894),
             0,
@@ -496,5 +499,4 @@ mod tests {
         let result = gn.forward(&input, 1);
         assert!(result.is_err());
     }
-
 }
