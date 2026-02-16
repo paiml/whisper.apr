@@ -1,7 +1,7 @@
 //! Model loading and caching for whisper-apr CLI
 //!
-//! This module handles automatic downloading of Whisper models from HuggingFace
-//! when no local model path is provided.
+//! This module handles automatic downloading of Whisper and Moonshine models
+//! from HuggingFace when no local model path is provided.
 //!
 //! # Cache Location
 //!
@@ -14,6 +14,8 @@
 //! - `openai/whisper-small` → small.apr
 //! - `openai/whisper-medium` → medium.apr
 //! - `openai/whisper-large-v3` → large.apr
+//! - `usefulsensors/moonshine-tiny` → moonshine-tiny.apr
+//! - `usefulsensors/moonshine-base` → moonshine-base.apr
 
 use std::fs;
 use std::path::PathBuf;
@@ -100,29 +102,11 @@ pub fn is_model_cached(size: ModelSize) -> bool {
 
 /// Download a model from HuggingFace Hub
 ///
-/// This downloads the safetensors weights and converts them to .apr format.
-/// For Moonshine models (ONNX format), use `whisper-apr-convert moonshine-tiny` instead.
+/// Downloads SafeTensors weights and converts them to .apr format.
+/// Whisper models include mel filterbank and vocabulary embedding.
+/// Moonshine models use their own tensor name mapping (no mel/vocab).
 fn download_model(size: ModelSize, verbose: bool) -> ModelLoaderResult<PathBuf> {
     use hf_hub::api::sync::Api;
-
-    // Moonshine models ship as ONNX, not safetensors — require explicit conversion
-    if size.is_moonshine() {
-        return Err(ModelLoaderError::Download(format!(
-            "Moonshine models require ONNX→APR conversion. Run:\n  \
-             whisper-apr-convert {}\n\
-             Then use: whisper-apr transcribe --model-path moonshine-{}.apr <audio>",
-            if matches!(size, ModelSize::MoonshineTiny) {
-                "moonshine-tiny"
-            } else {
-                "moonshine-base"
-            },
-            if matches!(size, ModelSize::MoonshineTiny) {
-                "tiny"
-            } else {
-                "base"
-            },
-        )));
-    }
 
     let repo_id = get_hf_repo_id(size);
     let cache_path = get_model_cache_path(size);
@@ -150,6 +134,12 @@ fn download_model(size: ModelSize, verbose: bool) -> ModelLoaderResult<PathBuf> 
             "[INFO] Downloaded safetensors to: {}",
             safetensors_path.display()
         );
+    }
+
+    // Moonshine uses SafeTensors with different tensor naming and no mel/vocab
+    if size.is_moonshine() {
+        convert_moonshine_safetensors_to_apr(&safetensors_path, &cache_path, size, verbose)?;
+        return Ok(cache_path);
     }
 
     // Download vocab.json for tokenizer
@@ -298,6 +288,84 @@ fn convert_safetensors_to_apr(
 
     if verbose {
         eprintln!("[INFO] Saved model to: {}", apr_path.display());
+    }
+
+    Ok(())
+}
+
+/// Convert Moonshine SafeTensors to .apr format
+///
+/// Moonshine models use different tensor naming, no mel filterbank,
+/// and SentencePiece tokenizer (not GPT-2 BPE). Tied embeddings
+/// (proj_out = embed_tokens) are handled by cloning.
+fn convert_moonshine_safetensors_to_apr(
+    safetensors_path: &std::path::Path,
+    apr_path: &std::path::Path,
+    size: ModelSize,
+    verbose: bool,
+) -> ModelLoaderResult<()> {
+    use crate::format::{map_moonshine_tensor_name, AprWriter};
+    use crate::model::ModelConfig;
+    use safetensors::SafeTensors;
+
+    if verbose {
+        eprintln!("[INFO] Converting Moonshine SafeTensors to .apr format...");
+    }
+
+    let data = fs::read(safetensors_path)?;
+    let tensors =
+        SafeTensors::deserialize(&data).map_err(|e| ModelLoaderError::Download(e.to_string()))?;
+
+    let config = match size {
+        ModelSize::MoonshineTiny => ModelConfig::moonshine_tiny(),
+        ModelSize::MoonshineBase => ModelConfig::moonshine_base(),
+        _ => unreachable!("only called for Moonshine models"),
+    };
+
+    let mut writer = AprWriter::from_config(&config);
+
+    // Track embed_tokens for tied embeddings
+    let mut embed_tokens_data: Option<(Vec<usize>, Vec<f32>)> = None;
+    let mut has_proj_out = false;
+
+    for (name, tensor) in tensors.tensors() {
+        let Some(f32_data) = convert_tensor_to_f32(&tensor) else {
+            if verbose {
+                eprintln!("[WARN] Skipping tensor {name} with unsupported dtype");
+            }
+            continue;
+        };
+
+        let our_name = map_moonshine_tensor_name(&name);
+        let shape: Vec<usize> = tensor.shape().to_vec();
+
+        if our_name == "decoder.proj_out.weight" {
+            has_proj_out = true;
+        }
+        if our_name == "decoder.token_embedding.weight" {
+            embed_tokens_data = Some((shape.clone(), f32_data.clone()));
+        }
+
+        writer.add(our_name, shape, f32_data);
+    }
+
+    // Handle tied embeddings: clone embed_tokens → proj_out if missing
+    if !has_proj_out {
+        if let Some((shape, data)) = embed_tokens_data {
+            if verbose {
+                eprintln!("[INFO] Tied embeddings: cloning embed_tokens → proj_out");
+            }
+            writer.add("decoder.proj_out.weight", shape, data);
+        }
+    }
+
+    let apr_data = writer
+        .to_bytes()
+        .map_err(|e| ModelLoaderError::Download(format!("Failed to write APR: {e}")))?;
+    fs::write(apr_path, apr_data)?;
+
+    if verbose {
+        eprintln!("[INFO] Saved Moonshine model to: {}", apr_path.display());
     }
 
     Ok(())
