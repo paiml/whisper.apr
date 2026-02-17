@@ -4,6 +4,86 @@ use super::check::{ValidationCheck, ValidationReport};
 use super::stats::TensorStats;
 use crate::format::AprReader;
 
+/// Specification for a bulk mean-range validation check.
+struct BulkMeanSpec {
+    id: u8,
+    category: char,
+    description: &'static str,
+    suffixes: &'static [&'static str],
+    min: f32,
+    max: f32,
+    pass_template: &'static str,
+    /// Tensor names that contain these patterns are excluded from matching.
+    exclude_contains: &'static [&'static str],
+}
+
+/// Layer norm mean-range checks (B8: block LN weights, B9: LN biases).
+const LAYER_NORM_MEAN_SPECS: &[BulkMeanSpec] = &[
+    BulkMeanSpec {
+        id: 8,
+        category: 'B',
+        description: "Block LN weight means",
+        suffixes: &[
+            "self_attn_layer_norm.weight",
+            "encoder_attn_layer_norm.weight",
+            "final_layer_norm.weight",
+        ],
+        min: 0.5,
+        max: 3.0,
+        pass_template: "block LN means in [0.5, 3.0]",
+        exclude_contains: &[],
+    },
+    BulkMeanSpec {
+        id: 9,
+        category: 'B',
+        description: "LN bias means",
+        suffixes: &["layer_norm.bias"],
+        min: -0.5,
+        max: 0.5,
+        pass_template: "LN bias means in [-0.5, 0.5]",
+        exclude_contains: &[],
+    },
+];
+
+/// Attention/linear mean-range checks (C11: QKV proj, C12: FFN, C15: bias vectors).
+const ATTENTION_MEAN_SPECS: &[BulkMeanSpec] = &[
+    BulkMeanSpec {
+        id: 11,
+        category: 'C',
+        description: "Q/K/V proj means",
+        suffixes: &[
+            "q_proj.weight",
+            "k_proj.weight",
+            "v_proj.weight",
+            "out_proj.weight",
+        ],
+        min: -0.1,
+        max: 0.1,
+        pass_template: "proj means in [-0.1, 0.1]",
+        exclude_contains: &[],
+    },
+    BulkMeanSpec {
+        id: 12,
+        category: 'C',
+        description: "FFN weight means",
+        suffixes: &["fc1.weight", "fc2.weight"],
+        min: -0.1,
+        max: 0.1,
+        pass_template: "FFN means in [-0.1, 0.1]",
+        exclude_contains: &[],
+    },
+    BulkMeanSpec {
+        id: 15,
+        category: 'C',
+        description: "Bias vectors valid",
+        suffixes: &[".bias"],
+        min: -1.0,
+        max: 1.0,
+        pass_template: "bias means in [-1.0, 1.0]",
+        exclude_contains: &["layer_norm"],
+    },
+];
+
 /// APR file validator implementing the 25-point QA checklist
 pub struct AprValidator<'a> {
     reader: &'a AprReader,
@@ -58,35 +138,41 @@ impl<'a> AprValidator<'a> {
 
     /// B. Layer Norm Validation (checks 6-10)
     fn validate_layer_norms(&self) -> Vec<ValidationCheck> {
-        vec![
-            self.check_encoder_ln_weight(),
-            self.check_decoder_ln_weight(),
-            self.check_block_ln_weights(),
-            self.check_ln_biases(),
-            self.check_ln_nan_inf(),
-        ]
+        let mut checks = self.check_named_tensor_means(&[
+            (
+                6,
+                'B',
+                "Encoder LN weight",
+                "encoder.layer_norm.weight",
+                0.5,
+                3.0,
+            ),
+            (
+                7,
+                'B',
+                "Decoder LN weight",
+                "decoder.layer_norm.weight",
+                0.5,
+                3.0,
+            ),
+        ]);
+        checks.extend(self.check_bulk_mean_ranges(LAYER_NORM_MEAN_SPECS));
+        checks.push(self.check_ln_nan_inf());
+        checks
     }
 
     /// C. Attention/Linear Validation (checks 11-15)
     fn validate_attention_linear(&self) -> Vec<ValidationCheck> {
-        vec![
-            self.check_qkv_proj_means(),
-            self.check_ffn_weight_means(),
-            self.check_weight_std(),
-            self.check_no_zero_tensors(),
-            self.check_bias_vectors(),
-        ]
+        let mut checks = self.check_bulk_mean_ranges(ATTENTION_MEAN_SPECS);
+        checks.extend(self.validate_weight_health());
+        checks
     }
 
     /// D. Embedding Validation (checks 16-20)
     fn validate_embeddings(&self) -> Vec<ValidationCheck> {
-        vec![
-            self.check_token_embedding_shape(),
-            self.check_token_embedding_stats(),
-            self.check_positional_embedding_shape(),
-            self.check_positional_embedding_stats(),
-            self.check_vocab_size(),
-        ]
+        let mut checks = self.validate_embedding_shapes();
+        checks.extend(self.validate_embedding_stats());
+        checks
     }
 
     /// E. Functional Validation (checks 21-25)
@@ -179,36 +265,30 @@ impl<'a> AprValidator<'a> {
         ValidationCheck::pass(5, 'A', "CRC32 valid", "Checksum verified")
     }
 
-    fn check_encoder_ln_weight(&self) -> ValidationCheck {
-        self.check_single_tensor(
-            6,
-            'B',
-            "Encoder LN weight",
-            "encoder.layer_norm.weight",
-            |s| {
-                if s.mean >= 0.5 && s.mean <= 3.0 {
-                    Ok(format!("mean={:.4} in [0.5, 3.0]", s.mean))
-                } else {
-                    Err(format!("mean={:.4} NOT in [0.5, 3.0]", s.mean))
-                }
-            },
-        )
+    /// Batch-validate named tensors: check that each tensor's mean falls in `[min, max]`.
+    fn check_named_tensor_means(
+        &self,
+        specs: &[(u8, char, &str, &str, f32, f32)],
+    ) -> Vec<ValidationCheck> {
+        specs
+            .iter()
+            .map(|&(id, cat, desc, tensor, min, max)| {
+                self.check_single_tensor(id, cat, desc, tensor, |s| {
+                    if s.mean >= min && s.mean <= max {
+                        Ok(format!("mean={:.4} in [{min}, {max}]", s.mean))
+                    } else {
+                        Err(format!("mean={:.4} NOT in [{min}, {max}]", s.mean))
+                    }
+                })
+            })
+            .collect()
     }
 
-    fn check_decoder_ln_weight(&self) -> ValidationCheck {
-        self.check_single_tensor(
-            7,
-            'B',
-            "Decoder LN weight",
-            "decoder.layer_norm.weight",
-            |s| {
-                if s.mean >= 0.5 && s.mean <= 3.0 {
-                    Ok(format!("mean={:.4} in [0.5, 3.0]", s.mean))
-                } else {
-                    Err(format!("mean={:.4} NOT in [0.5, 3.0]", s.mean))
-                }
-            },
-        )
+    /// Build a `check_tensor_stats` validator that fails when `stats.mean ∉ [min, max]`.
+    fn mean_outside_range(min: f32, max: f32) -> impl Fn(&TensorStats) -> Option<String> {
+        move |stats: &TensorStats| {
+            (stats.mean < min || stats.mean > max).then(|| format!("mean={:.4}", stats.mean))
+        }
     }
 
     /// Load a named tensor, compute stats, and return pass/fail based on a validator.
@@ -276,37 +356,6 @@ impl<'a> AprValidator<'a> {
         }
     }
 
-    fn check_block_ln_weights(&self) -> ValidationCheck {
-        let patterns = [
-            "self_attn_layer_norm.weight",
-            "encoder_attn_layer_norm.weight",
-            "final_layer_norm.weight",
-        ];
-        self.check_tensor_stats(
-            8,
-            'B',
-            "Block LN weight means",
-            |name| patterns.iter().any(|p| name.contains(p)),
-            |stats| {
-                (stats.mean < 0.5 || stats.mean > 3.0).then(|| format!("mean={:.4}", stats.mean))
-            },
-            "block LN means in [0.5, 3.0]",
-        )
-    }
-
-    fn check_ln_biases(&self) -> ValidationCheck {
-        self.check_tensor_stats(
-            9,
-            'B',
-            "LN bias means",
-            |name| name.contains("layer_norm.bias"),
-            |stats| {
-                (stats.mean < -0.5 || stats.mean > 0.5).then(|| format!("mean={:.4}", stats.mean))
-            },
-            "LN bias means in [-0.5, 0.5]",
-        )
-    }
-
     fn check_ln_nan_inf(&self) -> ValidationCheck {
         self.check_tensor_stats(
             10,
@@ -331,108 +380,84 @@ impl<'a> AprValidator<'a> {
         )
     }
 
-    fn check_qkv_proj_means(&self) -> ValidationCheck {
-        let patterns = [
-            "q_proj.weight",
-            "k_proj.weight",
-            "v_proj.weight",
-            "out_proj.weight",
-        ];
-        self.check_tensor_stats(
-            11,
-            'C',
-            "Q/K/V proj means",
-            |name| patterns.iter().any(|p| name.ends_with(p)),
-            |stats| {
-                (stats.mean < -0.1 || stats.mean > 0.1).then(|| format!("mean={:.4}", stats.mean))
-            },
-            "proj means in [-0.1, 0.1]",
-        )
+    /// Batch mean-range validation: each spec defines a filter + range check.
+    fn check_bulk_mean_ranges(&self, specs: &[BulkMeanSpec]) -> Vec<ValidationCheck> {
+        specs
+            .iter()
+            .map(|spec| {
+                self.check_tensor_stats(
+                    spec.id,
+                    spec.category,
+                    spec.description,
+                    |name| {
+                        let matches = spec.suffixes.iter().any(|p| name.ends_with(p));
+                        matches && spec.exclude_contains.iter().all(|exc| !name.contains(exc))
+                    },
+                    Self::mean_outside_range(spec.min, spec.max),
+                    spec.pass_template,
+                )
+            })
+            .collect()
     }
 
-    fn check_ffn_weight_means(&self) -> ValidationCheck {
-        let patterns = ["fc1.weight", "fc2.weight"];
-        self.check_tensor_stats(
-            12,
-            'C',
-            "FFN weight means",
-            |name| patterns.iter().any(|p| name.ends_with(p)),
-            |stats| {
-                (stats.mean < -0.1 || stats.mean > 0.1).then(|| format!("mean={:.4}", stats.mean))
-            },
-            "FFN means in [-0.1, 0.1]",
-        )
-    }
-
-    fn check_weight_std(&self) -> ValidationCheck {
-        // Uses custom tolerance: up to 25% outliers are acceptable (minor outliers)
-        let (mut failures, mut checked) = (Vec::new(), 0usize);
+    /// Weight health checks: std deviation (13) and no-all-zeros (14).
+    fn validate_weight_health(&self) -> Vec<ValidationCheck> {
+        // Check 13: weight std with 25% outlier tolerance
+        let (mut std_failures, mut checked) = (Vec::new(), 0usize);
         for tensor in &self.reader.tensors {
             if tensor.name.ends_with(".weight") && !tensor.name.contains("embedding") {
                 if let Ok(data) = self.reader.load_tensor(&tensor.name) {
                     let stats = TensorStats::compute(&tensor.name, &data);
                     checked += 1;
                     if stats.std < 0.01 || stats.std > 0.2 {
-                        failures.push(format!("{}: std={:.4}", tensor.name, stats.std));
+                        std_failures.push(format!("{}: std={:.4}", tensor.name, stats.std));
                     }
                 }
             }
         }
-        if failures.is_empty() {
+        let std_check = if std_failures.is_empty() {
             ValidationCheck::pass(
                 13,
                 'C',
                 "Weight std reasonable",
                 &format!("All {checked} weight stds in [0.01, 0.2]"),
             )
-        } else if failures.len() > checked / 4 {
+        } else if std_failures.len() > checked / 4 {
             ValidationCheck::fail(
                 13,
                 'C',
                 "Weight std reasonable",
-                &format!("{} failures: {}", failures.len(), failures[0]),
+                &format!("{} failures: {}", std_failures.len(), std_failures[0]),
             )
         } else {
             ValidationCheck::pass(
                 13,
                 'C',
                 "Weight std reasonable",
-                &format!("{} minor outliers in {checked} weights", failures.len()),
+                &format!("{} minor outliers in {checked} weights", std_failures.len()),
             )
-        }
-    }
+        };
 
-    fn check_no_zero_tensors(&self) -> ValidationCheck {
-        self.check_tensor_stats(
+        // Check 14: no all-zero tensors
+        let zero_check = self.check_tensor_stats(
             14,
             'C',
             "No zero tensors",
             |_| true,
             |stats| stats.is_all_zeros().then(|| "all zeros".to_string()),
             "tensors non-zero",
-        )
+        );
+
+        vec![std_check, zero_check]
     }
 
-    #[allow(clippy::case_sensitive_file_extension_comparisons)]
-    fn check_bias_vectors(&self) -> ValidationCheck {
-        self.check_tensor_stats(
-            15,
-            'C',
-            "Bias vectors valid",
-            |name| name.ends_with(".bias") && !name.contains("layer_norm"),
-            |stats| {
-                (stats.mean < -1.0 || stats.mean > 1.0).then(|| format!("mean={:.4}", stats.mean))
-            },
-            "bias means in [-1.0, 1.0]",
-        )
-    }
-
-    #[allow(clippy::option_if_let_else)]
-    fn check_token_embedding_shape(&self) -> ValidationCheck {
+    /// Validate embedding shapes (checks 16, 18, 20) in a single pass.
+    fn validate_embedding_shapes(&self) -> Vec<ValidationCheck> {
         let vocab_size = self.reader.header.n_vocab;
         let d_model = self.reader.header.n_text_state;
+        let d_audio = self.reader.header.n_audio_state;
 
-        match self.reader.find_tensor("decoder.token_embedding") {
+        let tok_check = match self.reader.find_tensor("decoder.token_embedding") {
             Some(tensor) => {
                 let shape = tensor.shape();
                 if shape.len() == 2 && shape[0] == vocab_size && shape[1] == d_model {
@@ -457,11 +482,72 @@ impl<'a> AprValidator<'a> {
                 "Token embedding shape",
                 "Token embedding not found",
             ),
+        };
+
+        // Positional embedding shapes (encoder: [1500, d_audio], decoder: [448, d_text])
+        let mut pos_failures = Vec::new();
+        for &(name, expected_len, d) in &[
+            ("encoder.positional_embedding", 1500u32, d_audio),
+            ("decoder.positional_embedding", 448, d_model),
+        ] {
+            if let Some(tensor) = self.reader.find_tensor(name) {
+                let shape = tensor.shape();
+                if shape.len() != 2 || shape[0] != expected_len || shape[1] != d {
+                    pos_failures.push(format!("{name}: {shape:?}, expected [{expected_len}, {d}]"));
+                }
+            }
         }
+        let pos_check = if pos_failures.is_empty() {
+            ValidationCheck::pass(
+                18,
+                'D',
+                "Positional embedding shape",
+                "Encoder [1500, d], Decoder [448, d]",
+            )
+        } else {
+            ValidationCheck::fail(
+                18,
+                'D',
+                "Positional embedding shape",
+                &pos_failures.join("; "),
+            )
+        };
+
+        // Vocab size consistency
+        let vocab_check = match self.reader.find_tensor("decoder.token_embedding") {
+            Some(tensor) => {
+                let shape = tensor.shape();
+                if !shape.is_empty() && shape[0] == vocab_size {
+                    ValidationCheck::pass(
+                        20,
+                        'D',
+                        "Vocab size matches",
+                        &format!("vocab_size={vocab_size} matches tensor"),
+                    )
+                } else {
+                    ValidationCheck::fail(
+                        20,
+                        'D',
+                        "Vocab size matches",
+                        &format!(
+                            "Header vocab={}, tensor dim={}",
+                            vocab_size,
+                            shape.first().unwrap_or(&0)
+                        ),
+                    )
+                }
+            }
+            None => {
+                ValidationCheck::fail(20, 'D', "Vocab size matches", "Token embedding not found")
+            }
+        };
+
+        vec![tok_check, pos_check, vocab_check]
     }
 
-    fn check_token_embedding_stats(&self) -> ValidationCheck {
-        self.check_single_tensor(
+    /// Validate embedding statistics (checks 17, 19) in a single pass.
+    fn validate_embedding_stats(&self) -> Vec<ValidationCheck> {
+        let tok_check = self.check_single_tensor(
             17,
             'D',
             "Token embedding stats",
@@ -476,105 +562,21 @@ impl<'a> AprValidator<'a> {
                     ))
                 }
             },
-        )
-    }
+        );
 
-    fn check_positional_embedding_shape(&self) -> ValidationCheck {
-        let mut failures = Vec::new();
-        let d_model_enc = self.reader.header.n_audio_state;
-        let d_model_dec = self.reader.header.n_text_state;
+        let pos_check = self.check_tensor_stats(
+            19,
+            'D',
+            "Positional embedding stats",
+            |name| name.contains("positional_embedding"),
+            |stats| {
+                (stats.mean.abs() > 0.5 || stats.std < 0.005 || stats.std > 0.1)
+                    .then(|| format!("mean={:.4}, std={:.4}", stats.mean, stats.std))
+            },
+            "positional embedding stats valid",
+        );
 
-        if let Some(tensor) = self.reader.find_tensor("encoder.positional_embedding") {
-            let shape = tensor.shape();
-            if shape.len() != 2 || shape[0] != 1500 || shape[1] != d_model_enc {
-                failures.push(format!(
-                    "encoder pos: {shape:?}, expected [1500, {d_model_enc}]"
-                ));
-            }
-        }
-
-        if let Some(tensor) = self.reader.find_tensor("decoder.positional_embedding") {
-            let shape = tensor.shape();
-            if shape.len() != 2 || shape[0] != 448 || shape[1] != d_model_dec {
-                failures.push(format!(
-                    "decoder pos: {shape:?}, expected [448, {d_model_dec}]"
-                ));
-            }
-        }
-
-        if failures.is_empty() {
-            ValidationCheck::pass(
-                18,
-                'D',
-                "Positional embedding shape",
-                "Encoder [1500, d], Decoder [448, d]",
-            )
-        } else {
-            ValidationCheck::fail(18, 'D', "Positional embedding shape", &failures.join("; "))
-        }
-    }
-
-    fn check_positional_embedding_stats(&self) -> ValidationCheck {
-        let mut failures = Vec::new();
-
-        for name in [
-            "encoder.positional_embedding",
-            "decoder.positional_embedding",
-        ] {
-            if let Ok(data) = self.reader.load_tensor(name) {
-                let stats = TensorStats::compute(name, &data);
-                if stats.mean.abs() > 0.5 || stats.std < 0.005 || stats.std > 0.1 {
-                    failures.push(format!(
-                        "{}: mean={:.4}, std={:.4}",
-                        name, stats.mean, stats.std
-                    ));
-                }
-            }
-        }
-
-        if failures.is_empty() {
-            ValidationCheck::pass(
-                19,
-                'D',
-                "Positional embedding stats",
-                "Stats within expected ranges",
-            )
-        } else {
-            ValidationCheck::fail(19, 'D', "Positional embedding stats", &failures.join("; "))
-        }
-    }
-
-    #[allow(clippy::option_if_let_else)]
-    fn check_vocab_size(&self) -> ValidationCheck {
-        let header_vocab = self.reader.header.n_vocab;
-
-        match self.reader.find_tensor("decoder.token_embedding") {
-            Some(tensor) => {
-                let shape = tensor.shape();
-                if !shape.is_empty() && shape[0] == header_vocab {
-                    ValidationCheck::pass(
-                        20,
-                        'D',
-                        "Vocab size matches",
-                        &format!("vocab_size={header_vocab} matches tensor"),
-                    )
-                } else {
-                    ValidationCheck::fail(
-                        20,
-                        'D',
-                        "Vocab size matches",
-                        &format!(
-                            "Header vocab={}, tensor dim={}",
-                            header_vocab,
-                            shape.first().unwrap_or(&0)
-                        ),
-                    )
-                }
-            }
-            None => {
-                ValidationCheck::fail(20, 'D', "Vocab size matches", "Token embedding not found")
-            }
-        }
+        vec![tok_check, pos_check]
     }
 
     fn expected_tensor_count(&self) -> usize {
