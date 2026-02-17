@@ -28,7 +28,10 @@ use std::collections::BTreeMap;
 pub struct SizeClass(usize);
 
 impl SizeClass {
-    /// Create a size class for the given number of elements
+    /// Create a size class for the given number of elements.
+    ///
+    /// Rounds `size` up to the next power of two for efficient pool bucketing.
+    /// Returns `SizeClass(0)` when `size` is zero.
     #[must_use]
     pub fn for_size(size: usize) -> Self {
         if size == 0 {

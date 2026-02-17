@@ -223,12 +223,15 @@ impl VocabularyTrie {
         self.entry_count == 0
     }
 
-    /// Insert a token sequence into the trie
+    /// Insert a token sequence into the trie.
+    ///
+    /// Walks the trie from root to leaf, creating intermediate nodes as needed.
+    /// Empty token sequences are silently ignored.
     ///
     /// # Arguments
     /// * `tokens` - Token sequence representing the vocabulary entry
-    /// * `text` - Original text
-    /// * `boost` - Boost value for this entry
+    /// * `text` - Original text associated with this entry
+    /// * `boost` - Log-probability boost applied during constrained decoding
     pub fn insert(&mut self, tokens: &[u32], text: &str, boost: f32) {
         if tokens.is_empty() {
             return;
