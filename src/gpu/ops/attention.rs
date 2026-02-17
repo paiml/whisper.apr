@@ -348,6 +348,19 @@ fn main(
         )
     }
 
+    /// Build the WGSL causal mask snippet (empty if non-causal attention)
+    fn build_causal_check(&self) -> &'static str {
+        if self.config.causal {
+            r#"
+        // Causal mask
+        if (col > row) {
+            score = NEG_INF;
+        }"#
+        } else {
+            ""
+        }
+    }
+
     /// Generate complete fused attention shader
     ///
     /// This combines scores, optional causal mask, softmax, and output
@@ -359,17 +372,7 @@ fn main(
         let seq_q = self.config.seq_len_q;
         let seq_kv = self.config.seq_len_kv;
         let head_dim = self.config.head_dim;
-        let causal = self.config.causal;
-
-        let causal_check = if causal {
-            r#"
-        // Causal mask
-        if (col > row) {
-            score = NEG_INF;
-        }"#
-        } else {
-            ""
-        };
+        let causal_check = self.build_causal_check();
 
         format!(
             r#"// Fused Multi-Head Attention

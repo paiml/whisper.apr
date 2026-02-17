@@ -226,6 +226,15 @@ impl GpuSoftmax {
         (num_reductions, 1, 1)
     }
 
+    /// Build the output expression for the normalize phase (log-softmax vs softmax)
+    fn build_output_expr(&self) -> &'static str {
+        if self.config.log_softmax {
+            "output[row_offset + i] = val - shared_max - log(shared_sum);"
+        } else {
+            "output[row_offset + i] = exp(val - shared_max) / shared_sum;"
+        }
+    }
+
     /// Generate WGSL shader for this operation
     #[must_use]
     pub fn generate_shader(&self) -> String {
@@ -322,11 +331,7 @@ fn main(
             cols = self.config.cols,
             temperature_val = temperature,
             wg_size = workgroup_size,
-            output_expr = if is_log {
-                "output[row_offset + i] = val - shared_max - log(shared_sum);"
-            } else {
-                "output[row_offset + i] = exp(val - shared_max) / shared_sum;"
-            },
+            output_expr = self.build_output_expr(),
         )
     }
 }

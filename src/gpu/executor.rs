@@ -109,7 +109,11 @@ impl GpuExecutor {
         ))
     }
 
-    /// Execute matrix multiplication on GPU
+    /// Execute matrix multiplication on GPU.
+    ///
+    /// Runs the full pipeline: validates dimensions, creates input/output GPU buffers,
+    /// compiles the WGSL shader, dispatches the compute workgroups, and reads back
+    /// the result.
     #[cfg(feature = "webgpu")]
     pub async fn execute_matmul(
         &self,

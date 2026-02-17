@@ -254,16 +254,9 @@ impl GpuLayerNorm {
         (self.config.batch_size, 1, 1)
     }
 
-    /// Generate WGSL shader for this operation
-    #[must_use]
-    #[allow(clippy::too_many_lines)]
-    pub fn generate_shader(&self) -> String {
-        let hidden_size = self.config.hidden_size;
-        let workgroup_size = self.config.workgroup_size.min(hidden_size);
-        let epsilon = self.config.epsilon;
-        let is_rms = matches!(self.config.mode, LayerNormMode::RmsNorm);
-
-        let compute_variance = if is_rms {
+    /// Build the WGSL variance computation snippet (RMS norm vs standard norm)
+    fn build_variance_shader(&self) -> &'static str {
+        if matches!(self.config.mode, LayerNormMode::RmsNorm) {
             r"
     // Compute mean of squares (RMS norm)
     var local_sq_sum: f32 = 0.0;
@@ -325,17 +318,28 @@ impl GpuLayerNorm {
 
     let variance = partial_sum[0] / f32(hidden_size);
     let inv_std = 1.0 / sqrt(variance + params.epsilon);"
-        };
+        }
+    }
 
-        let normalize_expr = if self.config.use_scale && self.config.use_bias {
-            "output[row_offset + i] = gamma[i] * normalized + beta[i];"
-        } else if self.config.use_scale {
-            "output[row_offset + i] = gamma[i] * normalized;"
-        } else if self.config.use_bias {
-            "output[row_offset + i] = normalized + beta[i];"
-        } else {
-            "output[row_offset + i] = normalized;"
-        };
+    /// Build the WGSL normalize expression based on scale/bias config
+    fn build_normalize_expr(&self) -> &'static str {
+        match (self.config.use_scale, self.config.use_bias) {
+            (true, true) => "output[row_offset + i] = gamma[i] * normalized + beta[i];",
+            (true, false) => "output[row_offset + i] = gamma[i] * normalized;",
+            (false, true) => "output[row_offset + i] = normalized + beta[i];",
+            (false, false) => "output[row_offset + i] = normalized;",
+        }
+    }
+
+    /// Generate WGSL shader for this operation
+    #[must_use]
+    pub fn generate_shader(&self) -> String {
+        let hidden_size = self.config.hidden_size;
+        let workgroup_size = self.config.workgroup_size.min(hidden_size);
+        let epsilon = self.config.epsilon;
+
+        let compute_variance = self.build_variance_shader();
+        let normalize_expr = self.build_normalize_expr();
 
         format!(
             r"// {mode} shader

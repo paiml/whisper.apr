@@ -200,7 +200,10 @@ fn attention_cell_average(
     safe_average(sum, count)
 }
 
-/// Map a normalized value [0, 1] to a heatmap character
+/// Map a normalized value [0, 1] to a heatmap character by linear interpolation.
+///
+/// Linearly maps `normalized` onto the `chars` palette: 0.0 maps to the first
+/// character, 1.0 maps to the last. Values are clamped to the palette bounds.
 fn heatmap_char(chars: &[char], normalized: f32) -> char {
     debug_assert!(!chars.is_empty(), "character palette must not be empty");
     debug_assert!(
