@@ -25,7 +25,7 @@
 
 ## Overview
 
-**whisper.apr** is a pure Rust implementation of OpenAI's Whisper speech recognition model, engineered from the ground up for WebAssembly (WASM) deployment. It features a custom `.apr` model format optimized for browser streaming, SIMD acceleration, and int4/int8 quantization for efficient edge inference.
+**whisper.apr** is a pure Rust implementation of OpenAI's Whisper speech recognition model, engineered from the ground up for WebAssembly (WASM) deployment. It features a custom `.apr` model format optimized for browser streaming, SIMD acceleration via trueno, and int4/int8 quantization for efficient edge inference. Also supports Moonshine ASR models and direct GGUF model loading.
 
 ### Key Differentiators
 
@@ -37,6 +37,8 @@
 | **Streaming Inference** | Yes | Batch only | Limited |
 | **Zero-Copy Loading** | Yes | No | No |
 | **Custom Format (.apr)** | Yes | GGML | ONNX |
+| **GGUF Loading** | Yes | Native | No |
+| **Moonshine Support** | Yes | No | No |
 | **Browser-Native** | Yes | Emscripten | Yes |
 
 ---
@@ -50,6 +52,7 @@
 - [Model Format](#model-format)
 - [Performance](#performance)
 - [API Reference](#api-reference)
+- [CLI](#cli)
 - [Demo Applications](#demo-applications)
 - [Running Examples](#running-examples)
 - [Development](#development)
@@ -65,9 +68,11 @@
 ### Core Capabilities
 
 - **Full Whisper Implementation**: Encoder-decoder transformer with multi-head attention
+- **Moonshine ASR**: Lightweight alternative with GQA decoder and ConvStem encoder
 - **Multi-Language Support**: 99 languages with automatic language detection
 - **Streaming Transcription**: Real-time audio processing with chunked inference
 - **Translation Mode**: Speech-to-English translation for all supported languages
+- **Multi-Format Audio**: MP3, FLAC, OGG, AAC, M4A, WAV via symphonia
 
 ### Optimization Features
 
@@ -75,23 +80,54 @@
 - **Int4/Int8 Quantization**: 4x-8x model size reduction with minimal accuracy loss
 - **Mixed-Precision Inference**: Int4 weights with FP32 activations
 - **KV-Cache Optimization**: Efficient autoregressive decoding
+- **Tiled MatVec**: 3.5x single-token decoding speedup
 - **Memory Pooling**: Zero-allocation inference after warmup
 
 ### Model Support
 
-| Model | Parameters | .apr Size (Int4) | .apr Size (Int8) | RTF* |
-|-------|------------|------------------|------------------|------|
-| tiny  | 39M        | 20 MB            | 39 MB            | 0.3x |
-| base  | 74M        | 37 MB            | 74 MB            | 0.5x |
-| small | 244M       | 122 MB           | 244 MB           | 0.8x |
-| medium| 769M       | 385 MB           | 769 MB           | 1.2x |
-| large | 1.5B       | 750 MB           | 1.5 GB           | 2.0x |
+| Model | Parameters | Type | .apr Size (Int8) | Notes |
+|-------|------------|------|------------------|-------|
+| tiny | 39M | Whisper | 39 MB | Fastest, English-focused |
+| base | 74M | Whisper | 74 MB | Good balance |
+| small | 244M | Whisper | 244 MB | High accuracy |
+| large-v3-turbo | 809M | Whisper | ~800 MB | 32 enc + 4 dec layers |
+| large | 1.5B | Whisper | 1.5 GB | Highest accuracy |
+| moonshine-tiny | 27M | Moonshine | 27 MB | Ultra-lightweight |
+| moonshine-base | 61M | Moonshine | 61 MB | Lightweight alternative |
 
-*RTF = Real-Time Factor on M1 MacBook (lower is faster)
+### Model Formats
+
+| Format | Support | Notes |
+|--------|---------|-------|
+| **.apr** | Native | Optimized for WASM streaming |
+| **.gguf** | Direct load | Pre-quantized from HuggingFace |
+| **SafeTensors** | Convert to .apr | Via built-in converter |
 
 ---
 
 ## Usage
+
+### CLI Transcription
+
+```bash
+# Install
+cargo install whisper-apr --features cli
+
+# Transcribe audio (auto-downloads model)
+whisper-apr transcribe -f audio.wav
+
+# Use specific model
+whisper-apr transcribe -f audio.wav --model base
+
+# Use Moonshine model
+whisper-apr transcribe -f audio.wav --model moonshine-tiny
+
+# Load GGUF model directly
+whisper-apr transcribe -f audio.wav --model-path whisper-tiny.gguf
+
+# Transcribe MP3/FLAC/OGG/M4A (auto-detected)
+whisper-apr transcribe -f podcast.mp3
+```
 
 ### Browser (WASM)
 
@@ -111,7 +147,7 @@
 </script>
 ```
 
-### Rust
+### Rust Library
 
 ```rust
 use whisper_apr::{WhisperModel, TranscribeOptions};
@@ -160,6 +196,16 @@ println!("Final: {}", final_result.text);
 - Rust 1.75+ with `wasm32-unknown-unknown` target
 - wasm-pack (for WASM builds)
 
+### From crates.io
+
+```bash
+# Library dependency
+cargo add whisper-apr
+
+# CLI tool
+cargo install whisper-apr --features cli
+```
+
 ### Building from Source
 
 ```bash
@@ -182,17 +228,12 @@ cargo test
 Convert existing Whisper models to `.apr` format:
 
 ```bash
-# From safetensors (Hugging Face)
-cargo run --bin convert -- \
-  --input openai/whisper-tiny \
-  --output whisper-tiny.apr \
-  --quantize int8
+# From HuggingFace SafeTensors (auto-downloads)
+cargo run --bin whisper-convert --features converter -- \
+  --model tiny --output whisper-tiny.apr
 
-# With int4 quantization for smaller size
-cargo run --bin convert -- \
-  --input openai/whisper-small \
-  --output whisper-small-int4.apr \
-  --quantize int4
+# Or load GGUF models directly (no conversion needed)
+whisper-apr transcribe -f audio.wav --model-path whisper-tiny.gguf
 ```
 
 ---
@@ -205,39 +246,49 @@ cargo run --bin convert -- \
 ├─────────────────────────────────────────────────────────────────┤
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
 │  │    Audio     │  │   Encoder    │  │   Decoder    │          │
-│  │  Processing  │──│  (6 layers)  │──│  (6 layers)  │──► Text  │
+│  │  Processing  │──│  Transformer │──│  Transformer │──► Text  │
 │  │              │  │              │  │              │          │
 │  │ • Resampling │  │ • Self-Attn  │  │ • Self-Attn  │          │
 │  │ • Mel Spec   │  │ • FFN        │  │ • Cross-Attn │          │
-│  │ • STFT       │  │ • LayerNorm  │  │ • FFN        │          │
+│  │ • Symphonia  │  │ • LayerNorm  │  │ • FFN / GQA  │          │
 │  └──────────────┘  └──────────────┘  └──────────────┘          │
 ├─────────────────────────────────────────────────────────────────┤
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
 │  │  Tokenizer   │  │ Quantization │  │    SIMD      │          │
-│  │              │  │              │  │  Primitives  │          │
+│  │              │  │              │  │  (trueno)    │          │
 │  │ • BPE        │  │ • Int4/Int8  │  │              │          │
 │  │ • 51,865 tok │  │ • Mixed Prec │  │ • MatMul     │          │
-│  │ • Multi-lang │  │ • Zero-Copy  │  │ • Softmax    │          │
+│  │ • Multi-lang │  │ • GGUF Q4-Q6 │  │ • Softmax    │          │
 │  └──────────────┘  └──────────────┘  └──────────────┘          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### Supported Model Architectures
+
+| Architecture | Models | Decoder | Key Difference |
+|-------------|--------|---------|----------------|
+| **Whisper** | tiny, base, small, medium, large, large-v3-turbo | MHA + Cross-Attention | Standard encoder-decoder |
+| **Moonshine** | moonshine-tiny, moonshine-base | GQA + Cross-Attention | ConvStem encoder, lighter |
+
 ### Module Overview
 
-| Module | Description | LOC |
-|--------|-------------|-----|
-| `audio/` | Mel spectrogram, resampling, streaming, filterbank | ~48,600 |
-| `model/` | Encoder, decoder, attention, quantization | ~21,800 |
-| `wasm/` | JavaScript bindings, Web Worker support | ~10,000 |
-| `format/` | .apr format, compression, streaming load | ~7,600 |
-| `inference/` | Greedy/beam search decoding, KV cache | ~2,600 |
-| `tokenizer/` | BPE tokenizer, vocabulary, special tokens | ~1,500 |
-| `cuda/`, `cli/`, `backend/`, etc. | GPU, CLI, TUI, VAD, diarization | ~53,000 |
-| **Total (src/)** | | **~145,000** |
+| Module | Description |
+|--------|-------------|
+| `audio/` | Mel spectrogram, resampling, symphonia decoding, streaming |
+| `model/` | Whisper encoder/decoder, attention, quantization |
+| `model/lfm2/` | Moonshine GQA decoder with RoPE |
+| `wasm/` | JavaScript bindings, Web Worker support |
+| `format/` | .apr format, GGUF loader, compression, streaming load |
+| `inference/` | Greedy/beam search decoding, KV cache |
+| `tokenizer/` | BPE tokenizer, vocabulary, 99-language support |
+| `detection/` | Automatic language detection |
+| `cli/` | Command-line interface and model management |
 
 ---
 
 ## Model Format
+
+### .apr Format
 
 The `.apr` (Aprender) format is optimized for streaming and browser deployment:
 
@@ -263,41 +314,28 @@ The `.apr` (Aprender) format is optimized for streaming and browser deployment:
 └────────────────────────────────────────┘
 ```
 
-### Format Benefits
+### GGUF Format (Direct Loading)
 
-- **Streaming Load**: Progressive tensor loading, start inference before full download
-- **Zero-Copy**: Memory-mapped tensor access on native platforms
-- **Compression**: Zstd compression for 30-50% smaller files
-- **Quantization Metadata**: Embedded scales and zero-points for dequantization
+whisper.apr can load pre-quantized GGUF models from HuggingFace directly:
+
+- Automatic tensor name remapping (whisper.cpp names to internal names)
+- Model config inference from tensor shapes
+- Supports Q4_0 through Q6_K, F16, and F32 quantization levels
+- No conversion step needed
+
+### Format Comparison
+
+| Feature | .apr | GGUF | SafeTensors |
+|---------|------|------|-------------|
+| Streaming load | Yes | No | No |
+| Browser-optimized | Yes | No | No |
+| Pre-quantized | Yes | Yes | No |
+| Direct loading | Yes | Yes | Convert needed |
+| Compression | Zstd | None | None |
 
 ---
 
 ## Performance
-
-### Model Format Comparison
-
-The `.apr` format is optimized for WASM delivery. Benchmark results for Whisper Tiny:
-
-| Format | Size | Compression | WASM Ready |
-|--------|------|-------------|------------|
-| SafeTensors | 145 MB | baseline | ❌ Too large |
-| GGML | 75 MB | 52% | ⚠️ Moderate |
-| APR-f32 | 145 MB | 100% | ❌ Too large |
-| **APR-int8** | **37 MB** | **25%** | ✅ Excellent |
-
-### Loading Performance
-
-| Metric | APR-f32 | APR-int8 | Improvement |
-|--------|---------|----------|-------------|
-| File Read | 87ms | 21ms | **4x faster** |
-| Parse | 73ms | 19ms | **4x faster** |
-| Model Load | 490ms | 416ms | 15% faster |
-| First Token | ~280ms | ~280ms | Same quality |
-
-Run the benchmark yourself:
-```bash
-cargo run --example format_comparison --release
-```
 
 ### Runtime Benchmarks (whisper-tiny on 30s audio)
 
@@ -307,15 +345,22 @@ cargo run --example format_comparison --release
 | Native (x86 AVX2) | 12.1s | 180 MB | 0.40x |
 | WASM (Chrome) | 18.5s | 220 MB | 0.62x |
 | WASM (Firefox) | 21.3s | 225 MB | 0.71x |
-| WASM (Safari) | 24.1s | 230 MB | 0.80x |
 
-### Optimization Techniques
+### Key Optimizations
 
-1. **SIMD Vectorization**: 4x speedup on supported operations
-2. **KV-Cache Reuse**: 60% reduction in decoder compute
-3. **Quantized MatMul**: Int4 compute with FP32 accumulation
-4. **Memory Pooling**: Eliminates allocation overhead after warmup
-5. **Batch Processing**: Process multiple audio segments in parallel
+1. **Tiled MatVec**: 3.5x speedup for single-token decoding via fast path in matmul_raw
+2. **SIMD Vectorization**: 4x speedup on supported operations via trueno
+3. **KV-Cache Reuse**: 60% reduction in decoder compute
+4. **Quantized MatMul**: Int4 compute with FP32 accumulation
+5. **Memory Pooling**: Eliminates allocation overhead after warmup
+
+### Performance Targets
+
+| Model | Target RTF | Memory Peak |
+|-------|------------|-------------|
+| tiny | 2.0x | 150 MB |
+| base | 2.5x | 350 MB |
+| small | 4.0x | 800 MB |
 
 ---
 
@@ -349,7 +394,7 @@ pub struct TranscribeOptions {
     pub language: Option<String>,      // Force language (None = auto-detect)
     pub task: Task,                    // Transcribe or Translate
     pub beam_size: usize,              // Beam search width (1 = greedy)
-    pub best_of: usize,                // Sample multiple and pick best
+    pub best_of: usize,               // Sample multiple and pick best
     pub temperature: f32,              // Sampling temperature
     pub compression_ratio_threshold: f32,
     pub logprob_threshold: f32,
@@ -391,6 +436,36 @@ export interface TranscribeResult {
   languageProbability: number;
 }
 ```
+
+---
+
+## CLI
+
+The `whisper-apr` CLI provides transcription and debugging commands:
+
+```bash
+# Install CLI
+cargo install whisper-apr --features cli
+
+# Transcribe audio
+whisper-apr transcribe -f audio.wav --model tiny
+
+# Probe model internals (forward-pass debugging)
+whisper-apr probe --model-path model.apr
+
+# Check model configuration
+whisper-apr config-check --model-path model.apr
+
+# Run parity checks against reference implementations
+whisper-apr parity --model-path model.apr -f audio.wav
+
+# Verify installation
+whisper-apr selftest
+```
+
+### Supported Audio Formats
+
+WAV, MP3, FLAC, OGG/Vorbis, AAC, M4A, MKV/WebM (via symphonia).
 
 ---
 
@@ -438,25 +513,9 @@ cargo run --example benchmark_tui --release --features tui
 # Format comparison (APR vs SafeTensors)
 cargo run --example format_comparison --release
 
-# Debug decoder output
-cargo run --example debug_decoder --release
-
-# Profile encoder performance
-cargo run --example profile_encoder --release
-
 # List all available examples
 ls examples/*.rs | xargs -I {} basename {} .rs
 ```
-
-### Example Categories
-
-| Category | Examples | Description |
-|----------|----------|-------------|
-| **Basic** | `basic_transcription`, `cli_usage` | Getting started |
-| **Benchmark** | `benchmark_pipeline`, `benchmark_tui` | Performance measurement |
-| **Debug** | `debug_decoder`, `debug_encoder_output` | Model debugging |
-| **Comparison** | `compare_hf_outputs`, `format_comparison` | Validation against reference |
-| **Pipeline** | `pipeline_tui`, `pipeline_falsification` | Full pipeline analysis |
 
 ---
 
@@ -468,24 +527,20 @@ ls examples/*.rs | xargs -I {} basename {} .rs
 whisper.apr/
 ├── src/
 │   ├── lib.rs              # Library entry point
-│   ├── audio/              # Audio processing
-│   │   ├── mel.rs          # Mel spectrogram
-│   │   ├── resampler.rs    # Audio resampling
-│   │   ├── batch.rs        # Batch preprocessing
-│   │   └── streaming.rs    # Streaming processor
-│   ├── model/              # Neural network
-│   │   ├── encoder.rs      # Transformer encoder
-│   │   ├── decoder.rs      # Transformer decoder
-│   │   ├── attention.rs    # Multi-head attention
-│   │   └── quantized.rs    # Quantization support
-│   ├── tokenizer/          # BPE tokenizer
-│   ├── inference/          # Decoding strategies
-│   ├── format/             # .apr format
+│   ├── audio/              # Audio processing (mel, resampling, symphonia)
+│   ├── model/              # Whisper encoder/decoder/attention
+│   │   └── lfm2/           # Moonshine GQA decoder
+│   ├── tokenizer/          # BPE tokenizer (51,865 tokens)
+│   ├── inference/          # Greedy/beam search, KV cache
+│   ├── format/             # .apr format + GGUF loader
+│   ├── detection/          # Language detection (99 languages)
+│   ├── cli/                # CLI commands
 │   └── wasm/               # WASM bindings
-├── demos/                  # Demo applications
+├── demos/                  # Browser demo applications
 ├── benches/                # Criterion benchmarks
 ├── tests/                  # Integration tests
-└── docs/                   # Documentation
+├── book/                   # mdBook documentation
+└── tools/                  # Standalone converter
 ```
 
 ### Make Commands
@@ -520,50 +575,44 @@ wasm-pack test --headless --chrome
 
 ## Quality Metrics
 
-whisper.apr follows **EXTREME TDD** methodology with comprehensive quality gates.
+whisper.apr follows **Extreme TDD** methodology with comprehensive quality gates.
 
-### PMAT-Verified Scores (via `pmat` tooling)
+### Current Scores (v0.2.4)
 
 | Metric | Score | Grade |
 |--------|-------|-------|
-| **Rust Project Score** | 156/159 | A+ (98.1%) |
-| **TDG (Technical Debt Grade)** | 90.9/100 | A |
-| **Repository Health** | 81.5/100 | B+ |
-| **Maintainability Index** | 70.0 | — |
-| **Median Cyclomatic Complexity** | 2.00 | — |
+| **TDG (Technical Debt Grade)** | 99.5/100 | A+ |
+| **Test Coverage** | 96%+ | Above 95% target |
+| **Unit Tests** | 2,885 | 0 failures |
+| **pmat Compliance** | COMPLIANT | All gates passing |
+| **Quality Gate** | PASSED | 0 violations |
+| **GitHub Issues** | 0 open | All 15 closed |
 
-### Codebase Statistics
+### Dependencies
 
-| Metric | Value |
-|--------|-------|
-| **Test Count** | 2,920 |
-| **Total Functions** | 933 |
-| **Source LOC** | ~145,000 |
-| **Examples** | 103 |
+| Crate | Version | Purpose |
+|-------|---------|---------|
+| trueno | 0.14.6 | SIMD-accelerated tensor operations |
+| aprender | 0.25.9 | .apr model format and GGUF parsing |
+| realizar | 0.6.13 | Inference primitives (attention, quantization) |
 
 ### Quality Gate Configuration
 
 ```toml
 # From .pmat-metrics.toml
 [quality_gates]
-min_coverage_pct = 95.0           # Target
-min_mutation_score_pct = 85.0     # Target
-max_cyclomatic_complexity = 10    # Per function
-min_tdg_grade = "A+"              # Target
+min_coverage_pct = 95.0
+min_mutation_score_pct = 85.0
+max_cyclomatic_complexity = 40
+min_tdg_grade = "A+"
 max_unwrap_calls = 0              # Zero tolerance
 
 [performance]
-max_rtf_tiny = 2.0                # ≤2.0x real-time
-max_rtf_base = 2.5                # ≤2.5x real-time
-max_memory_tiny_mb = 150          # Peak memory
-max_memory_base_mb = 350          # Peak memory
+max_rtf_tiny = 2.0                # Real-time factor target
+max_rtf_base = 2.5
+max_memory_tiny_mb = 150          # Peak memory target
+max_memory_base_mb = 350
 ```
-
-### Toyota Way Principles
-
-- **Jidoka**: Automatic quality gates prevent defects
-- **Kaizen**: Continuous improvement through iteration
-- **Genchi Genbutsu**: Tests verify actual behavior, not assumptions
 
 ---
 
@@ -574,11 +623,10 @@ Contributions are welcome! Please follow these guidelines:
 ### Development Workflow
 
 1. Fork the repository
-2. Create a feature branch from `master`
-3. Make your changes
-4. Run quality gates: `make lint && make test && make coverage`
-5. Ensure coverage remains above 95%
-6. Submit a pull request
+2. Make your changes on `main`
+3. Run quality gates: `make lint && make test && make coverage`
+4. Ensure coverage remains above 95%
+5. Submit a pull request
 
 ### Code Standards
 
@@ -597,34 +645,32 @@ make coverage      # Must be >= 95%
 pmat quality-gate  # Must pass
 ```
 
-### Commit Messages
-
-Follow conventional commits format:
-- `feat(module): add new feature`
-- `fix(module): fix bug`
-- `refactor(module): improve code`
-- `docs(module): update documentation`
-
 ---
 
 ## Roadmap
 
-### v0.2.0 (Current Release)
+### v0.2.4 (Current Release)
+
 - [x] Full Whisper architecture (encoder-decoder transformer)
+- [x] Moonshine ASR model support (GQA decoder, ConvStem encoder)
+- [x] GGUF model loading (pre-quantized from HuggingFace)
+- [x] Large v3 Turbo model support (809M params)
 - [x] Int4/Int8 quantization with .apr format
-- [x] WASM SIMD acceleration
+- [x] WASM SIMD acceleration via trueno
 - [x] Streaming transcription
 - [x] 99 language support with auto-detection
+- [x] Multi-format audio (MP3, FLAC, OGG, AAC, M4A)
 - [x] Greedy and beam search decoding
-- [x] GPU-resident tensor architecture via trueno-gpu
-- [x] CUDA acceleration with 5.8x speedup
-- [x] 2,920+ tests, 97.92% coverage, TDG A grade (90.9/100)
+- [x] 3.5x single-token decoding speedup (tiled_matvec)
+- [x] CLI with transcribe, probe, parity, config-check, selftest
+- [x] 2,885 tests, 96%+ coverage, TDG 99.5/100 A+
 
 ### v0.3.0 (Planned)
+
 - [ ] WebGPU acceleration
-- [ ] Turbo model support
 - [ ] Word-level timestamps
-- [ ] Voice activity detection
+- [ ] Distil-Whisper model support
+- [ ] Whisper v4 model support (when released)
 
 ---
 

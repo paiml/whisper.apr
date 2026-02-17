@@ -6,9 +6,42 @@ All notable changes to whisper.apr are documented here.
 
 ### Planned
 - WebGPU acceleration
-- Turbo model support
 - Word-level timestamps
-- Voice activity detection
+- Distil-Whisper model support
+
+## [0.2.4] - 2026-02-17
+
+### Added
+- **Moonshine ASR support** - moonshine-tiny (27M) and moonshine-base (61M) models with GQA decoder and ConvStem encoder
+- **GGUF model loading** - Load pre-quantized GGUF models from HuggingFace directly, no conversion step needed
+- **Large v3 Turbo model** - 809M params (1280 dim, 32 encoder + 4 decoder layers, 128 mels)
+- **Multi-format audio** - MP3, FLAC, OGG/Vorbis, AAC, M4A, MKV/WebM via symphonia
+- **CLI commands** - `probe` (forward-pass debugging), `config-check` (model validation), `selftest` (install verification), `parity` (reference comparison)
+- **Browser E2E tests** via Probar for WASM deployment validation
+
+### Performance
+- **3.5x single-token decoding speedup** via tiled_matvec fast path in matmul_raw
+- Moonshine GQA/MLP routed through trueno SIMD matmul + SDPA
+
+### Fixed
+- WASM compilation with split parallel/wasm-threads features (#11)
+- Model download URL parsing failure by updating hf-hub 0.3 to 0.4 (#13)
+- Moonshine encoder LayerNorm placement (post-block only)
+- 3 Moonshine forward-pass bugs causing garbage transcription
+- NaN in beam search log_softmax when all logits suppressed
+- Production unwrap() violations (zero-unwrap policy enforced)
+
+### Quality
+- **TDG Score: 99.5/100 (A+)** (up from 90.9)
+- **2,885 unit tests**, 0 failures
+- **96%+ line coverage** (above 95% target)
+- pmat compliance: COMPLIANT, all quality gates passing
+- All 15 GitHub issues closed
+
+### Dependencies
+- trueno 0.14.6 (SIMD compute)
+- aprender 0.25.9 (model format + GGUF parsing)
+- realizar 0.6.13 (inference primitives)
 
 ## [0.2.0] - 2026-01-22
 
@@ -16,11 +49,6 @@ All notable changes to whisper.apr are documented here.
 - GPU-resident tensor architecture via trueno-gpu 0.4.10
 - CUDA acceleration with 5.8x speedup over whisper.cpp
 - `BenchmarkSummary` struct for comprehensive performance validation
-- `PerformanceTarget` with `is_met()` and `achievement_ratio()` methods
-- `generate_whisper_tiny_summary()` for pre-configured validation
-- `estimate_memory_usage()` function for memory profiling
-- `estimate_decoder_latency_ms()` for latency predictions
-- `run_rtf_benchmark_instrumented()` with component breakdown
 - JSON export for all benchmark results
 - 100+ examples in `examples/` directory
 
@@ -35,9 +63,8 @@ All notable changes to whisper.apr are documented here.
 ### Validation
 - All 7/7 performance targets met
 - Average achievement ratio: 1.76x
-- 2125 tests passing (up from 1823)
+- 2,125 tests passing
 - 95% test coverage
-- Golden tests locked as immutable guardians
 
 ### Dependencies
 - trueno 0.13.0

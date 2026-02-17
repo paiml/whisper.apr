@@ -2,6 +2,28 @@
 
 This guide walks through transcribing audio with Whisper.apr.
 
+## CLI (Fastest Way)
+
+```bash
+# Install
+cargo install whisper-apr --features cli
+
+# Transcribe (auto-downloads model)
+whisper-apr transcribe -f audio.wav
+
+# Use a specific model
+whisper-apr transcribe -f audio.wav --model base
+
+# Moonshine model (lightweight)
+whisper-apr transcribe -f audio.wav --model moonshine-tiny
+
+# Load GGUF model directly
+whisper-apr transcribe -f audio.wav --model-path whisper-tiny.gguf
+
+# Multi-format audio (MP3, FLAC, OGG, M4A)
+whisper-apr transcribe -f podcast.mp3
+```
+
 ## Browser (JavaScript)
 
 ### Basic Setup
@@ -132,7 +154,9 @@ Whisper.apr expects:
 - **Format**: 32-bit float (-1.0 to 1.0)
 - **Duration**: Up to 30 seconds per chunk
 
-### Converting Audio
+The CLI handles format conversion automatically for MP3, FLAC, OGG, AAC, M4A, and WAV files via symphonia.
+
+### Manual Audio Conversion
 
 Using ffmpeg:
 
@@ -153,3 +177,4 @@ const mono = audioBuffer.getChannelData(0);  // First channel as Float32Array
 - [Browser Integration](./browser-integration.md) - Web Worker setup, React hooks
 - [Core Concepts](./core-concepts.md) - Understanding the transcription pipeline
 - [Performance](../performance/benchmarks.md) - Optimizing for your use case
+- [Model Comparison](../appendix/model-comparison.md) - Choosing the right model

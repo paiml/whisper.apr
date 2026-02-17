@@ -1,6 +1,6 @@
 # Quality Gates
 
-Whisper.apr implements tiered quality gates following the **bashrs** methodology for fast feedback loops.
+Whisper.apr implements tiered quality gates for fast feedback loops.
 
 ## Tier Overview
 
@@ -16,14 +16,12 @@ Whisper.apr implements tiered quality gates following the **bashrs** methodology
 Fast feedback for immediate issues:
 
 ```bash
-make tier1
-# Or manually:
-cargo fmt --check && cargo clippy -- -W all && cargo check
+cargo fmt --check && cargo clippy -- -D warnings && cargo check
 ```
 
 **Validates:**
 - Code formatting
-- Common lint issues
+- Clippy lint compliance
 - Compilation
 
 ## Tier 2: Pre-Commit (<5s)
@@ -31,8 +29,6 @@ cargo fmt --check && cargo clippy -- -W all && cargo check
 Quick validation before committing:
 
 ```bash
-make tier2
-# Or manually:
 cargo test --lib && cargo clippy -- -D warnings
 ```
 
@@ -46,12 +42,12 @@ cargo test --lib && cargo clippy -- -D warnings
 Full validation before pushing:
 
 ```bash
-make tier3
+make coverage
 ```
 
 **Validates:**
 - All tests (unit + property + integration)
-- Coverage ≥95%
+- Coverage >= 95%
 - Documentation builds
 
 ### Coverage Requirements
@@ -60,7 +56,7 @@ make tier3
 make coverage
 ```
 
-The coverage target uses `cargo llvm-cov test --lib` (not nextest) to avoid profraw file explosion:
+Uses `cargo llvm-cov test --lib` for coverage measurement:
 
 ```bash
 COV_THRESHOLD ?= 95
@@ -73,55 +69,27 @@ coverage:
     cargo llvm-cov report --summary-only | tee target/coverage/summary.txt
 ```
 
-Current targets:
-- **Line coverage**: ≥95% (achieved: 97.92%)
-- **Branch coverage**: tracked
-
 ## Tier 4: CI/CD (5-60min)
 
 Comprehensive analysis in CI pipeline:
 
-```bash
-make tier4
-```
-
 **Validates:**
 - Everything from Tier 3
-- Mutation testing (target: ≥85%)
+- Mutation testing (target: >= 85%)
 - Security audit
 - PMAT quality analysis
 
-### Mutation Testing
+## PMAT Quality Gates
 
 ```bash
-make mutants
-```
+# Check compliance
+pmat comply check
 
-Mutation testing validates test quality by introducing bugs and checking if tests catch them.
+# Run quality gates
+pmat quality-gate
 
-## Makefile Targets
-
-```makefile
-# Tier 1: Fast feedback
-tier1:
-    cargo fmt --check
-    cargo clippy -- -W all
-    cargo check
-
-# Tier 2: Pre-commit
-tier2:
-    cargo test --lib
-    cargo clippy -- -D warnings
-
-# Tier 3: Pre-push
-tier3:
-    cargo test --all
-    make coverage
-
-# Tier 4: CI/CD
-tier4:
-    make tier3
-    make mutants
+# Continuous improvement scan
+pmat kaizen
 ```
 
 ## Lint Configuration
@@ -130,59 +98,40 @@ Whisper.apr uses strict clippy configuration in `Cargo.toml`:
 
 ```toml
 [lints.clippy]
-all = { level = "warn", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-nursery = { level = "warn", priority = -1 }
-unwrap_used = "deny"      # Prevent panics
-expect_used = "warn"      # Discourage panics
-panic = "warn"            # Prevent explicit panics
-
-# DSP-specific allows
-cast_precision_loss = "allow"
-cast_possible_truncation = "allow"
+unwrap_used = "deny"      # Zero tolerance
+expect_used = "warn"
+panic = "warn"
 ```
 
-## CI Integration
+## Quality Metrics (v0.2.4)
 
-Quality gates are enforced in `.github/workflows/ci.yml`:
+| Metric | Value |
+|--------|-------|
+| **TDG Score** | 99.5/100 (A+) |
+| **Unit tests** | 2,885 (147 ignored by default) |
+| **Line coverage** | 96%+ |
+| **Property tests** | 19 |
+| **Clippy warnings** | 0 (strict mode) |
+| **pmat compliance** | COMPLIANT |
+| **Quality gate** | PASSED (0 violations) |
+| **GitHub issues** | 0 open |
 
-```yaml
-jobs:
-  tier2:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: make tier2
+### Dependencies
 
-  tier3:
-    runs-on: ubuntu-latest
-    needs: tier2
-    steps:
-      - uses: actions/checkout@v4
-      - run: make tier3
-
-  coverage:
-    runs-on: ubuntu-latest
-    needs: tier2
-    steps:
-      - uses: actions/checkout@v4
-      - run: make coverage
-      - uses: codecov/codecov-action@v4
-```
-
-## Quality Metrics
-
-Current project status:
-- **Test count**: 2,920 tests (133 heavy tests ignored by default)
-- **Line coverage**: 97.92%
-- **Property tests**: 19 tests
-- **Zero clippy warnings** (in strict mode)
-- **Zero unsafe code**
-- **PMAT compliant**: All quality gates pass
+| Crate | Version | Purpose |
+|-------|---------|---------|
+| trueno | 0.14.6 | SIMD-accelerated tensor operations |
+| aprender | 0.25.9 | .apr model format + GGUF parsing |
+| realizar | 0.6.13 | Inference primitives |
 
 ## Best Practices
 
 1. **Run tier1 on every save** - Use editor integration
-2. **Run tier2 before every commit** - Git hooks recommended
+2. **Run tier2 before every commit** - Git hooks enforce this
 3. **Run tier3 before every push** - Catches integration issues
 4. **Never skip CI** - Full validation catches edge cases
+5. **Use pmat tools** - `pmat comply check`, `pmat quality-gate`, `pmat kaizen`
