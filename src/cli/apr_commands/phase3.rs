@@ -22,6 +22,15 @@ use aprender::format::RosettaStone;
 // Phase 3: Tier B — Feature-Gated Handlers
 // ============================================================================
 
+/// Dispatch CLI output to JSON or human-readable text based on global flags.
+fn emit_output(global: &super::super::args::Args, json_fn: impl FnOnce(), text_fn: impl FnOnce()) {
+    if global.json {
+        json_fn();
+    } else if !global.quiet {
+        text_fn();
+    }
+}
+
 /// Sign a model file with Ed25519 (feature: `format-signing`)
 pub(super) fn run_sign(
     args: &AprSignArgs,
@@ -72,16 +81,18 @@ pub(super) fn run_sign(
         fs::write(&args.output, &output)
             .map_err(|e| CliError::InvalidArgument(format!("Failed to write signed model: {e}")))?;
 
-        if global.json {
-            println!(
-                "{{\"status\":\"signed\",\"output\":\"{}\",\"pubkey_hex\":\"{}\"}}",
-                args.output.display(),
-                hex::encode(verifying_key.as_bytes())
-            );
-        } else if !global.quiet {
-            println!("Signed: {}", args.output.display());
-            println!("Public key: {}", hex::encode(verifying_key.as_bytes()));
-        }
+        let out_display = args.output.display().to_string();
+        let pk_hex = hex::encode(verifying_key.as_bytes());
+        emit_output(
+            global,
+            || {
+                println!("{{\"status\":\"signed\",\"output\":\"{out_display}\",\"pubkey_hex\":\"{pk_hex}\"}}")
+            },
+            || {
+                println!("Signed: {out_display}");
+                println!("Public key: {pk_hex}");
+            },
+        );
 
         Ok(CommandResult::success("Model signed"))
     }
@@ -164,11 +175,11 @@ pub(super) fn run_verify_sig(
         let model_data = &content[..sig_start];
         let valid = verifying_key.verify(model_data, &signature).is_ok();
 
-        if global.json {
-            println!("{{\"valid\":{valid}}}");
-        } else if !global.quiet {
-            println!("Signature {}", if valid { "VALID" } else { "INVALID" });
-        }
+        emit_output(
+            global,
+            || println!("{{\"valid\":{valid}}}"),
+            || println!("Signature {}", if valid { "VALID" } else { "INVALID" }),
+        );
 
         if valid {
             Ok(CommandResult::success("Signature valid"))
@@ -233,16 +244,20 @@ pub(super) fn run_encrypt(
             CliError::InvalidArgument(format!("Failed to write encrypted model: {e}"))
         })?;
 
-        if global.json {
-            println!(
-                "{{\"status\":\"encrypted\",\"output\":\"{}\",\"size\":{}}}",
-                args.output.display(),
-                output.len()
-            );
-        } else if !global.quiet {
-            println!("Encrypted: {}", args.output.display());
-            println!("Size: {} bytes", output.len());
-        }
+        let out_display = args.output.display().to_string();
+        let out_len = output.len();
+        emit_output(
+            global,
+            || {
+                println!(
+                    "{{\"status\":\"encrypted\",\"output\":\"{out_display}\",\"size\":{out_len}}}"
+                )
+            },
+            || {
+                println!("Encrypted: {out_display}");
+                println!("Size: {out_len} bytes");
+            },
+        );
 
         Ok(CommandResult::success("Model encrypted"))
     }
@@ -318,16 +333,20 @@ pub(super) fn run_decrypt(
             CliError::InvalidArgument(format!("Failed to write decrypted model: {e}"))
         })?;
 
-        if global.json {
-            println!(
-                "{{\"status\":\"decrypted\",\"output\":\"{}\",\"size\":{}}}",
-                args.output.display(),
-                plaintext.len()
-            );
-        } else if !global.quiet {
-            println!("Decrypted: {}", args.output.display());
-            println!("Size: {} bytes", plaintext.len());
-        }
+        let out_display = args.output.display().to_string();
+        let pt_len = plaintext.len();
+        emit_output(
+            global,
+            || {
+                println!(
+                    "{{\"status\":\"decrypted\",\"output\":\"{out_display}\",\"size\":{pt_len}}}"
+                )
+            },
+            || {
+                println!("Decrypted: {out_display}");
+                println!("Size: {pt_len} bytes");
+            },
+        );
 
         Ok(CommandResult::success("Model decrypted"))
     }
@@ -411,31 +430,36 @@ pub(super) fn run_quantize(
             1.0
         };
 
-        if global.json {
-            let mut json = format!(
-                "{{\"quant_type\":\"{:?}\",\"tensors\":{tensor_count},\
-                 \"original_bytes\":{total_original_bytes},\
-                 \"quantized_bytes\":{total_quantized_bytes},\
-                 \"compression_ratio\":{ratio:.2}",
-                quant_type
-            );
-            if args.verify {
-                let _ = write!(json, ",\"max_mse\":{max_mse:.6}");
-            }
-            json.push('}');
-            println!("{json}");
-        } else if !global.quiet {
-            println!("Quantization: {:?}", quant_type);
-            println!("Tensors processed: {tensor_count}");
-            println!(
-                "Original: {} -> Quantized: {} ({ratio:.2}x)",
-                format_size(total_original_bytes),
-                format_size(total_quantized_bytes)
-            );
-            if args.verify {
-                println!("Max MSE: {max_mse:.6}");
-            }
-        }
+        let verify = args.verify;
+        emit_output(
+            global,
+            || {
+                let mut json = format!(
+                    "{{\"quant_type\":\"{:?}\",\"tensors\":{tensor_count},\
+                     \"original_bytes\":{total_original_bytes},\
+                     \"quantized_bytes\":{total_quantized_bytes},\
+                     \"compression_ratio\":{ratio:.2}",
+                    quant_type
+                );
+                if verify {
+                    let _ = write!(json, ",\"max_mse\":{max_mse:.6}");
+                }
+                json.push('}');
+                println!("{json}");
+            },
+            || {
+                println!("Quantization: {:?}", quant_type);
+                println!("Tensors processed: {tensor_count}");
+                println!(
+                    "Original: {} -> Quantized: {} ({ratio:.2}x)",
+                    format_size(total_original_bytes),
+                    format_size(total_quantized_bytes)
+                );
+                if verify {
+                    println!("Max MSE: {max_mse:.6}");
+                }
+            },
+        );
 
         Ok(CommandResult::success("Quantization complete"))
     }
@@ -465,34 +489,38 @@ pub(super) fn run_import_sharded(
         .stream_merge(&index, &args.output)
         .map_err(|e| CliError::InvalidArgument(format!("Import failed: {e}")))?;
 
-    if global.json {
-        println!(
-            "{{\"tensors\":{},\"shards\":{},\"bytes_written\":{},\
-             \"peak_memory_bytes\":{},\"cache_hit_rate\":{:.2},\
-             \"duration_ms\":{},\"warnings\":{}}}",
-            report.tensor_count,
-            report.shard_count,
-            report.bytes_written,
-            report.peak_memory_bytes,
-            report.cache_hit_rate,
-            report.duration_ms,
-            report.warnings.len()
-        );
-    } else if !global.quiet {
-        println!("Sharded import complete:");
-        println!("  Tensors: {}", report.tensor_count);
-        println!("  Shards: {}", report.shard_count);
-        println!("  Bytes written: {}", format_size(report.bytes_written));
-        println!("  Peak memory: {}", format_size(report.peak_memory_bytes));
-        println!("  Cache hit rate: {:.0}%", report.cache_hit_rate * 100.0);
-        println!("  Duration: {}ms", report.duration_ms);
-        if !report.warnings.is_empty() {
-            println!("  Warnings: {}", report.warnings.len());
-            for w in &report.warnings {
-                println!("    - {w}");
+    emit_output(
+        global,
+        || {
+            println!(
+                "{{\"tensors\":{},\"shards\":{},\"bytes_written\":{},\
+                 \"peak_memory_bytes\":{},\"cache_hit_rate\":{:.2},\
+                 \"duration_ms\":{},\"warnings\":{}}}",
+                report.tensor_count,
+                report.shard_count,
+                report.bytes_written,
+                report.peak_memory_bytes,
+                report.cache_hit_rate,
+                report.duration_ms,
+                report.warnings.len()
+            );
+        },
+        || {
+            println!("Sharded import complete:");
+            println!("  Tensors: {}", report.tensor_count);
+            println!("  Shards: {}", report.shard_count);
+            println!("  Bytes written: {}", format_size(report.bytes_written));
+            println!("  Peak memory: {}", format_size(report.peak_memory_bytes));
+            println!("  Cache hit rate: {:.0}%", report.cache_hit_rate * 100.0);
+            println!("  Duration: {}ms", report.duration_ms);
+            if !report.warnings.is_empty() {
+                println!("  Warnings: {}", report.warnings.len());
+                for w in &report.warnings {
+                    println!("    - {w}");
+                }
             }
-        }
-    }
+        },
+    );
 
     Ok(CommandResult::success("Sharded import complete"))
 }
@@ -521,43 +549,47 @@ pub(super) fn run_he_inspect(
         // For actual HE models, the parameters would be embedded in metadata
         let params = HeParameters::default_128bit();
 
-        if global.json {
-            println!(
-                "{{\"file\":\"{}\",\"format\":\"{}\",\"tensor_count\":{},\
-                 \"he_scheme\":\"{:?}\",\"security_level\":\"{:?}\",\
-                 \"poly_modulus_degree\":{},\"slot_count\":{},\
-                 \"coeff_modulus_bits\":{:?},\"scale_bits\":{}}}",
-                args.file.display(),
-                report.format,
-                report.tensors.len(),
-                params.scheme,
-                params.security_level,
-                params.security_level.poly_modulus_degree(),
-                params.security_level.slot_count(),
-                params.coeff_modulus_bits,
-                params.scale_bits
-            );
-        } else if !global.quiet {
-            println!("HE Model Inspection: {}", args.file.display());
-            println!("  Format: {}", report.format);
-            println!("  Tensors: {}", report.tensors.len());
-            println!("  HE Scheme: {:?}", params.scheme);
-            println!("  Security Level: {:?}", params.security_level);
-            println!(
-                "  Polynomial Degree: {}",
-                params.security_level.poly_modulus_degree()
-            );
-            println!("  SIMD Slots: {}", params.security_level.slot_count());
-            println!(
-                "  Coeff Modulus: {:?} ({} bits total)",
-                params.coeff_modulus_bits,
-                params
-                    .coeff_modulus_bits
-                    .iter()
-                    .map(|&b| u32::from(b))
-                    .sum::<u32>()
-            );
-        }
+        emit_output(
+            global,
+            || {
+                println!(
+                    "{{\"file\":\"{}\",\"format\":\"{}\",\"tensor_count\":{},\
+                     \"he_scheme\":\"{:?}\",\"security_level\":\"{:?}\",\
+                     \"poly_modulus_degree\":{},\"slot_count\":{},\
+                     \"coeff_modulus_bits\":{:?},\"scale_bits\":{}}}",
+                    args.file.display(),
+                    report.format,
+                    report.tensors.len(),
+                    params.scheme,
+                    params.security_level,
+                    params.security_level.poly_modulus_degree(),
+                    params.security_level.slot_count(),
+                    params.coeff_modulus_bits,
+                    params.scale_bits
+                );
+            },
+            || {
+                println!("HE Model Inspection: {}", args.file.display());
+                println!("  Format: {}", report.format);
+                println!("  Tensors: {}", report.tensors.len());
+                println!("  HE Scheme: {:?}", params.scheme);
+                println!("  Security Level: {:?}", params.security_level);
+                println!(
+                    "  Polynomial Degree: {}",
+                    params.security_level.poly_modulus_degree()
+                );
+                println!("  SIMD Slots: {}", params.security_level.slot_count());
+                println!(
+                    "  Coeff Modulus: {:?} ({} bits total)",
+                    params.coeff_modulus_bits,
+                    params
+                        .coeff_modulus_bits
+                        .iter()
+                        .map(|&b| u32::from(b))
+                        .sum::<u32>()
+                );
+            },
+        );
 
         Ok(CommandResult::success("HE inspection complete"))
     }
@@ -658,8 +690,8 @@ pub(super) fn run_profile(
         } else {
             println!("{json}");
         }
-    } else if !global.quiet {
-        summary.print_table(args);
+    } else {
+        emit_output(global, || {}, || summary.print_table(args));
     }
 
     Ok(CommandResult::success("Profile complete"))
