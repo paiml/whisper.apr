@@ -15,10 +15,34 @@ struct BulkMeanSpec {
     pass_template: &'static str,
     /// Tensor names that contain these patterns are excluded from matching.
     exclude_contains: &'static [&'static str],
+    /// If true, the check fails when no tensors match the filter.
+    require_matches: bool,
 }
 
-/// Layer norm mean-range checks (B8: block LN weights, B9: LN biases).
+/// Layer norm mean-range checks (B6-B9).
 const LAYER_NORM_MEAN_SPECS: &[BulkMeanSpec] = &[
+    BulkMeanSpec {
+        id: 6,
+        category: 'B',
+        description: "Encoder LN weight",
+        suffixes: &["encoder.layer_norm.weight"],
+        min: 0.5,
+        max: 3.0,
+        pass_template: "encoder LN mean in [0.5, 3.0]",
+        exclude_contains: &[],
+        require_matches: true,
+    },
+    BulkMeanSpec {
+        id: 7,
+        category: 'B',
+        description: "Decoder LN weight",
+        suffixes: &["decoder.layer_norm.weight"],
+        min: 0.5,
+        max: 3.0,
+        pass_template: "decoder LN mean in [0.5, 3.0]",
+        exclude_contains: &[],
+        require_matches: true,
+    },
     BulkMeanSpec {
         id: 8,
         category: 'B',
@@ -31,7 +55,8 @@ const LAYER_NORM_MEAN_SPECS: &[BulkMeanSpec] = &[
         min: 0.5,
         max: 3.0,
         pass_template: "block LN means in [0.5, 3.0]",
-        exclude_contains: &[],
+        exclude_contains: &["encoder.layer_norm", "decoder.layer_norm"],
+        require_matches: false,
     },
     BulkMeanSpec {
         id: 9,
@@ -42,6 +67,7 @@ const LAYER_NORM_MEAN_SPECS: &[BulkMeanSpec] = &[
         max: 0.5,
         pass_template: "LN bias means in [-0.5, 0.5]",
         exclude_contains: &[],
+        require_matches: false,
     },
 ];
 
@@ -61,6 +87,7 @@ const ATTENTION_MEAN_SPECS: &[BulkMeanSpec] = &[
         max: 0.1,
         pass_template: "proj means in [-0.1, 0.1]",
         exclude_contains: &[],
+        require_matches: false,
     },
     BulkMeanSpec {
         id: 12,
@@ -71,6 +98,7 @@ const ATTENTION_MEAN_SPECS: &[BulkMeanSpec] = &[
         max: 0.1,
         pass_template: "FFN means in [-0.1, 0.1]",
         exclude_contains: &[],
+        require_matches: false,
     },
     BulkMeanSpec {
         id: 15,
@@ -81,6 +109,7 @@ const ATTENTION_MEAN_SPECS: &[BulkMeanSpec] = &[
         max: 1.0,
         pass_template: "bias means in [-1.0, 1.0]",
         exclude_contains: &["layer_norm"],
+        require_matches: false,
     },
 ];
 
@@ -138,26 +167,29 @@ impl<'a> AprValidator<'a> {
 
     /// B. Layer Norm Validation (checks 6-10)
     fn validate_layer_norms(&self) -> Vec<ValidationCheck> {
-        let mut checks = self.check_named_tensor_means(&[
-            (
-                6,
-                'B',
-                "Encoder LN weight",
-                "encoder.layer_norm.weight",
-                0.5,
-                3.0,
-            ),
-            (
-                7,
-                'B',
-                "Decoder LN weight",
-                "decoder.layer_norm.weight",
-                0.5,
-                3.0,
-            ),
-        ]);
-        checks.extend(self.check_bulk_mean_ranges(LAYER_NORM_MEAN_SPECS));
-        checks.push(self.check_ln_nan_inf());
+        let mut checks = self.check_bulk_mean_ranges(LAYER_NORM_MEAN_SPECS);
+        // Check 10: NaN/Inf in layer norm tensors
+        checks.push(self.check_tensor_stats(
+            10,
+            'B',
+            "No NaN/Inf in LN",
+            |name| name.contains("layer_norm"),
+            |stats| {
+                let mut issues = Vec::new();
+                if stats.has_nan() {
+                    issues.push("NaN");
+                }
+                if stats.has_inf() {
+                    issues.push("Inf");
+                }
+                if issues.is_empty() {
+                    None
+                } else {
+                    Some(issues.join("+"))
+                }
+            },
+            "LN tensors clean",
+        ));
         checks
     }
 
@@ -168,11 +200,130 @@ impl<'a> AprValidator<'a> {
         checks
     }
 
-    /// D. Embedding Validation (checks 16-20)
+    /// D. Embedding Validation (checks 16-20): shapes and stats in a single pass.
     fn validate_embeddings(&self) -> Vec<ValidationCheck> {
-        let mut checks = self.validate_embedding_shapes();
-        checks.extend(self.validate_embedding_stats());
-        checks
+        let vocab_size = self.reader.header.n_vocab;
+        let d_model = self.reader.header.n_text_state;
+        let d_audio = self.reader.header.n_audio_state;
+
+        // Check 16: token embedding shape
+        let tok_shape = match self.reader.find_tensor("decoder.token_embedding") {
+            Some(tensor) => {
+                let shape = tensor.shape();
+                if shape.len() == 2 && shape[0] == vocab_size && shape[1] == d_model {
+                    ValidationCheck::pass(
+                        16,
+                        'D',
+                        "Token embedding shape",
+                        &format!("[{vocab_size}, {d_model}] correct"),
+                    )
+                } else {
+                    ValidationCheck::fail(
+                        16,
+                        'D',
+                        "Token embedding shape",
+                        &format!("Got {shape:?}, expected [{vocab_size}, {d_model}]"),
+                    )
+                }
+            }
+            None => ValidationCheck::fail(
+                16,
+                'D',
+                "Token embedding shape",
+                "Token embedding not found",
+            ),
+        };
+
+        // Check 17: token embedding stats
+        let tok_stats = self.check_single_tensor(
+            17,
+            'D',
+            "Token embedding stats",
+            "decoder.token_embedding",
+            |s| {
+                if s.mean.abs() < 0.1 && s.std >= 0.01 && s.std <= 0.1 {
+                    Ok(format!("mean={:.4}, std={:.4}", s.mean, s.std))
+                } else {
+                    Err(format!(
+                        "mean={:.4} (want ~0), std={:.4} (want 0.01-0.1)",
+                        s.mean, s.std
+                    ))
+                }
+            },
+        );
+
+        // Check 18: positional embedding shapes
+        let mut pos_failures = Vec::new();
+        for &(name, expected_len, d) in &[
+            ("encoder.positional_embedding", 1500u32, d_audio),
+            ("decoder.positional_embedding", 448, d_model),
+        ] {
+            if let Some(tensor) = self.reader.find_tensor(name) {
+                let shape = tensor.shape();
+                if shape.len() != 2 || shape[0] != expected_len || shape[1] != d {
+                    pos_failures.push(format!("{name}: {shape:?}, expected [{expected_len}, {d}]"));
+                }
+            }
+        }
+        let pos_shape = if pos_failures.is_empty() {
+            ValidationCheck::pass(
+                18,
+                'D',
+                "Positional embedding shape",
+                "Encoder [1500, d], Decoder [448, d]",
+            )
+        } else {
+            ValidationCheck::fail(
+                18,
+                'D',
+                "Positional embedding shape",
+                &pos_failures.join("; "),
+            )
+        };
+
+        // Check 19: positional embedding stats
+        let pos_stats = self.check_tensor_stats(
+            19,
+            'D',
+            "Positional embedding stats",
+            |name| name.contains("positional_embedding"),
+            |stats| {
+                (stats.mean.abs() > 0.5 || stats.std < 0.005 || stats.std > 0.1)
+                    .then(|| format!("mean={:.4}, std={:.4}", stats.mean, stats.std))
+            },
+            "positional embedding stats valid",
+        );
+
+        // Check 20: vocab size consistency
+        let vocab_check = match self.reader.find_tensor("decoder.token_embedding") {
+            Some(tensor) => {
+                let shape = tensor.shape();
+                if !shape.is_empty() && shape[0] == vocab_size {
+                    ValidationCheck::pass(
+                        20,
+                        'D',
+                        "Vocab size matches",
+                        &format!("vocab_size={vocab_size} matches tensor"),
+                    )
+                } else {
+                    ValidationCheck::fail(
+                        20,
+                        'D',
+                        "Vocab size matches",
+                        &format!(
+                            "Header vocab={}, tensor dim={}",
+                            vocab_size,
+                            shape.first().unwrap_or(&0)
+                        ),
+                    )
+                }
+            }
+            None => {
+                ValidationCheck::fail(20, 'D', "Vocab size matches", "Token embedding not found")
+            }
+        };
+
+        vec![tok_shape, tok_stats, pos_shape, pos_stats, vocab_check]
     }
 
     /// E. Functional Validation (checks 21-25)
@@ -265,25 +416,6 @@ impl<'a> AprValidator<'a> {
         ValidationCheck::pass(5, 'A', "CRC32 valid", "Checksum verified")
     }
 
-    /// Batch-validate named tensors: check that each tensor's mean falls in `[min, max]`.
-    fn check_named_tensor_means(
-        &self,
-        specs: &[(u8, char, &str, &str, f32, f32)],
-    ) -> Vec<ValidationCheck> {
-        specs
-            .iter()
-            .map(|&(id, cat, desc, tensor, min, max)| {
-                self.check_single_tensor(id, cat, desc, tensor, |s| {
-                    if s.mean >= min && s.mean <= max {
-                        Ok(format!("mean={:.4} in [{min}, {max}]", s.mean))
-                    } else {
-                        Err(format!("mean={:.4} NOT in [{min}, {max}]", s.mean))
-                    }
-                })
-            })
-            .collect()
-    }
-
     /// Build a `check_tensor_stats` validator that fails when `stats.mean ∉ [min, max]`.
     fn mean_outside_range(min: f32, max: f32) -> impl Fn(&TensorStats) -> Option<String> {
         move |stats: &TensorStats| {
@@ -356,46 +488,35 @@ impl<'a> AprValidator<'a> {
         }
     }
 
-    fn check_ln_nan_inf(&self) -> ValidationCheck {
-        self.check_tensor_stats(
-            10,
-            'B',
-            "No NaN/Inf in LN",
-            |name| name.contains("layer_norm"),
-            |stats| {
-                let mut issues = Vec::new();
-                if stats.has_nan() {
-                    issues.push("NaN");
-                }
-                if stats.has_inf() {
-                    issues.push("Inf");
-                }
-                if issues.is_empty() {
-                    None
-                } else {
-                    Some(issues.join("+"))
-                }
-            },
-            "LN tensors clean",
-        )
-    }
-
     /// Batch mean-range validation: each spec defines a filter + range check.
     fn check_bulk_mean_ranges(&self, specs: &[BulkMeanSpec]) -> Vec<ValidationCheck> {
+        let range_filter = |name: &str, spec: &BulkMeanSpec| -> bool {
+            let matches = spec.suffixes.iter().any(|p| name.ends_with(p));
+            matches && spec.exclude_contains.iter().all(|exc| !name.contains(exc))
+        };
+
         specs
             .iter()
             .map(|spec| {
-                self.check_tensor_stats(
+                let check = self.check_tensor_stats(
                     spec.id,
                     spec.category,
                     spec.description,
-                    |name| {
-                        let matches = spec.suffixes.iter().any(|p| name.ends_with(p));
-                        matches && spec.exclude_contains.iter().all(|exc| !name.contains(exc))
-                    },
+                    |name| range_filter(name, spec),
                     Self::mean_outside_range(spec.min, spec.max),
                     spec.pass_template,
-                )
+                );
+                // For required specs, fail if no tensors matched
+                if spec.require_matches && check.passed && check.message.starts_with("All 0 ") {
+                    ValidationCheck::fail(
+                        spec.id,
+                        spec.category,
+                        spec.description,
+                        &format!("No tensors matching {:?} found", spec.suffixes),
+                    )
+                } else {
+                    check
+                }
             })
             .collect()
     }
@@ -449,134 +570,6 @@ impl<'a> AprValidator<'a> {
         );
 
         vec![std_check, zero_check]
-    }
-
-    /// Validate embedding shapes (checks 16, 18, 20) in a single pass.
-    fn validate_embedding_shapes(&self) -> Vec<ValidationCheck> {
-        let vocab_size = self.reader.header.n_vocab;
-        let d_model = self.reader.header.n_text_state;
-        let d_audio = self.reader.header.n_audio_state;
-
-        let tok_check = match self.reader.find_tensor("decoder.token_embedding") {
-            Some(tensor) => {
-                let shape = tensor.shape();
-                if shape.len() == 2 && shape[0] == vocab_size && shape[1] == d_model {
-                    ValidationCheck::pass(
-                        16,
-                        'D',
-                        "Token embedding shape",
-                        &format!("[{vocab_size}, {d_model}] correct"),
-                    )
-                } else {
-                    ValidationCheck::fail(
-                        16,
-                        'D',
-                        "Token embedding shape",
-                        &format!("Got {shape:?}, expected [{vocab_size}, {d_model}]"),
-                    )
-                }
-            }
-            None => ValidationCheck::fail(
-                16,
-                'D',
-                "Token embedding shape",
-                "Token embedding not found",
-            ),
-        };
-
-        // Positional embedding shapes (encoder: [1500, d_audio], decoder: [448, d_text])
-        let mut pos_failures = Vec::new();
-        for &(name, expected_len, d) in &[
-            ("encoder.positional_embedding", 1500u32, d_audio),
-            ("decoder.positional_embedding", 448, d_model),
-        ] {
-            if let Some(tensor) = self.reader.find_tensor(name) {
-                let shape = tensor.shape();
-                if shape.len() != 2 || shape[0] != expected_len || shape[1] != d {
-                    pos_failures.push(format!("{name}: {shape:?}, expected [{expected_len}, {d}]"));
-                }
-            }
-        }
-        let pos_check = if pos_failures.is_empty() {
-            ValidationCheck::pass(
-                18,
-                'D',
-                "Positional embedding shape",
-                "Encoder [1500, d], Decoder [448, d]",
-            )
-        } else {
-            ValidationCheck::fail(
-                18,
-                'D',
-                "Positional embedding shape",
-                &pos_failures.join("; "),
-            )
-        };
-
-        // Vocab size consistency
-        let vocab_check = match self.reader.find_tensor("decoder.token_embedding") {
-            Some(tensor) => {
-                let shape = tensor.shape();
-                if !shape.is_empty() && shape[0] == vocab_size {
-                    ValidationCheck::pass(
-                        20,
-                        'D',
-                        "Vocab size matches",
-                        &format!("vocab_size={vocab_size} matches tensor"),
-                    )
-                } else {
-                    ValidationCheck::fail(
-                        20,
-                        'D',
-                        "Vocab size matches",
-                        &format!(
-                            "Header vocab={}, tensor dim={}",
-                            vocab_size,
-                            shape.first().unwrap_or(&0)
-                        ),
-                    )
-                }
-            }
-            None => {
-                ValidationCheck::fail(20, 'D', "Vocab size matches", "Token embedding not found")
-            }
-        };
-
-        vec![tok_check, pos_check, vocab_check]
-    }
-
-    /// Validate embedding statistics (checks 17, 19) in a single pass.
-    fn validate_embedding_stats(&self) -> Vec<ValidationCheck> {
-        let tok_check = self.check_single_tensor(
-            17,
-            'D',
-            "Token embedding stats",
-            "decoder.token_embedding",
-            |s| {
-                if s.mean.abs() < 0.1 && s.std >= 0.01 && s.std <= 0.1 {
-                    Ok(format!("mean={:.4}, std={:.4}", s.mean, s.std))
-                } else {
-                    Err(format!(
-                        "mean={:.4} (want ~0), std={:.4} (want 0.01-0.1)",
-                        s.mean, s.std
-                    ))
-                }
-            },
-        );
-
-        let pos_check = self.check_tensor_stats(
-            19,
-            'D',
-            "Positional embedding stats",
-            |name| name.contains("positional_embedding"),
-            |stats| {
-                (stats.mean.abs() > 0.5 || stats.std < 0.005 || stats.std > 0.1)
-                    .then(|| format!("mean={:.4}, std={:.4}", stats.mean, stats.std))
-            },
-            "positional embedding stats valid",
-        );
-
-        vec![tok_check, pos_check]
     }
 
     fn expected_tensor_count(&self) -> usize {

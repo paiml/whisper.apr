@@ -19,13 +19,14 @@ exclude = [
 ]
 
 [quality-gates]
-# Exclude generated files, tests, demos, examples, and docs from quality gate analysis
+# Exclude generated files, tests, demos, examples, tools, and docs from quality gate analysis
 exclude = [
     "**/*_generated.rs",
     "**/tests.rs",
     "**/test_*.rs",
     "demos/**",
     "examples/**",
+    "tools/**",
     "book/**",
     "docs/**",
 ]

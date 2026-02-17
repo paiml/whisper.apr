@@ -292,7 +292,7 @@ fn test_validator_bad_ln_apr() {
         .find(|c| c.id == 7)
         .expect("should have check 7");
     assert!(!check_7.passed);
-    assert!(check_7.message.contains("NOT in"));
+    assert!(check_7.message.contains("mean="));
 }
 
 #[test]
