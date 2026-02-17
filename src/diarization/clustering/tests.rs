@@ -1173,3 +1173,14 @@ fn test_compute_silhouette_euclidean_nontrivial_coefficient() {
         score
     );
 }
+
+#[test]
+fn test_clustering_result_clusters_accessor() {
+    let c0 = SpeakerCluster::new(0, vec![0, 1], SpeakerEmbedding::new(vec![1.0], 0));
+    let c1 = SpeakerCluster::new(1, vec![2], SpeakerEmbedding::new(vec![2.0], 1));
+    let result = ClusteringResult::new(vec![0, 0, 1], vec![c0, c1]).with_silhouette_score(0.5);
+    let clusters = result.clusters();
+    assert_eq!(clusters.len(), 2);
+    assert_eq!(result.num_clusters(), 2);
+    assert!((result.silhouette_score() - 0.5).abs() < f32::EPSILON);
+}
