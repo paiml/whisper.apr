@@ -305,9 +305,7 @@ impl GpuSoftmax {
         let reduction_body = self.build_reduction_body(workgroup_size);
 
         format!(
-            r"// Softmax shader ({log}softmax along {dim})
-// Rows: {rows}, Cols: {cols}
-// Temperature: {temp}
+            r"// Softmax shader ({log}softmax along {dim}) [{rows}x{cols} t={temp}]
 
 struct Params {{
     rows: u32,
