@@ -13,6 +13,7 @@ mod resampler;
 mod ring_buffer;
 mod streaming;
 pub mod wav;
+pub mod decode;
 
 pub use batch::{split_into_chunks, AudioBatch, BatchMelResult, BatchPreprocessor};
 pub use conv_stem::{ConvStem, GroupNorm, CONV_STEM_TOTAL_STRIDE};
@@ -26,6 +27,7 @@ pub use streaming::{
     LOW_LATENCY_MIN_SPEECH_MS, LOW_LATENCY_PARTIAL_THRESHOLD, MIN_SPEECH_DURATION_MS,
 };
 
+pub use decode::{load_audio_file, load_audio_samples, AudioDecodeError, SUPPORTED_EXTENSIONS, is_supported_extension};
 // Re-export VAD types from root module for audio pipeline integration
 pub use crate::vad::{
     SpeechSegment, StreamingVad, VadConfig, VadEvent, VadState, VoiceActivityDetector,

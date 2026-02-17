@@ -201,6 +201,10 @@ pub struct MatMulOp {
     pub trans_a: bool,
     /// Transpose B
     pub trans_b: bool,
+    /// Input matrix A data (optional, needed for actual GPU execution)
+    a_data: Option<Vec<f32>>,
+    /// Input matrix B data (optional, needed for actual GPU execution)
+    b_data: Option<Vec<f32>>,
 }
 
 impl MatMulOp {
@@ -213,7 +217,17 @@ impl MatMulOp {
             n,
             trans_a: false,
             trans_b: false,
+            a_data: None,
+            b_data: None,
         }
+    }
+
+    /// Attach input data for GPU execution
+    #[must_use]
+    pub fn with_data(mut self, a: Vec<f32>, b: Vec<f32>) -> Self {
+        self.a_data = Some(a);
+        self.b_data = Some(b);
+        self
     }
 
     /// Transpose A
@@ -246,8 +260,32 @@ impl ComputeOp for MatMulOp {
     }
 
     fn execute_gpu(&self) -> WhisperResult<Self::Output> {
-        // Placeholder - would use GPU matmul
-        // For now, fall back to SIMD
+        #[cfg(feature = "webgpu")]
+        {
+            // Only dispatch to GPU if input data is attached
+            if let (Some(a), Some(b)) = (&self.a_data, &self.b_data) {
+                use crate::gpu::{ExecutorConfig, GpuExecutorSync};
+                use crate::gpu::ops::matmul::GpuMatMul;
+
+                let gpu_op = GpuMatMul::simple(self.m as u32, self.k as u32, self.n as u32)
+                    .map_err(|e| crate::error::WhisperError::Inference(
+                        format!("GPU matmul setup failed: {e}")
+                    ))?;
+
+                let executor = GpuExecutorSync::new(&ExecutorConfig::for_inference())
+                    .map_err(|e| crate::error::WhisperError::Inference(
+                        format!("GPU init failed: {e}")
+                    ))?;
+
+                let result = executor.execute_matmul(&gpu_op, a, b)
+                    .map_err(|e| crate::error::WhisperError::Inference(
+                        format!("GPU matmul failed: {e}")
+                    ))?;
+
+                return Ok(result);
+            }
+        }
+        // Fall back to SIMD when webgpu feature is disabled or no data attached
         self.execute_simd()
     }
 
