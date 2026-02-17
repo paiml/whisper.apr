@@ -403,4 +403,28 @@ mod tests {
         let output = display.render();
         assert!(!output.is_empty());
     }
+
+    #[test]
+    fn test_heatmap_char_boundaries() {
+        let chars = &['·', '░', '▒', '▓', '█'];
+        assert_eq!(heatmap_char(chars, 0.0), '·');
+        assert_eq!(heatmap_char(chars, 1.0), '█');
+        assert_eq!(heatmap_char(chars, 0.5), '▒');
+    }
+
+    #[test]
+    fn test_heatmap_char_single() {
+        let chars = &['X'];
+        assert_eq!(heatmap_char(chars, 0.0), 'X');
+        assert_eq!(heatmap_char(chars, 0.5), 'X');
+        assert_eq!(heatmap_char(chars, 1.0), 'X');
+    }
+
+    #[test]
+    fn test_heatmap_char_two_chars() {
+        let chars = &['A', 'B'];
+        assert_eq!(heatmap_char(chars, 0.0), 'A');
+        assert_eq!(heatmap_char(chars, 0.49), 'A');
+        assert_eq!(heatmap_char(chars, 1.0), 'B');
+    }
 }
