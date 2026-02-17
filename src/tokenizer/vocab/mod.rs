@@ -177,62 +177,7 @@ pub mod special_tokens {
     /// Token ID for the language, or None if unsupported
     #[must_use]
     pub fn language_token(lang_code: &str) -> Option<u32> {
-        // Language indices (Whisper's 99 supported languages)
-        let lang_offset = match lang_code {
-            "en" => 0,
-            "zh" => 1,
-            "de" => 2,
-            "es" => 3,
-            "ru" => 4,
-            "ko" => 5,
-            "fr" => 6,
-            "ja" => 7,
-            "pt" => 8,
-            "tr" => 9,
-            "pl" => 10,
-            "ca" => 11,
-            "nl" => 12,
-            "ar" => 13,
-            "sv" => 14,
-            "it" => 15,
-            "id" => 16,
-            "hi" => 17,
-            "fi" => 18,
-            "vi" => 19,
-            "he" => 20,
-            "uk" => 21,
-            "el" => 22,
-            "ms" => 23,
-            "cs" => 24,
-            "ro" => 25,
-            "da" => 26,
-            "hu" => 27,
-            "ta" => 28,
-            "no" => 29,
-            "th" => 30,
-            "ur" => 31,
-            "hr" => 32,
-            "bg" => 33,
-            "lt" => 34,
-            "la" => 35,
-            "mi" => 36,
-            "ml" => 37,
-            "cy" => 38,
-            "sk" => 39,
-            "te" => 40,
-            "fa" => 41,
-            "lv" => 42,
-            "bn" => 43,
-            "sr" => 44,
-            "az" => 45,
-            "sl" => 46,
-            "kn" => 47,
-            "et" => 48,
-            "mk" => 49,
-            // Additional languages...
-            _ => return None,
-        };
-        Some(LANG_BASE + lang_offset)
+        language_offset(lang_code).map(|offset| LANG_BASE + offset)
     }
 
     /// Check if a token ID is a timestamp token
@@ -264,48 +209,12 @@ pub mod special_tokens {
     /// # Returns
     /// Language offset, or None if unsupported
     #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
     pub fn language_offset(lang_code: &str) -> Option<u32> {
-        match lang_code {
-            "en" => Some(0),
-            "zh" => Some(1),
-            "de" => Some(2),
-            "es" => Some(3),
-            "ru" => Some(4),
-            "ko" => Some(5),
-            "fr" => Some(6),
-            "ja" => Some(7),
-            "pt" => Some(8),
-            "tr" => Some(9),
-            "pl" => Some(10),
-            "ca" => Some(11),
-            "nl" => Some(12),
-            "ar" => Some(13),
-            "sv" => Some(14),
-            "it" => Some(15),
-            "id" => Some(16),
-            "hi" => Some(17),
-            "fi" => Some(18),
-            "vi" => Some(19),
-            "he" => Some(20),
-            "uk" => Some(21),
-            "el" => Some(22),
-            "ms" => Some(23),
-            "cs" => Some(24),
-            "ro" => Some(25),
-            "da" => Some(26),
-            "hu" => Some(27),
-            "ta" => Some(28),
-            "no" => Some(29),
-            "th" => Some(30),
-            "ur" => Some(31),
-            "hr" => Some(32),
-            "bg" => Some(33),
-            "lt" => Some(34),
-            "la" => Some(35),
-            "mi" => Some(36),
-            "ml" => Some(37),
-            _ => None,
-        }
+        crate::detection::SUPPORTED_LANGUAGES
+            .iter()
+            .position(|&c| c == lang_code)
+            .map(|i| i as u32)
     }
 }
 
