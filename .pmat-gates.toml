@@ -32,11 +32,9 @@ exclude = [
 ]
 
 [entropy]
-# Relax thresholds for mature codebase with inherently repetitive patterns
-max_pattern_repetition = 12
-min_pattern_diversity = 0.3
-max_violations_to_report = 0
-# Exclude generated files, demos, examples, tools, and inherently repetitive modules
+# DISABLED: unreachable 200% min_pattern_diversity threshold (paiml/paiml-mcp-agent-toolkit#219)
+# Re-enable once upstream fix lands
+enabled = false
 exclude = [
     "**/*_generated.rs",
     "**/tests.rs",
