@@ -180,37 +180,50 @@ impl<'a> AprValidator<'a> {
     }
 
     fn check_encoder_ln_weight(&self) -> ValidationCheck {
-        self.check_ln_weight_mean(6, "encoder.layer_norm.weight", "Encoder LN weight")
+        self.check_single_tensor(6, 'B', "Encoder LN weight", "encoder.layer_norm.weight", |s| {
+            if s.mean >= 0.5 && s.mean <= 3.0 {
+                Ok(format!("mean={:.4} in [0.5, 3.0]", s.mean))
+            } else {
+                Err(format!("mean={:.4} NOT in [0.5, 3.0]", s.mean))
+            }
+        })
     }
 
     fn check_decoder_ln_weight(&self) -> ValidationCheck {
-        self.check_ln_weight_mean(7, "decoder.layer_norm.weight", "Decoder LN weight")
+        self.check_single_tensor(7, 'B', "Decoder LN weight", "decoder.layer_norm.weight", |s| {
+            if s.mean >= 0.5 && s.mean <= 3.0 {
+                Ok(format!("mean={:.4} in [0.5, 3.0]", s.mean))
+            } else {
+                Err(format!("mean={:.4} NOT in [0.5, 3.0]", s.mean))
+            }
+        })
     }
 
-    #[allow(clippy::option_if_let_else)]
-    fn check_ln_weight_mean(&self, id: u8, name: &str, description: &str) -> ValidationCheck {
-        match self.reader.load_tensor(name) {
+    /// Load a named tensor, compute stats, and return pass/fail based on a validator.
+    ///
+    /// The `validate` closure returns `Ok(message)` on pass, `Err(message)` on fail.
+    fn check_single_tensor(
+        &self,
+        id: u8,
+        category: char,
+        description: &str,
+        tensor_name: &str,
+        validate: impl FnOnce(&TensorStats) -> Result<String, String>,
+    ) -> ValidationCheck {
+        match self.reader.load_tensor(tensor_name) {
             Ok(data) => {
-                let stats = TensorStats::compute(name, &data);
-                if stats.mean >= 0.5 && stats.mean <= 3.0 {
-                    ValidationCheck::pass(
-                        id,
-                        'B',
-                        description,
-                        &format!("mean={:.4} in [0.5, 3.0]", stats.mean),
-                    )
-                } else {
-                    ValidationCheck::fail(
-                        id,
-                        'B',
-                        description,
-                        &format!("mean={:.4} NOT in [0.5, 3.0]", stats.mean),
-                    )
+                let stats = TensorStats::compute(tensor_name, &data);
+                match validate(&stats) {
+                    Ok(msg) => ValidationCheck::pass(id, category, description, &msg),
+                    Err(msg) => ValidationCheck::fail(id, category, description, &msg),
                 }
             }
-            Err(_) => {
-                ValidationCheck::fail(id, 'B', description, &format!("Tensor {name} not found"))
-            }
+            Err(_) => ValidationCheck::fail(
+                id,
+                category,
+                description,
+                &format!("Tensor {tensor_name} not found"),
+            ),
         }
     }
 
@@ -435,40 +448,17 @@ impl<'a> AprValidator<'a> {
         }
     }
 
-    #[allow(clippy::option_if_let_else)]
     fn check_token_embedding_stats(&self) -> ValidationCheck {
-        match self.reader.load_tensor("decoder.token_embedding") {
-            Ok(data) => {
-                let stats = TensorStats::compute("decoder.token_embedding", &data);
-                let mean_ok = stats.mean.abs() < 0.1;
-                let std_ok = stats.std >= 0.01 && stats.std <= 0.1;
-
-                if mean_ok && std_ok {
-                    ValidationCheck::pass(
-                        17,
-                        'D',
-                        "Token embedding stats",
-                        &format!("mean={:.4}, std={:.4}", stats.mean, stats.std),
-                    )
-                } else {
-                    ValidationCheck::fail(
-                        17,
-                        'D',
-                        "Token embedding stats",
-                        &format!(
-                            "mean={:.4} (want ~0), std={:.4} (want 0.01-0.1)",
-                            stats.mean, stats.std
-                        ),
-                    )
-                }
+        self.check_single_tensor(17, 'D', "Token embedding stats", "decoder.token_embedding", |s| {
+            if s.mean.abs() < 0.1 && s.std >= 0.01 && s.std <= 0.1 {
+                Ok(format!("mean={:.4}, std={:.4}", s.mean, s.std))
+            } else {
+                Err(format!(
+                    "mean={:.4} (want ~0), std={:.4} (want 0.01-0.1)",
+                    s.mean, s.std
+                ))
             }
-            Err(_) => ValidationCheck::fail(
-                17,
-                'D',
-                "Token embedding stats",
-                "Token embedding not found",
-            ),
-        }
+        })
     }
 
     fn check_positional_embedding_shape(&self) -> ValidationCheck {
