@@ -537,10 +537,7 @@ impl<'a> AprValidator<'a> {
         // Check 13: weight std with 25% outlier tolerance
         let (std_failures, checked) = self.collect_tensor_failures(
             |name| name.ends_with(".weight") && !name.contains("embedding"),
-            |stats| {
-                (stats.std < 0.01 || stats.std > 0.2)
-                    .then(|| format!("std={:.4}", stats.std))
-            },
+            |stats| (stats.std < 0.01 || stats.std > 0.2).then(|| format!("std={:.4}", stats.std)),
         );
         let std_check = if std_failures.is_empty() {
             ValidationCheck::pass(
