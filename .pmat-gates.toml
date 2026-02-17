@@ -47,11 +47,13 @@ exclude = [
 ]
 
 [tdg]
-# Exclude generated files and non-code from TDG grading
+# Exclude generated files, tools, scripts, and non-code from TDG grading
 exclude = [
     "**/*_generated.rs",
     "demos/**",
     "examples/**",
+    "tools/**",
+    "scripts/**",
     "book/**",
     "docs/**",
 ]
