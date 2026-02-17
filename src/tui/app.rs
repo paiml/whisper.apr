@@ -272,6 +272,17 @@ impl WhisperApp {
         self.current_panel = panel;
     }
 
+    /// Transition to a new pipeline state with a status message.
+    fn transition(&mut self, state: WhisperState, message: String) {
+        self.state = state;
+        self.status_message = Some(message);
+    }
+
+    /// Record elapsed time in milliseconds from an `Instant`.
+    fn elapsed_ms(start: std::time::Instant) -> f32 {
+        start.elapsed().as_secs_f32() * 1000.0
+    }
+
     /// Handle keyboard input
     pub fn handle_key(&mut self, key: char) {
         match key {
@@ -296,7 +307,6 @@ impl WhisperApp {
     #[allow(clippy::no_effect_underscore_binding)]
     pub fn reset(&mut self) {
         let _span = crate::trace_enter!("tui.reset");
-        self.state = WhisperState::Idle;
         self.audio_data.clear();
         self.mel_data.clear();
         self.mel_frames = 0;
@@ -307,12 +317,12 @@ impl WhisperApp {
         self.metrics = PipelineMetrics::default();
         self.alerts = JidokaAlerts::default();
         self.error_message = None;
-        self.status_message = Some("Reset to idle".to_string());
         self.scroll_x = 0;
         self.scroll_y = 0;
         self.selected_layer = 0;
         self.show_trace_overlay = false;
         self.show_vad_overlay = false;
+        self.transition(WhisperState::Idle, "Reset to idle".to_string());
     }
 
     /// Load audio data
@@ -323,12 +333,14 @@ impl WhisperApp {
         self.metrics.audio_duration_secs = audio.len() as f32 / self.sample_rate as f32;
         // Compute max amplitude for clipping detection (Jidoka)
         self.alerts.max_amplitude = audio.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
-        self.state = WhisperState::WaveformReady;
-        self.status_message = Some(format!(
-            "Loaded {} samples ({:.2}s)",
-            audio.len(),
-            self.metrics.audio_duration_secs
-        ));
+        self.transition(
+            WhisperState::WaveformReady,
+            format!(
+                "Loaded {} samples ({:.2}s)",
+                audio.len(),
+                self.metrics.audio_duration_secs
+            ),
+        );
     }
 
     /// Compute mel spectrogram (mock for TUI testing)
@@ -340,7 +352,7 @@ impl WhisperApp {
         let _span = crate::trace_enter!("tui.compute_mel");
         if self.audio_data.is_empty() {
             self.error_message = Some("No audio loaded".to_string());
-            self.state = WhisperState::Error;
+            self.transition(WhisperState::Error, "No audio loaded".to_string());
             return;
         }
 
@@ -366,12 +378,14 @@ impl WhisperApp {
         }
         self.mel_frames = n_frames;
 
-        self.metrics.mel_time_ms = start.elapsed().as_secs_f32() * 1000.0;
-        self.state = WhisperState::MelReady;
-        self.status_message = Some(format!(
-            "Computed {} mel frames in {:.2}ms",
-            n_frames, self.metrics.mel_time_ms
-        ));
+        self.metrics.mel_time_ms = Self::elapsed_ms(start);
+        self.transition(
+            WhisperState::MelReady,
+            format!(
+                "Computed {n_frames} mel frames in {:.2}ms",
+                self.metrics.mel_time_ms
+            ),
+        );
     }
 
     /// Start encoding (mock for TUI)
@@ -394,13 +408,15 @@ impl WhisperApp {
             })
             .collect();
 
-        self.metrics.encoder_time_ms = start.elapsed().as_secs_f32() * 1000.0;
-        self.state = WhisperState::Encoding;
-        self.status_message = Some(format!(
-            "Encoded through {} layers in {:.2}ms",
-            self.encoder_metrics.len(),
-            self.metrics.encoder_time_ms
-        ));
+        self.metrics.encoder_time_ms = Self::elapsed_ms(start);
+        self.transition(
+            WhisperState::Encoding,
+            format!(
+                "Encoded through {} layers in {:.2}ms",
+                self.encoder_metrics.len(),
+                self.metrics.encoder_time_ms,
+            ),
+        );
     }
 
     /// Start decoding (mock for TUI)
@@ -453,14 +469,16 @@ impl WhisperApp {
             .map(|t| t.attention_weights.clone())
             .collect();
 
-        self.metrics.decoder_time_ms = start.elapsed().as_secs_f32() * 1000.0;
+        self.metrics.decoder_time_ms = Self::elapsed_ms(start);
         self.metrics.tokens_generated = self.decoder_tokens.len();
-        self.state = WhisperState::Decoding;
-        self.status_message = Some(format!(
-            "Generated {} tokens in {:.2}ms",
-            self.decoder_tokens.len(),
-            self.metrics.decoder_time_ms
-        ));
+        self.transition(
+            WhisperState::Decoding,
+            format!(
+                "Generated {} tokens in {:.2}ms",
+                self.decoder_tokens.len(),
+                self.metrics.decoder_time_ms,
+            ),
+        );
     }
 
     /// Complete transcription
@@ -485,12 +503,14 @@ impl WhisperApp {
             self.metrics.mel_time_ms + self.metrics.encoder_time_ms + self.metrics.decoder_time_ms;
         self.metrics.compute_rtf();
 
-        self.state = WhisperState::Complete;
-        self.status_message = Some(format!(
-            "Complete: '{}' (RTF: {:.2}x)",
-            self.transcription.trim(),
-            self.metrics.rtf
-        ));
+        self.transition(
+            WhisperState::Complete,
+            format!(
+                "Complete: '{}' (RTF: {:.2}x)",
+                self.transcription.trim(),
+                self.metrics.rtf,
+            ),
+        );
     }
 
     /// Get state description
