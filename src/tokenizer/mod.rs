@@ -84,41 +84,43 @@ impl BpeTokenizer {
             return Ok(vec![]);
         }
 
-        // Convert text to bytes
-        let bytes = text.as_bytes();
+        let tokens = self.apply_bpe_merges(text.as_bytes());
+        self.tokens_to_ids(&tokens)
+    }
 
-        // Initialize token sequence (each byte is a token)
+    /// Apply BPE merges to a byte sequence until no more merges are possible.
+    ///
+    /// Iteratively finds and applies the highest-priority merge pair in the
+    /// current token sequence, collapsing adjacent tokens according to the
+    /// learned merge rules.
+    fn apply_bpe_merges(&self, bytes: &[u8]) -> Vec<Vec<u8>> {
         let mut tokens: Vec<Vec<u8>> = bytes_to_singleton_tokens(bytes);
 
-        // Apply BPE merges iteratively
-        loop {
-            // Find the highest priority merge in the current sequence
-            let merge = self.find_best_merge(&tokens);
-
-            match merge {
-                Some((idx, merged_bytes)) => {
-                    // Apply the merge
-                    let second = tokens.remove(idx + 1);
-                    tokens[idx].extend_from_slice(&second);
-                    debug_assert_eq!(tokens[idx], merged_bytes);
-                }
-                None => break, // No more merges possible
-            }
+        while let Some((idx, merged_bytes)) = self.find_best_merge(&tokens) {
+            let second = tokens.remove(idx + 1);
+            tokens[idx].extend_from_slice(&second);
+            debug_assert_eq!(tokens[idx], merged_bytes);
         }
 
-        // Convert byte sequences to token IDs
-        let mut token_ids = Vec::with_capacity(tokens.len());
-        for token_bytes in tokens {
-            let id = self.vocab.get_id(&token_bytes).ok_or_else(|| {
-                WhisperError::Tokenizer(format!(
-                    "unknown token: {:?}",
-                    String::from_utf8_lossy(&token_bytes)
-                ))
-            })?;
-            token_ids.push(id);
-        }
+        tokens
+    }
 
-        Ok(token_ids)
+    /// Convert byte-sequence tokens to vocabulary IDs.
+    ///
+    /// Each token is looked up in the vocabulary. Returns an error if any
+    /// byte sequence doesn't map to a known token ID.
+    fn tokens_to_ids(&self, tokens: &[Vec<u8>]) -> WhisperResult<Vec<u32>> {
+        tokens
+            .iter()
+            .map(|token_bytes| {
+                self.vocab.get_id(token_bytes).ok_or_else(|| {
+                    WhisperError::Tokenizer(format!(
+                        "unknown token: {:?}",
+                        String::from_utf8_lossy(token_bytes)
+                    ))
+                })
+            })
+            .collect()
     }
 
     /// Find the highest priority merge in the token sequence

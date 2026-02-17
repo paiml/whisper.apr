@@ -235,46 +235,12 @@ impl GpuSoftmax {
         }
     }
 
-    /// Generate WGSL shader for this operation
-    #[must_use]
-    pub fn generate_shader(&self) -> String {
-        let reduction_size = self.config.reduction_size();
-        let workgroup_size = self.config.workgroup_size.min(reduction_size);
-        let temperature = self.config.temperature;
-        let is_log = self.config.log_softmax;
-
+    /// Build the WGSL parallel reduction snippet for finding max and computing exp-sum.
+    ///
+    /// Emits three phases: max-reduce, exp-sum-reduce, and normalize.
+    fn build_reduction_body(&self, wg_size: u32) -> String {
         format!(
-            r"// Softmax shader ({log}softmax along {dim})
-// Rows: {rows}, Cols: {cols}
-// Softmax temperature scaling: {temperature_val}
-
-struct Params {{
-    rows: u32,
-    cols: u32,
-    temperature: f32,
-}}
-
-@group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> input: array<f32>;
-@group(0) @binding(2) var<storage, read_write> output: array<f32>;
-
-var<workgroup> shared_max: f32;
-var<workgroup> shared_sum: f32;
-var<workgroup> partial_max: array<f32, {wg_size}>;
-var<workgroup> partial_sum: array<f32, {wg_size}>;
-
-@compute @workgroup_size({wg_size}, 1, 1)
-fn main(
-    @builtin(workgroup_id) workgroup_id: vec3<u32>,
-    @builtin(local_invocation_id) local_id: vec3<u32>,
-    @builtin(num_workgroups) num_workgroups: vec3<u32>,
-) {{
-    let row = workgroup_id.x;
-    let tid = local_id.x;
-    let reduction_size = params.cols;
-    let row_offset = row * reduction_size;
-
-    // Phase 1: Find max value for numerical stability
+            r"    // Phase 1: Find max value for numerical stability
     var local_max: f32 = -1e38;
     for (var i = tid; i < reduction_size; i = i + {wg_size}u) {{
         let val = input[row_offset + i] / params.temperature;
@@ -322,16 +288,63 @@ fn main(
     for (var i = tid; i < reduction_size; i = i + {wg_size}u) {{
         let val = input[row_offset + i] / params.temperature;
         {output_expr}
-    }}
+    }}",
+            wg_size = wg_size,
+            output_expr = self.build_output_expr(),
+        )
+    }
+
+    /// Generate WGSL shader for numerically stable softmax.
+    ///
+    /// Uses a three-phase parallel reduction: max-find, exp-sum, normalize.
+    /// Supports both softmax and log-softmax via `config.log_softmax`.
+    #[must_use]
+    pub fn generate_shader(&self) -> String {
+        let workgroup_size = self.config.workgroup_size.min(self.config.reduction_size());
+        let is_log = self.config.log_softmax;
+        let reduction_body = self.build_reduction_body(workgroup_size);
+
+        format!(
+            r"// Softmax shader ({log}softmax along {dim})
+// Rows: {rows}, Cols: {cols}
+// Temperature: {temp}
+
+struct Params {{
+    rows: u32,
+    cols: u32,
+    temperature: f32,
+}}
+
+@group(0) @binding(0) var<uniform> params: Params;
+@group(0) @binding(1) var<storage, read> input: array<f32>;
+@group(0) @binding(2) var<storage, read_write> output: array<f32>;
+
+var<workgroup> shared_max: f32;
+var<workgroup> shared_sum: f32;
+var<workgroup> partial_max: array<f32, {wg_size}>;
+var<workgroup> partial_sum: array<f32, {wg_size}>;
+
+@compute @workgroup_size({wg_size}, 1, 1)
+fn main(
+    @builtin(workgroup_id) workgroup_id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>,
+) {{
+    let row = workgroup_id.x;
+    let tid = local_id.x;
+    let reduction_size = params.cols;
+    let row_offset = row * reduction_size;
+
+{reduction_body}
 }}
 ",
             log = if is_log { "log-" } else { "" },
             dim = self.config.dimension.axis_description(),
             rows = self.config.rows,
             cols = self.config.cols,
-            temperature_val = temperature,
+            temp = self.config.temperature,
             wg_size = workgroup_size,
-            output_expr = self.build_output_expr(),
+            reduction_body = reduction_body,
         )
     }
 }
