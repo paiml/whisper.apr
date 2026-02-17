@@ -180,23 +180,35 @@ impl<'a> AprValidator<'a> {
     }
 
     fn check_encoder_ln_weight(&self) -> ValidationCheck {
-        self.check_single_tensor(6, 'B', "Encoder LN weight", "encoder.layer_norm.weight", |s| {
-            if s.mean >= 0.5 && s.mean <= 3.0 {
-                Ok(format!("mean={:.4} in [0.5, 3.0]", s.mean))
-            } else {
-                Err(format!("mean={:.4} NOT in [0.5, 3.0]", s.mean))
-            }
-        })
+        self.check_single_tensor(
+            6,
+            'B',
+            "Encoder LN weight",
+            "encoder.layer_norm.weight",
+            |s| {
+                if s.mean >= 0.5 && s.mean <= 3.0 {
+                    Ok(format!("mean={:.4} in [0.5, 3.0]", s.mean))
+                } else {
+                    Err(format!("mean={:.4} NOT in [0.5, 3.0]", s.mean))
+                }
+            },
+        )
     }
 
     fn check_decoder_ln_weight(&self) -> ValidationCheck {
-        self.check_single_tensor(7, 'B', "Decoder LN weight", "decoder.layer_norm.weight", |s| {
-            if s.mean >= 0.5 && s.mean <= 3.0 {
-                Ok(format!("mean={:.4} in [0.5, 3.0]", s.mean))
-            } else {
-                Err(format!("mean={:.4} NOT in [0.5, 3.0]", s.mean))
-            }
-        })
+        self.check_single_tensor(
+            7,
+            'B',
+            "Decoder LN weight",
+            "decoder.layer_norm.weight",
+            |s| {
+                if s.mean >= 0.5 && s.mean <= 3.0 {
+                    Ok(format!("mean={:.4} in [0.5, 3.0]", s.mean))
+                } else {
+                    Err(format!("mean={:.4} NOT in [0.5, 3.0]", s.mean))
+                }
+            },
+        )
     }
 
     /// Load a named tensor, compute stats, and return pass/fail based on a validator.
@@ -449,16 +461,22 @@ impl<'a> AprValidator<'a> {
     }
 
     fn check_token_embedding_stats(&self) -> ValidationCheck {
-        self.check_single_tensor(17, 'D', "Token embedding stats", "decoder.token_embedding", |s| {
-            if s.mean.abs() < 0.1 && s.std >= 0.01 && s.std <= 0.1 {
-                Ok(format!("mean={:.4}, std={:.4}", s.mean, s.std))
-            } else {
-                Err(format!(
-                    "mean={:.4} (want ~0), std={:.4} (want 0.01-0.1)",
-                    s.mean, s.std
-                ))
-            }
-        })
+        self.check_single_tensor(
+            17,
+            'D',
+            "Token embedding stats",
+            "decoder.token_embedding",
+            |s| {
+                if s.mean.abs() < 0.1 && s.std >= 0.01 && s.std <= 0.1 {
+                    Ok(format!("mean={:.4}, std={:.4}", s.mean, s.std))
+                } else {
+                    Err(format!(
+                        "mean={:.4} (want ~0), std={:.4} (want 0.01-0.1)",
+                        s.mean, s.std
+                    ))
+                }
+            },
+        )
     }
 
     fn check_positional_embedding_shape(&self) -> ValidationCheck {
