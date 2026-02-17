@@ -451,16 +451,12 @@ impl<'a> AprValidator<'a> {
         }
     }
 
-    /// Generic tensor stat validation: iterate matching tensors, check stats, collect failures.
-    fn check_tensor_stats(
+    /// Iterate tensors matching a filter, compute stats, collect failures.
+    fn collect_tensor_failures(
         &self,
-        id: u8,
-        category: char,
-        description: &str,
         filter: impl Fn(&str) -> bool,
         validate: impl Fn(&TensorStats) -> Option<String>,
-        pass_template: &str,
-    ) -> ValidationCheck {
+    ) -> (Vec<String>, usize) {
         let mut failures = Vec::new();
         let mut checked = 0;
 
@@ -475,6 +471,21 @@ impl<'a> AprValidator<'a> {
                 }
             }
         }
+
+        (failures, checked)
+    }
+
+    /// Generic tensor stat validation: iterate matching tensors, check stats, collect failures.
+    fn check_tensor_stats(
+        &self,
+        id: u8,
+        category: char,
+        description: &str,
+        filter: impl Fn(&str) -> bool,
+        validate: impl Fn(&TensorStats) -> Option<String>,
+        pass_template: &str,
+    ) -> ValidationCheck {
+        let (failures, checked) = self.collect_tensor_failures(filter, validate);
 
         if failures.is_empty() {
             ValidationCheck::pass(
@@ -524,18 +535,13 @@ impl<'a> AprValidator<'a> {
     /// Weight health checks: std deviation (13) and no-all-zeros (14).
     fn validate_weight_health(&self) -> Vec<ValidationCheck> {
         // Check 13: weight std with 25% outlier tolerance
-        let (mut std_failures, mut checked) = (Vec::new(), 0usize);
-        for tensor in &self.reader.tensors {
-            if tensor.name.ends_with(".weight") && !tensor.name.contains("embedding") {
-                if let Ok(data) = self.reader.load_tensor(&tensor.name) {
-                    let stats = TensorStats::compute(&tensor.name, &data);
-                    checked += 1;
-                    if stats.std < 0.01 || stats.std > 0.2 {
-                        std_failures.push(format!("{}: std={:.4}", tensor.name, stats.std));
-                    }
-                }
-            }
-        }
+        let (std_failures, checked) = self.collect_tensor_failures(
+            |name| name.ends_with(".weight") && !name.contains("embedding"),
+            |stats| {
+                (stats.std < 0.01 || stats.std > 0.2)
+                    .then(|| format!("std={:.4}", stats.std))
+            },
+        );
         let std_check = if std_failures.is_empty() {
             ValidationCheck::pass(
                 13,
