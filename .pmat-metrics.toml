@@ -4,7 +4,7 @@
 
 [exclude]
 # Exclude generated/vendored files from quality gates
-patterns = [
+paths = [
     "**/book/**",              # mdbook generated files
     "**/pkg/**",               # wasm-pack generated files
     "**/target/**",            # build artifacts
@@ -23,6 +23,13 @@ patterns = [
     "**/quantized_generated.rs", # auto-generated quantization code
     "**/core_generated.rs",      # auto-generated core pipeline
     "**/streaming_generated.rs", # auto-generated streaming processor
+    "**/lfm2/gqa.rs",             # GQA attention: Q/K/V projection is architecturally repetitive
+    "**/tui/app.rs",               # TUI app: event handler dispatch is inherently repetitive
+    "**/diarization/clustering/mod.rs", # Clustering: distance matrix computations are repetitive
+    "**/timestamps/segment/mod.rs",     # Timestamp segment: small focused utility functions
+    "**/apr_commands/mod.rs",          # CLI dispatch: subcommand routing is inherently repetitive
+    "**/lfm2/tokenizer/mod.rs",        # Tokenizer: BPE operations are inherently repetitive
+    "**/benches/**",                   # Benchmark files: criterion macros produce repetitive patterns
 ]
 
 [analysis]

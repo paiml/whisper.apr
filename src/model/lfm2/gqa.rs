@@ -209,67 +209,9 @@ impl GroupedQueryAttention {
             )));
         }
 
-        // Project to Q, K, V
-        // Q: [seq_len, hidden_size] -> [seq_len, num_q_heads * head_dim]
-        let kv_dim = self.kv_dim();
-        let (q_raw, k_raw, v_raw) = if cfg!(feature = "simd") {
-            let q = crate::simd::matmul_raw(
-                hidden_states,
-                &self.w_q,
-                self.b_q.as_deref(),
-                seq_len,
-                hidden_size,
-                hidden_size,
-            );
-            let k = crate::simd::matmul_raw(
-                hidden_states,
-                &self.w_k,
-                self.b_k.as_deref(),
-                seq_len,
-                hidden_size,
-                kv_dim,
-            );
-            let v = crate::simd::matmul_raw(
-                hidden_states,
-                &self.w_v,
-                self.b_v.as_deref(),
-                seq_len,
-                hidden_size,
-                kv_dim,
-            );
-            (q, k, v)
-        } else {
-            let q = self.linear(hidden_states, &self.w_q, self.b_q.as_deref(), hidden_size);
-            let k = self.linear(hidden_states, &self.w_k, self.b_k.as_deref(), kv_dim);
-            let v = self.linear(hidden_states, &self.w_v, self.b_v.as_deref(), kv_dim);
-            (q, k, v)
-        };
-
-        // K, V: [seq_len, hidden_size] -> [seq_len, num_kv_heads * head_dim]
-
-        // Pad head_dim if needed (e.g., 36→40 for Moonshine)
-        let (mut q, mut k, v, q_stride, kv_padded_dim) = if padded_hd == head_dim {
-            (q_raw, k_raw, v_raw, hidden_size, kv_dim)
-        } else {
-            let q_padded = Self::pad_heads(&q_raw, seq_len, num_q_heads, head_dim, padded_hd);
-            let k_padded = Self::pad_heads(
-                &k_raw,
-                seq_len,
-                self.config.num_kv_heads,
-                head_dim,
-                padded_hd,
-            );
-            let v_padded = Self::pad_heads(
-                &v_raw,
-                seq_len,
-                self.config.num_kv_heads,
-                head_dim,
-                padded_hd,
-            );
-            let q_s = num_q_heads * padded_hd;
-            let kv_p = self.config.num_kv_heads * padded_hd;
-            (q_padded, k_padded, v_padded, q_s, kv_p)
-        };
+        // Project Q, K, V and pad heads if needed
+        let (mut q, mut k, v, q_stride, kv_padded_dim) =
+            self.project_and_pad_qkv(hidden_states, hidden_states, seq_len, seq_len);
 
         // Apply RoPE to Q and K if provided (operates on padded dim)
         if let Some(rope_emb) = rope {
@@ -291,28 +233,8 @@ impl GroupedQueryAttention {
             self.config.causal,
         );
 
-        // Strip padding before output projection (padded → original head_dim)
-        let attn_unpadded = if padded_hd == head_dim {
-            attn_output
-        } else {
-            Self::unpad_heads(&attn_output, seq_len, num_q_heads, head_dim, padded_hd)
-        };
-
-        // Output projection
-        let output = if cfg!(feature = "simd") {
-            crate::simd::matmul_raw(
-                &attn_unpadded,
-                &self.w_o,
-                self.b_o.as_deref(),
-                seq_len,
-                hidden_size,
-                hidden_size,
-            )
-        } else {
-            self.linear(&attn_unpadded, &self.w_o, self.b_o.as_deref(), hidden_size)
-        };
-
-        Ok(output)
+        // Unpad and output projection
+        Ok(self.unpad_and_out_proj(attn_output, seq_len))
     }
 
     /// Cross-attention forward pass (WAPR-MOONSHINE-003)
@@ -339,10 +261,8 @@ impl GroupedQueryAttention {
         enc_seq_len: usize,
     ) -> WhisperResult<Vec<f32>> {
         let hidden_size = self.config.hidden_size;
-        let num_q_heads = self.config.num_q_heads;
         let head_dim = self.config.head_dim;
         let padded_hd = self.config.padded_head_dim();
-        let kv_dim = self.kv_dim();
 
         // Validate input shapes
         if decoder_hidden.len() != dec_seq_len * hidden_size {
@@ -360,79 +280,9 @@ impl GroupedQueryAttention {
             )));
         }
 
-        // Q from decoder, K/V from encoder
-        let (q_raw, k_raw, v_raw) = if cfg!(feature = "simd") {
-            let q = crate::simd::matmul_raw(
-                decoder_hidden,
-                &self.w_q,
-                self.b_q.as_deref(),
-                dec_seq_len,
-                hidden_size,
-                hidden_size,
-            );
-            let k = crate::simd::matmul_raw(
-                encoder_output,
-                &self.w_k,
-                self.b_k.as_deref(),
-                enc_seq_len,
-                hidden_size,
-                kv_dim,
-            );
-            let v = crate::simd::matmul_raw(
-                encoder_output,
-                &self.w_v,
-                self.b_v.as_deref(),
-                enc_seq_len,
-                hidden_size,
-                kv_dim,
-            );
-            (q, k, v)
-        } else {
-            let q = self.linear(decoder_hidden, &self.w_q, self.b_q.as_deref(), hidden_size);
-            let k = self.linear_with_dim(
-                encoder_output,
-                &self.w_k,
-                self.b_k.as_deref(),
-                hidden_size,
-                kv_dim,
-            );
-            let v = self.linear_with_dim(
-                encoder_output,
-                &self.w_v,
-                self.b_v.as_deref(),
-                hidden_size,
-                kv_dim,
-            );
-            (q, k, v)
-        };
-
-        // Pad head_dim if needed
-        let (q, k, v, q_stride, kv_padded_dim) = if padded_hd == head_dim {
-            (q_raw, k_raw, v_raw, hidden_size, kv_dim)
-        } else {
-            let q_p = Self::pad_heads(&q_raw, dec_seq_len, num_q_heads, head_dim, padded_hd);
-            let k_p = Self::pad_heads(
-                &k_raw,
-                enc_seq_len,
-                self.config.num_kv_heads,
-                head_dim,
-                padded_hd,
-            );
-            let v_p = Self::pad_heads(
-                &v_raw,
-                enc_seq_len,
-                self.config.num_kv_heads,
-                head_dim,
-                padded_hd,
-            );
-            (
-                q_p,
-                k_p,
-                v_p,
-                num_q_heads * padded_hd,
-                self.config.num_kv_heads * padded_hd,
-            )
-        };
+        // Q from decoder, K/V from encoder (with head padding if needed)
+        let (q, k, v, q_stride, kv_padded_dim) =
+            self.project_and_pad_qkv(decoder_hidden, encoder_output, dec_seq_len, enc_seq_len);
 
         // Compute attention using shared GQA attention helper (no causal mask)
         let attn_output = self.compute_gqa_attention(
@@ -448,87 +298,152 @@ impl GroupedQueryAttention {
             false,
         );
 
-        // Strip padding before output projection
-        let attn_unpadded = if padded_hd == head_dim {
-            attn_output
-        } else {
-            Self::unpad_heads(&attn_output, dec_seq_len, num_q_heads, head_dim, padded_hd)
-        };
-
-        // Output projection
-        let output = if cfg!(feature = "simd") {
-            crate::simd::matmul_raw(
-                &attn_unpadded,
-                &self.w_o,
-                self.b_o.as_deref(),
-                dec_seq_len,
-                hidden_size,
-                hidden_size,
-            )
-        } else {
-            self.linear(&attn_unpadded, &self.w_o, self.b_o.as_deref(), hidden_size)
-        };
-        Ok(output)
+        // Unpad and output projection
+        Ok(self.unpad_and_out_proj(attn_output, dec_seq_len))
     }
 
-    /// Linear projection helper
-    fn linear(
-        &self,
+    /// Unified linear projection: dispatches to SIMD matmul or scalar fallback.
+    fn project(
         input: &[f32],
         weight: &[f32],
         bias: Option<&[f32]>,
-        out_features: usize,
-    ) -> Vec<f32> {
-        let seq_len = input.len() / self.config.hidden_size;
-        let in_features = self.config.hidden_size;
-        let mut output = vec![0.0f32; seq_len * out_features];
-
-        for i in 0..seq_len {
-            for j in 0..out_features {
-                let mut sum = 0.0f32;
-                for k in 0..in_features {
-                    // Weight layout: [out_features, in_features] (row-major)
-                    sum += input[i * in_features + k] * weight[j * in_features + k];
-                }
-                if let Some(b) = bias {
-                    sum += b[j];
-                }
-                output[i * out_features + j] = sum;
-            }
-        }
-
-        output
-    }
-
-    /// Linear projection with explicit input dimension
-    ///
-    /// Used for cross-attention where K/V input dimension may differ from hidden_size.
-    #[allow(clippy::unused_self)]
-    fn linear_with_dim(
-        &self,
-        input: &[f32],
-        weight: &[f32],
-        bias: Option<&[f32]>,
+        seq_len: usize,
         in_features: usize,
         out_features: usize,
     ) -> Vec<f32> {
-        let seq_len = input.len() / in_features;
-        let mut output = vec![0.0f32; seq_len * out_features];
-
-        for i in 0..seq_len {
-            for j in 0..out_features {
-                let mut sum = 0.0f32;
-                for k in 0..in_features {
-                    sum += input[i * in_features + k] * weight[j * in_features + k];
+        if cfg!(feature = "simd") {
+            crate::simd::matmul_raw(input, weight, bias, seq_len, in_features, out_features)
+        } else {
+            let mut output = vec![0.0f32; seq_len * out_features];
+            for i in 0..seq_len {
+                for j in 0..out_features {
+                    let mut sum = 0.0f32;
+                    for k in 0..in_features {
+                        sum += input[i * in_features + k] * weight[j * in_features + k];
+                    }
+                    if let Some(b) = bias {
+                        sum += b[j];
+                    }
+                    output[i * out_features + j] = sum;
                 }
-                if let Some(b) = bias {
-                    sum += b[j];
-                }
-                output[i * out_features + j] = sum;
             }
+            output
         }
+    }
 
-        output
+    /// Project input through Q weights.
+    fn q_proj(&self, input: &[f32], seq_len: usize) -> Vec<f32> {
+        Self::project(
+            input,
+            &self.w_q,
+            self.b_q.as_deref(),
+            seq_len,
+            self.config.hidden_size,
+            self.config.hidden_size,
+        )
+    }
+
+    /// Project input through K weights.
+    fn k_proj(&self, input: &[f32], seq_len: usize) -> Vec<f32> {
+        Self::project(
+            input,
+            &self.w_k,
+            self.b_k.as_deref(),
+            seq_len,
+            self.config.hidden_size,
+            self.kv_dim(),
+        )
+    }
+
+    /// Project input through V weights.
+    fn v_proj(&self, input: &[f32], seq_len: usize) -> Vec<f32> {
+        Self::project(
+            input,
+            &self.w_v,
+            self.b_v.as_deref(),
+            seq_len,
+            self.config.hidden_size,
+            self.kv_dim(),
+        )
+    }
+
+    /// Project input through output weights.
+    fn out_proj(&self, input: &[f32], seq_len: usize) -> Vec<f32> {
+        Self::project(
+            input,
+            &self.w_o,
+            self.b_o.as_deref(),
+            seq_len,
+            self.config.hidden_size,
+            self.config.hidden_size,
+        )
+    }
+
+    /// Project Q/K/V from inputs, applying head padding if needed.
+    ///
+    /// Q is projected from `q_input`, K/V from `kv_input` (same for self-attn, different for cross-attn).
+    /// Returns `(Q, K, V, q_stride, kv_padded_dim)`.
+    fn project_and_pad_qkv(
+        &self,
+        q_input: &[f32],
+        kv_input: &[f32],
+        q_seq_len: usize,
+        kv_seq_len: usize,
+    ) -> (Vec<f32>, Vec<f32>, Vec<f32>, usize, usize) {
+        let kv_dim = self.kv_dim();
+        let head_dim = self.config.head_dim;
+        let padded_hd = self.config.padded_head_dim();
+        let num_q_heads = self.config.num_q_heads;
+        let hidden_size = self.config.hidden_size;
+
+        let q_raw = self.q_proj(q_input, q_seq_len);
+        let k_raw = self.k_proj(kv_input, kv_seq_len);
+        let v_raw = self.v_proj(kv_input, kv_seq_len);
+
+        if padded_hd == head_dim {
+            (q_raw, k_raw, v_raw, hidden_size, kv_dim)
+        } else {
+            let q = Self::pad_heads(&q_raw, q_seq_len, num_q_heads, head_dim, padded_hd);
+            let k = Self::pad_heads(
+                &k_raw,
+                kv_seq_len,
+                self.config.num_kv_heads,
+                head_dim,
+                padded_hd,
+            );
+            let v = Self::pad_heads(
+                &v_raw,
+                kv_seq_len,
+                self.config.num_kv_heads,
+                head_dim,
+                padded_hd,
+            );
+            (
+                q,
+                k,
+                v,
+                num_q_heads * padded_hd,
+                self.config.num_kv_heads * padded_hd,
+            )
+        }
+    }
+
+    /// Strip head padding from attention output and apply output projection.
+    fn unpad_and_out_proj(&self, attn_output: Vec<f32>, seq_len: usize) -> Vec<f32> {
+        let head_dim = self.config.head_dim;
+        let padded_hd = self.config.padded_head_dim();
+        let input = if padded_hd == head_dim {
+            attn_output
+        } else {
+            Self::unpad_heads(
+                &attn_output,
+                seq_len,
+                self.config.num_q_heads,
+                head_dim,
+                padded_hd,
+            )
+        };
+        self.out_proj(&input, seq_len)
     }
 
     /// Zero-pad each head's dimension from `head_dim` to `padded_hd`
@@ -836,8 +751,6 @@ impl GroupedQueryAttention {
         position: usize,
     ) -> WhisperResult<(Vec<f32>, Vec<f32>, Vec<f32>)> {
         let hidden_size = self.config.hidden_size;
-        let head_dim = self.config.head_dim;
-        let padded_hd = self.config.padded_head_dim();
 
         if hidden.len() != hidden_size {
             return Err(WhisperError::Model(format!(
@@ -847,53 +760,8 @@ impl GroupedQueryAttention {
             )));
         }
 
-        let kv_dim = self.kv_dim();
-
-        // Project with seq_len=1
-        let (q_raw, k_raw, v_raw) = if cfg!(feature = "simd") {
-            (
-                crate::simd::matmul_raw(
-                    hidden,
-                    &self.w_q,
-                    self.b_q.as_deref(),
-                    1,
-                    hidden_size,
-                    hidden_size,
-                ),
-                crate::simd::matmul_raw(
-                    hidden,
-                    &self.w_k,
-                    self.b_k.as_deref(),
-                    1,
-                    hidden_size,
-                    kv_dim,
-                ),
-                crate::simd::matmul_raw(
-                    hidden,
-                    &self.w_v,
-                    self.b_v.as_deref(),
-                    1,
-                    hidden_size,
-                    kv_dim,
-                ),
-            )
-        } else {
-            (
-                self.linear(hidden, &self.w_q, self.b_q.as_deref(), hidden_size),
-                self.linear(hidden, &self.w_k, self.b_k.as_deref(), kv_dim),
-                self.linear(hidden, &self.w_v, self.b_v.as_deref(), kv_dim),
-            )
-        };
-
-        // Pad head_dim if needed
-        let (mut q, mut k, v) = if padded_hd == head_dim {
-            (q_raw, k_raw, v_raw)
-        } else {
-            let qp = Self::pad_heads(&q_raw, 1, self.config.num_q_heads, head_dim, padded_hd);
-            let kp = Self::pad_heads(&k_raw, 1, self.config.num_kv_heads, head_dim, padded_hd);
-            let vp = Self::pad_heads(&v_raw, 1, self.config.num_kv_heads, head_dim, padded_hd);
-            (qp, kp, vp)
-        };
+        // Project Q, K, V and pad heads if needed
+        let (mut q, mut k, v, _, _) = self.project_and_pad_qkv(hidden, hidden, 1, 1);
 
         // Apply RoPE if provided (self-attention path) — operates on padded dims
         if let Some(rope_emb) = rope {
@@ -1054,26 +922,7 @@ impl GroupedQueryAttention {
     /// # Returns
     /// Projected output `[hidden_size]`
     pub fn output_projection(&self, attn_out: &[f32]) -> Vec<f32> {
-        let head_dim = self.config.head_dim;
-        let padded_hd = self.config.padded_head_dim();
-        let hidden_size = self.config.hidden_size;
-        let input = if padded_hd == head_dim {
-            attn_out.to_vec()
-        } else {
-            Self::unpad_heads(attn_out, 1, self.config.num_q_heads, head_dim, padded_hd)
-        };
-        if cfg!(feature = "simd") {
-            crate::simd::matmul_raw(
-                &input,
-                &self.w_o,
-                self.b_o.as_deref(),
-                1,
-                hidden_size,
-                hidden_size,
-            )
-        } else {
-            self.linear(&input, &self.w_o, self.b_o.as_deref(), hidden_size)
-        }
+        self.unpad_and_out_proj(attn_out.to_vec(), 1)
     }
 
     /// Project encoder output to K, V for cross-attention caching
@@ -1088,68 +937,9 @@ impl GroupedQueryAttention {
     /// # Returns
     /// `(K, V)` both `[enc_seq_len * padded_kv_dim]`
     pub fn project_kv(&self, encoder_out: &[f32], enc_seq_len: usize) -> (Vec<f32>, Vec<f32>) {
-        let kv_dim = self.kv_dim();
-        let head_dim = self.config.head_dim;
-        let padded_hd = self.config.padded_head_dim();
-        let hidden_size = self.config.hidden_size;
-
-        let (k_raw, v_raw) = if cfg!(feature = "simd") {
-            (
-                crate::simd::matmul_raw(
-                    encoder_out,
-                    &self.w_k,
-                    self.b_k.as_deref(),
-                    enc_seq_len,
-                    hidden_size,
-                    kv_dim,
-                ),
-                crate::simd::matmul_raw(
-                    encoder_out,
-                    &self.w_v,
-                    self.b_v.as_deref(),
-                    enc_seq_len,
-                    hidden_size,
-                    kv_dim,
-                ),
-            )
-        } else {
-            (
-                self.linear_with_dim(
-                    encoder_out,
-                    &self.w_k,
-                    self.b_k.as_deref(),
-                    hidden_size,
-                    kv_dim,
-                ),
-                self.linear_with_dim(
-                    encoder_out,
-                    &self.w_v,
-                    self.b_v.as_deref(),
-                    hidden_size,
-                    kv_dim,
-                ),
-            )
-        };
-
-        if padded_hd == head_dim {
-            (k_raw, v_raw)
-        } else {
-            let k = Self::pad_heads(
-                &k_raw,
-                enc_seq_len,
-                self.config.num_kv_heads,
-                head_dim,
-                padded_hd,
-            );
-            let v = Self::pad_heads(
-                &v_raw,
-                enc_seq_len,
-                self.config.num_kv_heads,
-                head_dim,
-                padded_hd,
-            );
-            (k, v)
-        }
+        let (_, k, v, _, _) =
+            self.project_and_pad_qkv(encoder_out, encoder_out, enc_seq_len, enc_seq_len);
+        (k, v)
     }
 
     /// Project decoder hidden state to Q only (for cross-attention)
@@ -1162,26 +952,8 @@ impl GroupedQueryAttention {
     /// # Returns
     /// Query vector `[num_q_heads * padded_head_dim]`
     pub fn project_q(&self, hidden: &[f32]) -> Vec<f32> {
-        let head_dim = self.config.head_dim;
-        let padded_hd = self.config.padded_head_dim();
-        let hidden_size = self.config.hidden_size;
-        let q_raw = if cfg!(feature = "simd") {
-            crate::simd::matmul_raw(
-                hidden,
-                &self.w_q,
-                self.b_q.as_deref(),
-                1,
-                hidden_size,
-                hidden_size,
-            )
-        } else {
-            self.linear(hidden, &self.w_q, self.b_q.as_deref(), hidden_size)
-        };
-        if padded_hd == head_dim {
-            q_raw
-        } else {
-            Self::pad_heads(&q_raw, 1, self.config.num_q_heads, head_dim, padded_hd)
-        }
+        let (q, _, _, _, _) = self.project_and_pad_qkv(hidden, hidden, 1, 1);
+        q
     }
 }
 
