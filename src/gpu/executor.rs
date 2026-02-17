@@ -221,47 +221,70 @@ impl GpuExecutor {
         let c_buffer = self.create_storage_buffer("C", dims.result_bytes() as u64);
         let staging_buffer = self.create_staging_buffer("staging", dims.result_bytes() as u64);
         let dims_data = Dimensions {
-            m: dims.m, k: dims.k, n: dims.n,
-            alpha: op.config().alpha, beta: op.config().beta,
+            m: dims.m,
+            k: dims.k,
+            n: dims.n,
+            alpha: op.config().alpha,
+            beta: op.config().beta,
             _padding: [0; 3],
         };
         let dims_buffer = self.create_uniform_buffer_init("dims", bytemuck::bytes_of(&dims_data));
 
         // Compile shader and create pipeline
-        let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("matmul_shader"),
-            source: wgpu::ShaderSource::Wgsl(op.generate_shader().into()),
-        });
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("matmul_shader"),
+                source: wgpu::ShaderSource::Wgsl(op.generate_shader().into()),
+            });
         let bind_group_layout = self.create_matmul_bind_group_layout("matmul_bgl");
-        let pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("matmul_pl"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-        let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("matmul_pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("matmul_pl"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("matmul_pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some("main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            });
 
         // Bind and dispatch
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("matmul_bg"),
             layout: &bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: dims_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: a_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: b_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: c_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: dims_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: a_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: b_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: c_buffer.as_entire_binding(),
+                },
             ],
         });
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("matmul_enc"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("matmul_enc"),
+            });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("matmul_pass"),
