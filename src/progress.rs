@@ -521,4 +521,25 @@ mod tests {
         assert_eq!(progress.phase, "Loading");
         assert_eq!(progress.message, "Loading model weights...");
     }
+
+    #[test]
+    fn test_progress_display_message() {
+        let progress = Progress::new(3, 10).message("Decoding tokens...");
+        assert_eq!(progress.display_message(), "Decoding tokens...");
+
+        let empty = Progress::new(0, 0);
+        assert_eq!(empty.display_message(), "");
+    }
+
+    #[test]
+    fn test_progress_tracker_overall_percent() {
+        let mut tracker = ProgressTracker::new(vec![("A", 0.4), ("B", 0.6)]);
+        assert!((tracker.overall_percent() - 0.0).abs() < f32::EPSILON);
+
+        tracker.next_phase();
+        assert!((tracker.overall_percent() - 40.0).abs() < f32::EPSILON);
+
+        tracker.complete();
+        assert!((tracker.overall_percent() - 100.0).abs() < f32::EPSILON);
+    }
 }

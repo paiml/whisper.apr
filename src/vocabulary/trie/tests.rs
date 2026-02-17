@@ -351,3 +351,16 @@ fn test_vocabulary_trie_shared_prefix() {
     assert_eq!(result.continuations.len(), 3);
     assert_eq!(result.matching_entries, 3);
 }
+
+#[test]
+fn test_trie_node_get_child_mut() {
+    let mut node = TrieNode::new(0);
+    node.get_or_create_child(42);
+    let child = node.get_child_mut(42);
+    assert!(child.is_some());
+    child.unwrap().set_terminal("hello".to_string(), 1.5);
+    assert!(node.get_child(42).unwrap().is_terminal());
+    assert!((node.get_child(42).unwrap().boost() - 1.5).abs() < f32::EPSILON);
+
+    assert!(node.get_child_mut(99).is_none());
+}

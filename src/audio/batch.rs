@@ -285,6 +285,25 @@ mod tests {
         assert_eq!(segments[1], vec![3.0, 4.0, 5.0]);
     }
 
+    #[test]
+    fn test_audio_batch_segments_mut() {
+        let mut batch = AudioBatch::new(AudioConfig::default());
+        batch.add_segment(vec![1.0, 2.0]);
+        batch.segments_mut().push(vec![3.0, 4.0]);
+        assert_eq!(batch.len(), 2);
+        assert_eq!(batch.segments()[1], vec![3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_audio_batch_config() {
+        let cfg = AudioConfig {
+            sample_rate: 44100,
+            ..AudioConfig::default()
+        };
+        let batch = AudioBatch::new(cfg.clone());
+        assert_eq!(batch.config().sample_rate, 44100);
+    }
+
     // =========================================================================
     // BatchMelResult Tests
     // =========================================================================
