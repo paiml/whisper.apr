@@ -109,191 +109,43 @@ impl GpuExecutor {
         ))
     }
 
-    /// Execute matrix multiplication on GPU.
-    ///
-    /// Runs the full pipeline: validates dimensions, creates input/output GPU buffers,
-    /// compiles the WGSL shader, dispatches the compute workgroups, and reads back
-    /// the result.
+    /// Create a standard 4-buffer bind group layout: uniform + 2 read-only storage + 1 read-write.
     #[cfg(feature = "webgpu")]
-    pub async fn execute_matmul(
-        &self,
-        op: &GpuMatMul,
-        lhs: &[f32],
-        rhs: &[f32],
-    ) -> GpuResult<Vec<f32>> {
-        // Uniform buffer layout for dimensions (must be declared before statements)
-        #[repr(C)]
-        #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-        struct Dimensions {
-            m: u32,
-            k: u32,
-            n: u32,
-            alpha: f32,
-            beta: f32,
-            _padding: [u32; 3],
-        }
-
-        let dims = op.dimensions();
-
-        // Validate input sizes
-        if lhs.len() != dims.a_size() {
-            return Err(GpuError::compute(format!(
-                "Matrix A size mismatch: expected {}, got {}",
-                dims.a_size(),
-                lhs.len()
-            )));
-        }
-        if rhs.len() != dims.b_size() {
-            return Err(GpuError::compute(format!(
-                "Matrix B size mismatch: expected {}, got {}",
-                dims.b_size(),
-                rhs.len()
-            )));
-        }
-
-        // Create buffers
-        let a_buffer = self.create_storage_buffer_init("A", bytemuck::cast_slice(lhs));
-        let b_buffer = self.create_storage_buffer_init("B", bytemuck::cast_slice(rhs));
-        let c_buffer = self.create_storage_buffer("C", dims.result_bytes() as u64);
-        let staging_buffer = self.create_staging_buffer("staging", dims.result_bytes() as u64);
-
-        let dims_data = Dimensions {
-            m: dims.m,
-            k: dims.k,
-            n: dims.n,
-            alpha: op.config().alpha,
-            beta: op.config().beta,
-            _padding: [0; 3],
+    fn create_matmul_bind_group_layout(&self, label: &str) -> wgpu::BindGroupLayout {
+        let storage_entry = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
         };
-        let dims_buffer = self.create_uniform_buffer_init("dims", bytemuck::bytes_of(&dims_data));
-
-        // Compile shader
-        let shader_source = op.generate_shader();
-        let shader = self
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("matmul_shader"),
-                source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-            });
-
-        // Create bind group layout
-        let bind_group_layout =
-            self.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("matmul_bind_group_layout"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
+        self.device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some(label),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
                         },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 2,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 3,
-                            visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                    ],
-                });
+                        count: None,
+                    },
+                    storage_entry(1, true),
+                    storage_entry(2, true),
+                    storage_entry(3, false),
+                ],
+            })
+    }
 
-        // Create pipeline layout
-        let pipeline_layout = self
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("matmul_pipeline_layout"),
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-        // Create compute pipeline
-        let pipeline = self
-            .device
-            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("matmul_pipeline"),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some("main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            });
-
-        // Create bind group
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("matmul_bind_group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: dims_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: a_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: b_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: c_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
-        // Encode and submit
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("matmul_encoder"),
-            });
-
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("matmul_pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            let (wg_x, wg_y, wg_z) = op.workgroups();
-            pass.dispatch_workgroups(wg_x, wg_y, wg_z);
-        }
-
-        // Copy result to staging buffer
-        encoder.copy_buffer_to_buffer(&c_buffer, 0, &staging_buffer, 0, dims.result_bytes() as u64);
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-
-        // Read back result
+    /// Read back f32 data from a GPU staging buffer.
+    #[cfg(feature = "webgpu")]
+    fn read_staging_buffer(&self, staging_buffer: &wgpu::Buffer) -> GpuResult<Vec<f32>> {
         let buffer_slice = staging_buffer.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
@@ -309,8 +161,121 @@ impl GpuExecutor {
         let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
         drop(data);
         staging_buffer.unmap();
-
         Ok(result)
+    }
+
+    /// Validate matmul input slice lengths against expected dimensions.
+    #[cfg(feature = "webgpu")]
+    fn validate_matmul_inputs(
+        &self,
+        lhs: &[f32],
+        rhs: &[f32],
+        dims: &crate::gpu::ops::matmul::MatMulDimensions,
+    ) -> GpuResult<()> {
+        if lhs.len() != dims.a_size() {
+            return Err(GpuError::compute(format!(
+                "Matrix A size mismatch: expected {}, got {}",
+                dims.a_size(),
+                lhs.len()
+            )));
+        }
+        if rhs.len() != dims.b_size() {
+            return Err(GpuError::compute(format!(
+                "Matrix B size mismatch: expected {}, got {}",
+                dims.b_size(),
+                rhs.len()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Execute matrix multiplication on GPU.
+    ///
+    /// Runs the full pipeline: validates dimensions, creates input/output GPU buffers,
+    /// compiles the WGSL shader, dispatches the compute workgroups, and reads back
+    /// the result.
+    #[cfg(feature = "webgpu")]
+    pub async fn execute_matmul(
+        &self,
+        op: &GpuMatMul,
+        lhs: &[f32],
+        rhs: &[f32],
+    ) -> GpuResult<Vec<f32>> {
+        #[repr(C)]
+        #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+        struct Dimensions {
+            m: u32,
+            k: u32,
+            n: u32,
+            alpha: f32,
+            beta: f32,
+            _padding: [u32; 3],
+        }
+
+        let dims = op.dimensions();
+        self.validate_matmul_inputs(lhs, rhs, &dims)?;
+
+        // Create GPU buffers
+        let a_buffer = self.create_storage_buffer_init("A", bytemuck::cast_slice(lhs));
+        let b_buffer = self.create_storage_buffer_init("B", bytemuck::cast_slice(rhs));
+        let c_buffer = self.create_storage_buffer("C", dims.result_bytes() as u64);
+        let staging_buffer = self.create_staging_buffer("staging", dims.result_bytes() as u64);
+        let dims_data = Dimensions {
+            m: dims.m, k: dims.k, n: dims.n,
+            alpha: op.config().alpha, beta: op.config().beta,
+            _padding: [0; 3],
+        };
+        let dims_buffer = self.create_uniform_buffer_init("dims", bytemuck::bytes_of(&dims_data));
+
+        // Compile shader and create pipeline
+        let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("matmul_shader"),
+            source: wgpu::ShaderSource::Wgsl(op.generate_shader().into()),
+        });
+        let bind_group_layout = self.create_matmul_bind_group_layout("matmul_bgl");
+        let pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("matmul_pl"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("matmul_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
+
+        // Bind and dispatch
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("matmul_bg"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: dims_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: a_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: b_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: c_buffer.as_entire_binding() },
+            ],
+        });
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("matmul_enc"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("matmul_pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            let (wg_x, wg_y, wg_z) = op.workgroups();
+            pass.dispatch_workgroups(wg_x, wg_y, wg_z);
+        }
+        encoder.copy_buffer_to_buffer(&c_buffer, 0, &staging_buffer, 0, dims.result_bytes() as u64);
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        self.read_staging_buffer(&staging_buffer)
     }
 
     /// Execute matrix multiplication (stub when webgpu disabled)

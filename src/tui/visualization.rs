@@ -204,14 +204,21 @@ fn attention_cell_average(
 ///
 /// Linearly maps `normalized` onto the `chars` palette: 0.0 maps to the first
 /// character, 1.0 maps to the last. Values are clamped to the palette bounds.
+///
+/// # Boundary behavior
+///
+/// - `normalized = 0.0` always returns `chars[0]`
+/// - `normalized = 1.0` always returns the last character
+/// - Intermediate values are linearly interpolated across the palette
 fn heatmap_char(chars: &[char], normalized: f32) -> char {
     debug_assert!(!chars.is_empty(), "character palette must not be empty");
     debug_assert!(
         (0.0..=1.0).contains(&normalized),
         "normalized value must be in [0, 1], got {normalized}"
     );
-    let idx = (normalized * (chars.len() - 1) as f32) as usize;
-    chars[idx.min(chars.len() - 1)]
+    let last = chars.len() - 1;
+    let idx = (normalized * last as f32) as usize;
+    chars[idx.min(last)]
 }
 
 /// Render mel spectrogram as ASCII heatmap

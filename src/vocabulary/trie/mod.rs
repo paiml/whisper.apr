@@ -225,8 +225,9 @@ impl VocabularyTrie {
 
     /// Insert a token sequence into the trie.
     ///
-    /// Walks the trie from root to leaf, creating intermediate nodes as needed.
-    /// Empty token sequences are silently ignored.
+    /// Walks from root to leaf, creating intermediate nodes as needed.
+    /// If the token sequence already exists, its text and boost are updated.
+    /// Empty token sequences are silently ignored (no-op).
     ///
     /// # Arguments
     /// * `tokens` - Token sequence representing the vocabulary entry
@@ -242,20 +243,10 @@ impl VocabularyTrie {
             node = node.get_or_create_child(token);
         }
 
-        // Mark terminal
         if !node.is_terminal() {
             self.entry_count += 1;
         }
         node.set_terminal(text.to_string(), boost);
-
-        debug_assert!(
-            self.entry_count > 0,
-            "entry_count must be positive after insertion"
-        );
-        debug_assert!(
-            self.contains(tokens),
-            "inserted token sequence must be findable"
-        );
     }
 
     /// Insert with default boost

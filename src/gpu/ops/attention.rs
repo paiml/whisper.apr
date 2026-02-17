@@ -361,23 +361,12 @@ fn main(
         }
     }
 
-    /// Generate complete fused attention shader
-    ///
-    /// This combines scores, optional causal mask, softmax, and output
-    /// into a single shader for reduced memory bandwidth.
-    #[must_use]
-    pub fn generate_fused_attention_shader(&self) -> String {
+    /// Build the WGSL header with bindings and constants for fused attention.
+    fn build_fused_header(&self) -> String {
         let tile = self.config.tile_size.dimension();
-        let scale = self.config.scale();
-        let seq_q = self.config.seq_len_q;
-        let seq_kv = self.config.seq_len_kv;
-        let head_dim = self.config.head_dim;
-        let causal_check = self.build_causal_check();
-
         format!(
             r#"// Fused Multi-Head Attention
 // Computes: softmax(Q @ K^T / sqrt(d_k) + mask) @ V
-// Generated for WAPR-GPU-ATTENTION-001
 
 struct Params {{
     seq_len_q: u32,
@@ -387,10 +376,10 @@ struct Params {{
 }}
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> q: array<f32>;      // [batch, heads, seq_q, head_dim]
-@group(0) @binding(2) var<storage, read> k: array<f32>;      // [batch, heads, seq_kv, head_dim]
-@group(0) @binding(3) var<storage, read> v: array<f32>;      // [batch, heads, seq_kv, head_dim]
-@group(0) @binding(4) var<storage, read_write> output: array<f32>; // [batch, heads, seq_q, head_dim]
+@group(0) @binding(1) var<storage, read> q: array<f32>;
+@group(0) @binding(2) var<storage, read> k: array<f32>;
+@group(0) @binding(3) var<storage, read> v: array<f32>;
+@group(0) @binding(4) var<storage, read_write> output: array<f32>;
 
 const TILE_SIZE: u32 = {tile}u;
 const SEQ_Q: u32 = {seq_q}u;
@@ -399,93 +388,89 @@ const HEAD_DIM: u32 = {head_dim}u;
 const SCALE: f32 = {scale};
 const NEG_INF: f32 = -3.402823e+38;
 
-// Per-row maximum and sum for online softmax
 var<workgroup> row_max: array<f32, {tile}>;
-var<workgroup> row_sum: array<f32, {tile}>;
+var<workgroup> row_sum: array<f32, {tile}>;"#,
+            tile = tile,
+            seq_q = self.config.seq_len_q,
+            seq_kv = self.config.seq_len_kv,
+            head_dim = self.config.head_dim,
+            scale = self.config.scale(),
+        )
+    }
 
-@compute @workgroup_size({tile}, 1)
+    /// Build the WGSL body: score computation, online softmax, and output accumulation.
+    fn build_fused_body(&self) -> String {
+        let tile = self.config.tile_size.dimension();
+        let causal_check = self.build_causal_check();
+        format!(
+            r#"@compute @workgroup_size({tile}, 1)
 fn main(
     @builtin(global_invocation_id) global_id: vec3<u32>,
     @builtin(local_invocation_id) local_id: vec3<u32>,
     @builtin(workgroup_id) group_id: vec3<u32>
 ) {{
-    let row = global_id.x;  // Query position
-    let head = group_id.y;  // Attention head
+    let row = global_id.x;
+    let head = group_id.y;
     let local_row = local_id.x;
 
-    if (row >= SEQ_Q) {{
-        return;
-    }}
+    if (row >= SEQ_Q) {{ return; }}
 
     // Step 1: Compute attention scores and find max
     var max_score: f32 = NEG_INF;
-
     for (var col: u32 = 0u; col < SEQ_KV; col = col + 1u) {{
         var score: f32 = 0.0;
-
-        // Compute Q @ K^T for this position
         for (var d: u32 = 0u; d < HEAD_DIM; d = d + 1u) {{
-            let q_idx = (head * SEQ_Q + row) * HEAD_DIM + d;
-            let k_idx = (head * SEQ_KV + col) * HEAD_DIM + d;
-            score = score + q[q_idx] * k[k_idx];
+            score = score + q[(head * SEQ_Q + row) * HEAD_DIM + d] * k[(head * SEQ_KV + col) * HEAD_DIM + d];
         }}
         score = score * SCALE;
         {causal_check}
-
         max_score = max(max_score, score);
     }}
-
     row_max[local_row] = max_score;
     workgroupBarrier();
 
-    // Step 2: Compute softmax and weighted output
+    // Step 2: Softmax weights and weighted V accumulation
     var sum_exp: f32 = 0.0;
-    var out: array<f32, {head_dim}>;  // Accumulate output
-
-    for (var d: u32 = 0u; d < HEAD_DIM; d = d + 1u) {{
-        out[d] = 0.0;
-    }}
+    var out: array<f32, {head_dim}>;
+    for (var d: u32 = 0u; d < HEAD_DIM; d = d + 1u) {{ out[d] = 0.0; }}
 
     for (var col: u32 = 0u; col < SEQ_KV; col = col + 1u) {{
         var score: f32 = 0.0;
-
-        // Recompute score (could cache, but memory bound)
         for (var d: u32 = 0u; d < HEAD_DIM; d = d + 1u) {{
-            let q_idx = (head * SEQ_Q + row) * HEAD_DIM + d;
-            let k_idx = (head * SEQ_KV + col) * HEAD_DIM + d;
-            score = score + q[q_idx] * k[k_idx];
+            score = score + q[(head * SEQ_Q + row) * HEAD_DIM + d] * k[(head * SEQ_KV + col) * HEAD_DIM + d];
         }}
         score = score * SCALE;
         {causal_check}
-
-        // Softmax weight
         let weight = exp(score - max_score);
         sum_exp = sum_exp + weight;
-
-        // Accumulate weighted V
         for (var d: u32 = 0u; d < HEAD_DIM; d = d + 1u) {{
-            let v_idx = (head * SEQ_KV + col) * HEAD_DIM + d;
-            out[d] = out[d] + weight * v[v_idx];
+            out[d] = out[d] + weight * v[(head * SEQ_KV + col) * HEAD_DIM + d];
         }}
     }}
-
     row_sum[local_row] = sum_exp;
     workgroupBarrier();
 
     // Step 3: Normalize and write output
     let norm = 1.0 / sum_exp;
     for (var d: u32 = 0u; d < HEAD_DIM; d = d + 1u) {{
-        let out_idx = (head * SEQ_Q + row) * HEAD_DIM + d;
-        output[out_idx] = out[d] * norm;
+        output[(head * SEQ_Q + row) * HEAD_DIM + d] = out[d] * norm;
     }}
 }}"#,
             tile = tile,
-            seq_q = seq_q,
-            seq_kv = seq_kv,
-            head_dim = head_dim,
-            scale = scale,
+            head_dim = self.config.head_dim,
             causal_check = causal_check,
         )
+    }
+
+    /// Generate complete fused attention shader.
+    ///
+    /// Combines Q@K^T scoring, optional causal mask, online softmax, and V accumulation
+    /// into a single GPU dispatch for reduced memory bandwidth.
+    #[must_use]
+    pub fn generate_fused_attention_shader(&self) -> String {
+        let header = self.build_fused_header();
+        let body = self.build_fused_body();
+        format!("{header}\n\n{body}")
     }
 }
 

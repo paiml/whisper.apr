@@ -32,12 +32,19 @@ impl SizeClass {
     ///
     /// Rounds `size` up to the next power of two for efficient pool bucketing.
     /// Returns `SizeClass(0)` when `size` is zero.
+    ///
+    /// # Examples
+    ///
+    /// - `for_size(0)` → `SizeClass(0)`
+    /// - `for_size(1)` → `SizeClass(1)`
+    /// - `for_size(5)` → `SizeClass(8)`
+    /// - `for_size(1024)` → `SizeClass(1024)` (already a power of two)
     #[must_use]
     pub fn for_size(size: usize) -> Self {
         if size == 0 {
             return Self(0);
         }
-        // Round up to next power of 2
+        // Round up to next power of 2 using bit counting
         let bits = usize::BITS - (size - 1).leading_zeros();
         let result = Self(1 << bits);
         debug_assert!(
