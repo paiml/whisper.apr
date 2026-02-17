@@ -1,5 +1,19 @@
 # Installation
 
+## CLI (Recommended)
+
+Install the whisper-apr CLI for quick transcription:
+
+```bash
+cargo install whisper-apr --features cli
+```
+
+Verify installation:
+
+```bash
+whisper-apr selftest
+```
+
 ## Browser Usage (npm)
 
 For web applications, install via npm:
@@ -20,27 +34,33 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-whisper-apr = "0.1"
+whisper-apr = "0.2"
 ```
 
 ### Feature Flags
 
 ```toml
 [dependencies]
-whisper-apr = { version = "0.1", features = ["wasm", "simd"] }
+whisper-apr = { version = "0.2", features = ["wasm", "simd"] }
 ```
 
 Available features:
 - `std` (default) - Standard library support
+- `simd` (default) - SIMD optimization paths
+- `parallel` (default) - Multi-threaded inference via rayon
+- `realizar-inference` (default) - Advanced inference primitives
 - `wasm` - WASM bindings via wasm-bindgen
-- `simd` - Explicit SIMD optimization paths
+- `cli` - Command-line interface
+- `converter` - Model converter tool
 - `tracing` - Performance tracing via renacer
+- `tui` - Terminal UI benchmark visualization
+- `symphonia` - Multi-format audio (MP3, FLAC, OGG, AAC, M4A)
 
 ## Building from Source
 
 ### Prerequisites
 
-- Rust 1.85+ (edition 2024)
+- Rust 1.75+ (edition 2021)
 - wasm-pack (for WASM builds)
 - Node.js 18+ (for running browser tests)
 
@@ -63,30 +83,50 @@ wasm-pack build --target web --release
 ### Running Tests
 
 ```bash
-# All tests
-cargo test
+# All unit tests
+cargo test --lib
+
+# Full test suite (including integration tests)
+cargo test --features integration-tests
 
 # WASM tests (requires Chrome)
 wasm-pack test --headless --chrome
 ```
 
-## Model Download
+## Model Setup
 
-Download pre-converted `.apr` models:
+### Auto-Download (CLI)
+
+The CLI auto-downloads models from HuggingFace on first use:
 
 ```bash
-# tiny model (~40MB)
-curl -O https://models.paiml.com/whisper/tiny.apr
+# Uses whisper-tiny by default (auto-downloads ~39MB)
+whisper-apr transcribe -f audio.wav
 
-# base model (~75MB)
-curl -O https://models.paiml.com/whisper/base.apr
+# Specify model size
+whisper-apr transcribe -f audio.wav --model base
+
+# Use Moonshine models
+whisper-apr transcribe -f audio.wav --model moonshine-tiny
 ```
 
-Or use the model converter to create `.apr` from PyTorch weights:
+### GGUF Models (Direct Loading)
+
+Load pre-quantized GGUF models from HuggingFace directly:
 
 ```bash
-cd models/converter
-python convert.py --model base --output base.apr
+# Download a GGUF model manually
+# Then load it directly (no conversion needed)
+whisper-apr transcribe -f audio.wav --model-path whisper-tiny.gguf
+```
+
+### Model Conversion
+
+Convert SafeTensors models to .apr format:
+
+```bash
+cargo run --bin whisper-convert --features converter -- \
+  --model tiny --output whisper-tiny.apr
 ```
 
 ## Verifying Installation
@@ -96,8 +136,8 @@ use whisper_apr::{WhisperApr, TranscribeOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load model
-    let model_data = std::fs::read("base.apr")?;
-    let whisper = WhisperApr::load(&model_data)?;
+    let model_data = std::fs::read("whisper-tiny.apr")?;
+    let whisper = WhisperApr::load_from_apr(&model_data)?;
 
     println!("Model loaded successfully!");
     Ok(())

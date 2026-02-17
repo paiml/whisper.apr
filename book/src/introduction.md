@@ -1,6 +1,6 @@
 # Introduction
 
-Whisper.apr is a WASM-first automatic speech recognition (ASR) engine implementing OpenAI's Whisper architecture in pure Rust. Unlike whisper.cpp (C++ with Emscripten) or Python implementations, Whisper.apr is designed from inception for browser deployment via `wasm32-unknown-unknown`.
+Whisper.apr is a WASM-first automatic speech recognition (ASR) engine implementing OpenAI's Whisper architecture in pure Rust. Unlike whisper.cpp (C++ with Emscripten) or Python implementations, Whisper.apr is designed from inception for browser deployment via `wasm32-unknown-unknown`. It also supports Moonshine ASR models and direct GGUF model loading.
 
 ## Why Whisper.apr?
 
@@ -31,6 +31,8 @@ Whisper.apr achieves practical transcription speeds:
 | tiny  | 39M        | 2.0x       | 150MB  |
 | base  | 74M        | 2.5x       | 300MB  |
 | small | 244M       | 4.0x       | 800MB  |
+| moonshine-tiny | 27M | 1.0x    | 50MB   |
+| moonshine-base | 61M | 1.5x    | 100MB  |
 
 *RTF = Real-Time Factor (2.0x means 60s audio takes 120s to process)*
 
@@ -62,17 +64,20 @@ Whisper.apr follows Toyota Way principles:
 2. **Jidoka** - Quality built in via PMAT gates and mutation testing
 3. **Genchi Genbutsu** - Reality-based performance targets from browser benchmarks
 
-## Project Status
+## Project Status (v0.2.4)
 
-Whisper.apr is under active development. Current focus:
-
-- [x] Core transformer architecture
-- [x] Audio preprocessing (mel spectrogram)
-- [x] BPE tokenization
-- [ ] Greedy decoding
-- [ ] Beam search
-- [ ] .apr model format
-- [ ] JavaScript bindings
+- [x] Core transformer architecture (encoder-decoder)
+- [x] Audio preprocessing (mel spectrogram, symphonia multi-format)
+- [x] BPE tokenization (51,865 tokens, 99 languages)
+- [x] Greedy and beam search decoding
+- [x] .apr model format with streaming load
+- [x] GGUF model loading (pre-quantized from HuggingFace)
+- [x] Moonshine ASR (GQA decoder, ConvStem encoder)
+- [x] Large v3 Turbo support (809M params)
+- [x] JavaScript/WASM bindings
+- [x] Int4/Int8 quantization
+- [x] CLI with transcribe, probe, parity, config-check, selftest
+- [x] 2,885 tests, 96%+ coverage, TDG 99.5/100 A+
 
 ## Next Steps
 

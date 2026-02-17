@@ -20,6 +20,7 @@
   - [Decoder](./architecture/decoder.md)
   - [Multi-Head Attention](./architecture/attention.md)
 - [.apr Model Format](./architecture/apr-format.md)
+- [GGUF Model Loading](./advanced/model-conversion.md)
 - [Quantization](./architecture/quantization.md)
 - [Trueno Integration](./architecture/trueno-integration.md)
 
