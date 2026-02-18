@@ -35,6 +35,7 @@ fn main() {
         strategy: DecodingStrategy::Greedy,
         word_timestamps: false,
         profile: false,
+        ..Default::default()
     };
 
     println!("Transcription options:");
