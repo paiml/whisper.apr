@@ -278,13 +278,29 @@ impl LinearWeights {
         let batch_size = input.len() / (seq_len * self.in_features);
         let total_tokens = batch_size * seq_len;
 
-        // fp16 weight path: halves DRAM bandwidth for memory-bound decoder inference
+        // fp16 weight path
         if let Some(ref w_f16) = self.weight_f16 {
-            let mut output = if total_tokens == 1 {
-                // Single token: fp16 tiled matvec (dequant row-by-row into L1 cache)
-                simd::tiled_matvec_f16(w_f16, input, self.out_features, self.in_features)
+            // Threshold: matvec is memory-bound (fp16 wins 2-5x),
+            // matmul is compute-bound (fp16 dequant overhead, no win).
+            const FP16_MATVEC_BATCH_LIMIT: usize = 8;
+            let mut output = if total_tokens <= FP16_MATVEC_BATCH_LIMIT {
+                // Small batch: fused F16C matvec per token (memory-bound, 2-5x win)
+                let mut out = vec![0.0_f32; total_tokens * self.out_features];
+                for t in 0..total_tokens {
+                    let tok_in = &input[t * self.in_features..(t + 1) * self.in_features];
+                    let tok_out =
+                        &mut out[t * self.out_features..(t + 1) * self.out_features];
+                    simd::tiled_matvec_f16_into(
+                        w_f16,
+                        tok_in,
+                        tok_out,
+                        self.out_features,
+                        self.in_features,
+                    );
+                }
+                out
             } else {
-                // Batch: dequant full matrix to temp f32, then standard matmul
+                // Large batch (encoder): dequant once + matmul (compute-bound)
                 let mut buf = vec![0.0_f32; w_f16.len()];
                 simd::dequant_f16_row(w_f16, &mut buf);
                 let weight_t = simd::transpose(&buf, self.out_features, self.in_features);
