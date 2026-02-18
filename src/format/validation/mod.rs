@@ -20,15 +20,17 @@ pub use stats::TensorStats;
 pub use validator::AprValidator;
 
 use crate::error::{WhisperError, WhisperResult};
-use crate::format::AprReader;
+use crate::format::{metadata_to_model_config, AprV2ReaderRef};
 
 /// Validate an APR file from bytes
 ///
 /// # Errors
 /// Returns error if file cannot be parsed
-pub fn validate_apr_bytes(data: Vec<u8>) -> WhisperResult<ValidationReport> {
-    let reader = AprReader::new(data)?;
-    let validator = AprValidator::new(&reader);
+pub fn validate_apr_bytes(data: &[u8]) -> WhisperResult<ValidationReport> {
+    let reader =
+        AprV2ReaderRef::from_bytes(data).map_err(|e| WhisperError::Format(e.to_string()))?;
+    let config = metadata_to_model_config(reader.metadata());
+    let validator = AprValidator::new(&reader, config);
     Ok(validator.validate_all())
 }
 
@@ -36,9 +38,9 @@ pub fn validate_apr_bytes(data: Vec<u8>) -> WhisperResult<ValidationReport> {
 ///
 /// # Errors
 /// Returns error if critical validation fails
-pub fn quick_validate(reader: &AprReader) -> WhisperResult<()> {
+pub fn quick_validate(reader: &AprV2ReaderRef<'_>) -> WhisperResult<()> {
     // Validate decoder layer norm weights are within expected statistical range
-    if let Ok(data) = reader.load_tensor("decoder.layer_norm.weight") {
+    if let Some(data) = reader.get_tensor_as_f32("decoder.layer_norm.weight") {
         let stats = TensorStats::compute("decoder.layer_norm.weight", &data);
         if stats.mean < 0.5 || stats.mean > 3.0 {
             return Err(WhisperError::Format(format!(
@@ -49,7 +51,7 @@ pub fn quick_validate(reader: &AprReader) -> WhisperResult<()> {
     }
 
     // Check encoder LN weight mean
-    if let Ok(data) = reader.load_tensor("encoder.layer_norm.weight") {
+    if let Some(data) = reader.get_tensor_as_f32("encoder.layer_norm.weight") {
         let stats = TensorStats::compute("encoder.layer_norm.weight", &data);
         if stats.mean < 0.5 || stats.mean > 3.0 {
             return Err(WhisperError::Format(format!(

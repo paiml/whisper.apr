@@ -2948,7 +2948,7 @@ fn run_lfm2_benchmark(args: &BenchmarkArgs, global: &Args) -> CliResult<CommandR
 
 /// Run quick APR validation mode
 fn run_quick_validation(
-    reader: &crate::format::AprReader,
+    reader: &crate::format::AprV2ReaderRef<'_>,
     global: &Args,
 ) -> CliResult<CommandResult> {
     match crate::format::quick_validate(reader) {
@@ -2971,7 +2971,7 @@ fn run_quick_validation(
 
 /// Run validate command
 pub fn run_validate(args: ValidateArgs, global: &Args) -> CliResult<CommandResult> {
-    use crate::format::{AprReader, AprValidator};
+    use crate::format::{metadata_to_model_config, AprV2ReaderRef, AprValidator};
 
     // Validate input file exists
     if !args.file.exists() {
@@ -2984,14 +2984,16 @@ pub fn run_validate(args: ValidateArgs, global: &Args) -> CliResult<CommandResul
     }
 
     let data = fs::read(&args.file)?;
-    let reader = AprReader::new(data).map_err(|e| CliError::InvalidArgument(e.to_string()))?;
+    let reader = AprV2ReaderRef::from_bytes(&data)
+        .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
 
     if args.quick {
         return run_quick_validation(&reader, global);
     }
 
     // Full 25-point validation
-    let validator = AprValidator::new(&reader);
+    let config = metadata_to_model_config(reader.metadata());
+    let validator = AprValidator::new(&reader, config);
     let report = validator.validate_all();
 
     // Format output
@@ -3412,7 +3414,7 @@ fn diagnose_model_file(
 
     match fs::read(model_path) {
         Ok(data) => {
-            let has_magic = data.len() >= 4 && data.get(0..4) == Some(&crate::format::MAGIC);
+            let has_magic = data.len() >= 4 && data.get(0..4) == Some(&crate::format::MAGIC_V2[..]);
             let actual = if let Some(magic) = data.get(0..4) {
                 format!(
                     "{:02X} {:02X} {:02X} {:02X}",
@@ -4078,7 +4080,7 @@ fn log_tensor_mapping(tensor_names: &[String], n_tensors: usize, n_params: u64, 
 
 /// Extract tensors from an APR reader into a BTreeMap for export
 fn extract_tensors_for_export(
-    reader: &crate::format::AprReader,
+    reader: &crate::format::AprV2ReaderRef<'_>,
     global: &Args,
 ) -> CliResult<std::collections::BTreeMap<String, crate::format::export::TensorData>> {
     use crate::format::export::TensorData;
@@ -4086,19 +4088,21 @@ fn extract_tensors_for_export(
 
     let mut tensors: BTreeMap<String, TensorData> = BTreeMap::new();
 
-    for tensor_desc in &reader.tensors {
-        let name = &tensor_desc.name;
-        let tensor_data = reader
-            .load_tensor(name)
-            .map_err(|e| CliError::InvalidArgument(format!("Failed to load tensor {name}: {e}")))?;
+    for name in reader.tensor_names() {
+        let tensor_entry = reader.get_tensor(name).ok_or_else(|| {
+            CliError::InvalidArgument(format!("Tensor not found: {name}"))
+        })?;
+        let tensor_data = reader.get_tensor_as_f32(name).ok_or_else(|| {
+            CliError::InvalidArgument(format!("Failed to load tensor {name}"))
+        })?;
 
-        let shape: Vec<usize> = tensor_desc.shape().iter().map(|&d| d as usize).collect();
+        let shape: Vec<usize> = tensor_entry.shape.clone();
 
         if global.verbose {
             println!("  {} {:?} ({} elements)", name, shape, tensor_data.len());
         }
 
-        tensors.insert(name.clone(), TensorData::new(tensor_data, shape));
+        tensors.insert(name.to_string(), TensorData::new(tensor_data, shape));
     }
 
     Ok(tensors)
@@ -4107,7 +4111,7 @@ fn extract_tensors_for_export(
 /// Run export command — convert APR model to SafeTensors format
 pub fn run_export(args: ExportArgs, global: &Args) -> CliResult<CommandResult> {
     use crate::format::export::SafeTensorsExporter;
-    use crate::format::AprReader;
+    use crate::format::AprV2ReaderRef;
     use std::collections::BTreeMap;
     use std::time::Instant;
 
@@ -4145,10 +4149,10 @@ pub fn run_export(args: ExportArgs, global: &Args) -> CliResult<CommandResult> {
     }
 
     // Load APR model
-    let reader = AprReader::new(data)
+    let reader = AprV2ReaderRef::from_bytes(&data)
         .map_err(|e| CliError::InvalidArgument(format!("Failed to parse APR: {e}")))?;
 
-    let n_tensors = reader.n_tensors();
+    let n_tensors = reader.header().tensor_count as usize;
 
     if global.verbose {
         println!("\nTensors found: {n_tensors}");

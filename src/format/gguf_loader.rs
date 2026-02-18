@@ -12,7 +12,7 @@
 use std::path::Path;
 
 use crate::error::{WhisperError, WhisperResult};
-use crate::format::{AprWriter, MelFilterbankData};
+use crate::format::{build_whisper_metadata, AprV2Writer, TensorDType};
 use crate::model::ModelConfig;
 use crate::tokenizer::Vocabulary;
 
@@ -191,29 +191,40 @@ pub fn load_gguf_whisper(path: &Path) -> WhisperResult<Vec<u8>> {
     // Detect config from original tensor names (before remapping)
     let config = detect_whisper_config(&result.tensors)?;
 
-    // Build APR writer
-    let mut writer = AprWriter::from_config(&config);
+    // Build APR writer using AprV2Writer
+    let metadata = build_whisper_metadata(&config, "gguf");
+    let mut writer = AprV2Writer::new(metadata);
 
     // Remap tensor names and add to writer
     for (gguf_name, (data, shape)) in &result.tensors {
         let apr_name = map_gguf_whisper_tensor_name(gguf_name);
-        writer.add(apr_name, shape.clone(), data.clone());
+        writer.add_f32_tensor(apr_name, shape.clone(), data);
     }
 
-    // Embed vocabulary from GGUF tokenizer
+    // Embed vocabulary from GGUF tokenizer as binary tensor
     if result.tokenizer.has_vocabulary() {
         let vocab = build_vocabulary_from_gguf(&result.tokenizer);
-        writer.set_vocabulary(vocab);
+        let vocab_bytes = vocab.to_bytes();
+        writer.add_tensor(
+            "__vocab__",
+            TensorDType::U8,
+            vec![vocab_bytes.len()],
+            vocab_bytes,
+        );
     }
 
-    // Generate and embed mel filterbank
+    // Generate and embed mel filterbank as f32 tensor
     let n_mels = config.n_mels;
     let n_freqs = 201u32; // Whisper uses n_fft=400, so n_fft/2+1 = 201
     let filterbank_data = generate_mel_filterbank_data(n_mels, n_freqs);
-    writer.set_mel_filterbank(MelFilterbankData::new(n_mels, n_freqs, filterbank_data));
+    writer.add_f32_tensor(
+        "__mel_filters__",
+        vec![n_mels as usize, n_freqs as usize],
+        &filterbank_data,
+    );
 
     writer
-        .to_bytes()
+        .write()
         .map_err(|e| WhisperError::Format(format!("Failed to write APR bytes: {e}")))
 }
 

@@ -1340,6 +1340,14 @@ fn format_model_error(e: &aprender::error::AprenderError, path: &std::path::Path
 
     // Unrecognized magic — not a valid APR file
     if msg.contains("Invalid magic") {
+        // Detect old APR v1 magic (APRN = 0x4150524e)
+        if msg.contains("4150524e") {
+            return CliError::UnsupportedFormat(format!(
+                "{}: APR v1 format is no longer supported. \
+                 Re-convert the model with the latest converter.",
+                path.display()
+            ));
+        }
         return CliError::UnsupportedFormat(format!(
             "{}: not a valid APR file (invalid magic number). \
              Re-download or re-convert the model.",

@@ -225,7 +225,7 @@ fn convert_safetensors_to_apr(
     size: ModelSize,
     verbose: bool,
 ) -> ModelLoaderResult<()> {
-    use crate::format::AprWriter;
+    use crate::format::{build_whisper_metadata, AprV2Writer, TensorDType};
     use crate::model::ModelConfig;
     use safetensors::SafeTensors;
 
@@ -251,7 +251,9 @@ fn convert_safetensors_to_apr(
     };
 
     // Create APR writer
-    let mut writer = AprWriter::from_config(&config);
+    let source = format!("hf://{}", get_hf_repo_id(size));
+    let metadata = build_whisper_metadata(&config, &source);
+    let mut writer = AprV2Writer::new(metadata);
 
     // Load mel filters from preprocessor_config.json
     if let Ok(mel_filterbank) = load_mel_filters_from_preprocessor(preprocessor_path, verbose) {
@@ -263,15 +265,25 @@ fn convert_safetensors_to_apr(
                 mel_filterbank.data.len()
             );
         }
-        writer.set_mel_filterbank(mel_filterbank);
+        writer.add_f32_tensor(
+            "__mel_filters__",
+            vec![mel_filterbank.n_mels as usize, mel_filterbank.n_freqs as usize],
+            &mel_filterbank.data,
+        );
     }
 
-    // Load and embed vocabulary from vocab.json
+    // Load and embed vocabulary from vocab.json as binary tensor
     if let Ok(vocab) = load_vocabulary_from_json(vocab_path, verbose) {
         if verbose {
             eprintln!("[INFO] Embedding vocabulary with {} tokens", vocab.len());
         }
-        writer.set_vocabulary(vocab);
+        let vocab_bytes = vocab.to_bytes();
+        writer.add_tensor(
+            "__vocab__",
+            TensorDType::U8,
+            vec![vocab_bytes.len()],
+            vocab_bytes,
+        );
     } else if verbose {
         eprintln!("[WARN] Failed to load vocabulary, using base tokens");
     }
@@ -287,12 +299,12 @@ fn convert_safetensors_to_apr(
 
         let our_name = map_tensor_name(&name);
         let shape: Vec<usize> = tensor.shape().to_vec();
-        writer.add(our_name, shape, f32_data);
+        writer.add_f32_tensor(our_name, shape, &f32_data);
     }
 
     // Write to file
     let apr_data = writer
-        .to_bytes()
+        .write()
         .map_err(|e| ModelLoaderError::Download(format!("Failed to write APR: {e}")))?;
     fs::write(apr_path, apr_data)?;
 
@@ -315,7 +327,7 @@ fn convert_moonshine_safetensors_to_apr(
     size: ModelSize,
     verbose: bool,
 ) -> ModelLoaderResult<()> {
-    use crate::format::AprWriter;
+    use crate::format::{build_whisper_metadata, AprV2Writer};
     use crate::model::ModelConfig;
     use safetensors::SafeTensors;
 
@@ -333,27 +345,29 @@ fn convert_moonshine_safetensors_to_apr(
         _ => unreachable!("only called for Moonshine models"),
     };
 
-    let mut writer = AprWriter::from_config(&config);
+    let source = format!("hf://{}", get_hf_repo_id(size));
+    let metadata = build_whisper_metadata(&config, &source);
+    let mut writer = AprV2Writer::new(metadata);
 
-    // Load and embed vocabulary from tokenizer.json
+    // Load and embed vocabulary from tokenizer.json as binary tensor
     embed_moonshine_vocab(&mut writer, tokenizer_path, verbose);
 
     // Convert all tensors, tracking embed_tokens for tied embeddings
     let (has_proj_out, embed_tokens_data) =
         convert_moonshine_tensors(&tensors, &mut writer, verbose);
 
-    // Handle tied embeddings: clone embed_tokens → proj_out if missing
+    // Handle tied embeddings: clone embed_tokens -> proj_out if missing
     if !has_proj_out {
         if let Some((shape, data)) = embed_tokens_data {
             if verbose {
-                eprintln!("[INFO] Tied embeddings: cloning embed_tokens → proj_out");
+                eprintln!("[INFO] Tied embeddings: cloning embed_tokens -> proj_out");
             }
-            writer.add("decoder.proj_out.weight", shape, data);
+            writer.add_f32_tensor("decoder.proj_out.weight", shape, &data);
         }
     }
 
     let apr_data = writer
-        .to_bytes()
+        .write()
         .map_err(|e| ModelLoaderError::Download(format!("Failed to write APR: {e}")))?;
     fs::write(apr_path, apr_data)?;
 
@@ -364,9 +378,9 @@ fn convert_moonshine_safetensors_to_apr(
     Ok(())
 }
 
-/// Embed Moonshine vocabulary into APR writer from tokenizer.json
+/// Embed Moonshine vocabulary into APR writer from tokenizer.json as binary tensor
 fn embed_moonshine_vocab(
-    writer: &mut crate::format::AprWriter,
+    writer: &mut crate::format::AprV2Writer,
     tokenizer_path: &std::path::Path,
     verbose: bool,
 ) {
@@ -377,7 +391,13 @@ fn embed_moonshine_vocab(
                 vocab.len()
             );
         }
-        writer.set_vocabulary(vocab);
+        let vocab_bytes = vocab.to_bytes();
+        writer.add_tensor(
+            "__vocab__",
+            crate::format::TensorDType::U8,
+            vec![vocab_bytes.len()],
+            vocab_bytes,
+        );
     } else if verbose {
         eprintln!("[WARN] Failed to load Moonshine tokenizer, vocab not embedded");
     }
@@ -389,7 +409,7 @@ type TensorShapeData = (Vec<usize>, Vec<f32>);
 /// Convert all Moonshine tensors, returning (has_proj_out, embed_tokens_data)
 fn convert_moonshine_tensors(
     tensors: &safetensors::SafeTensors<'_>,
-    writer: &mut crate::format::AprWriter,
+    writer: &mut crate::format::AprV2Writer,
     verbose: bool,
 ) -> (bool, Option<TensorShapeData>) {
     use crate::format::map_moonshine_tensor_name;
@@ -415,7 +435,7 @@ fn convert_moonshine_tensors(
             embed_tokens_data = Some((shape.clone(), f32_data.clone()));
         }
 
-        writer.add(our_name, shape, f32_data);
+        writer.add_f32_tensor(our_name, shape, &f32_data);
     }
 
     (has_proj_out, embed_tokens_data)

@@ -1145,11 +1145,17 @@ impl WhisperApr {
 
         // Phase 1: Parsing header
         callback(&tracker.to_progress());
-        let reader = format::AprReader::new(data.to_vec())?;
-        let config = reader.header.to_model_config();
+        let reader = format::AprV2ReaderRef::from_bytes(data)
+            .map_err(|e| error::WhisperError::Format(e.to_string()))?;
+        let config = format::metadata_to_model_config(reader.metadata());
         tracker.next_phase();
 
-        let is_f16 = reader.header.quantization == format::Quantization::F16;
+        let is_f16 = reader
+            .tensor_names()
+            .iter()
+            .find(|n| n.ends_with(".weight") && !n.starts_with("__"))
+            .and_then(|n| reader.get_tensor(n))
+            .map_or(false, |t| t.dtype == format::TensorDType::F16);
 
         // Phase 2: Loading encoder
         callback(&tracker.to_progress());
@@ -1181,7 +1187,7 @@ impl WhisperApr {
         callback(&tracker.to_progress());
         let (mel_filters, conv_stem) = match config.audio_frontend {
             model::AudioFrontend::MelFilterbank => {
-                let mf = reader.read_mel_filterbank().map_or_else(
+                let mf = Self::read_mel_filterbank(&reader).map_or_else(
                     || {
                         audio::MelFilterbank::new(
                             config.n_mels as usize,
@@ -1218,20 +1224,54 @@ impl WhisperApr {
     /// Build tokenizer from APR reader and config
     fn build_tokenizer(
         config: &model::ModelConfig,
-        reader: &format::AprReader,
+        reader: &format::AprV2ReaderRef<'_>,
     ) -> tokenizer::Tokenizer {
         if config.model_family == format::ModelFamily::Moonshine {
             let mut sp = tokenizer::SentencePieceTokenizer::moonshine_default();
-            if let Some(vocab) = reader.read_vocabulary() {
+            if let Some(vocab) = Self::read_vocabulary(reader) {
                 Self::populate_sentencepiece(&mut sp, &vocab);
             }
             tokenizer::Tokenizer::SentencePiece(sp)
         } else {
-            tokenizer::Tokenizer::Bpe(reader.read_vocabulary().map_or_else(
+            tokenizer::Tokenizer::Bpe(Self::read_vocabulary(reader).map_or_else(
                 tokenizer::BpeTokenizer::with_base_tokens,
                 tokenizer::BpeTokenizer::from_vocabulary,
             ))
         }
+    }
+
+    /// Read vocabulary from __vocab__ tensor
+    fn read_vocabulary(reader: &format::AprV2ReaderRef<'_>) -> Option<tokenizer::Vocabulary> {
+        let raw = reader.get_tensor_data("__vocab__")?;
+        tokenizer::Vocabulary::from_bytes(raw)
+    }
+
+    /// Read mel filterbank from __mel_filters__ tensor
+    fn read_mel_filterbank(
+        reader: &format::AprV2ReaderRef<'_>,
+    ) -> Option<format::MelFilterbankData> {
+        let data = reader.get_tensor_as_f32("__mel_filters__")?;
+        let entry = reader.get_tensor("__mel_filters__")?;
+        let shape = &entry.shape;
+        if shape.len() == 2 {
+            Some(format::MelFilterbankData::new(
+                shape[0] as u32,
+                shape[1] as u32,
+                data,
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// Load tensor as raw fp16 u16 bit patterns
+    fn load_f16_raw(reader: &format::AprV2ReaderRef<'_>, name: &str) -> Option<Vec<u16>> {
+        let raw = reader.get_tensor_data(name)?;
+        Some(
+            raw.chunks_exact(2)
+                .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                .collect(),
+        )
     }
 
     /// Populate SentencePiece tokenizer from APR vocabulary
@@ -1252,7 +1292,7 @@ impl WhisperApr {
 
     /// Load encoder weights from .apr reader
     fn load_encoder_weights(
-        reader: &format::AprReader,
+        reader: &format::AprV2ReaderRef<'_>,
         encoder: &mut model::Encoder,
         tracker: &mut progress::ProgressTracker,
         callback: progress::ProgressCallback<'_>,
@@ -1262,24 +1302,24 @@ impl WhisperApr {
         // Load convolutional frontend weights (Whisper only; Moonshine uses learned conv stem)
         if let Some(conv_frontend) = encoder.conv_frontend_mut() {
             // Conv1: mel -> hidden (n_mels x d_model with kernel_size=3)
-            if let Ok(weight) = reader.load_tensor("encoder.conv1.weight") {
+            if let Some(weight) = reader.get_tensor_as_f32("encoder.conv1.weight") {
                 let target = conv_frontend.conv1.weight_mut();
                 let len = weight.len().min(target.len());
                 target[..len].copy_from_slice(&weight[..len]);
             }
-            if let Ok(bias) = reader.load_tensor("encoder.conv1.bias") {
+            if let Some(bias) = reader.get_tensor_as_f32("encoder.conv1.bias") {
                 let target = conv_frontend.conv1.bias_mut();
                 let len = bias.len().min(target.len());
                 target[..len].copy_from_slice(&bias[..len]);
             }
 
             // Conv2: hidden -> hidden with stride 2
-            if let Ok(weight) = reader.load_tensor("encoder.conv2.weight") {
+            if let Some(weight) = reader.get_tensor_as_f32("encoder.conv2.weight") {
                 let target = conv_frontend.conv2.weight_mut();
                 let len = weight.len().min(target.len());
                 target[..len].copy_from_slice(&weight[..len]);
             }
-            if let Ok(bias) = reader.load_tensor("encoder.conv2.bias") {
+            if let Some(bias) = reader.get_tensor_as_f32("encoder.conv2.bias") {
                 let target = conv_frontend.conv2.bias_mut();
                 let len = bias.len().min(target.len());
                 target[..len].copy_from_slice(&bias[..len]);
@@ -1288,9 +1328,9 @@ impl WhisperApr {
 
         // Load positional embedding if available (HF uses embed_positions.weight)
         let pe_result = reader
-            .load_tensor("encoder.embed_positions.weight")
-            .or_else(|_| reader.load_tensor("encoder.positional_embedding"));
-        if let Ok(pe) = pe_result {
+            .get_tensor_as_f32("encoder.embed_positions.weight")
+            .or_else(|| reader.get_tensor_as_f32("encoder.positional_embedding"));
+        if let Some(pe) = pe_result {
             let target = encoder.positional_embedding_mut();
             let len = pe.len().min(target.len());
             target[..len].copy_from_slice(&pe[..len]);
@@ -1385,7 +1425,7 @@ impl WhisperApr {
 
     /// Load decoder weights from .apr reader
     fn load_decoder_weights(
-        reader: &format::AprReader,
+        reader: &format::AprV2ReaderRef<'_>,
         decoder: &mut model::Decoder,
         tracker: &mut progress::ProgressTracker,
         callback: progress::ProgressCallback<'_>,
@@ -1397,10 +1437,10 @@ impl WhisperApr {
         // Moonshine APR: decoder.token_embedding.weight
         // Legacy: decoder.token_embedding
         let te_result = reader
-            .load_tensor("decoder.embed_tokens.weight")
-            .or_else(|_| reader.load_tensor("decoder.token_embedding.weight"))
-            .or_else(|_| reader.load_tensor("decoder.token_embedding"));
-        if let Ok(te) = te_result {
+            .get_tensor_as_f32("decoder.embed_tokens.weight")
+            .or_else(|| reader.get_tensor_as_f32("decoder.token_embedding.weight"))
+            .or_else(|| reader.get_tensor_as_f32("decoder.token_embedding"));
+        if let Some(te) = te_result {
             let target = decoder.token_embedding_mut();
             let len = te.len().min(target.len());
             target[..len].copy_from_slice(&te[..len]);
@@ -1408,9 +1448,9 @@ impl WhisperApr {
 
         // Load positional embedding if available (HF uses embed_positions.weight)
         let pe_result = reader
-            .load_tensor("decoder.embed_positions.weight")
-            .or_else(|_| reader.load_tensor("decoder.positional_embedding"));
-        if let Ok(pe) = pe_result {
+            .get_tensor_as_f32("decoder.embed_positions.weight")
+            .or_else(|| reader.get_tensor_as_f32("decoder.positional_embedding"));
+        if let Some(pe) = pe_result {
             let target = decoder.positional_embedding_mut();
             let len = pe.len().min(target.len());
             target[..len].copy_from_slice(&pe[..len]);
@@ -1541,7 +1581,7 @@ impl WhisperApr {
     /// for fast project_to_vocab. LayerNorm weights/biases are loaded as f32
     /// (negligible size, need full precision).
     fn load_decoder_weights_f16(
-        reader: &format::AprReader,
+        reader: &format::AprV2ReaderRef<'_>,
         decoder: &mut model::Decoder,
         tracker: &mut progress::ProgressTracker,
         callback: progress::ProgressCallback<'_>,
@@ -1550,10 +1590,10 @@ impl WhisperApr {
 
         // Token embedding: load as f32 (needed for embedding lookup), then convert to fp16
         let te_result = reader
-            .load_tensor("decoder.embed_tokens.weight")
-            .or_else(|_| reader.load_tensor("decoder.token_embedding.weight"))
-            .or_else(|_| reader.load_tensor("decoder.token_embedding"));
-        if let Ok(te) = te_result {
+            .get_tensor_as_f32("decoder.embed_tokens.weight")
+            .or_else(|| reader.get_tensor_as_f32("decoder.token_embedding.weight"))
+            .or_else(|| reader.get_tensor_as_f32("decoder.token_embedding"));
+        if let Some(te) = te_result {
             let target = decoder.token_embedding_mut();
             let len = te.len().min(target.len());
             target[..len].copy_from_slice(&te[..len]);
@@ -1561,9 +1601,9 @@ impl WhisperApr {
 
         // Positional embedding (f32 — small, need full precision)
         let pe_result = reader
-            .load_tensor("decoder.embed_positions.weight")
-            .or_else(|_| reader.load_tensor("decoder.positional_embedding"));
-        if let Ok(pe) = pe_result {
+            .get_tensor_as_f32("decoder.embed_positions.weight")
+            .or_else(|| reader.get_tensor_as_f32("decoder.positional_embedding"));
+        if let Some(pe) = pe_result {
             let target = decoder.positional_embedding_mut();
             let len = pe.len().min(target.len());
             target[..len].copy_from_slice(&pe[..len]);
@@ -1628,15 +1668,15 @@ impl WhisperApr {
 
     /// Load layer norm weights
     fn load_layer_norm_weights(
-        reader: &format::AprReader,
+        reader: &format::AprV2ReaderRef<'_>,
         prefix: &str,
         ln: &mut model::LayerNorm,
     ) {
-        if let Ok(weight) = reader.load_tensor(&format!("{prefix}.weight")) {
+        if let Some(weight) = reader.get_tensor_as_f32(&format!("{prefix}.weight")) {
             let len = weight.len().min(ln.weight.len());
             ln.weight[..len].copy_from_slice(&weight[..len]);
         }
-        if let Ok(bias) = reader.load_tensor(&format!("{prefix}.bias")) {
+        if let Some(bias) = reader.get_tensor_as_f32(&format!("{prefix}.bias")) {
             let len = bias.len().min(ln.bias.len());
             ln.bias[..len].copy_from_slice(&bias[..len]);
         }
@@ -1644,49 +1684,49 @@ impl WhisperApr {
 
     /// Load attention weights (HuggingFace naming: q_proj, k_proj, v_proj, out_proj)
     fn load_attention_weights(
-        reader: &format::AprReader,
+        reader: &format::AprV2ReaderRef<'_>,
         prefix: &str,
         attn: &mut model::MultiHeadAttention,
     ) {
         // Load query, key, value projections - weights and biases
-        if let Ok(q_weight) = reader.load_tensor(&format!("{prefix}.q_proj.weight")) {
+        if let Some(q_weight) = reader.get_tensor_as_f32(&format!("{prefix}.q_proj.weight")) {
             attn.set_query_weight(&q_weight);
         }
-        if let Ok(q_bias) = reader.load_tensor(&format!("{prefix}.q_proj.bias")) {
+        if let Some(q_bias) = reader.get_tensor_as_f32(&format!("{prefix}.q_proj.bias")) {
             attn.set_query_bias(&q_bias);
         }
-        if let Ok(k_weight) = reader.load_tensor(&format!("{prefix}.k_proj.weight")) {
+        if let Some(k_weight) = reader.get_tensor_as_f32(&format!("{prefix}.k_proj.weight")) {
             attn.set_key_weight(&k_weight);
         }
-        if let Ok(k_bias) = reader.load_tensor(&format!("{prefix}.k_proj.bias")) {
+        if let Some(k_bias) = reader.get_tensor_as_f32(&format!("{prefix}.k_proj.bias")) {
             attn.set_key_bias(&k_bias);
         }
-        if let Ok(v_weight) = reader.load_tensor(&format!("{prefix}.v_proj.weight")) {
+        if let Some(v_weight) = reader.get_tensor_as_f32(&format!("{prefix}.v_proj.weight")) {
             attn.set_value_weight(&v_weight);
         }
-        if let Ok(v_bias) = reader.load_tensor(&format!("{prefix}.v_proj.bias")) {
+        if let Some(v_bias) = reader.get_tensor_as_f32(&format!("{prefix}.v_proj.bias")) {
             attn.set_value_bias(&v_bias);
         }
-        if let Ok(out_weight) = reader.load_tensor(&format!("{prefix}.out_proj.weight")) {
+        if let Some(out_weight) = reader.get_tensor_as_f32(&format!("{prefix}.out_proj.weight")) {
             attn.set_out_weight(&out_weight);
         }
-        if let Ok(out_bias) = reader.load_tensor(&format!("{prefix}.out_proj.bias")) {
+        if let Some(out_bias) = reader.get_tensor_as_f32(&format!("{prefix}.out_proj.bias")) {
             attn.set_out_bias(&out_bias);
         }
     }
 
     /// Load feed-forward network weights (HuggingFace naming: fc1, fc2)
-    fn load_ffn_weights(reader: &format::AprReader, prefix: &str, ffn: &mut model::FeedForward) {
-        if let Ok(fc1_weight) = reader.load_tensor(&format!("{prefix}.fc1.weight")) {
+    fn load_ffn_weights(reader: &format::AprV2ReaderRef<'_>, prefix: &str, ffn: &mut model::FeedForward) {
+        if let Some(fc1_weight) = reader.get_tensor_as_f32(&format!("{prefix}.fc1.weight")) {
             ffn.fc1.set_weight(&fc1_weight);
         }
-        if let Ok(fc1_bias) = reader.load_tensor(&format!("{prefix}.fc1.bias")) {
+        if let Some(fc1_bias) = reader.get_tensor_as_f32(&format!("{prefix}.fc1.bias")) {
             ffn.fc1.set_bias(&fc1_bias);
         }
-        if let Ok(fc2_weight) = reader.load_tensor(&format!("{prefix}.fc2.weight")) {
+        if let Some(fc2_weight) = reader.get_tensor_as_f32(&format!("{prefix}.fc2.weight")) {
             ffn.fc2.set_weight(&fc2_weight);
         }
-        if let Ok(fc2_bias) = reader.load_tensor(&format!("{prefix}.fc2.bias")) {
+        if let Some(fc2_bias) = reader.get_tensor_as_f32(&format!("{prefix}.fc2.bias")) {
             ffn.fc2.set_bias(&fc2_bias);
         }
     }
@@ -1696,34 +1736,34 @@ impl WhisperApr {
     /// Biases are loaded as f32 (negligible size). Weights are loaded as raw u16
     /// to enable the fp16 inference path (tiled_matvec_f16).
     fn load_attention_weights_f16(
-        reader: &format::AprReader,
+        reader: &format::AprV2ReaderRef<'_>,
         prefix: &str,
         attn: &mut model::MultiHeadAttention,
     ) {
         // Weights: load as raw fp16 u16 bit patterns
-        if let Ok(q_weight) = reader.load_tensor_f16(&format!("{prefix}.q_proj.weight")) {
+        if let Some(q_weight) = Self::load_f16_raw(reader,&format!("{prefix}.q_proj.weight")) {
             attn.set_query_weight_f16(&q_weight);
         }
-        if let Ok(k_weight) = reader.load_tensor_f16(&format!("{prefix}.k_proj.weight")) {
+        if let Some(k_weight) = Self::load_f16_raw(reader,&format!("{prefix}.k_proj.weight")) {
             attn.set_key_weight_f16(&k_weight);
         }
-        if let Ok(v_weight) = reader.load_tensor_f16(&format!("{prefix}.v_proj.weight")) {
+        if let Some(v_weight) = Self::load_f16_raw(reader,&format!("{prefix}.v_proj.weight")) {
             attn.set_value_weight_f16(&v_weight);
         }
-        if let Ok(out_weight) = reader.load_tensor_f16(&format!("{prefix}.out_proj.weight")) {
+        if let Some(out_weight) = Self::load_f16_raw(reader,&format!("{prefix}.out_proj.weight")) {
             attn.set_out_weight_f16(&out_weight);
         }
         // Biases: always load as f32 (negligible size, needed at full precision)
-        if let Ok(q_bias) = reader.load_tensor(&format!("{prefix}.q_proj.bias")) {
+        if let Some(q_bias) = reader.get_tensor_as_f32(&format!("{prefix}.q_proj.bias")) {
             attn.set_query_bias(&q_bias);
         }
-        if let Ok(k_bias) = reader.load_tensor(&format!("{prefix}.k_proj.bias")) {
+        if let Some(k_bias) = reader.get_tensor_as_f32(&format!("{prefix}.k_proj.bias")) {
             attn.set_key_bias(&k_bias);
         }
-        if let Ok(v_bias) = reader.load_tensor(&format!("{prefix}.v_proj.bias")) {
+        if let Some(v_bias) = reader.get_tensor_as_f32(&format!("{prefix}.v_proj.bias")) {
             attn.set_value_bias(&v_bias);
         }
-        if let Ok(out_bias) = reader.load_tensor(&format!("{prefix}.out_proj.bias")) {
+        if let Some(out_bias) = reader.get_tensor_as_f32(&format!("{prefix}.out_proj.bias")) {
             attn.set_out_bias(&out_bias);
         }
     }
@@ -1732,20 +1772,20 @@ impl WhisperApr {
     ///
     /// Biases are loaded as f32 (negligible size).
     fn load_ffn_weights_f16(
-        reader: &format::AprReader,
+        reader: &format::AprV2ReaderRef<'_>,
         prefix: &str,
         ffn: &mut model::FeedForward,
     ) {
-        if let Ok(fc1_weight) = reader.load_tensor_f16(&format!("{prefix}.fc1.weight")) {
+        if let Some(fc1_weight) = Self::load_f16_raw(reader,&format!("{prefix}.fc1.weight")) {
             ffn.fc1.set_weight_f16(&fc1_weight);
         }
-        if let Ok(fc1_bias) = reader.load_tensor(&format!("{prefix}.fc1.bias")) {
+        if let Some(fc1_bias) = reader.get_tensor_as_f32(&format!("{prefix}.fc1.bias")) {
             ffn.fc1.set_bias(&fc1_bias);
         }
-        if let Ok(fc2_weight) = reader.load_tensor_f16(&format!("{prefix}.fc2.weight")) {
+        if let Some(fc2_weight) = Self::load_f16_raw(reader,&format!("{prefix}.fc2.weight")) {
             ffn.fc2.set_weight_f16(&fc2_weight);
         }
-        if let Ok(fc2_bias) = reader.load_tensor(&format!("{prefix}.fc2.bias")) {
+        if let Some(fc2_bias) = reader.get_tensor_as_f32(&format!("{prefix}.fc2.bias")) {
             ffn.fc2.set_bias(&fc2_bias);
         }
     }
@@ -1753,11 +1793,11 @@ impl WhisperApr {
     /// Load RMS norm weights (LFM2: single weight vector, no bias)
     #[allow(dead_code)]
     fn load_rms_norm_weights(
-        reader: &format::AprReader,
+        reader: &format::AprV2ReaderRef<'_>,
         prefix: &str,
         rms: &mut model::lfm2::layer::RmsNorm,
     ) {
-        if let Ok(weight) = reader.load_tensor(&format!("{prefix}.weight")) {
+        if let Some(weight) = reader.get_tensor_as_f32(&format!("{prefix}.weight")) {
             let len = weight.len().min(rms.weight.len());
             rms.weight[..len].copy_from_slice(&weight[..len]);
         }
@@ -1765,11 +1805,11 @@ impl WhisperApr {
 
     /// Load LayerNorm (no bias) weights (Moonshine: weight-only LayerNorm)
     fn load_layernorm_nobias_weights(
-        reader: &format::AprReader,
+        reader: &format::AprV2ReaderRef<'_>,
         prefix: &str,
         ln: &mut model::lfm2::layer::LayerNormNoBias,
     ) {
-        if let Ok(weight) = reader.load_tensor(&format!("{prefix}.weight")) {
+        if let Some(weight) = reader.get_tensor_as_f32(&format!("{prefix}.weight")) {
             let len = weight.len().min(ln.weight.len());
             ln.weight[..len].copy_from_slice(&weight[..len]);
         }
@@ -1777,23 +1817,23 @@ impl WhisperApr {
 
     /// Load GQA attention weights (Moonshine: q, k, v, o projections)
     fn load_gqa_weights(
-        reader: &format::AprReader,
+        reader: &format::AprV2ReaderRef<'_>,
         prefix: &str,
         gqa: &mut model::lfm2::gqa::GroupedQueryAttention,
     ) {
-        if let Ok(w) = reader.load_tensor(&format!("{prefix}.q.weight")) {
+        if let Some(w) = reader.get_tensor_as_f32(&format!("{prefix}.q.weight")) {
             let len = w.len().min(gqa.w_q.len());
             gqa.w_q[..len].copy_from_slice(&w[..len]);
         }
-        if let Ok(w) = reader.load_tensor(&format!("{prefix}.k.weight")) {
+        if let Some(w) = reader.get_tensor_as_f32(&format!("{prefix}.k.weight")) {
             let len = w.len().min(gqa.w_k.len());
             gqa.w_k[..len].copy_from_slice(&w[..len]);
         }
-        if let Ok(w) = reader.load_tensor(&format!("{prefix}.v.weight")) {
+        if let Some(w) = reader.get_tensor_as_f32(&format!("{prefix}.v.weight")) {
             let len = w.len().min(gqa.w_v.len());
             gqa.w_v[..len].copy_from_slice(&w[..len]);
         }
-        if let Ok(w) = reader.load_tensor(&format!("{prefix}.o.weight")) {
+        if let Some(w) = reader.get_tensor_as_f32(&format!("{prefix}.o.weight")) {
             let len = w.len().min(gqa.w_o.len());
             gqa.w_o[..len].copy_from_slice(&w[..len]);
         }
@@ -1801,87 +1841,87 @@ impl WhisperApr {
 
     /// Load MLP FFN weights (Moonshine: fc1 → activation → fc2)
     fn load_mlp_weights(
-        reader: &format::AprReader,
+        reader: &format::AprV2ReaderRef<'_>,
         prefix: &str,
         ffn: &mut model::lfm2::mlp::MlpFfn,
     ) {
-        if let Ok(w) = reader.load_tensor(&format!("{prefix}.fc1.weight")) {
+        if let Some(w) = reader.get_tensor_as_f32(&format!("{prefix}.fc1.weight")) {
             let len = w.len().min(ffn.fc1.len());
             ffn.fc1[..len].copy_from_slice(&w[..len]);
         }
-        if let Ok(b) = reader.load_tensor(&format!("{prefix}.fc1.bias")) {
+        if let Some(b) = reader.get_tensor_as_f32(&format!("{prefix}.fc1.bias")) {
             ffn.b1 = Some(b);
         }
-        if let Ok(w) = reader.load_tensor(&format!("{prefix}.fc2.weight")) {
+        if let Some(w) = reader.get_tensor_as_f32(&format!("{prefix}.fc2.weight")) {
             let len = w.len().min(ffn.fc2.len());
             ffn.fc2[..len].copy_from_slice(&w[..len]);
         }
-        if let Ok(b) = reader.load_tensor(&format!("{prefix}.fc2.bias")) {
+        if let Some(b) = reader.get_tensor_as_f32(&format!("{prefix}.fc2.bias")) {
             ffn.b2 = Some(b);
         }
     }
 
     /// Load gated MLP FFN weights (Moonshine decoder: fc1[→2x] → SiLU gate → fc2)
     fn load_gated_mlp_weights(
-        reader: &format::AprReader,
+        reader: &format::AprV2ReaderRef<'_>,
         prefix: &str,
         ffn: &mut model::lfm2::mlp::GatedMlpFfn,
     ) {
-        if let Ok(w) = reader.load_tensor(&format!("{prefix}.fc1.weight")) {
+        if let Some(w) = reader.get_tensor_as_f32(&format!("{prefix}.fc1.weight")) {
             let len = w.len().min(ffn.fc1.len());
             ffn.fc1[..len].copy_from_slice(&w[..len]);
         }
-        if let Ok(b) = reader.load_tensor(&format!("{prefix}.fc1.bias")) {
+        if let Some(b) = reader.get_tensor_as_f32(&format!("{prefix}.fc1.bias")) {
             ffn.b1 = Some(b);
         }
-        if let Ok(w) = reader.load_tensor(&format!("{prefix}.fc2.weight")) {
+        if let Some(w) = reader.get_tensor_as_f32(&format!("{prefix}.fc2.weight")) {
             let len = w.len().min(ffn.fc2.len());
             ffn.fc2[..len].copy_from_slice(&w[..len]);
         }
-        if let Ok(b) = reader.load_tensor(&format!("{prefix}.fc2.bias")) {
+        if let Some(b) = reader.get_tensor_as_f32(&format!("{prefix}.fc2.bias")) {
             ffn.b2 = Some(b);
         }
     }
 
     /// Load conv stem weights (Moonshine: conv1, conv2, conv3 + GroupNorm + LayerNorm)
-    fn load_conv_stem_weights(reader: &format::AprReader, stem: &mut audio::ConvStem) {
+    fn load_conv_stem_weights(reader: &format::AprV2ReaderRef<'_>, stem: &mut audio::ConvStem) {
         // Conv1 (no bias — weight only)
-        if let Ok(w) = reader.load_tensor("encoder.conv1.weight") {
+        if let Some(w) = reader.get_tensor_as_f32("encoder.conv1.weight") {
             let target = stem.conv1.weight_mut();
             let len = w.len().min(target.len());
             target[..len].copy_from_slice(&w[..len]);
         }
 
         // Conv2 (weight + bias)
-        if let Ok(w) = reader.load_tensor("encoder.conv2.weight") {
+        if let Some(w) = reader.get_tensor_as_f32("encoder.conv2.weight") {
             let target = stem.conv2.weight_mut();
             let len = w.len().min(target.len());
             target[..len].copy_from_slice(&w[..len]);
         }
-        if let Ok(b) = reader.load_tensor("encoder.conv2.bias") {
+        if let Some(b) = reader.get_tensor_as_f32("encoder.conv2.bias") {
             let target = stem.conv2.bias_mut();
             let len = b.len().min(target.len());
             target[..len].copy_from_slice(&b[..len]);
         }
 
         // Conv3 (weight + bias)
-        if let Ok(w) = reader.load_tensor("encoder.conv3.weight") {
+        if let Some(w) = reader.get_tensor_as_f32("encoder.conv3.weight") {
             let target = stem.conv3.weight_mut();
             let len = w.len().min(target.len());
             target[..len].copy_from_slice(&w[..len]);
         }
-        if let Ok(b) = reader.load_tensor("encoder.conv3.bias") {
+        if let Some(b) = reader.get_tensor_as_f32("encoder.conv3.bias") {
             let target = stem.conv3.bias_mut();
             let len = b.len().min(target.len());
             target[..len].copy_from_slice(&b[..len]);
         }
 
         // GroupNorm after conv1 (weight + bias)
-        if let Ok(w) = reader.load_tensor("encoder.groupnorm.weight") {
+        if let Some(w) = reader.get_tensor_as_f32("encoder.groupnorm.weight") {
             let len = w.len().min(stem.groupnorm.weight.len());
             stem.groupnorm.weight[..len].copy_from_slice(&w[..len]);
         }
-        if let Ok(b) = reader.load_tensor("encoder.groupnorm.bias") {
+        if let Some(b) = reader.get_tensor_as_f32("encoder.groupnorm.bias") {
             let len = b.len().min(stem.groupnorm.bias.len());
             stem.groupnorm.bias[..len].copy_from_slice(&b[..len]);
         }

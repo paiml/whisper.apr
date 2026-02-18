@@ -2,7 +2,8 @@
 
 use super::check::{ValidationCheck, ValidationReport};
 use super::stats::TensorStats;
-use crate::format::AprReader;
+use crate::format::AprV2ReaderRef;
+use crate::model::ModelConfig;
 
 /// Specification for a bulk mean-range validation check.
 struct BulkMeanSpec {
@@ -115,14 +116,15 @@ const ATTENTION_MEAN_SPECS: &[BulkMeanSpec] = &[
 
 /// APR file validator implementing the 25-point QA checklist
 pub struct AprValidator<'a> {
-    reader: &'a AprReader,
+    reader: &'a AprV2ReaderRef<'a>,
+    config: ModelConfig,
 }
 
 impl<'a> AprValidator<'a> {
-    /// Create validator from reader
+    /// Create validator from reader and model config
     #[must_use]
-    pub fn new(reader: &'a AprReader) -> Self {
-        Self { reader }
+    pub fn new(reader: &'a AprV2ReaderRef<'a>, config: ModelConfig) -> Self {
+        Self { reader, config }
     }
 
     /// Run all 25 validation checks
@@ -202,14 +204,14 @@ impl<'a> AprValidator<'a> {
 
     /// D. Embedding Validation (checks 16-20): shapes and stats in a single pass.
     fn validate_embeddings(&self) -> Vec<ValidationCheck> {
-        let vocab_size = self.reader.header.n_vocab;
-        let d_model = self.reader.header.n_text_state;
-        let d_audio = self.reader.header.n_audio_state;
+        let vocab_size = self.config.n_vocab as usize;
+        let d_model = self.config.n_text_state as usize;
+        let d_audio = self.config.n_audio_state as usize;
 
         // Check 16: token embedding shape
-        let tok_shape = match self.reader.find_tensor("decoder.token_embedding") {
+        let tok_shape = match self.reader.get_tensor("decoder.token_embedding") {
             Some(tensor) => {
-                let shape = tensor.shape();
+                let shape = &tensor.shape;
                 if shape.len() == 2 && shape[0] == vocab_size && shape[1] == d_model {
                     ValidationCheck::pass(
                         16,
@@ -255,11 +257,11 @@ impl<'a> AprValidator<'a> {
         // Check 18: positional embedding shapes
         let mut pos_failures = Vec::new();
         for &(name, expected_len, d) in &[
-            ("encoder.positional_embedding", 1500u32, d_audio),
+            ("encoder.positional_embedding", 1500usize, d_audio),
             ("decoder.positional_embedding", 448, d_model),
         ] {
-            if let Some(tensor) = self.reader.find_tensor(name) {
-                let shape = tensor.shape();
+            if let Some(tensor) = self.reader.get_tensor(name) {
+                let shape = &tensor.shape;
                 if shape.len() != 2 || shape[0] != expected_len || shape[1] != d {
                     pos_failures.push(format!("{name}: {shape:?}, expected [{expected_len}, {d}]"));
                 }
@@ -295,9 +297,9 @@ impl<'a> AprValidator<'a> {
         );
 
         // Check 20: vocab size consistency
-        let vocab_check = match self.reader.find_tensor("decoder.token_embedding") {
+        let vocab_check = match self.reader.get_tensor("decoder.token_embedding") {
             Some(tensor) => {
-                let shape = tensor.shape();
+                let shape = &tensor.shape;
                 if !shape.is_empty() && shape[0] == vocab_size {
                     ValidationCheck::pass(
                         20,
@@ -348,7 +350,7 @@ impl<'a> AprValidator<'a> {
     }
 
     fn check_header(&self) -> ValidationCheck {
-        let version = self.reader.header.version;
+        let version = self.reader.header().version.0;
         if version <= 2 {
             ValidationCheck::pass(2, 'A', "Header parseable", &format!("Version {version}"))
         } else {
@@ -362,7 +364,7 @@ impl<'a> AprValidator<'a> {
     }
 
     fn check_tensor_count(&self) -> ValidationCheck {
-        let count = self.reader.n_tensors();
+        let count = self.reader.header().tensor_count as usize;
         let expected = self.expected_tensor_count();
 
         if count >= expected {
@@ -384,10 +386,10 @@ impl<'a> AprValidator<'a> {
 
     fn check_tensor_shapes(&self) -> ValidationCheck {
         let mut failures = Vec::new();
-        let d_model = self.reader.header.n_audio_state;
+        let d_model = self.config.n_audio_state as usize;
 
-        if let Some(tensor) = self.reader.find_tensor("decoder.token_embedding") {
-            let shape = tensor.shape();
+        if let Some(tensor) = self.reader.get_tensor("decoder.token_embedding") {
+            let shape = &tensor.shape;
             if shape.len() != 2 || shape[1] != d_model {
                 failures.push(format!(
                     "token_embedding shape {shape:?}, expected [*, {d_model}]"
@@ -395,8 +397,8 @@ impl<'a> AprValidator<'a> {
             }
         }
 
-        if let Some(tensor) = self.reader.find_tensor("encoder.conv1.weight") {
-            let shape = tensor.shape();
+        if let Some(tensor) = self.reader.get_tensor("encoder.conv1.weight") {
+            let shape = &tensor.shape;
             if shape.len() != 3 || shape[0] != d_model {
                 failures.push(format!(
                     "conv1 shape {shape:?}, expected [{d_model}, 80, 3]"
@@ -434,15 +436,15 @@ impl<'a> AprValidator<'a> {
         tensor_name: &str,
         validate: impl FnOnce(&TensorStats) -> Result<String, String>,
     ) -> ValidationCheck {
-        match self.reader.load_tensor(tensor_name) {
-            Ok(data) => {
+        match self.reader.get_tensor_as_f32(tensor_name) {
+            Some(data) => {
                 let stats = TensorStats::compute(tensor_name, &data);
                 match validate(&stats) {
                     Ok(msg) => ValidationCheck::pass(id, category, description, &msg),
                     Err(msg) => ValidationCheck::fail(id, category, description, &msg),
                 }
             }
-            Err(_) => ValidationCheck::fail(
+            None => ValidationCheck::fail(
                 id,
                 category,
                 description,
@@ -460,13 +462,13 @@ impl<'a> AprValidator<'a> {
         let mut failures = Vec::new();
         let mut checked = 0;
 
-        for tensor in &self.reader.tensors {
-            if filter(&tensor.name) {
-                if let Ok(data) = self.reader.load_tensor(&tensor.name) {
-                    let stats = TensorStats::compute(&tensor.name, &data);
+        for name in self.reader.tensor_names() {
+            if filter(name) {
+                if let Some(data) = self.reader.get_tensor_as_f32(name) {
+                    let stats = TensorStats::compute(name, &data);
                     checked += 1;
                     if let Some(msg) = validate(&stats) {
-                        failures.push(format!("{}: {msg}", tensor.name));
+                        failures.push(format!("{name}: {msg}"));
                     }
                 }
             }
@@ -576,8 +578,8 @@ impl<'a> AprValidator<'a> {
     }
 
     fn expected_tensor_count(&self) -> usize {
-        let n_enc = self.reader.header.n_audio_layer as usize;
-        let n_dec = self.reader.header.n_text_layer as usize;
+        let n_enc = self.config.n_audio_layer as usize;
+        let n_dec = self.config.n_text_layer as usize;
         2 + 4 + (n_enc * 8) + (n_dec * 12) + 4
     }
 }
