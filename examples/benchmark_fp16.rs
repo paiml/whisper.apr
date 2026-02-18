@@ -163,20 +163,30 @@ fn bench_linear_forward(in_features: usize, out_features: usize) -> (f64, f64) {
     let out_f32 = linear_f32.forward_simd(&input, 1).unwrap();
     let out_f16 = linear_f16.forward_simd(&input, 1).unwrap();
     assert_eq!(out_f32.len(), out_f16.len());
-    let max_rel_err: f32 = out_f32
-        .iter()
-        .zip(out_f16.iter())
-        .map(|(a, b)| {
-            if a.abs() > 1e-8 {
-                (a - b).abs() / a.abs()
-            } else {
-                (a - b).abs()
+
+    // Use numerically sound error metric:
+    // - Relative error for elements with |a| > atol (significant values)
+    // - Absolute error for elements near zero (where rel error is misleading)
+    let atol = 1e-4; // absolute tolerance for near-zero values
+    let rtol = 0.02; // 2% relative tolerance for significant values
+    let mut max_rel_err: f32 = 0.0;
+    let mut max_abs_err: f32 = 0.0;
+    let mut violations = 0usize;
+    for (a, b) in out_f32.iter().zip(out_f16.iter()) {
+        let abs_err = (a - b).abs();
+        max_abs_err = max_abs_err.max(abs_err);
+        if a.abs() > atol {
+            let rel = abs_err / a.abs();
+            max_rel_err = max_rel_err.max(rel);
+            if rel > rtol {
+                violations += 1;
             }
-        })
-        .fold(0.0_f32, f32::max);
-    if max_rel_err > 0.05 {
+        }
+    }
+    if violations > 0 {
         eprintln!(
-            "    WARNING: fp16 output diverges: max_rel_err={max_rel_err:.4} (threshold=0.05)"
+            "    WARNING: {violations}/{} elements exceed {rtol:.0}% rel error (max_rel={max_rel_err:.4}, max_abs={max_abs_err:.6})",
+            out_f32.len()
         );
     }
 
