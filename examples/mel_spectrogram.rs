@@ -5,16 +5,17 @@
 //!
 //! Run with: `cargo run --example mel_spectrogram`
 
-use whisper_apr::audio::MelFilterbank;
+use whisper_apr::audio::{MelConfig, MelFilterbank};
 
 fn main() {
     println!("=== Whisper.apr Mel Spectrogram Example ===\n");
 
     // Whisper's standard parameters
-    let n_mels = 80; // Number of mel frequency bins
-    let n_fft = 400; // FFT window size (25ms at 16kHz)
-    let sample_rate: usize = 16000; // Whisper's native sample rate
-    let hop_length = 160; // Hop size (10ms at 16kHz)
+    let config = MelConfig::whisper();
+    let n_mels = config.n_mels;
+    let n_fft = config.n_fft;
+    let sample_rate = config.sample_rate as usize;
+    let hop_length = config.hop_length;
 
     println!("Mel filterbank parameters:");
     println!("  Mel bins: {}", n_mels);
@@ -32,7 +33,7 @@ fn main() {
     println!();
 
     // Create mel filterbank
-    let mel = MelFilterbank::new(n_mels, n_fft, sample_rate as u32);
+    let mel = MelFilterbank::new(&config);
 
     // Demonstrate mel scale conversion
     println!("Mel scale examples:");
@@ -48,7 +49,7 @@ fn main() {
 
     // 1. Pure silence
     let silence: Vec<f32> = vec![0.0; sample_rate]; // 1 second
-    analyze_signal(&mel, "Silence", &silence, hop_length);
+    analyze_signal(&mel, "Silence", &silence);
 
     // 2. Low frequency tone (200 Hz)
     let low_tone: Vec<f32> = (0..sample_rate)
@@ -57,7 +58,7 @@ fn main() {
             (2.0 * std::f32::consts::PI * 200.0 * t).sin() * 0.5
         })
         .collect();
-    analyze_signal(&mel, "200 Hz tone", &low_tone, hop_length);
+    analyze_signal(&mel, "200 Hz tone", &low_tone);
 
     // 3. Mid frequency tone (1000 Hz)
     let mid_tone: Vec<f32> = (0..sample_rate)
@@ -66,7 +67,7 @@ fn main() {
             (2.0 * std::f32::consts::PI * 1000.0 * t).sin() * 0.5
         })
         .collect();
-    analyze_signal(&mel, "1000 Hz tone", &mid_tone, hop_length);
+    analyze_signal(&mel, "1000 Hz tone", &mid_tone);
 
     // 4. High frequency tone (4000 Hz)
     let high_tone: Vec<f32> = (0..sample_rate)
@@ -75,7 +76,7 @@ fn main() {
             (2.0 * std::f32::consts::PI * 4000.0 * t).sin() * 0.5
         })
         .collect();
-    analyze_signal(&mel, "4000 Hz tone", &high_tone, hop_length);
+    analyze_signal(&mel, "4000 Hz tone", &high_tone);
 
     // 5. White noise (random)
     let noise: Vec<f32> = (0..sample_rate)
@@ -85,7 +86,7 @@ fn main() {
         })
         .map(|x| x * 0.3) // Scale down
         .collect();
-    analyze_signal(&mel, "White noise", &noise, hop_length);
+    analyze_signal(&mel, "White noise", &noise);
 
     // 6. Speech-like (multiple harmonics)
     let speech_like: Vec<f32> = (0..sample_rate)
@@ -99,15 +100,15 @@ fn main() {
             (f1 + f2 + f3 + f4) * 0.3
         })
         .collect();
-    analyze_signal(&mel, "Speech-like (harmonics)", &speech_like, hop_length);
+    analyze_signal(&mel, "Speech-like (harmonics)", &speech_like);
 
     println!("=== Example Complete ===");
 }
 
-fn analyze_signal(mel: &MelFilterbank, name: &str, audio: &[f32], hop_length: usize) {
+fn analyze_signal(mel: &MelFilterbank, name: &str, audio: &[f32]) {
     println!("{} ({} samples):", name, audio.len());
 
-    match mel.compute(audio, hop_length) {
+    match mel.compute(audio) {
         Ok(mel_spec) => {
             let n_frames = mel_spec.len() / 80;
             println!("  Frames: {}", n_frames);

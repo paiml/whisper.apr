@@ -78,7 +78,11 @@ pub use validation::{
     ValidationReport,
 };
 pub use whisper_metadata::{
-    build_whisper_metadata, create_test_apr, metadata_to_model_config, MelFilterbankData,
+    metadata_to_model_config, MelFilterbankData,
+};
+#[cfg(any(feature = "converter", test))]
+pub use whisper_metadata::{
+    build_whisper_metadata, create_test_apr,
 };
 
 /// CRC32 (IEEE) checksum for APR2 format compatibility

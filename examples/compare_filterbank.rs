@@ -2,7 +2,7 @@
 //!
 //! This performs a t-test to determine if the filterbanks are statistically different.
 
-use whisper_apr::audio::MelFilterbank;
+use whisper_apr::audio::{MelConfig, MelFilterbank};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("╔════════════════════════════════════════════════════════════╗");
@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     // Compute our filterbank
-    let mel_filterbank = MelFilterbank::new(n_mels, 400, 16000);
+    let mel_filterbank = MelFilterbank::new(&MelConfig::whisper());
     let our_filterbank = mel_filterbank.filters();
 
     println!("Filterbank Dimensions:");

@@ -309,9 +309,7 @@ impl WhisperApr {
         let (mel_filters, conv_stem) = match config.audio_frontend {
             model::AudioFrontend::MelFilterbank => (
                 Some(audio::MelFilterbank::new(
-                    config.n_mels as usize,
-                    audio::N_FFT,
-                    audio::SAMPLE_RATE,
+                    &audio::MelConfig { n_mels: config.n_mels as usize, ..audio::MelConfig::whisper() },
                 )),
                 None,
             ),
@@ -440,16 +438,39 @@ impl WhisperApr {
             None
         };
 
-        // 1-2. Compute audio features (mel + encode for Whisper, ConvStem + encode for Moonshine)
+        // 1-2. Compute audio features (BrickTracing: mel_ms split from encoder_ms)
         #[cfg(feature = "std")]
-        let start_enc = if options.profile {
-            Some(std::time::Instant::now())
-        } else {
-            None
+        let start_audio = start_total.map(|_| std::time::Instant::now());
+
+        #[cfg(feature = "std")]
+        let mut mel_ms: Option<f64> = None;
+
+        let audio_features = match self.config.audio_frontend {
+            model::AudioFrontend::MelFilterbank => {
+                #[cfg(feature = "std")]
+                let mel_start = std::time::Instant::now();
+
+                let mel = self.compute_mel(audio)?;
+
+                #[cfg(feature = "std")]
+                {
+                    mel_ms = Some(mel_start.elapsed().as_secs_f64() * 1000.0);
+                }
+
+                self.encode(&mel)?
+            }
+            model::AudioFrontend::LearnedConv => {
+                let stem = self
+                    .conv_stem
+                    .as_ref()
+                    .ok_or_else(|| WhisperError::Model("Moonshine requires ConvStem".into()))?;
+                let stem_out = stem.forward(audio)?;
+                self.encoder.forward(&stem_out)?
+            }
         };
-        let audio_features = self.compute_features(audio)?;
+
         #[cfg(feature = "std")]
-        let enc_ms = start_enc.map(|s| s.elapsed().as_secs_f64() * 1000.0);
+        let enc_ms = start_audio.map(|s| s.elapsed().as_secs_f64() * 1000.0);
 
         // 3. Determine language
         let language = options.language.clone().unwrap_or_else(|| "en".to_string());
@@ -459,11 +480,7 @@ impl WhisperApr {
 
         // 5. Decode tokens
         #[cfg(feature = "std")]
-        let start_dec = if options.profile {
-            Some(std::time::Instant::now())
-        } else {
-            None
-        };
+        let start_dec = start_total.map(|_| std::time::Instant::now());
         let tokens = self.decode(&audio_features, &initial_tokens, &options)?;
         #[cfg(feature = "std")]
         let dec_ms = start_dec.map(|s| s.elapsed().as_secs_f64() * 1000.0);
@@ -487,26 +504,29 @@ impl WhisperApr {
             Vec::new()
         };
 
-        // 8. Build result with optional profiling
+        // 8. Build result with optional profiling (BrickTracing: mel_ms split from encoder_ms)
         #[cfg(feature = "std")]
-        let profiling = if options.profile {
+        let profiling = start_total.map(|st| {
             let mut breakdown = std::collections::HashMap::new();
-            if let Some(ms) = enc_ms {
-                breakdown.insert("encoder_ms".to_string(), ms);
+            let pairs: &[(&str, Option<f64>)] = &[
+                ("mel_ms", mel_ms),
+                ("audio_ms", enc_ms),
+                ("decoder_ms", dec_ms),
+            ];
+            for &(key, val) in pairs {
+                if let Some(ms) = val {
+                    breakdown.insert(key.to_string(), ms);
+                }
             }
-            if let Some(ms) = dec_ms {
-                breakdown.insert("decoder_ms".to_string(), ms);
+            // encoder_ms = audio_ms minus mel_ms (pure encoder time)
+            if let Some(audio) = enc_ms {
+                breakdown.insert("encoder_ms".to_string(), audio - mel_ms.unwrap_or(0.0));
             }
-
-            Some(ProfilingStats {
-                total_ms: start_total
-                    .map(|s| s.elapsed().as_secs_f64() * 1000.0)
-                    .unwrap_or(0.0),
+            ProfilingStats {
+                total_ms: st.elapsed().as_secs_f64() * 1000.0,
                 breakdown,
-            })
-        } else {
-            None
-        };
+            }
+        });
 
         #[cfg(not(feature = "std"))]
         let profiling = None;
@@ -670,31 +690,6 @@ impl WhisperApr {
         merged
     }
 
-    /// Compute audio features (model-family-aware audio frontend)
-    ///
-    /// For Whisper: mel spectrogram (30s padded, 3000 frames x 80 mels)
-    /// For Moonshine: learned ConvStem on variable-length audio
-    ///
-    /// # Errors
-    /// Returns error if audio processing fails
-    fn compute_features(&self, audio: &[f32]) -> WhisperResult<Vec<f32>> {
-        match self.config.audio_frontend {
-            model::AudioFrontend::MelFilterbank => {
-                let mel = self.compute_mel(audio)?;
-                self.encode(&mel)
-            }
-            model::AudioFrontend::LearnedConv => {
-                let stem = self
-                    .conv_stem
-                    .as_ref()
-                    .ok_or_else(|| WhisperError::Model("Moonshine requires ConvStem".into()))?;
-                let stem_out = stem.forward(audio)?;
-                // Pass ConvStem output through encoder blocks
-                self.encoder.forward(&stem_out)
-            }
-        }
-    }
-
     /// Run a probed forward pass through the full pipeline
     ///
     /// Orchestrates: audio → ConvStem → Encoder → Decoder with activation
@@ -775,7 +770,8 @@ impl WhisperApr {
         let mel_fb = self.mel_filters.as_ref().ok_or_else(|| {
             WhisperError::Audio("mel filterbank not available (Moonshine model?)".into())
         })?;
-        let mut mel = mel_fb.compute(&padded_audio, audio::HOP_LENGTH)?;
+        let mut mel = mel_fb.compute(&padded_audio)
+            .map_err(|e| WhisperError::Audio(e.to_string()))?;
         let actual_frames = mel.len() / N_MELS;
 
         // Ensure exactly 3000 frames (pad or truncate mel output)
@@ -1187,15 +1183,12 @@ impl WhisperApr {
         callback(&tracker.to_progress());
         let (mel_filters, conv_stem) = match config.audio_frontend {
             model::AudioFrontend::MelFilterbank => {
+                let mel_config = audio::MelConfig { n_mels: config.n_mels as usize, ..audio::MelConfig::whisper() };
                 let mf = Self::read_mel_filterbank(&reader).map_or_else(
                     || {
-                        audio::MelFilterbank::new(
-                            config.n_mels as usize,
-                            audio::N_FFT,
-                            audio::SAMPLE_RATE,
-                        )
+                        audio::MelFilterbank::new(&mel_config)
                     },
-                    |fb| audio::MelFilterbank::from_apr_data(fb, audio::SAMPLE_RATE),
+                    |fb| audio::MelFilterbank::from_filters(fb.data, &mel_config),
                 );
                 (Some(mf), None)
             }
@@ -2074,7 +2067,7 @@ impl WhisperApr {
         let start_time = std::time::Instant::now();
 
         // Use batch preprocessor for efficient mel computation
-        let preprocessor = audio::BatchPreprocessor::new(audio::AudioConfig::default());
+        let preprocessor = audio::BatchPreprocessor::new(audio::MelConfig::default());
         let mel_result = preprocessor.process_batch(batch)?;
 
         let mut results = Vec::with_capacity(batch.len());

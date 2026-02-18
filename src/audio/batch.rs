@@ -2,8 +2,8 @@
 //!
 //! Efficient batch processing of multiple audio segments for parallel inference.
 
-use super::{AudioConfig, MelFilterbank};
-use crate::error::WhisperResult;
+use super::{MelConfig, MelFilterbank};
+use crate::error::{WhisperError, WhisperResult};
 
 /// Batch of audio samples for parallel processing
 #[derive(Debug, Clone)]
@@ -11,13 +11,13 @@ pub struct AudioBatch {
     /// Individual audio segments (each is a Vec<f32> of samples)
     segments: Vec<Vec<f32>>,
     /// Audio configuration
-    config: AudioConfig,
+    config: MelConfig,
 }
 
 impl AudioBatch {
     /// Create a new empty batch
     #[must_use]
-    pub fn new(config: AudioConfig) -> Self {
+    pub fn new(config: MelConfig) -> Self {
         Self {
             segments: Vec::new(),
             config,
@@ -27,7 +27,7 @@ impl AudioBatch {
     /// Create batch with default config
     #[must_use]
     pub fn with_default_config() -> Self {
-        Self::new(AudioConfig::default())
+        Self::new(MelConfig::default())
     }
 
     /// Add an audio segment to the batch
@@ -65,7 +65,7 @@ impl AudioBatch {
 
     /// Get the audio configuration
     #[must_use]
-    pub const fn config(&self) -> &AudioConfig {
+    pub const fn config(&self) -> &MelConfig {
         &self.config
     }
 }
@@ -131,7 +131,7 @@ impl BatchMelResult {
 #[derive(Debug, Clone)]
 pub struct BatchPreprocessor {
     /// Audio configuration
-    config: AudioConfig,
+    config: MelConfig,
     /// Mel filterbank
     filterbank: MelFilterbank,
 }
@@ -139,15 +139,15 @@ pub struct BatchPreprocessor {
 impl BatchPreprocessor {
     /// Create a new batch preprocessor
     #[must_use]
-    pub fn new(config: AudioConfig) -> Self {
-        let filterbank = MelFilterbank::new(config.n_mels, config.n_fft, config.sample_rate);
+    pub fn new(config: MelConfig) -> Self {
+        let filterbank = MelFilterbank::new(&config);
         Self { config, filterbank }
     }
 
     /// Create with default configuration
     #[must_use]
     pub fn with_default_config() -> Self {
-        Self::new(AudioConfig::default())
+        Self::new(MelConfig::default())
     }
 
     /// Process a batch of audio samples into mel spectrograms
@@ -161,7 +161,8 @@ impl BatchPreprocessor {
         let mut max_frames = 0_usize;
 
         for samples in batch.segments() {
-            let mel = self.filterbank.compute(samples, self.config.hop_length)?;
+            let mel = self.filterbank.compute(samples)
+                .map_err(|e| WhisperError::Audio(e.to_string()))?;
             let frames = mel.len() / self.config.n_mels;
             frame_counts.push(frames);
             max_frames = max_frames.max(frames);
@@ -287,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_audio_batch_segments_mut() {
-        let mut batch = AudioBatch::new(AudioConfig::default());
+        let mut batch = AudioBatch::new(MelConfig::default());
         batch.add_segment(vec![1.0, 2.0]);
         batch.segments_mut().push(vec![3.0, 4.0]);
         assert_eq!(batch.len(), 2);
@@ -296,9 +297,9 @@ mod tests {
 
     #[test]
     fn test_audio_batch_config() {
-        let cfg = AudioConfig {
+        let cfg = MelConfig {
             sample_rate: 44100,
-            ..AudioConfig::default()
+            ..MelConfig::default()
         };
         let batch = AudioBatch::new(cfg.clone());
         assert_eq!(batch.config().sample_rate, 44100);

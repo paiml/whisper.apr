@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Actually, let's compute our own filterbank with the same parameters
     // and compare with what the model uses
-    let our_fb = whisper_apr::audio::MelFilterbank::new(80, 400, 16000);
+    let our_fb = whisper_apr::audio::MelFilterbank::new(&whisper_apr::audio::MelConfig::whisper());
     let our_filters = our_fb.filters();
 
     let our_max = our_filters
