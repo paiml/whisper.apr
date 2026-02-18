@@ -43,19 +43,27 @@ pub fn tiled_matvec(weights: &[f32], x: &[f32], rows: usize, cols: usize) -> Vec
     debug_assert_eq!(weights.len(), rows * cols, "weight dimensions mismatch");
     debug_assert_eq!(x.len(), cols, "input dimension mismatch");
 
-    let mut out = vec![0.0_f32; rows];
+    // For large matrices, parallelize across output rows
+    #[cfg(feature = "parallel")]
+    if rows * cols >= PARALLEL_THRESHOLD {
+        use rayon::prelude::*;
+        return (0..rows)
+            .into_par_iter()
+            .map(|i| {
+                let row_offset = i * cols;
+                dot(&weights[row_offset..row_offset + cols], x)
+            })
+            .collect();
+    }
 
-    // Process in tiles for cache efficiency
+    let mut out = vec![0.0_f32; rows];
     for tile_start in (0..rows).step_by(TILE_SIZE) {
         let tile_end = (tile_start + TILE_SIZE).min(rows);
-
         for i in tile_start..tile_end {
             let row_offset = i * cols;
-            // Use SIMD dot product for inner loop
             out[i] = dot(&weights[row_offset..row_offset + cols], x);
         }
     }
-
     out
 }
 
@@ -68,9 +76,19 @@ pub fn tiled_matvec_into(weights: &[f32], x: &[f32], out: &mut [f32], rows: usiz
     debug_assert_eq!(x.len(), cols, "input dimension mismatch");
     debug_assert_eq!(out.len(), rows, "output dimension mismatch");
 
+    // For large matrices, parallelize across output rows
+    #[cfg(feature = "parallel")]
+    if rows * cols >= PARALLEL_THRESHOLD {
+        use rayon::prelude::*;
+        out.par_iter_mut().enumerate().for_each(|(i, o)| {
+            let row_offset = i * cols;
+            *o = dot(&weights[row_offset..row_offset + cols], x);
+        });
+        return;
+    }
+
     for tile_start in (0..rows).step_by(TILE_SIZE) {
         let tile_end = (tile_start + TILE_SIZE).min(rows);
-
         for i in tile_start..tile_end {
             let row_offset = i * cols;
             out[i] = dot(&weights[row_offset..row_offset + cols], x);
@@ -164,6 +182,23 @@ pub fn tiled_matvec_f16(weights_f16: &[u16], x: &[f32], rows: usize, cols: usize
     );
     debug_assert_eq!(x.len(), cols, "input dimension mismatch");
 
+    // For large matrices, parallelize across output rows
+    // Each thread gets its own dequant buffer via dot_f16's internal buf parameter
+    #[cfg(feature = "parallel")]
+    if rows * cols >= PARALLEL_THRESHOLD {
+        use rayon::prelude::*;
+        return (0..rows)
+            .into_par_iter()
+            .map(|i| {
+                let row_offset = i * cols;
+                let row_f16 = &weights_f16[row_offset..row_offset + cols];
+                // Each rayon task allocates its own thread-local buffer
+                let mut buf = vec![0.0_f32; cols];
+                super::vector::dot_f16(row_f16, x, &mut buf)
+            })
+            .collect();
+    }
+
     let mut out = vec![0.0_f32; rows];
     // Thread-local dequantization buffer — stays in L1 cache
     let mut buf = vec![0.0_f32; cols];
@@ -199,6 +234,19 @@ pub fn tiled_matvec_f16_into(
     );
     debug_assert_eq!(x.len(), cols, "input dimension mismatch");
     debug_assert_eq!(out.len(), rows, "output dimension mismatch");
+
+    // For large matrices, parallelize across output rows
+    #[cfg(feature = "parallel")]
+    if rows * cols >= PARALLEL_THRESHOLD {
+        use rayon::prelude::*;
+        out.par_iter_mut().enumerate().for_each(|(i, o)| {
+            let row_offset = i * cols;
+            let row_f16 = &weights_f16[row_offset..row_offset + cols];
+            let mut buf = vec![0.0_f32; cols];
+            *o = super::vector::dot_f16(row_f16, x, &mut buf);
+        });
+        return;
+    }
 
     let mut buf = vec![0.0_f32; cols];
 
