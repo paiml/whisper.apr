@@ -112,6 +112,12 @@ impl FeedForward {
     pub fn is_finalized(&self) -> bool {
         self.fc1.is_finalized() && self.fc2.is_finalized()
     }
+
+    /// Convert all weights to fp16 in-place
+    pub fn convert_to_f16(&mut self) {
+        self.fc1.convert_to_f16();
+        self.fc2.convert_to_f16();
+    }
 }
 
 /// GELU activation function (approximate)

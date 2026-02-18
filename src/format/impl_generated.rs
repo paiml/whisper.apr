@@ -562,6 +562,75 @@ impl AprReader {
         Ok(result)
     }
 
+    /// Read fp16 tensor and dequantize to f32
+    ///
+    /// Reads u16 values (fp16 bit patterns) from disk and converts each to f32.
+    ///
+    /// # Errors
+    /// Returns error if read fails
+    pub fn read_f16_tensor(&self, offset: usize, count: usize) -> WhisperResult<Vec<f32>> {
+        let start = self.tensor_data_offset + offset;
+        let byte_count = count * 2; // fp16 = 2 bytes
+        let end = start + byte_count;
+
+        if end > self.data.len() {
+            return Err(WhisperError::Format(
+                "fp16 tensor data out of bounds".into(),
+            ));
+        }
+
+        let slice = &self.data[start..end];
+        let mut result = Vec::with_capacity(count);
+
+        for chunk in slice.chunks_exact(2) {
+            let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
+            result.push(half::f16::from_bits(bits).to_f32());
+        }
+
+        Ok(result)
+    }
+
+    /// Read fp16 tensor as raw u16 bit patterns (no dequantization)
+    ///
+    /// Keeps values as fp16 bit patterns for direct use in fp16 inference path.
+    ///
+    /// # Errors
+    /// Returns error if read fails
+    pub fn read_f16_tensor_raw(&self, offset: usize, count: usize) -> WhisperResult<Vec<u16>> {
+        let start = self.tensor_data_offset + offset;
+        let byte_count = count * 2; // fp16 = 2 bytes
+        let end = start + byte_count;
+
+        if end > self.data.len() {
+            return Err(WhisperError::Format(
+                "fp16 tensor data out of bounds".into(),
+            ));
+        }
+
+        let slice = &self.data[start..end];
+        let mut result = Vec::with_capacity(count);
+
+        for chunk in slice.chunks_exact(2) {
+            result.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+        }
+
+        Ok(result)
+    }
+
+    /// Load tensor by name as raw fp16 u16 bit patterns
+    ///
+    /// # Errors
+    /// Returns error if tensor not found or read fails
+    pub fn load_tensor_f16(&self, name: &str) -> WhisperResult<Vec<u16>> {
+        let desc = self
+            .tensors
+            .iter()
+            .find(|t| t.name == name)
+            .ok_or_else(|| WhisperError::Format(format!("tensor not found: {name}")))?;
+
+        self.read_f16_tensor_raw(desc.offset as usize, desc.n_elements as usize)
+    }
+
     /// Get remaining data after header
     #[must_use]
     pub fn tensor_data(&self) -> &[u8] {
@@ -595,15 +664,20 @@ impl AprReader {
 
         let desc = &self.tensors[tensor_idx];
 
-        if self.header.quantization == Quantization::Int8 {
-            // For int8 models, dequantize the tensor
-            self.read_int8_tensor_dequantized(
-                tensor_idx,
-                desc.offset as usize,
-                desc.n_elements as usize,
-            )
-        } else {
-            self.read_f32_tensor(desc.offset as usize, desc.n_elements as usize)
+        match self.header.quantization {
+            Quantization::Int8 => {
+                // For int8 models, dequantize the tensor
+                self.read_int8_tensor_dequantized(
+                    tensor_idx,
+                    desc.offset as usize,
+                    desc.n_elements as usize,
+                )
+            }
+            Quantization::F16 => {
+                // For fp16 models, dequantize to f32
+                self.read_f16_tensor(desc.offset as usize, desc.n_elements as usize)
+            }
+            _ => self.read_f32_tensor(desc.offset as usize, desc.n_elements as usize),
         }
     }
 
@@ -1356,6 +1430,239 @@ impl AprWriterInt8 {
     /// Get tensors reference
     #[must_use]
     pub fn tensors(&self) -> &[QuantizedTensorData] {
+        &self.tensors
+    }
+}
+
+// =============================================================================
+// fp16 Tensor Data and Writer
+// =============================================================================
+
+/// fp16 tensor with name and u16 data for writing
+#[derive(Debug, Clone)]
+pub struct F16TensorData {
+    /// Tensor name (max 31 chars)
+    pub name: String,
+    /// Shape of the tensor
+    pub shape: Vec<usize>,
+    /// fp16 data stored as u16 bit patterns
+    pub data: Vec<u16>,
+}
+
+impl F16TensorData {
+    /// Create fp16 tensor data from f32 values
+    #[must_use]
+    pub fn from_f32(name: impl Into<String>, shape: Vec<usize>, f32_data: &[f32]) -> Self {
+        let data: Vec<u16> = f32_data
+            .iter()
+            .map(|&v| half::f16::from_f32(v).to_bits())
+            .collect();
+        Self {
+            name: name.into(),
+            shape,
+            data,
+        }
+    }
+
+    /// Create from raw u16 bit patterns
+    #[must_use]
+    pub fn new(name: impl Into<String>, shape: Vec<usize>, data: Vec<u16>) -> Self {
+        Self {
+            name: name.into(),
+            shape,
+            data,
+        }
+    }
+
+    /// Number of elements
+    #[must_use]
+    pub fn n_elements(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Size in bytes (fp16 = 2 bytes each)
+    #[must_use]
+    pub fn byte_size(&self) -> usize {
+        self.data.len() * 2
+    }
+}
+
+/// .apr file writer for fp16 quantized models
+///
+/// Modeled after `AprWriterInt8`. Stores weights as 2-byte fp16 values
+/// (u16 little-endian). No scale table needed (fp16 is self-describing).
+#[derive(Debug)]
+pub struct AprWriterF16 {
+    /// File header
+    header: AprHeader,
+    /// fp16 tensors to write
+    tensors: Vec<F16TensorData>,
+    /// Optional vocabulary to embed
+    vocabulary: Option<crate::tokenizer::Vocabulary>,
+    /// Optional mel filterbank to embed
+    mel_filterbank: Option<MelFilterbankData>,
+}
+
+impl AprWriterF16 {
+    /// Create new fp16 writer with header
+    #[must_use]
+    pub fn new(header: AprHeader) -> Self {
+        let mut header = header;
+        header.quantization = Quantization::F16;
+        Self {
+            header,
+            tensors: Vec::new(),
+            vocabulary: None,
+            mel_filterbank: None,
+        }
+    }
+
+    /// Create writer from model config
+    #[must_use]
+    pub fn from_config(config: &ModelConfig) -> Self {
+        Self::new(AprHeader::from_config(config, Quantization::F16, false))
+    }
+
+    /// Add a tensor by quantizing f32 data to fp16
+    pub fn add_tensor_f32(&mut self, name: impl Into<String>, shape: Vec<usize>, data: &[f32]) {
+        let tensor = F16TensorData::from_f32(name, shape, data);
+        self.tensors.push(tensor);
+    }
+
+    /// Add a pre-quantized fp16 tensor
+    pub fn add_tensor(&mut self, tensor: F16TensorData) {
+        self.tensors.push(tensor);
+    }
+
+    /// Number of tensors
+    #[must_use]
+    pub fn n_tensors(&self) -> usize {
+        self.tensors.len()
+    }
+
+    /// Set vocabulary to embed in the model file
+    pub fn set_vocabulary(&mut self, vocab: crate::tokenizer::Vocabulary) {
+        self.vocabulary = Some(vocab);
+    }
+
+    /// Check if vocabulary is set
+    #[must_use]
+    pub fn has_vocabulary(&self) -> bool {
+        self.vocabulary.is_some()
+    }
+
+    /// Set mel filterbank to embed in the model file
+    pub fn set_mel_filterbank(&mut self, filterbank: MelFilterbankData) {
+        self.mel_filterbank = Some(filterbank);
+    }
+
+    /// Check if mel filterbank is set
+    #[must_use]
+    pub fn has_mel_filterbank(&self) -> bool {
+        self.mel_filterbank.is_some()
+    }
+
+    /// Write to bytes
+    ///
+    /// Format for fp16:
+    /// - magic (4 bytes)
+    /// - header (64 bytes)
+    /// - tensor index (96 bytes per tensor)
+    /// - tensor data (2 bytes per element, u16 LE)
+    /// - vocabulary (optional)
+    /// - filterbank (optional)
+    /// - crc32 (4 bytes)
+    ///
+    /// # Errors
+    /// Returns error if writing fails
+    pub fn to_bytes(&self) -> WhisperResult<Vec<u8>> {
+        let index_size = self.tensors.len() * TENSOR_INDEX_ENTRY_SIZE;
+        let data_size: usize = self.tensors.iter().map(F16TensorData::byte_size).sum();
+        let vocab_bytes = self.vocabulary.as_ref().map(|v| v.to_bytes());
+        let vocab_section_size = vocab_bytes.as_ref().map_or(0, |b| 4 + b.len());
+        let filterbank_bytes = self
+            .mel_filterbank
+            .as_ref()
+            .map(MelFilterbankData::to_bytes);
+        let filterbank_section_size = filterbank_bytes.as_ref().map_or(0, |b| 4 + b.len());
+        let total_size = 4
+            + HEADER_SIZE
+            + index_size
+            + data_size
+            + vocab_section_size
+            + filterbank_section_size
+            + 4;
+
+        let mut bytes = Vec::with_capacity(total_size);
+
+        // 1. Write magic
+        bytes.extend_from_slice(&MAGIC);
+
+        // 2. Write header
+        let mut header = self.header.clone();
+        header.n_tensors = self.tensors.len() as u16;
+        header.has_vocab = self.vocabulary.is_some();
+        header.has_filterbank = self.mel_filterbank.is_some();
+        bytes.extend_from_slice(&header.to_bytes());
+
+        // 3. Write tensor index
+        let mut offset: u64 = 0;
+        for tensor in &self.tensors {
+            let desc = TensorDescriptor::new(
+                &tensor.name,
+                &tensor.shape,
+                offset,
+                tensor.byte_size() as u64,
+            );
+            bytes.extend_from_slice(&desc.to_bytes());
+            offset += tensor.byte_size() as u64;
+        }
+
+        // 4. Write tensor data (fp16 as u16 LE)
+        for tensor in &self.tensors {
+            for &value in &tensor.data {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+
+        // 5. Write vocabulary section if present
+        if let Some(vocab_data) = vocab_bytes {
+            bytes.extend_from_slice(&(vocab_data.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&vocab_data);
+        }
+
+        // 6. Write filterbank section if present
+        if let Some(fb_data) = filterbank_bytes {
+            bytes.extend_from_slice(&(fb_data.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&fb_data);
+        }
+
+        // 7. Compute and write CRC32
+        let crc = crc32(&bytes);
+        bytes.extend_from_slice(&crc.to_le_bytes());
+
+        Ok(bytes)
+    }
+
+    /// Write to file
+    ///
+    /// # Errors
+    /// Returns error if file write fails
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn write_to_file(&self, path: impl AsRef<std::path::Path>) -> WhisperResult<()> {
+        let bytes = self.to_bytes()?;
+        std::fs::write(path, bytes).map_err(|e| WhisperError::Format(e.to_string()))
+    }
+
+    /// Get header reference
+    #[must_use]
+    pub const fn header(&self) -> &AprHeader {
+        &self.header
+    }
+
+    /// Get tensors reference
+    #[must_use]
+    pub fn tensors(&self) -> &[F16TensorData] {
         &self.tensors
     }
 }

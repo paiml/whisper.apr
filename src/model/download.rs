@@ -135,6 +135,16 @@ pub const MODELS: &[ModelInfo] = &[
         size_fp16: "3.0GB",
         size_int4: "750MB",
     },
+    ModelInfo {
+        name: "whisper-large-v3-turbo",
+        repo_id: "openai/whisper-large-v3-turbo",
+        family: ModelFamily::Whisper,
+        params: "809M",
+        description: "Fast large model (32 enc + 4 dec layers)",
+        wasm_quant: "int4",
+        size_fp16: "1.6GB",
+        size_int4: "404MB",
+    },
     // LFM2 models
     ModelInfo {
         name: "lfm2-2.6b-transcript",
@@ -351,13 +361,13 @@ mod tests {
     fn test_list_models() {
         let models = list_models();
         assert!(!models.is_empty());
-        assert!(models.len() >= 8); // 2 moonshine + 5 whisper + 1 lfm2
+        assert!(models.len() >= 9); // 2 moonshine + 6 whisper + 1 lfm2
     }
 
     #[test]
     fn test_list_models_by_family_whisper() {
         let whisper_models = list_models_by_family(ModelFamily::Whisper);
-        assert_eq!(whisper_models.len(), 5);
+        assert_eq!(whisper_models.len(), 6);
         for m in whisper_models {
             assert_eq!(m.family, ModelFamily::Whisper);
         }

@@ -29,7 +29,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::path::PathBuf;
-use whisper_apr::format::{AprWriter, AprWriterInt8, MelFilterbankData, TensorData};
+use whisper_apr::format::{AprWriter, AprWriterF16, AprWriterInt8, MelFilterbankData, TensorData};
 use whisper_apr::model::ModelConfig;
 use whisper_apr::tokenizer::Vocabulary;
 
@@ -110,6 +110,7 @@ impl ModelSize {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum QuantizeType {
     None,
+    F16,
     Int8,
 }
 
@@ -117,6 +118,7 @@ impl QuantizeType {
     fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "none" | "f32" => Some(Self::None),
+            "f16" | "fp16" | "half" => Some(Self::F16),
             "int8" | "i8" => Some(Self::Int8),
             _ => None,
         }
@@ -762,6 +764,56 @@ fn convert_to_apr_int8(
     Ok(bytes)
 }
 
+/// Convert SafeTensors to .apr format (fp16 quantized)
+fn convert_to_apr_f16(
+    tensors: Vec<ParsedTensor>,
+    model_size: ModelSize,
+    vocab: Option<Vocabulary>,
+    filterbank: Option<MelFilterbankData>,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let config = model_size.to_model_config();
+    let mut writer = AprWriterF16::from_config(&config);
+
+    println!("Quantizing {} tensors to fp16...", tensors.len());
+    let pb = ProgressBar::new(tensors.len() as u64);
+
+    for tensor in tensors {
+        writer.add_tensor_f32(tensor.name, tensor.shape, &tensor.data);
+        pb.inc(1);
+    }
+
+    pb.finish_with_message("Quantization complete");
+
+    // Embed vocabulary if provided
+    if let Some(v) = vocab {
+        println!("Embedding vocabulary ({} tokens)...", v.len());
+        writer.set_vocabulary(v);
+    }
+
+    // Embed mel filterbank if provided
+    if let Some(fb) = filterbank {
+        println!(
+            "Embedding mel filterbank ({}×{} = {} floats)...",
+            fb.n_mels,
+            fb.n_freqs,
+            fb.data.len()
+        );
+        writer.set_mel_filterbank(fb);
+    }
+
+    println!("Serializing to .apr format (fp16)...");
+    let bytes = writer.to_bytes()?;
+    println!(
+        "Output size: {:.2} MB ({} tensors, vocab={}, filterbank={})",
+        bytes.len() as f64 / 1_000_000.0,
+        writer.n_tensors(),
+        writer.has_vocabulary(),
+        writer.has_mel_filterbank()
+    );
+
+    Ok(bytes)
+}
+
 /// Convert f16 bits to f32
 fn half_to_f32(bits: u16) -> f32 {
     let sign = ((bits >> 15) & 1) as u32;
@@ -832,13 +884,14 @@ MOONSHINE MODELS (Useful Sensors, ONNX):
 
 OPTIONS:
     --output, -o <PATH>     Output .apr file path (default: <model>.apr)
-    --quantize, -q <TYPE>   Quantization type: none, int8 (default: none)
+    --quantize, -q <TYPE>   Quantization type: none, f16, int8 (default: none)
     --cache <DIR>           Cache directory for downloaded models
                             (default: ~/.cache/whisper-apr)
     --help, -h              Print this help message
 
 QUANTIZATION:
     none/f32    Full precision (default) - largest size, best quality
+    f16/fp16    Half precision - ~2x smaller, negligible quality loss, ~2x faster decode
     int8/i8     8-bit integer - ~4x smaller, minor quality loss
 
 EXAMPLES:
@@ -878,8 +931,12 @@ fn parse_arg(
             if *idx >= args.len() {
                 return Err("--quantize requires a type argument (none, int8)".into());
             }
-            *quantize = QuantizeType::from_str(&args[*idx])
-                .ok_or_else(|| format!("Unknown quantization type: {}", args[*idx]))?;
+            *quantize = QuantizeType::from_str(&args[*idx]).ok_or_else(|| {
+                format!(
+                    "Unknown quantization type: {}. Options: none, f16, int8",
+                    args[*idx]
+                )
+            })?;
         }
         "--cache" => {
             *idx += 1;
@@ -939,6 +996,7 @@ fn parse_args() -> Result<CliArgs, Box<dyn std::error::Error>> {
     let output_path = output_path.unwrap_or_else(|| {
         let suffix = match quantize {
             QuantizeType::None => "",
+            QuantizeType::F16 => "-f16",
             QuantizeType::Int8 => "-int8",
         };
         let prefix = if model_size.is_moonshine() {
@@ -1183,6 +1241,7 @@ async fn convert_moonshine(args: CliArgs) -> Result<(), Box<dyn std::error::Erro
     // Moonshine has no mel filterbank but DOES have SentencePiece vocabulary
     let apr_bytes = match args.quantize {
         QuantizeType::None => convert_to_apr_f32(tensors, args.model_size, vocab, None)?,
+        QuantizeType::F16 => convert_to_apr_f16(tensors, args.model_size, vocab, None)?,
         QuantizeType::Int8 => convert_to_apr_int8(tensors, args.model_size, vocab, None)?,
     };
 
@@ -1210,6 +1269,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let quant_str = match args.quantize {
         QuantizeType::None => "f32 (full precision)",
+        QuantizeType::F16 => "fp16 (half precision)",
         QuantizeType::Int8 => "int8 (quantized)",
     };
 
@@ -1273,6 +1333,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let apr_bytes = match args.quantize {
         QuantizeType::None => {
             convert_to_apr_f32(tensors, args.model_size, Some(vocab), Some(filterbank))?
+        }
+        QuantizeType::F16 => {
+            convert_to_apr_f16(tensors, args.model_size, Some(vocab), Some(filterbank))?
         }
         QuantizeType::Int8 => {
             convert_to_apr_int8(tensors, args.model_size, Some(vocab), Some(filterbank))?

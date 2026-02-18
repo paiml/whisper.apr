@@ -1149,18 +1149,26 @@ impl WhisperApr {
         let config = reader.header.to_model_config();
         tracker.next_phase();
 
+        let is_f16 = reader.header.quantization == format::Quantization::F16;
+
         // Phase 2: Loading encoder
         callback(&tracker.to_progress());
         let mut encoder = model::Encoder::new(&config);
         Self::load_encoder_weights(&reader, &mut encoder, &mut tracker, callback);
         // Finalize encoder - cache transposed weights for fast forward
+        // (For fp16 models, encoder weights are loaded as f32 via dequant — finalize still needed)
         encoder.finalize_weights();
         tracker.next_phase();
 
         // Phase 3: Loading decoder
         callback(&tracker.to_progress());
         let mut decoder = model::Decoder::new(&config);
-        Self::load_decoder_weights(&reader, &mut decoder, &mut tracker, callback);
+        if is_f16 {
+            // fp16 model: load decoder weights as raw fp16 u16 for fast inference
+            Self::load_decoder_weights_f16(&reader, &mut decoder, &mut tracker, callback);
+        } else {
+            Self::load_decoder_weights(&reader, &mut decoder, &mut tracker, callback);
+        }
         tracker.next_phase();
 
         // Phase 4: Loading vocabulary
@@ -1525,6 +1533,99 @@ impl WhisperApr {
         decoder.finalize_weights();
     }
 
+    /// Load decoder weights from fp16 .apr reader
+    ///
+    /// For fp16 models, decoder linear layer weights are loaded as raw u16 fp16
+    /// bit patterns (no dequant) for the fp16 inference path. Token embeddings
+    /// are loaded as f32 (needed for embedding lookup), then converted to fp16
+    /// for fast project_to_vocab. LayerNorm weights/biases are loaded as f32
+    /// (negligible size, need full precision).
+    fn load_decoder_weights_f16(
+        reader: &format::AprReader,
+        decoder: &mut model::Decoder,
+        tracker: &mut progress::ProgressTracker,
+        callback: progress::ProgressCallback<'_>,
+    ) {
+        let n_layers = decoder.n_layers();
+
+        // Token embedding: load as f32 (needed for embedding lookup), then convert to fp16
+        let te_result = reader
+            .load_tensor("decoder.embed_tokens.weight")
+            .or_else(|_| reader.load_tensor("decoder.token_embedding.weight"))
+            .or_else(|_| reader.load_tensor("decoder.token_embedding"));
+        if let Ok(te) = te_result {
+            let target = decoder.token_embedding_mut();
+            let len = te.len().min(target.len());
+            target[..len].copy_from_slice(&te[..len]);
+        }
+
+        // Positional embedding (f32 — small, need full precision)
+        let pe_result = reader
+            .load_tensor("decoder.embed_positions.weight")
+            .or_else(|_| reader.load_tensor("decoder.positional_embedding"));
+        if let Ok(pe) = pe_result {
+            let target = decoder.positional_embedding_mut();
+            let len = pe.len().min(target.len());
+            target[..len].copy_from_slice(&pe[..len]);
+        }
+
+        // Whisper decoder blocks: load weights as fp16, biases/norms as f32
+        for layer_idx in 0..n_layers {
+            let progress = layer_idx as f32 / n_layers as f32;
+            tracker.update_phase_progress(progress);
+            callback(&tracker.to_progress());
+
+            let block = &mut decoder.blocks_mut()[layer_idx];
+
+            // LayerNorms: always f32 (small, need precision)
+            Self::load_layer_norm_weights(
+                reader,
+                &format!("decoder.layers.{layer_idx}.self_attn_layer_norm"),
+                &mut block.ln1,
+            );
+
+            // Self-attention: weights as fp16
+            Self::load_attention_weights_f16(
+                reader,
+                &format!("decoder.layers.{layer_idx}.self_attn"),
+                &mut block.self_attn,
+            );
+
+            Self::load_layer_norm_weights(
+                reader,
+                &format!("decoder.layers.{layer_idx}.encoder_attn_layer_norm"),
+                &mut block.ln2,
+            );
+
+            // Cross-attention: weights as fp16
+            Self::load_attention_weights_f16(
+                reader,
+                &format!("decoder.layers.{layer_idx}.encoder_attn"),
+                &mut block.cross_attn,
+            );
+
+            Self::load_layer_norm_weights(
+                reader,
+                &format!("decoder.layers.{layer_idx}.final_layer_norm"),
+                &mut block.ln3,
+            );
+
+            // FFN: weights as fp16
+            Self::load_ffn_weights_f16(
+                reader,
+                &format!("decoder.layers.{layer_idx}"),
+                &mut block.ffn,
+            );
+        }
+
+        // Final layer norm (f32)
+        Self::load_layer_norm_weights(reader, "decoder.layer_norm", decoder.ln_post_mut());
+
+        // Finalize and convert token embeddings to fp16 for project_to_vocab
+        decoder.finalize_weights();
+        decoder.convert_embeddings_to_f16();
+    }
+
     /// Load layer norm weights
     fn load_layer_norm_weights(
         reader: &format::AprReader,
@@ -1584,6 +1685,65 @@ impl WhisperApr {
         }
         if let Ok(fc2_weight) = reader.load_tensor(&format!("{prefix}.fc2.weight")) {
             ffn.fc2.set_weight(&fc2_weight);
+        }
+        if let Ok(fc2_bias) = reader.load_tensor(&format!("{prefix}.fc2.bias")) {
+            ffn.fc2.set_bias(&fc2_bias);
+        }
+    }
+
+    /// Load attention weights as raw fp16 (u16 bit patterns) for fp16 models.
+    ///
+    /// Biases are loaded as f32 (negligible size). Weights are loaded as raw u16
+    /// to enable the fp16 inference path (tiled_matvec_f16).
+    fn load_attention_weights_f16(
+        reader: &format::AprReader,
+        prefix: &str,
+        attn: &mut model::MultiHeadAttention,
+    ) {
+        // Weights: load as raw fp16 u16 bit patterns
+        if let Ok(q_weight) = reader.load_tensor_f16(&format!("{prefix}.q_proj.weight")) {
+            attn.set_query_weight_f16(&q_weight);
+        }
+        if let Ok(k_weight) = reader.load_tensor_f16(&format!("{prefix}.k_proj.weight")) {
+            attn.set_key_weight_f16(&k_weight);
+        }
+        if let Ok(v_weight) = reader.load_tensor_f16(&format!("{prefix}.v_proj.weight")) {
+            attn.set_value_weight_f16(&v_weight);
+        }
+        if let Ok(out_weight) = reader.load_tensor_f16(&format!("{prefix}.out_proj.weight")) {
+            attn.set_out_weight_f16(&out_weight);
+        }
+        // Biases: always load as f32 (negligible size, needed at full precision)
+        if let Ok(q_bias) = reader.load_tensor(&format!("{prefix}.q_proj.bias")) {
+            attn.set_query_bias(&q_bias);
+        }
+        if let Ok(k_bias) = reader.load_tensor(&format!("{prefix}.k_proj.bias")) {
+            attn.set_key_bias(&k_bias);
+        }
+        if let Ok(v_bias) = reader.load_tensor(&format!("{prefix}.v_proj.bias")) {
+            attn.set_value_bias(&v_bias);
+        }
+        if let Ok(out_bias) = reader.load_tensor(&format!("{prefix}.out_proj.bias")) {
+            attn.set_out_bias(&out_bias);
+        }
+    }
+
+    /// Load feed-forward network weights as raw fp16 for fp16 models.
+    ///
+    /// Biases are loaded as f32 (negligible size).
+    fn load_ffn_weights_f16(
+        reader: &format::AprReader,
+        prefix: &str,
+        ffn: &mut model::FeedForward,
+    ) {
+        if let Ok(fc1_weight) = reader.load_tensor_f16(&format!("{prefix}.fc1.weight")) {
+            ffn.fc1.set_weight_f16(&fc1_weight);
+        }
+        if let Ok(fc1_bias) = reader.load_tensor(&format!("{prefix}.fc1.bias")) {
+            ffn.fc1.set_bias(&fc1_bias);
+        }
+        if let Ok(fc2_weight) = reader.load_tensor_f16(&format!("{prefix}.fc2.weight")) {
+            ffn.fc2.set_weight_f16(&fc2_weight);
         }
         if let Ok(fc2_bias) = reader.load_tensor(&format!("{prefix}.fc2.bias")) {
             ffn.fc2.set_bias(&fc2_bias);
