@@ -1,6 +1,7 @@
 //! List all tensors in an .apr model file
 
 use std::path::Path;
+use whisper_apr::format::{AprV2ReaderRef, metadata_to_model_config};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== APR MODEL TENSOR LIST ===\n");
@@ -14,11 +15,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_bytes = std::fs::read(model_path)?;
 
     // Use the format module directly
-    let reader = whisper_apr::format::AprReader::new(model_bytes)?;
+    let reader = AprV2ReaderRef::from_bytes(&model_bytes)?;
 
-    println!("Model: {:?}", reader.header.model_type);
-    println!("Quantization: {:?}", reader.header.quantization);
-    println!("Tensor count: {}\n", reader.tensors.len());
+    let config = metadata_to_model_config(reader.metadata());
+    println!("Model: {:?}", config.model_type);
+    println!("Tensor count: {}\n", reader.tensor_names().len());
 
     println!("Tensors:");
     println!("{:-<80}", "");
@@ -28,17 +29,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut decoder_tensors = Vec::new();
     let mut other_tensors = Vec::new();
 
-    for tensor in &reader.tensors {
-        let name = tensor.name.trim_end_matches('\0');
-        let dims: Vec<_> = tensor.shape.iter().take(tensor.n_dims as usize).collect();
-        let size = tensor.n_elements;
+    for name in reader.tensor_names() {
+        let entry = reader.get_tensor(name).unwrap();
+        let size = entry.element_count();
 
         if name.starts_with("encoder") {
-            encoder_tensors.push((name.to_string(), dims.clone(), size));
+            encoder_tensors.push((name.to_string(), entry.shape.clone(), size));
         } else if name.starts_with("decoder") {
-            decoder_tensors.push((name.to_string(), dims.clone(), size));
+            decoder_tensors.push((name.to_string(), entry.shape.clone(), size));
         } else {
-            other_tensors.push((name.to_string(), dims.clone(), size));
+            other_tensors.push((name.to_string(), entry.shape.clone(), size));
         }
     }
 
@@ -86,9 +86,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     for name in expected {
-        match reader.load_tensor(name) {
-            Ok(data) => println!("  ✅ {} ({} values)", name, data.len()),
-            Err(_) => println!("  ❌ {} NOT FOUND", name),
+        match reader.get_tensor_as_f32(name) {
+            Some(data) => println!("  {} ({} values)", name, data.len()),
+            None => println!("  {} NOT FOUND", name),
         }
     }
 

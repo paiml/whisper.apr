@@ -1,16 +1,16 @@
 //! Inspect layer norm weights directly from APR file
 
 use std::fs;
-use whisper_apr::format::AprReader;
+use whisper_apr::format::AprV2ReaderRef;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_bytes = fs::read("models/whisper-tiny-fb.apr")?;
-    let reader = AprReader::new(model_bytes)?;
+    let reader = AprV2ReaderRef::from_bytes(&model_bytes)?;
 
     println!("=== Layer Norm Weights from APR File ===\n");
 
     // Check decoder final layer norm
-    if let Ok(weight) = reader.load_tensor("decoder.layer_norm.weight") {
+    if let Some(weight) = reader.get_tensor_as_f32("decoder.layer_norm.weight") {
         println!("decoder.layer_norm.weight:");
         println!("  Length: {}", weight.len());
         let mean: f32 = weight.iter().sum::<f32>() / weight.len() as f32;
@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Check encoder final layer norm
-    if let Ok(weight) = reader.load_tensor("encoder.layer_norm.weight") {
+    if let Some(weight) = reader.get_tensor_as_f32("encoder.layer_norm.weight") {
         println!("\nencoder.layer_norm.weight:");
         println!("  Length: {}", weight.len());
         let mean: f32 = weight.iter().sum::<f32>() / weight.len() as f32;
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Check a decoder block layer norm
-    if let Ok(weight) = reader.load_tensor("decoder.layers.0.self_attn_layer_norm.weight") {
+    if let Some(weight) = reader.get_tensor_as_f32("decoder.layers.0.self_attn_layer_norm.weight") {
         println!("\ndecoder.layers.0.self_attn_layer_norm.weight:");
         println!("  Length: {}", weight.len());
         let mean: f32 = weight.iter().sum::<f32>() / weight.len() as f32;
@@ -54,12 +54,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     for name in tensor_names {
-        match reader.load_tensor(name) {
-            Ok(t) => {
+        match reader.get_tensor_as_f32(name) {
+            Some(t) => {
                 let mean: f32 = t.iter().sum::<f32>() / t.len() as f32;
                 println!("  {}: len={}, mean={:.4}", name, t.len(), mean);
             }
-            Err(_) => println!("  {}: NOT FOUND", name),
+            None => println!("  {}: NOT FOUND", name),
         }
     }
 

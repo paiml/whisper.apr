@@ -8,7 +8,9 @@
 //! With model file: `cargo run --example filterbank_embedding -- models/whisper-tiny.apr`
 
 use whisper_apr::audio::MelFilterbank;
-use whisper_apr::format::{AprReader, AprWriter, MelFilterbankData};
+use whisper_apr::format::{
+    AprV2ReaderRef, AprV2Writer, MelFilterbankData, build_whisper_metadata, metadata_to_model_config,
+};
 use whisper_apr::model::ModelConfig;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -34,64 +36,67 @@ fn inspect_apr_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Inspecting: {} ===\n", path);
 
     let data = std::fs::read(path)?;
-    let reader = AprReader::new(data)?;
-    let header = &reader.header;
+    let reader = AprV2ReaderRef::from_bytes(&data)?;
+    let config = metadata_to_model_config(reader.metadata());
 
     println!("Model Information:");
     println!(
-        "  Type: {} ({})",
-        header.model_type,
-        model_type_name(header.model_type)
+        "  Type: {:?} ({})",
+        config.model_type,
+        model_type_name(config.model_type)
     );
-    println!("  Tensors: {}", header.n_tensors);
-    println!("  Quantization: {:?}", header.quantization);
-    println!("  n_mels: {}", header.n_mels);
+    println!("  Tensors: {}", reader.header().tensor_count);
+    println!("  n_mels: {}", config.n_mels);
     println!();
 
     println!("Embedded Data:");
-    println!("  Has vocabulary: {}", reader.has_vocabulary());
-    println!("  Has filterbank: {}", reader.has_mel_filterbank());
+    println!("  Has vocabulary: {}", reader.get_tensor("__vocab__").is_some());
+    println!("  Has filterbank: {}", reader.get_tensor("__mel_filters__").is_some());
 
-    if let Some(vocab) = reader.read_vocabulary() {
-        println!("  Vocabulary size: {} tokens", vocab.len());
+    if let Some(vocab_data) = reader.get_tensor_data("__vocab__") {
+        if let Some(vocab) = whisper_apr::tokenizer::Vocabulary::from_bytes(vocab_data) {
+            println!("  Vocabulary size: {} tokens", vocab.len());
+        }
     }
 
-    if let Some(fb) = reader.read_mel_filterbank() {
-        println!("\n=== Filterbank Analysis ===");
-        println!("  Dimensions: {} x {}", fb.n_mels, fb.n_freqs);
-        println!("  Total values: {}", fb.data.len());
+    if let Some(fb_data) = reader.get_tensor_data("__mel_filters__") {
+        if let Ok(fb) = MelFilterbankData::from_bytes(fb_data) {
+            println!("\n=== Filterbank Analysis ===");
+            println!("  Dimensions: {} x {}", fb.n_mels, fb.n_freqs);
+            println!("  Total values: {}", fb.data.len());
 
-        // Check slaney normalization (row sums should be ~0.025)
-        let n_freqs = fb.n_freqs as usize;
-        println!("\n  Row Sums (should be ~0.025 for slaney normalization):");
-        for row in 0..5.min(fb.n_mels as usize) {
-            let row_sum: f32 = fb.data[row * n_freqs..(row + 1) * n_freqs].iter().sum();
-            println!("    Row {}: {:.6}", row, row_sum);
+            // Check slaney normalization (row sums should be ~0.025)
+            let n_freqs = fb.n_freqs as usize;
+            println!("\n  Row Sums (should be ~0.025 for slaney normalization):");
+            for row in 0..5.min(fb.n_mels as usize) {
+                let row_sum: f32 = fb.data[row * n_freqs..(row + 1) * n_freqs].iter().sum();
+                println!("    Row {}: {:.6}", row, row_sum);
+            }
+
+            // Compare with computed filterbank
+            println!("\n=== Comparison with Computed Filterbank ===");
+            let computed = MelFilterbank::new(fb.n_mels as usize, 400, 16000);
+            let cosine_sim = cosine_similarity(&fb.data, computed.filters());
+            println!("  Cosine similarity: {:.6}", cosine_sim);
+
+            if cosine_sim > 0.99 {
+                println!("  Status: MATCH - Filterbanks are nearly identical");
+            } else {
+                println!("  Status: DIFFERENT - Using embedded filterbank is critical!");
+                println!("  (This is expected - OpenAI's filterbank uses slaney normalization)");
+            }
+
+            // Create MelFilterbank from embedded data
+            let mel = MelFilterbank::from_apr_data(fb, 16000);
+            println!(
+                "\n  Created MelFilterbank: {} mels, {} FFT, {} Hz",
+                mel.n_mels(),
+                mel.n_fft(),
+                mel.sample_rate()
+            );
         }
-
-        // Compare with computed filterbank
-        println!("\n=== Comparison with Computed Filterbank ===");
-        let computed = MelFilterbank::new(fb.n_mels as usize, 400, 16000);
-        let cosine_sim = cosine_similarity(&fb.data, computed.filters());
-        println!("  Cosine similarity: {:.6}", cosine_sim);
-
-        if cosine_sim > 0.99 {
-            println!("  Status: MATCH - Filterbanks are nearly identical");
-        } else {
-            println!("  Status: DIFFERENT - Using embedded filterbank is critical!");
-            println!("  (This is expected - OpenAI's filterbank uses slaney normalization)");
-        }
-
-        // Create MelFilterbank from embedded data
-        let mel = MelFilterbank::from_apr_data(fb, 16000);
-        println!(
-            "\n  Created MelFilterbank: {} mels, {} FFT, {} Hz",
-            mel.n_mels(),
-            mel.n_fft(),
-            mel.sample_rate()
-        );
     } else {
-        println!("\n  ⚠️  No filterbank embedded in this model");
+        println!("\n  No filterbank embedded in this model");
         println!("      Consider reconverting with the latest converter.");
     }
 
@@ -123,59 +128,68 @@ fn demo_filterbank_embedding() -> Result<(), Box<dyn std::error::Error>> {
     // Create a minimal .apr file with filterbank
     println!("\nCreating .apr file with embedded filterbank...");
     let config = ModelConfig::tiny();
-    let mut writer = AprWriter::from_config(&config);
+    let meta = build_whisper_metadata(&config, "test");
+    let mut writer = AprV2Writer::new(meta);
 
     // Add a dummy tensor
-    writer.add("dummy.weight", vec![10, 10], vec![0.0; 100]);
+    writer.add_f32_tensor("dummy.weight", vec![10, 10], &[0.0; 100]);
 
-    // Embed the filterbank
-    writer.set_mel_filterbank(fb_data);
+    // Embed the filterbank as a tensor
+    let fb_bytes = fb_data.to_bytes();
+    writer.add_tensor(
+        "__mel_filters__",
+        whisper_apr::format::TensorDType::F32,
+        vec![n_mels, n_freqs],
+        fb_bytes,
+    );
 
-    let bytes = writer.to_bytes()?;
+    let bytes = writer.write()?;
     println!("  File size: {} bytes", bytes.len());
-    println!("  Has filterbank: {}", writer.has_mel_filterbank());
 
     // Read it back
     println!("\nReading back filterbank...");
-    let reader = AprReader::new(bytes)?;
+    let reader = AprV2ReaderRef::from_bytes(&bytes)?;
 
-    if let Some(fb) = reader.read_mel_filterbank() {
-        println!("  Recovered: {}x{}", fb.n_mels, fb.n_freqs);
+    if let Some(raw_data) = reader.get_tensor_data("__mel_filters__") {
+        if let Ok(fb) = MelFilterbankData::from_bytes(raw_data) {
+            println!("  Recovered: {}x{}", fb.n_mels, fb.n_freqs);
 
-        // Verify data integrity
-        let orig_sum: f32 = filterbank_data.iter().sum();
-        let read_sum: f32 = fb.data.iter().sum();
-        println!("  Original sum: {:.6}", orig_sum);
-        println!("  Read sum:     {:.6}", read_sum);
-        println!("  Match: {}", (orig_sum - read_sum).abs() < 1e-6);
+            // Verify data integrity
+            let orig_sum: f32 = filterbank_data.iter().sum();
+            let read_sum: f32 = fb.data.iter().sum();
+            println!("  Original sum: {:.6}", orig_sum);
+            println!("  Read sum:     {:.6}", read_sum);
+            println!("  Match: {}", (orig_sum - read_sum).abs() < 1e-6);
 
-        // Create MelFilterbank for use
-        let mel = MelFilterbank::from_apr_data(fb, 16000);
-        println!(
-            "\n  Ready to use: MelFilterbank with {} mel bands",
-            mel.n_mels()
-        );
+            // Create MelFilterbank for use
+            let mel = MelFilterbank::from_apr_data(fb, 16000);
+            println!(
+                "\n  Ready to use: MelFilterbank with {} mel bands",
+                mel.n_mels()
+            );
 
-        // Compare with standard computed filterbank
-        let computed = MelFilterbank::new(n_mels, 400, 16000);
-        let cosine_sim = cosine_similarity(mel.filters(), computed.filters());
-        println!("\n=== Filterbank Comparison ===");
-        println!(
-            "  Embedded (slaney) vs Computed: {:.4} cosine similarity",
-            cosine_sim
-        );
+            // Compare with standard computed filterbank
+            let computed = MelFilterbank::new(n_mels, 400, 16000);
+            let cosine_sim = cosine_similarity(mel.filters(), computed.filters());
+            println!("\n=== Filterbank Comparison ===");
+            println!(
+                "  Embedded (slaney) vs Computed: {:.4} cosine similarity",
+                cosine_sim
+            );
 
-        if cosine_sim < 0.99 {
-            println!("  ⚠️  DIFFERENT! This is why embedded filterbank matters.");
-            println!("     The model was trained with slaney-normalized filterbank.");
-            println!("     Computing from scratch produces different values.");
+            if cosine_sim < 0.99 {
+                println!("  DIFFERENT! This is why embedded filterbank matters.");
+                println!("     The model was trained with slaney-normalized filterbank.");
+                println!("     Computing from scratch produces different values.");
+            }
         }
     }
 
     println!("\n=== Usage Example ===");
     println!("```rust");
-    println!("let reader = AprReader::new(model_bytes)?;");
-    println!("let mel = reader.read_mel_filterbank()");
+    println!("let reader = AprV2ReaderRef::from_bytes(&model_bytes)?;");
+    println!("let mel = reader.get_tensor_data(\"__mel_filters__\")");
+    println!("    .and_then(|d| MelFilterbankData::from_bytes(d).ok())");
     println!("    .map(|fb| MelFilterbank::from_apr_data(fb, 16000))");
     println!("    .unwrap_or_else(|| MelFilterbank::new(80, 400, 16000));");
     println!("```");
@@ -262,20 +276,20 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     (dot / (norm_a.sqrt() * norm_b.sqrt())) as f32
 }
 
-fn model_type_name(t: u8) -> &'static str {
+fn model_type_name(t: whisper_apr::ModelType) -> &'static str {
     match t {
-        0 => "tiny",
-        1 => "tiny.en",
-        2 => "base",
-        3 => "base.en",
-        4 => "small",
-        5 => "small.en",
-        6 => "medium",
-        7 => "medium.en",
-        8 => "large",
-        9 => "large-v1",
-        10 => "large-v2",
-        11 => "large-v3",
-        _ => "unknown",
+        whisper_apr::ModelType::Tiny => "tiny",
+        whisper_apr::ModelType::TinyEn => "tiny.en",
+        whisper_apr::ModelType::Base => "base",
+        whisper_apr::ModelType::BaseEn => "base.en",
+        whisper_apr::ModelType::Small => "small",
+        whisper_apr::ModelType::SmallEn => "small.en",
+        whisper_apr::ModelType::Medium => "medium",
+        whisper_apr::ModelType::MediumEn => "medium.en",
+        whisper_apr::ModelType::Large => "large",
+        whisper_apr::ModelType::LargeV1 => "large-v1",
+        whisper_apr::ModelType::LargeV2 => "large-v2",
+        whisper_apr::ModelType::LargeV3 => "large-v3",
+        whisper_apr::ModelType::LargeV3Turbo => "large-v3-turbo",
     }
 }

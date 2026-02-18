@@ -1,11 +1,11 @@
 //! Check decoder tensor statistics
 
 use std::fs;
-use whisper_apr::format::AprReader;
+use whisper_apr::format::AprV2ReaderRef;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_bytes = fs::read("models/whisper-tiny-fb.apr")?;
-    let reader = AprReader::new(model_bytes)?;
+    let reader = AprV2ReaderRef::from_bytes(&model_bytes)?;
 
     println!("=== Decoder Tensor Statistics ===\n");
 
@@ -24,8 +24,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     for name in tensors {
-        match reader.load_tensor(name) {
-            Ok(t) => {
+        match reader.get_tensor_as_f32(name) {
+            Some(t) => {
                 let mean: f32 = t.iter().sum::<f32>() / t.len() as f32;
                 let std: f32 = {
                     let var = t.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / t.len() as f32;
@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     max
                 );
             }
-            Err(_) => println!("{name}: NOT FOUND"),
+            None => println!("{name}: NOT FOUND"),
         }
     }
 

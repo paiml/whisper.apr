@@ -10,7 +10,7 @@
 use aprender::inspect::safetensors::HfSafetensors;
 use aprender::inspect::WeightDiff;
 use std::path::Path;
-use whisper_apr::format::AprReader;
+use whisper_apr::format::AprV2ReaderRef;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== H6 Verification: Weight Values ===\n");
@@ -27,10 +27,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load APR model
     println!("Loading APR model: {}", model_path.display());
     let apr_bytes = std::fs::read(model_path)?;
-    let apr_reader = AprReader::new(apr_bytes)?;
+    let apr_reader = AprV2ReaderRef::from_bytes(&apr_bytes)?;
 
     // List APR tensor names
-    let apr_tensor_names: Vec<&str> = apr_reader.tensors.iter().map(|t| t.name.as_str()).collect();
+    let apr_tensor_names = apr_reader.tensor_names();
     println!("APR tensors: {}\n", apr_tensor_names.len());
 
     // Download HF model
@@ -63,10 +63,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        let apr_tensor = match apr_reader.load_tensor(apr_name) {
-            Ok(t) => t,
-            Err(e) => {
-                println!("  {hf_name} - APR not found (tried {apr_name}): {e}");
+        let apr_tensor = match apr_reader.get_tensor_as_f32(apr_name) {
+            Some(t) => t,
+            None => {
+                println!("  {hf_name} - APR not found (tried {apr_name})");
                 continue;
             }
         };
@@ -78,9 +78,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let apr_mean = apr_tensor.iter().sum::<f32>() / apr_tensor.len() as f32;
 
         let status = if diff.max_diff < threshold {
-            "✓"
+            "OK"
         } else {
-            "✗"
+            "MISMATCH"
         };
         let flag = if hf_name.ends_with(".weight") && (apr_mean - 1.0).abs() > 1.0 {
             " <-- BAD MEAN!"
@@ -130,10 +130,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let apr_tensor = match apr_reader.load_tensor(apr_name) {
-                Ok(t) => t,
-                Err(e) => {
-                    println!("  {hf_name} - APR not found (tried {apr_name}): {e}");
+            let apr_tensor = match apr_reader.get_tensor_as_f32(apr_name) {
+                Some(t) => t,
+                None => {
+                    println!("  {hf_name} - APR not found (tried {apr_name})");
                     continue;
                 }
             };
@@ -144,9 +144,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let status = if diff.max_diff < threshold {
                 total_passed += 1;
-                "✓"
+                "OK"
             } else {
-                "✗"
+                "MISMATCH"
             };
 
             println!(
@@ -163,9 +163,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Passed (< {threshold:.0e}): {total_passed}");
 
     if total_passed == total_comparisons && total_comparisons > 0 {
-        println!("\n✓ H6 PASSED: Weights match HuggingFace reference!");
+        println!("\n  H6 PASSED: Weights match HuggingFace reference!");
     } else {
-        println!("\n✗ H6 FAILED: Weight mismatch detected!");
+        println!("\n  H6 FAILED: Weight mismatch detected!");
         println!("\nPossible causes:");
         println!("  1. Weight transpose: HF is [out, in], check APR layout");
         println!("  2. Tensor name mapping incorrect");

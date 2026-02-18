@@ -55,14 +55,14 @@ fn main() {
                 size_bytes,
             })
         } else {
-            eprintln!("⚠ Not found: {path}");
+            eprintln!("Not found: {path}");
             None
         }
     })
     .collect();
 
     if formats.is_empty() {
-        eprintln!("\n❌ No model files found. Please run the converter first:");
+        eprintln!("\nNo model files found. Please run the converter first:");
         eprintln!("   cargo run --bin convert -- --model tiny");
         return;
     }
@@ -86,9 +86,9 @@ fn main() {
         let size_mb = format.size_bytes as f64 / 1_000_000.0;
         let ratio = (format.size_bytes as f64 / baseline_size as f64) * 100.0;
         let wasm_ready = if format.size_bytes < 50_000_000 {
-            "✅ Yes"
+            "Yes"
         } else {
-            "❌ Too large"
+            "Too large"
         };
 
         println!(
@@ -122,9 +122,9 @@ fn main() {
 
             // Measure APR parse
             let start = Instant::now();
-            let reader = whisper_apr::format::AprReader::new(data.clone()).expect("parse APR");
+            let reader = whisper_apr::format::AprV2ReaderRef::from_bytes(&data).expect("parse APR");
             let parse_time = start.elapsed();
-            let _ = reader.n_tensors(); // Use reader
+            let _ = reader.tensor_names().len(); // Use reader
 
             // Measure full model load
             let start = Instant::now();
@@ -206,9 +206,9 @@ fn main() {
     println!("\n╔═══════════════════════════════════════════════════════════╗");
     println!("║                       SUMMARY                             ║");
     println!("╠═══════════════════════════════════════════════════════════╣");
-    println!("║ ✅ APR-int8 achieves 75% compression (37MB vs 145MB)      ║");
-    println!("║ ✅ 4x faster file reads due to smaller size               ║");
-    println!("║ ✅ Optimized for WASM delivery and browser loading        ║");
+    println!("║ APR-int8 achieves 75% compression (37MB vs 145MB)        ║");
+    println!("║ 4x faster file reads due to smaller size                 ║");
+    println!("║ Optimized for WASM delivery and browser loading          ║");
     println!("║                                                           ║");
     println!("║ Recommendation: Use APR-int8 for production WASM builds   ║");
     println!("╚═══════════════════════════════════════════════════════════╝\n");

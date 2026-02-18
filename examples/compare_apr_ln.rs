@@ -1,7 +1,7 @@
 //! Compare layer norm weights between APR files
 
 use std::fs;
-use whisper_apr::format::AprReader;
+use whisper_apr::format::AprV2ReaderRef;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Comparing APR files ===\n");
@@ -10,12 +10,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bytes_orig = fs::read("models/whisper-tiny.apr")?;
     let bytes_fb = fs::read("models/whisper-tiny-fb.apr")?;
 
-    let reader_orig = AprReader::new(bytes_orig)?;
-    let reader_fb = AprReader::new(bytes_fb)?;
+    let reader_orig = AprV2ReaderRef::from_bytes(&bytes_orig)?;
+    let reader_fb = AprV2ReaderRef::from_bytes(&bytes_fb)?;
 
     // Compare decoder.layer_norm.weight
-    let orig = reader_orig.load_tensor("decoder.layer_norm.weight")?;
-    let fb = reader_fb.load_tensor("decoder.layer_norm.weight")?;
+    let orig = reader_orig.get_tensor_as_f32("decoder.layer_norm.weight")
+        .ok_or("decoder.layer_norm.weight not found in original")?;
+    let fb = reader_fb.get_tensor_as_f32("decoder.layer_norm.weight")
+        .ok_or("decoder.layer_norm.weight not found in fb")?;
 
     println!("decoder.layer_norm.weight:");
     println!(
@@ -28,8 +30,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Compare encoder.layer_norm.weight
-    let orig = reader_orig.load_tensor("encoder.layer_norm.weight")?;
-    let fb = reader_fb.load_tensor("encoder.layer_norm.weight")?;
+    let orig = reader_orig.get_tensor_as_f32("encoder.layer_norm.weight")
+        .ok_or("encoder.layer_norm.weight not found in original")?;
+    let fb = reader_fb.get_tensor_as_f32("encoder.layer_norm.weight")
+        .ok_or("encoder.layer_norm.weight not found in fb")?;
 
     println!("\nencoder.layer_norm.weight:");
     println!(
@@ -42,8 +46,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Compare decoder.layers.0.self_attn_layer_norm.weight
-    let orig = reader_orig.load_tensor("decoder.layers.0.self_attn_layer_norm.weight")?;
-    let fb = reader_fb.load_tensor("decoder.layers.0.self_attn_layer_norm.weight")?;
+    let orig = reader_orig.get_tensor_as_f32("decoder.layers.0.self_attn_layer_norm.weight")
+        .ok_or("decoder.layers.0.self_attn_layer_norm.weight not found in original")?;
+    let fb = reader_fb.get_tensor_as_f32("decoder.layers.0.self_attn_layer_norm.weight")
+        .ok_or("decoder.layers.0.self_attn_layer_norm.weight not found in fb")?;
 
     println!("\ndecoder.layers.0.self_attn_layer_norm.weight:");
     println!(

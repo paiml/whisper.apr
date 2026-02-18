@@ -1,17 +1,19 @@
 //! Test with encoder layer norm weights copied to decoder
 
 use std::fs;
-use whisper_apr::format::AprReader;
+use whisper_apr::format::AprV2ReaderRef;
 use whisper_apr::tokenizer::special_tokens;
 use whisper_apr::WhisperApr;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load APR to get encoder weights
     let model_bytes_copy = fs::read("models/whisper-tiny-fb.apr")?;
-    let reader = AprReader::new(model_bytes_copy)?;
+    let reader = AprV2ReaderRef::from_bytes(&model_bytes_copy)?;
 
-    let enc_ln_weight = reader.load_tensor("encoder.layer_norm.weight")?;
-    let enc_ln_bias = reader.load_tensor("encoder.layer_norm.bias")?;
+    let enc_ln_weight = reader.get_tensor_as_f32("encoder.layer_norm.weight")
+        .ok_or("encoder.layer_norm.weight not found")?;
+    let enc_ln_bias = reader.get_tensor_as_f32("encoder.layer_norm.bias")
+        .ok_or("encoder.layer_norm.bias not found")?;
 
     println!(
         "Encoder LN weight mean: {:.4}",
