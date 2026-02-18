@@ -11,32 +11,12 @@
 //! Run with: cargo run --release --example debug_cross_attn
 
 use std::path::Path;
+use whisper_apr::format::{AprV2ReaderRef, metadata_to_model_config};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== CROSS-ATTENTION DEBUG (Step 20 Hypotheses) ===\n");
-
-    let model_path = Path::new("models/whisper-tiny.apr");
-    if !model_path.exists() {
-        eprintln!("Model not found: {}", model_path.display());
-        eprintln!(
-            "Please convert with: cargo run --bin whisper-convert --features converter -- tiny"
-        );
-        return Ok(());
-    }
-
-    let model_bytes = std::fs::read(model_path)?;
-    let reader = whisper_apr::format::AprReader::new(model_bytes.clone())?;
-
-    println!("Model: {:?}", reader.header.model_type);
-    println!("Quantization: {:?}\n", reader.header.quantization);
-
-    // =========================================================================
-    // H3: Check if cross-attention weights are loaded (HIGHEST PRIORITY)
-    // =========================================================================
+fn test_h3_weight_loading(reader: &AprV2ReaderRef<'_>) -> (usize, usize) {
     println!("=== H3: CROSS-ATTENTION WEIGHT LOADING ===\n");
 
     let cross_attn_tensors = [
-        // Layer 0
         "decoder.layers.0.encoder_attn.q_proj.weight",
         "decoder.layers.0.encoder_attn.q_proj.bias",
         "decoder.layers.0.encoder_attn.k_proj.weight",
@@ -53,263 +33,199 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut total_zero = 0;
 
     for name in &cross_attn_tensors {
-        match reader.load_tensor(name) {
-            Ok(data) => {
+        match reader.get_tensor_as_f32(name) {
+            Some(data) => {
                 let norm: f32 = data.iter().map(|x| x * x).sum::<f32>().sqrt();
                 let max_abs: f32 = data.iter().map(|x| x.abs()).fold(0.0, f32::max);
                 let non_zero = data.iter().filter(|&&v| v.abs() > 1e-8).count();
-                let pct_nonzero = non_zero as f32 / data.len() as f32 * 100.0;
+                let pct = non_zero as f32 / data.len() as f32 * 100.0;
 
                 if non_zero == 0 {
-                    println!("  ❌ {} - ALL ZEROS!", name);
+                    println!("  {name} - ALL ZEROS!");
                     total_zero += 1;
-                } else if pct_nonzero < 50.0 {
-                    println!(
-                        "  ⚠️  {} - sparse ({:.1}% non-zero, norm={:.4})",
-                        name, pct_nonzero, norm
-                    );
+                } else if pct < 50.0 {
+                    println!("  {name} - sparse ({pct:.1}% non-zero, norm={norm:.4})");
                 } else {
-                    println!(
-                        "  ✅ {} - loaded (norm={:.4}, max={:.4}, {:.1}% non-zero)",
-                        name, norm, max_abs, pct_nonzero
-                    );
+                    println!("  {name} - loaded (norm={norm:.4}, max={max_abs:.4}, {pct:.1}% non-zero)");
                 }
             }
-            Err(e) => {
-                println!("  ❌ {} - NOT FOUND: {}", name, e);
+            None => {
+                println!("  {name} - NOT FOUND");
                 total_missing += 1;
             }
         }
     }
 
-    // Check all layers
-    println!("\n  --- All Layers Summary ---");
-    let num_layers = 4; // tiny model has 4 layers
-    let d_model = 384; // tiny model dimension
-
-    for layer in 0..num_layers {
-        let qkv_names = [
-            format!("decoder.layers.{}.encoder_attn.q_proj.weight", layer),
-            format!("decoder.layers.{}.encoder_attn.k_proj.weight", layer),
-            format!("decoder.layers.{}.encoder_attn.v_proj.weight", layer),
-        ];
-
-        let mut layer_status = "✅";
-        for name in &qkv_names {
-            match reader.load_tensor(name) {
-                Ok(data) => {
-                    let norm: f32 = data.iter().map(|x| x * x).sum::<f32>().sqrt();
-                    if norm < 1e-6 {
-                        layer_status = "❌ (zero norm)";
-                        break;
-                    }
-                }
-                Err(_) => {
-                    layer_status = "❌ (missing)";
-                    break;
-                }
-            }
-        }
-        println!("  Layer {} cross-attn Q/K/V: {}", layer, layer_status);
-    }
+    check_all_layers(reader);
 
     if total_missing > 0 || total_zero > 0 {
-        println!(
-            "\n  🔴 H3 FAILED: {} missing, {} zero tensors",
-            total_missing, total_zero
-        );
+        println!("\n  H3 FAILED: {total_missing} missing, {total_zero} zero tensors");
     } else {
-        println!("\n  🟢 H3 PASSED: All cross-attention weights loaded");
+        println!("\n  H3 PASSED: All cross-attention weights loaded");
     }
 
-    // =========================================================================
-    // H2: Check encoder output shape
-    // =========================================================================
-    println!("\n=== H2: ENCODER OUTPUT SHAPE ===\n");
+    (total_missing, total_zero)
+}
 
-    // Load model and run encoder
-    let model = whisper_apr::WhisperApr::load_from_apr(&model_bytes)?;
+fn check_all_layers(reader: &AprV2ReaderRef<'_>) {
+    println!("\n  --- All Layers Summary ---");
+    for layer in 0..4 {
+        let qkv = [
+            format!("decoder.layers.{layer}.encoder_attn.q_proj.weight"),
+            format!("decoder.layers.{layer}.encoder_attn.k_proj.weight"),
+            format!("decoder.layers.{layer}.encoder_attn.v_proj.weight"),
+        ];
 
-    // Load test audio
-    let audio_path = Path::new("demos/test-audio/test-speech-1.5s.wav");
-    if !audio_path.exists() {
-        println!("  ⚠️  Test audio not found, skipping shape test");
-    } else {
-        let audio_bytes = std::fs::read(audio_path)?;
-        let samples: Vec<f32> = audio_bytes[44..]
-            .chunks_exact(2)
-            .map(|chunk| {
-                let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
-                sample as f32 / 32768.0
-            })
-            .collect();
-
-        let mel = model.compute_mel(&samples)?;
-        let encoded = model.encode(&mel)?;
-
-        // Expected: [1, 1500, d_model] flattened = 1500 * d_model = 576000
-        let expected_elements = 1500 * d_model;
-        let actual_elements = encoded.len();
-
-        println!(
-            "  Expected encoder output: [1, 1500, {}] = {} elements",
-            d_model, expected_elements
-        );
-        println!("  Actual encoder output: {} elements", actual_elements);
-
-        if actual_elements == expected_elements {
-            println!("  🟢 H2 PASSED: Encoder output shape correct");
-        } else {
-            println!(
-                "  🔴 H2 FAILED: Shape mismatch! Got {} instead of {}",
-                actual_elements, expected_elements
-            );
-
-            // Additional diagnostics
-            if actual_elements == 1500 * d_model / 2 {
-                println!("     → Possible cause: Only half the frames processed");
-            } else if actual_elements == d_model {
-                println!("     → Possible cause: Only first frame output");
-            } else if actual_elements % 1500 == 0 {
-                println!(
-                    "     → Possible cause: Wrong d_model ({} instead of {})",
-                    actual_elements / 1500,
-                    d_model
-                );
+        let mut status = "OK";
+        for name in &qkv {
+            match reader.get_tensor_as_f32(name) {
+                Some(data) if data.iter().map(|x| x * x).sum::<f32>().sqrt() < 1e-6 => {
+                    status = "FAIL (zero norm)";
+                    break;
+                }
+                None => {
+                    status = "FAIL (missing)";
+                    break;
+                }
+                _ => {}
             }
         }
+        println!("  Layer {layer} cross-attn Q/K/V: {status}");
+    }
+}
 
-        // Check encoder output statistics
-        println!("\n  Encoder output statistics:");
-        let enc_mean: f32 = encoded.iter().sum::<f32>() / encoded.len() as f32;
-        let enc_var: f32 =
-            encoded.iter().map(|&x| (x - enc_mean).powi(2)).sum::<f32>() / encoded.len() as f32;
-        let enc_std = enc_var.sqrt();
-        let enc_max: f32 = encoded.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-        let enc_min: f32 = encoded.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+fn test_h2_encoder_shape(model: &whisper_apr::WhisperApr, d_model: usize) {
+    println!("\n=== H2: ENCODER OUTPUT SHAPE ===\n");
 
-        println!("    Mean: {:.6}", enc_mean);
-        println!("    Std:  {:.6}", enc_std);
-        println!("    Min:  {:.6}", enc_min);
-        println!("    Max:  {:.6}", enc_max);
-
-        // Check if normalized (Whisper uses LayerNorm, so values should be reasonable)
-        if enc_std.abs() < 0.01 {
-            println!("    ⚠️  Very low variance - encoder may not be processing correctly");
-        } else if enc_max.abs() > 100.0 {
-            println!("    ⚠️  Very large values - possible numerical issue");
-        } else {
-            println!("    ✅ Statistics look reasonable");
-        }
+    let audio_path = Path::new("demos/test-audio/test-speech-1.5s.wav");
+    if !audio_path.exists() {
+        println!("  Test audio not found, skipping shape test");
+        return;
     }
 
-    // =========================================================================
-    // H4: Check attention scaling factor
-    // =========================================================================
-    println!("\n=== H4: ATTENTION SCALING FACTOR ===\n");
+    let Ok(audio_bytes) = std::fs::read(audio_path) else { return };
+    let samples: Vec<f32> = audio_bytes[44..]
+        .chunks_exact(2)
+        .map(|chunk| {
+            let s = i16::from_le_bytes([chunk[0], chunk[1]]);
+            s as f32 / 32768.0
+        })
+        .collect();
 
-    // For Whisper tiny: d_model=384, n_heads=6, d_head=64
-    // Scaling factor should be 1/sqrt(64) = 0.125
-    let n_heads = 6;
-    let d_head = d_model / n_heads;
-    let expected_scale = 1.0 / (d_head as f32).sqrt();
+    let Ok(mel) = model.compute_mel(&samples) else { return };
+    let Ok(encoded) = model.encode(&mel) else { return };
 
-    println!("  Model config:");
-    println!("    d_model = {}", d_model);
-    println!("    n_heads = {}", n_heads);
-    println!("    d_head  = {} (= d_model / n_heads)", d_head);
-    println!(
-        "    Expected attention scale = 1/sqrt({}) = {:.6}",
-        d_head, expected_scale
-    );
+    let expected = 1500 * d_model;
+    println!("  Expected: [1, 1500, {d_model}] = {expected} elements");
+    println!("  Actual:   {} elements", encoded.len());
 
-    // We can't directly inspect the scale factor at runtime without modifying code,
-    // but we can verify the math is correct
-    println!("\n  ℹ️  To verify H4: Check src/model/attention.rs for scaling");
-    println!("      Look for: let scale = 1.0 / (d_head as f32).sqrt()");
-    println!("      Or equivalent scaling in attention score calculation");
+    if encoded.len() == expected {
+        println!("  H2 PASSED: Encoder output shape correct");
+    } else {
+        println!("  H2 FAILED: Shape mismatch!");
+    }
 
-    // =========================================================================
-    // H1: Verify cross-attention uses encoder output
-    // =========================================================================
+    print_encoder_stats(&encoded);
+}
+
+fn print_encoder_stats(encoded: &[f32]) {
+    let mean: f32 = encoded.iter().sum::<f32>() / encoded.len() as f32;
+    let var: f32 = encoded.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / encoded.len() as f32;
+    let std = var.sqrt();
+    let max: f32 = encoded.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    let min: f32 = encoded.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+
+    println!("\n  Encoder output statistics:");
+    println!("    Mean: {mean:.6}");
+    println!("    Std:  {std:.6}");
+    println!("    Min:  {min:.6}");
+    println!("    Max:  {max:.6}");
+
+    if std.abs() < 0.01 {
+        println!("    Very low variance - encoder may not be processing correctly");
+    } else if max.abs() > 100.0 {
+        println!("    Very large values - possible numerical issue");
+    } else {
+        println!("    Statistics look reasonable");
+    }
+}
+
+fn test_h1_input(model: &whisper_apr::WhisperApr) {
     println!("\n=== H1: CROSS-ATTENTION INPUT VERIFICATION ===\n");
-
-    // This requires runtime instrumentation. We can:
-    // 1. Check that encoder output is non-trivial
-    // 2. Run transcription and see if output changes with different audio
-
     println!("  Running diagnostic transcriptions...\n");
 
-    // Test with actual audio
-    if Path::new("demos/test-audio/test-speech-1.5s.wav").exists() {
-        let audio_bytes = std::fs::read("demos/test-audio/test-speech-1.5s.wav")?;
-        let samples: Vec<f32> = audio_bytes[44..]
-            .chunks_exact(2)
-            .map(|chunk| {
-                let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
-                sample as f32 / 32768.0
-            })
-            .collect();
-
-        let result = model.transcribe(&samples, whisper_apr::TranscribeOptions::default())?;
-        println!(
-            "  Real audio transcription: {:?}",
-            &result.text[..result.text.len().min(100)]
-        );
-
-        // Test with silence (zeros)
-        let silence: Vec<f32> = vec![0.0; samples.len()];
-        let silence_result =
-            model.transcribe(&silence, whisper_apr::TranscribeOptions::default())?;
-        println!(
-            "  Silence transcription:    {:?}",
-            &silence_result.text[..silence_result.text.len().min(100)]
-        );
-
-        // Test with noise
-        let noise: Vec<f32> = (0..samples.len())
-            .map(|i| (i as f32 * 0.1).sin() * 0.1)
-            .collect();
-        let noise_result = model.transcribe(&noise, whisper_apr::TranscribeOptions::default())?;
-        println!(
-            "  Noise transcription:      {:?}",
-            &noise_result.text[..noise_result.text.len().min(100)]
-        );
-
-        // Analysis
-        if result.text == silence_result.text && result.text == noise_result.text {
-            println!("\n  🔴 H1 LIKELY FAILED: Same output for different inputs!");
-            println!("     → Cross-attention may not be using encoder output");
-        } else if result.text != silence_result.text {
-            println!("\n  🟢 H1 LIKELY PASSED: Different inputs produce different outputs");
-        } else {
-            println!("\n  ⚠️  H1 INCONCLUSIVE: Need more analysis");
-        }
+    let audio_path = Path::new("demos/test-audio/test-speech-1.5s.wav");
+    if !audio_path.exists() {
+        return;
     }
 
-    // =========================================================================
-    // H5: KV Cache check
-    // =========================================================================
-    println!("\n=== H5: KV CACHE ISOLATION CHECK ===\n");
-    println!("  ℹ️  H5 requires streaming tests or code review");
-    println!("      Check src/model/decoder.rs for KV cache implementation");
-    println!("      Verify encoder KV cache is separate from decoder self-attn cache");
+    let Ok(audio_bytes) = std::fs::read(audio_path) else { return };
+    let samples: Vec<f32> = audio_bytes[44..]
+        .chunks_exact(2)
+        .map(|chunk| {
+            let s = i16::from_le_bytes([chunk[0], chunk[1]]);
+            s as f32 / 32768.0
+        })
+        .collect();
 
-    // =========================================================================
-    // Summary
-    // =========================================================================
+    let opts = whisper_apr::TranscribeOptions::default();
+    let Ok(result) = model.transcribe(&samples, opts.clone()) else { return };
+    println!("  Real audio: {:?}", &result.text[..result.text.len().min(100)]);
+
+    let silence = vec![0.0; samples.len()];
+    let Ok(silence_result) = model.transcribe(&silence, opts.clone()) else { return };
+    println!("  Silence:    {:?}", &silence_result.text[..silence_result.text.len().min(100)]);
+
+    let noise: Vec<f32> = (0..samples.len()).map(|i| (i as f32 * 0.1).sin() * 0.1).collect();
+    let Ok(noise_result) = model.transcribe(&noise, opts) else { return };
+    println!("  Noise:      {:?}", &noise_result.text[..noise_result.text.len().min(100)]);
+
+    if result.text == silence_result.text && result.text == noise_result.text {
+        println!("\n  H1 LIKELY FAILED: Same output for different inputs!");
+    } else if result.text != silence_result.text {
+        println!("\n  H1 LIKELY PASSED: Different inputs produce different outputs");
+    } else {
+        println!("\n  H1 INCONCLUSIVE: Need more analysis");
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("=== CROSS-ATTENTION DEBUG (Step 20 Hypotheses) ===\n");
+
+    let model_path = Path::new("models/whisper-tiny.apr");
+    if !model_path.exists() {
+        eprintln!("Model not found: {}", model_path.display());
+        return Ok(());
+    }
+
+    let model_bytes = std::fs::read(model_path)?;
+    let reader = AprV2ReaderRef::from_bytes(&model_bytes)?;
+    let config = metadata_to_model_config(reader.metadata());
+    println!("Model: {:?}", config.model_type);
+
+    let (total_missing, total_zero) = test_h3_weight_loading(&reader);
+
+    let model = whisper_apr::WhisperApr::load_from_apr(&model_bytes)?;
+    test_h2_encoder_shape(&model, 384);
+
+    println!("\n=== H4: ATTENTION SCALING FACTOR ===\n");
+    let d_head = 384 / 6;
+    let scale = 1.0 / (d_head as f32).sqrt();
+    println!("  d_head={d_head}, expected scale=1/sqrt({d_head})={scale:.6}");
+
+    test_h1_input(&model);
+
+    println!("\n=== H5: KV CACHE ISOLATION CHECK ===\n");
+    println!("  H5 requires streaming tests or code review");
+
     println!("\n{}", "=".repeat(60));
     println!("HYPOTHESIS TEST SUMMARY");
     println!("{}", "=".repeat(60));
     println!("H1 (Cross-attn input):     See transcription comparison above");
     println!("H2 (Encoder shape):        See shape analysis above");
-    println!(
-        "H3 (Weights loaded):       {} missing, {} zero",
-        total_missing, total_zero
-    );
+    println!("H3 (Weights loaded):       {total_missing} missing, {total_zero} zero");
     println!("H4 (Scaling factor):       Manual code review required");
     println!("H5 (KV cache):             Streaming test required");
-    println!("{}", "=".repeat(60));
 
     Ok(())
 }

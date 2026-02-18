@@ -1,6 +1,7 @@
 //! Debug tensor name matching
 
 use std::path::Path;
+use whisper_apr::format::AprV2ReaderRef;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== TENSOR NAME DEBUG ===\n");
@@ -8,19 +9,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_path = Path::new("models/whisper-tiny-int8.apr");
     let model_bytes = std::fs::read(model_path)?;
 
-    let reader = whisper_apr::format::AprReader::new(model_bytes)?;
+    let reader = AprV2ReaderRef::from_bytes(&model_bytes)?;
 
-    println!("Total tensors: {}", reader.tensors.len());
+    println!("Total tensors: {}", reader.tensor_names().len());
 
     // Find tensors with "token" in name
     let search_term = "token";
     println!("\nTensors containing '{}':", search_term);
 
-    for tensor in &reader.tensors {
-        if tensor.name.contains(search_term) {
-            println!("  Name: {:?}", tensor.name);
-            println!("  Name bytes: {:?}", tensor.name.as_bytes());
-            println!("  Name len: {}", tensor.name.len());
+    for name in reader.tensor_names() {
+        if name.contains(search_term) {
+            println!("  Name: {:?}", name);
+            println!("  Name bytes: {:?}", name.as_bytes());
+            println!("  Name len: {}", name.len());
             println!();
         }
     }
@@ -28,22 +29,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Try exact match
     let exact = "decoder.token_embedding";
     println!("Searching for exact match: {:?}", exact);
-    match reader.find_tensor(exact) {
+    match reader.get_tensor(exact) {
         Some(t) => println!("  FOUND: {:?}", t.name),
         None => {
             println!("  NOT FOUND");
 
             // Check for close matches
-            for tensor in &reader.tensors {
-                if tensor.name.starts_with("decoder.token") {
+            for name in reader.tensor_names() {
+                if name.starts_with("decoder.token") {
                     println!(
                         "  Close match: {:?} (len {})",
-                        tensor.name,
-                        tensor.name.len()
+                        name,
+                        name.len()
                     );
                     // Show difference
                     println!("    Expected bytes: {:?}", exact.as_bytes());
-                    println!("    Actual bytes:   {:?}", tensor.name.as_bytes());
+                    println!("    Actual bytes:   {:?}", name.as_bytes());
                 }
             }
         }

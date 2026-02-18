@@ -1,6 +1,7 @@
 //! Debug: Check if weights are being loaded correctly
 
 use std::path::Path;
+use whisper_apr::format::AprV2ReaderRef;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== WEIGHT LOADING DEBUG ===\n");
@@ -8,13 +9,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_path = Path::new("models/whisper-tiny-int8.apr");
     let model_bytes = std::fs::read(model_path)?;
 
-    let reader = whisper_apr::format::AprReader::new(model_bytes.clone())?;
+    let reader = AprV2ReaderRef::from_bytes(&model_bytes)?;
 
     // Check specific tensors that should be loaded
     println!("=== KEY TENSOR VALUES ===\n");
 
     // Check decoder token embedding
-    if let Ok(te) = reader.load_tensor("decoder.token_embedding") {
+    if let Some(te) = reader.get_tensor_as_f32("decoder.token_embedding") {
         let sum: f32 = te.iter().take(1000).sum();
         let first_10: Vec<f32> = te.iter().take(10).copied().collect();
         println!("decoder.token_embedding:");
@@ -30,11 +31,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             non_zero as f32 / te.len() as f32 * 100.0
         );
     } else {
-        println!("❌ decoder.token_embedding NOT FOUND");
+        println!("decoder.token_embedding NOT FOUND");
     }
 
     // Check encoder conv1 weight
-    if let Ok(w) = reader.load_tensor("encoder.conv1.weight") {
+    if let Some(w) = reader.get_tensor_as_f32("encoder.conv1.weight") {
         let sum: f32 = w.iter().sum();
         let first_10: Vec<f32> = w.iter().take(10).copied().collect();
         println!("\nencoder.conv1.weight:");
@@ -44,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Check a decoder layer self-attention weight
-    if let Ok(w) = reader.load_tensor("decoder.layers.0.self_attn.q_proj.weight") {
+    if let Some(w) = reader.get_tensor_as_f32("decoder.layers.0.self_attn.q_proj.weight") {
         let sum: f32 = w.iter().sum();
         let first_10: Vec<f32> = w.iter().take(10).copied().collect();
         println!("\ndecoder.layers.0.self_attn.q_proj.weight:");
@@ -52,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  First 10: {:?}", first_10);
         println!("  Sum: {:.6}", sum);
     } else {
-        println!("\n❌ decoder.layers.0.self_attn.q_proj.weight NOT FOUND");
+        println!("\ndecoder.layers.0.self_attn.q_proj.weight NOT FOUND");
     }
 
     // Now load the model and check if weights were loaded

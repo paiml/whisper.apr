@@ -5,7 +5,7 @@
 //! Usage:
 //!   cargo run --example list_model_tensors
 
-use whisper_apr::format::AprReader;
+use whisper_apr::format::AprV2ReaderRef;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_path = std::env::args()
@@ -15,40 +15,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Model Tensors: {} ===\n", model_path);
 
     let model_bytes = std::fs::read(&model_path)?;
-    let reader = AprReader::new(model_bytes)?;
+    let reader = AprV2ReaderRef::from_bytes(&model_bytes)?;
 
-    println!("Total tensors: {}\n", reader.tensors.len());
+    println!("Total tensors: {}\n", reader.tensor_names().len());
 
     // Group by prefix for organization
-    let mut by_prefix: std::collections::BTreeMap<String, Vec<_>> =
+    let mut by_prefix: std::collections::BTreeMap<String, Vec<(&str, &[usize], u64, usize)>> =
         std::collections::BTreeMap::new();
 
-    for tensor in &reader.tensors {
-        let prefix = tensor.name.split('.').next().unwrap_or("other").to_string();
-        by_prefix.entry(prefix).or_default().push(tensor);
+    for name in reader.tensor_names() {
+        let entry = reader.get_tensor(name).unwrap();
+        let prefix = name.split('.').next().unwrap_or("other").to_string();
+        let n_elements = entry.element_count();
+        by_prefix.entry(prefix).or_default().push((name, &entry.shape, entry.size, n_elements));
     }
 
     for (prefix, tensors) in &by_prefix {
         println!("=== {} ({} tensors) ===", prefix, tensors.len());
-        for tensor in tensors {
-            let shape: Vec<_> = tensor.shape().iter().map(|d| d.to_string()).collect();
-            let shape_str = format!("[{}]", shape.join(", "));
-            let size_kb = tensor.size as f64 / 1024.0;
+        for (name, shape, size, n_elements) in tensors {
+            let shape_strs: Vec<_> = shape.iter().map(|d| d.to_string()).collect();
+            let shape_str = format!("[{}]", shape_strs.join(", "));
+            let size_kb = *size as f64 / 1024.0;
 
             println!(
                 "  {} {:>20} {:>10.1} KB ({} elements)",
-                tensor.name, shape_str, size_kb, tensor.n_elements
+                name, shape_str, size_kb, n_elements
             );
         }
         println!();
     }
 
     // Summary
-    let total_bytes: u64 = reader.tensors.iter().map(|t| t.size).sum();
-    let total_elements: u64 = reader.tensors.iter().map(|t| t.n_elements).sum();
+    let mut total_bytes: u64 = 0;
+    let mut total_elements: usize = 0;
+    for name in reader.tensor_names() {
+        let entry = reader.get_tensor(name).unwrap();
+        total_bytes += entry.size;
+        total_elements += entry.element_count();
+    }
 
     println!("=== Summary ===");
-    println!("Total tensors: {}", reader.tensors.len());
+    println!("Total tensors: {}", reader.tensor_names().len());
     println!("Total size: {:.2} MB", total_bytes as f64 / 1024.0 / 1024.0);
     println!(
         "Total elements: {} ({:.2}M)",
@@ -58,16 +65,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Check for any suspicious tensors (layer_norm weights should have mean ~1.0)
     println!("\n=== Layer Norm Weight Check ===");
-    for tensor in &reader.tensors {
-        if tensor.name.contains("layer_norm") && tensor.name.contains("weight") {
-            if let Ok(values) = reader.load_tensor(&tensor.name) {
+    for name in reader.tensor_names() {
+        if name.contains("layer_norm") && name.contains("weight") {
+            if let Some(values) = reader.get_tensor_as_f32(name) {
                 let mean: f32 = values.iter().sum::<f32>() / values.len() as f32;
                 let flag = if mean.abs() > 5.0 {
                     " <-- LARGE MEAN!"
                 } else {
                     ""
                 };
-                println!("  {}: mean={:.4}{}", tensor.name, mean, flag);
+                println!("  {}: mean={:.4}{}", name, mean, flag);
             }
         }
     }

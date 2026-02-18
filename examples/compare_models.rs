@@ -1,6 +1,6 @@
 //! Compare layer norm weights between original and filterbank models
 
-use whisper_apr::format::AprReader;
+use whisper_apr::format::AprV2ReaderRef;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== MODEL COMPARISON ===\n");
@@ -9,17 +9,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let original_bytes = std::fs::read("models/whisper-tiny.apr")?;
     let fb_bytes = std::fs::read("models/whisper-tiny-fb.apr")?;
 
-    let original = AprReader::new(original_bytes)?;
-    let fb = AprReader::new(fb_bytes)?;
+    let original = AprV2ReaderRef::from_bytes(&original_bytes)?;
+    let fb = AprV2ReaderRef::from_bytes(&fb_bytes)?;
 
-    println!("Original model: {} tensors", original.tensors.len());
-    println!("FB model:       {} tensors", fb.tensors.len());
+    println!("Original model: {} tensors", original.tensor_names().len());
+    println!("FB model:       {} tensors", fb.tensor_names().len());
 
     // Compare decoder.layer_norm.weight
     println!("\n=== decoder.layer_norm.weight ===\n");
 
-    let orig_ln = original.load_tensor("decoder.layer_norm.weight")?;
-    let fb_ln = fb.load_tensor("decoder.layer_norm.weight")?;
+    let orig_ln = original.get_tensor_as_f32("decoder.layer_norm.weight")
+        .ok_or("decoder.layer_norm.weight not found in original")?;
+    let fb_ln = fb.get_tensor_as_f32("decoder.layer_norm.weight")
+        .ok_or("decoder.layer_norm.weight not found in fb")?;
 
     let orig_mean = orig_ln.iter().sum::<f32>() / orig_ln.len() as f32;
     let fb_mean = fb_ln.iter().sum::<f32>() / fb_ln.len() as f32;
@@ -52,9 +54,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Compare encoder.layer_norm.weight
     println!("\n=== encoder.layers.3.final_layer_norm.weight ===\n");
 
-    if let (Ok(orig_enc), Ok(fb_enc)) = (
-        original.load_tensor("encoder.layers.3.final_layer_norm.weight"),
-        fb.load_tensor("encoder.layers.3.final_layer_norm.weight"),
+    if let (Some(orig_enc), Some(fb_enc)) = (
+        original.get_tensor_as_f32("encoder.layers.3.final_layer_norm.weight"),
+        fb.get_tensor_as_f32("encoder.layers.3.final_layer_norm.weight"),
     ) {
         let orig_mean = orig_enc.iter().sum::<f32>() / orig_enc.len() as f32;
         let fb_mean = fb_enc.iter().sum::<f32>() / fb_enc.len() as f32;
