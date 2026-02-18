@@ -1757,6 +1757,9 @@ pub struct Decoder {
     /// Transposed token embeddings for fast projection (d_model x n_vocab)
     /// Stored as trueno::Matrix for zero-copy SIMD matmul in project_to_vocab
     token_embedding_transposed: Matrix<f32>,
+    /// fp16 token embeddings for fast project_to_vocab (n_vocab x d_model, stored as u16 bits).
+    /// When set, single-token projection uses tiled_matvec_f16 to halve DRAM bandwidth.
+    token_embedding_f16: Option<Vec<u16>>,
     /// Positional embeddings (max_len x d_model)
     /// Only used for Whisper (sinusoidal additive PE); Moonshine uses RoPE applied in attention.
     positional_embedding: Vec<f32>,
@@ -1858,6 +1861,7 @@ impl Decoder {
             ln_post_rms,
             token_embedding,
             token_embedding_transposed,
+            token_embedding_f16: None,
             positional_embedding,
             n_vocab,
             max_len,
@@ -1887,6 +1891,7 @@ impl Decoder {
             ln_post_rms: None,
             token_embedding,
             token_embedding_transposed,
+            token_embedding_f16: None,
             positional_embedding: vec![0.0_f32; max_len * d_model],
             n_vocab,
             max_len,
@@ -1917,6 +1922,27 @@ impl Decoder {
         // no additional work needed for moonshine_blocks.
         // Recompute embedding transpose
         self.update_embedding_transpose();
+    }
+
+    /// Convert token embeddings to fp16 for fast project_to_vocab.
+    ///
+    /// The f32 embeddings are kept (needed for token lookup during embedding),
+    /// but the fp16 copy enables halved DRAM bandwidth in `project_to_vocab`.
+    pub fn convert_embeddings_to_f16(&mut self) {
+        if self.token_embedding_f16.is_some() || self.token_embedding.is_empty() {
+            return;
+        }
+        self.token_embedding_f16 = Some(crate::simd::quant_f32_to_f16(&self.token_embedding));
+    }
+
+    /// Convert all decoder block weights to fp16 in-place
+    pub fn convert_to_f16(&mut self) {
+        for block in &mut self.blocks {
+            block.self_attn.convert_to_f16();
+            block.cross_attn.convert_to_f16();
+            block.ffn.convert_to_f16();
+        }
+        self.convert_embeddings_to_f16();
     }
 
     /// Check if all decoder weights have been finalized
@@ -2280,7 +2306,18 @@ impl Decoder {
     ///
     /// Computes x @ W_embedding^T (weight tying with token embeddings)
     /// Uses trueno::Matrix directly for zero-copy SIMD matmul (~13x faster than simd::matmul wrapper)
+    ///
+    /// When fp16 embeddings are available and seq_len==1 (single-token decode),
+    /// uses tiled_matvec_f16 which halves DRAM bandwidth.
     fn project_to_vocab(&self, x: &[f32], seq_len: usize) -> Vec<f32> {
+        // fp16 path: for single-token decode, use tiled_matvec_f16
+        // Token embedding is (n_vocab × d_model), we compute embedding @ x => (n_vocab,)
+        if seq_len == 1 {
+            if let Some(ref emb_f16) = self.token_embedding_f16 {
+                return crate::simd::tiled_matvec_f16(emb_f16, x, self.n_vocab, self.d_model);
+            }
+        }
+
         // Use trueno Matrix directly to avoid 80MB copy in simd::matmul wrapper
         // Matmul: x (seq_len × d_model) @ embedding_t (d_model × n_vocab) = logits (seq_len × n_vocab)
         let Ok(x_matrix) = Matrix::from_slice(seq_len, self.d_model, x) else {

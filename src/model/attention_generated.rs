@@ -39,6 +39,18 @@ use realizar::layers::Attention as RealizarAttention;
 #[cfg(feature = "realizar-inference")]
 use realizar::tensor::Tensor as RealizarTensor;
 
+/// Weight storage format for linear layers
+///
+/// Supports both f32 and fp16 storage. fp16 halves DRAM bandwidth
+/// for memory-bandwidth-bound single-token decoder inference.
+#[derive(Debug, Clone)]
+pub enum WeightStorage {
+    /// Full precision f32 (4 bytes/weight)
+    F32,
+    /// Half precision fp16 stored as u16 bit patterns (2 bytes/weight)
+    F16(Vec<u16>),
+}
+
 /// Linear projection weights for attention
 ///
 /// Note: Clone is derived but will clone the cached Matrix (expensive).
@@ -58,6 +70,9 @@ pub struct LinearWeights {
     /// Cached trueno Matrix for zero-copy matmul (WAPR-BENCH-001 optimization)
     /// This avoids repeated Matrix::from_vec() calls in the hot path
     weight_matrix: Option<Matrix<f32>>,
+    /// fp16 weight storage: when set, forward_simd uses fp16 path for single-token inference.
+    /// Halves DRAM reads (2 bytes/weight vs 4) — the dominant bottleneck in decoder inference.
+    weight_f16: Option<Vec<u16>>,
 }
 
 impl Clone for LinearWeights {
@@ -70,6 +85,7 @@ impl Clone for LinearWeights {
             weight_transposed: self.weight_transposed.clone(),
             // Don't clone the Matrix cache - it will be rebuilt on finalize_weights()
             weight_matrix: None,
+            weight_f16: self.weight_f16.clone(),
         }
     }
 }
@@ -83,6 +99,7 @@ impl std::fmt::Debug for LinearWeights {
             .field("bias_len", &self.bias.len())
             .field("is_finalized", &self.weight_transposed.is_some())
             .field("has_matrix_cache", &self.weight_matrix.is_some())
+            .field("has_f16", &self.weight_f16.is_some())
             .finish()
     }
 }
@@ -98,6 +115,7 @@ impl LinearWeights {
             out_features,
             weight_transposed: None,
             weight_matrix: None,
+            weight_f16: None,
         }
     }
 
@@ -107,7 +125,13 @@ impl LinearWeights {
     /// The transposed matrix is used by `forward_simd()` for efficient matmul.
     ///
     /// Also caches a trueno Matrix for zero-copy matmul operations.
+    /// Skips caching if weights are stored as fp16 (fp16 path uses tiled_matvec_f16 directly).
     pub fn finalize_weights(&mut self) {
+        // fp16 weights use tiled_matvec_f16 directly — no transpose/Matrix cache needed
+        if self.weight_f16.is_some() {
+            return;
+        }
+
         let weight_t = simd::transpose(&self.weight, self.out_features, self.in_features);
 
         // Create trueno Matrix from transposed weights (WAPR-BENCH-001 optimization)
@@ -144,6 +168,47 @@ impl LinearWeights {
     pub fn set_bias(&mut self, values: &[f32]) {
         let len = values.len().min(self.bias.len());
         self.bias[..len].copy_from_slice(&values[..len]);
+    }
+
+    /// Set weight values from fp16 (u16 bit pattern) data.
+    ///
+    /// The f32 weight field is cleared to free memory. All forward operations
+    /// will use the fp16 path (dequant-per-row + SIMD dot).
+    pub fn set_weight_f16(&mut self, values: &[u16]) {
+        self.weight_f16 = Some(values.to_vec());
+        // Free f32 weight memory — fp16 path doesn't need it
+        self.weight = Vec::new();
+        self.invalidate_cache();
+    }
+
+    /// Convert f32 weights to fp16 in-place, freeing the f32 memory.
+    ///
+    /// This halves weight memory (2 bytes/element vs 4) and enables the
+    /// fp16 forward path which halves DRAM bandwidth during inference.
+    pub fn convert_to_f16(&mut self) {
+        if self.weight_f16.is_some() || self.weight.is_empty() {
+            return;
+        }
+        self.weight_f16 = Some(simd::quant_f32_to_f16(&self.weight));
+        // Free f32 weight memory
+        self.weight = Vec::new();
+        self.invalidate_cache();
+    }
+
+    /// Check if weights are stored as fp16
+    #[must_use]
+    pub fn is_f16(&self) -> bool {
+        self.weight_f16.is_some()
+    }
+
+    /// Get weight storage type
+    #[must_use]
+    pub fn storage_type(&self) -> WeightStorage {
+        if let Some(ref f16) = self.weight_f16 {
+            WeightStorage::F16(f16.clone())
+        } else {
+            WeightStorage::F32
+        }
     }
 
     /// Apply linear projection: y = xW^T + b
@@ -196,6 +261,9 @@ impl LinearWeights {
     /// For single-token inference (autoregressive decoding), uses tiled_matvec
     /// for cache-efficient matrix-vector multiplication (WAPR-PERF-004).
     ///
+    /// When fp16 weights are available, uses `tiled_matvec_f16` which halves
+    /// DRAM bandwidth by dequantizing one row at a time into L1 cache.
+    ///
     /// # Arguments
     /// * `input` - Input tensor (batch_size x seq_len x in_features) flattened
     /// * `seq_len` - Sequence length
@@ -209,6 +277,28 @@ impl LinearWeights {
 
         let batch_size = input.len() / (seq_len * self.in_features);
         let total_tokens = batch_size * seq_len;
+
+        // fp16 weight path: halves DRAM bandwidth for memory-bound decoder inference
+        if let Some(ref w_f16) = self.weight_f16 {
+            let mut output = if total_tokens == 1 {
+                // Single token: fp16 tiled matvec (dequant row-by-row into L1 cache)
+                simd::tiled_matvec_f16(w_f16, input, self.out_features, self.in_features)
+            } else {
+                // Batch: dequant full matrix to temp f32, then standard matmul
+                let mut buf = vec![0.0_f32; w_f16.len()];
+                simd::dequant_f16_row(w_f16, &mut buf);
+                let weight_t = simd::transpose(&buf, self.out_features, self.in_features);
+                simd::matmul(
+                    input,
+                    &weight_t,
+                    total_tokens,
+                    self.in_features,
+                    self.out_features,
+                )
+            };
+            simd::broadcast_add_inplace(&mut output, &self.bias, total_tokens, self.out_features);
+            return Ok(output);
+        }
 
         // WAPR-PERF-004: Use tiled_matvec for single-token inference (autoregressive decoding)
         // This is ~2x faster than general matmul for the common case of decoding one token at a time
@@ -658,29 +748,7 @@ impl MultiHeadAttention {
         }
 
         // Softmax over key dimension
-        for q_idx in 0..seq_len {
-            let row_start = q_idx * kv_len;
-            let row_end = row_start + kv_len;
-
-            // Find max for numerical stability
-            let max_score = scores[row_start..row_end]
-                .iter()
-                .fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-
-            // Compute exp and sum
-            let mut sum = 0.0_f32;
-            for k_idx in 0..kv_len {
-                let exp_val = (scores[row_start + k_idx] - max_score).exp();
-                scores[row_start + k_idx] = exp_val;
-                sum += exp_val;
-            }
-
-            // Normalize
-            let inv_sum = if sum > 1e-10 { 1.0 / sum } else { 0.0 };
-            for k_idx in 0..kv_len {
-                scores[row_start + k_idx] *= inv_sum;
-            }
-        }
+        Self::apply_row_softmax(&mut scores, seq_len, kv_len);
 
         // Compute output: attention_weights @ V
         let mut output = vec![0.0_f32; seq_len * self.d_head];
@@ -696,6 +764,30 @@ impl MultiHeadAttention {
         }
 
         Ok(output)
+    }
+
+    /// Apply row-wise softmax in-place over a (seq_len x kv_len) score matrix.
+    fn apply_row_softmax(scores: &mut [f32], seq_len: usize, kv_len: usize) {
+        for q_idx in 0..seq_len {
+            let row_start = q_idx * kv_len;
+            let row_end = row_start + kv_len;
+
+            let max_score = scores[row_start..row_end]
+                .iter()
+                .fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+
+            let mut sum = 0.0_f32;
+            for k_idx in 0..kv_len {
+                let exp_val = (scores[row_start + k_idx] - max_score).exp();
+                scores[row_start + k_idx] = exp_val;
+                sum += exp_val;
+            }
+
+            let inv_sum = if sum > 1e-10 { 1.0 / sum } else { 0.0 };
+            for k_idx in 0..kv_len {
+                scores[row_start + k_idx] *= inv_sum;
+            }
+        }
     }
 
     /// SIMD-accelerated scaled dot-product attention
@@ -1375,6 +1467,34 @@ impl MultiHeadAttention {
     /// Set output bias from a slice
     pub fn set_out_bias(&mut self, values: &[f32]) {
         self.w_o.set_bias(values);
+    }
+
+    /// Set query weights from fp16 (u16 bit patterns)
+    pub fn set_query_weight_f16(&mut self, values: &[u16]) {
+        self.w_q.set_weight_f16(values);
+    }
+
+    /// Set key weights from fp16 (u16 bit patterns)
+    pub fn set_key_weight_f16(&mut self, values: &[u16]) {
+        self.w_k.set_weight_f16(values);
+    }
+
+    /// Set value weights from fp16 (u16 bit patterns)
+    pub fn set_value_weight_f16(&mut self, values: &[u16]) {
+        self.w_v.set_weight_f16(values);
+    }
+
+    /// Set output weights from fp16 (u16 bit patterns)
+    pub fn set_out_weight_f16(&mut self, values: &[u16]) {
+        self.w_o.set_weight_f16(values);
+    }
+
+    /// Convert all linear layer weights to fp16 in-place
+    pub fn convert_to_f16(&mut self) {
+        self.w_q.convert_to_f16();
+        self.w_k.convert_to_f16();
+        self.w_v.convert_to_f16();
+        self.w_o.convert_to_f16();
     }
 
     /// Pre-compute and cache transposed weights for all linear layers

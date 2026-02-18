@@ -65,7 +65,7 @@ parallel = ["rayon"]
 wasm-threads = ["wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
 converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs", "zip"]
-cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "half", "symphonia", "dirs", "parallel"]
+cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "symphonia", "dirs", "parallel"]
 # Multi-format audio decoding (MP3, FLAC, OGG, AAC, etc.)
 symphonia = ["dep:symphonia"]
 benchmark-tui = ["ratatui", "crossterm"]
@@ -105,6 +105,9 @@ aprender = { version = "0.25", path = "../aprender", default-features = false }
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
 realizar = { version = "0.6.12", optional = true, default-features = false }
+
+# fp16 weight storage (2 bytes/weight vs 4 bytes/weight for f32)
+half = "2"
 
 # FFT for mel spectrogram computation
 rustfft = "6.2"
@@ -146,7 +149,6 @@ zip = { version = "2", optional = true, default-features = false, features = ["d
 clap = { version = "4", features = ["derive"], optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 hf-hub = { version = "0.4", optional = true }
-half = { version = "2", optional = true }
 
 # Optional: Phase 3 crypto dependencies (feature-gated through format-*)
 ed25519-dalek = { version = "2", optional = true }

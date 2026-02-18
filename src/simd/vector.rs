@@ -172,6 +172,154 @@ pub fn broadcast_add_inplace(matrix: &mut [f32], vec: &[f32], rows: usize, cols:
     }
 }
 
+/// Dequantize a row of fp16 (u16 bits) values into an f32 buffer.
+///
+/// Converts IEEE 754 half-precision values stored as u16 bit patterns
+/// into f32. The output buffer must be at least as long as the input.
+///
+/// This is the inner loop of fp16 inference: dequantize one weight row
+/// into a thread-local f32 buffer that stays in L1 cache, then SIMD dot.
+pub fn dequant_f16_row(f16_data: &[u16], out: &mut [f32]) {
+    debug_assert!(
+        out.len() >= f16_data.len(),
+        "output buffer too small: {} < {}",
+        out.len(),
+        f16_data.len()
+    );
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("f16c") && is_x86_feature_detected!("avx") {
+            // SAFETY: We've confirmed F16C+AVX are available. Pointer math is
+            // bounds-checked by the chunk sizes and the debug_assert above.
+            unsafe {
+                dequant_f16_row_f16c(f16_data, out);
+            }
+            return;
+        }
+    }
+
+    // Scalar fallback
+    for (o, &bits) in out.iter_mut().zip(f16_data.iter()) {
+        *o = half::f16::from_bits(bits).to_f32();
+    }
+}
+
+/// F16C+AVX-accelerated fp16→f32 conversion (8 values per instruction).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "f16c", enable = "avx")]
+unsafe fn dequant_f16_row_f16c(f16_data: &[u16], out: &mut [f32]) {
+    use std::arch::x86_64::{_mm256_cvtph_ps, _mm256_storeu_ps, _mm_loadu_si128};
+    let n = f16_data.len();
+    let chunks = n / 8;
+    let remainder = n % 8;
+
+    let src = f16_data.as_ptr();
+    let dst = out.as_mut_ptr();
+
+    for i in 0..chunks {
+        let offset = i * 8;
+        unsafe {
+            let half8 = _mm_loadu_si128(src.add(offset).cast());
+            let float8 = _mm256_cvtph_ps(half8);
+            _mm256_storeu_ps(dst.add(offset), float8);
+        }
+    }
+
+    let base = chunks * 8;
+    for j in 0..remainder {
+        unsafe {
+            *dst.add(base + j) = half::f16::from_bits(*src.add(base + j)).to_f32();
+        }
+    }
+}
+
+/// Compute dot product of an fp16 weight row with an f32 input vector.
+///
+/// Dequantizes the fp16 row into the provided f32 buffer, then computes
+/// the SIMD dot product. The buffer should be reused across rows to stay
+/// in L1 cache.
+///
+/// # Arguments
+/// * `a_f16` - Weight row stored as fp16 bit patterns (u16)
+/// * `b` - Input vector (f32)
+/// * `buf` - Scratch buffer for dequantized f32 values (must be >= a_f16.len())
+#[must_use]
+pub fn dot_f16(a_f16: &[u16], b: &[f32], buf: &mut [f32]) -> f32 {
+    debug_assert_eq!(a_f16.len(), b.len(), "dot_f16 requires equal lengths");
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("f16c") && is_x86_feature_detected!("avx") && is_x86_feature_detected!("fma") {
+            // SAFETY: CPU features verified at runtime. Lengths are equal per debug_assert.
+            return unsafe { dot_f16_fused_f16c(a_f16, b) };
+        }
+    }
+
+    // Scalar fallback: dequant then dot
+    dequant_f16_row(a_f16, buf);
+    dot(&buf[..a_f16.len()], b)
+}
+
+/// Fused fp16 dot product: load fp16, convert to f32 in register, FMA accumulate.
+/// Single pass through memory — halves DRAM reads vs f32 dot.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "f16c", enable = "avx", enable = "fma")]
+unsafe fn dot_f16_fused_f16c(a_f16: &[u16], b: &[f32]) -> f32 {
+    use std::arch::x86_64::{
+        __m256, _mm256_cvtph_ps, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_setzero_ps,
+        _mm256_storeu_ps, _mm_loadu_si128,
+    };
+
+    let n = a_f16.len();
+    let chunks = n / 8;
+    let remainder = n % 8;
+
+    let a_ptr = a_f16.as_ptr();
+    let b_ptr = b.as_ptr();
+
+    // SAFETY: all intrinsics guarded by #[target_feature] and runtime detection.
+    // Pointer arithmetic is bounded by chunks*8 <= n = a_f16.len() = b.len().
+    let mut acc: __m256 = _mm256_setzero_ps();
+
+    for i in 0..chunks {
+        let offset = i * 8;
+        unsafe {
+            let half8 = _mm_loadu_si128(a_ptr.add(offset).cast());
+            let a_f32 = _mm256_cvtph_ps(half8);
+            let b_f32 = _mm256_loadu_ps(b_ptr.add(offset));
+            acc = _mm256_fmadd_ps(a_f32, b_f32, acc);
+        }
+    }
+
+    let mut sum_buf = [0.0_f32; 8];
+    unsafe { _mm256_storeu_ps(sum_buf.as_mut_ptr(), acc) };
+    let mut result: f32 = sum_buf.iter().sum();
+
+    let base = chunks * 8;
+    for j in 0..remainder {
+        unsafe {
+            let a_val = half::f16::from_bits(*a_ptr.add(base + j)).to_f32();
+            let b_val = *b_ptr.add(base + j);
+            result += a_val * b_val;
+        }
+    }
+
+    result
+}
+
+/// Quantize f32 values to fp16, returning u16 bit patterns.
+///
+/// Uses IEEE 754 half-precision format via the `half` crate.
+/// Values outside fp16 range are clamped to ±inf.
+#[must_use]
+pub fn quant_f32_to_f16(f32_data: &[f32]) -> Vec<u16> {
+    f32_data
+        .iter()
+        .map(|&v| half::f16::from_f32(v).to_bits())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,6 +550,59 @@ mod tests {
         let a: Vec<f32> = vec![];
         let b: Vec<f32> = vec![];
         let result = mul(&a, &b);
+        assert!(result.is_empty());
+    }
+
+    // =========================================================================
+    // fp16 Tests
+    // =========================================================================
+
+    #[test]
+    fn test_dequant_f16_row() {
+        let f32_vals = [1.0_f32, 2.0, 3.0, 4.0];
+        let f16_bits: Vec<u16> = f32_vals
+            .iter()
+            .map(|&v| half::f16::from_f32(v).to_bits())
+            .collect();
+        let mut out = vec![0.0_f32; 4];
+        dequant_f16_row(&f16_bits, &mut out);
+        for (a, &b) in out.iter().zip(f32_vals.iter()) {
+            assert!(approx_eq(*a, b));
+        }
+    }
+
+    #[test]
+    fn test_dot_f16() {
+        let a_f32 = [1.0_f32, 2.0, 3.0, 4.0];
+        let b = [5.0_f32, 6.0, 7.0, 8.0];
+        let a_f16: Vec<u16> = a_f32
+            .iter()
+            .map(|&v| half::f16::from_f32(v).to_bits())
+            .collect();
+        let mut buf = vec![0.0_f32; 4];
+        let result = dot_f16(&a_f16, &b, &mut buf);
+        // 1*5 + 2*6 + 3*7 + 4*8 = 70
+        assert!(approx_eq(result, 70.0));
+    }
+
+    #[test]
+    fn test_quant_f32_to_f16_roundtrip() {
+        let original = vec![0.0_f32, 1.0, -1.0, 0.5, 65504.0];
+        let f16_bits = quant_f32_to_f16(&original);
+        assert_eq!(f16_bits.len(), original.len());
+
+        // Round-trip: f32 -> f16 -> f32
+        let mut recovered = vec![0.0_f32; original.len()];
+        dequant_f16_row(&f16_bits, &mut recovered);
+
+        for (a, &b) in recovered.iter().zip(original.iter()) {
+            assert!(approx_eq(*a, b));
+        }
+    }
+
+    #[test]
+    fn test_quant_f32_to_f16_empty() {
+        let result = quant_f32_to_f16(&[]);
         assert!(result.is_empty());
     }
 }

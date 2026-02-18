@@ -136,6 +136,83 @@ pub fn rms_norm_into(x: &[f32], weight: &[f32], eps: f32, out: &mut [f32]) {
     }
 }
 
+/// Tiled matrix-vector multiplication for fp16 weights.
+///
+/// Mirrors `tiled_matvec` but reads fp16 (u16 bit-pattern) weights.
+/// Each row is dequantized into a reusable f32 buffer that stays in L1 cache,
+/// then a SIMD dot product is computed against the f32 input vector.
+///
+/// This halves DRAM bandwidth vs f32 weights while keeping compute in f32.
+///
+/// # Arguments
+///
+/// * `weights_f16` - Row-major fp16 weight matrix stored as u16 bit patterns (rows × cols)
+/// * `x` - Input vector (f32, cols elements)
+/// * `rows` - Number of output elements
+/// * `cols` - Size of input vector / weight matrix width
+///
+/// # Returns
+///
+/// Output vector (rows)
+#[must_use]
+#[allow(clippy::needless_range_loop)]
+pub fn tiled_matvec_f16(weights_f16: &[u16], x: &[f32], rows: usize, cols: usize) -> Vec<f32> {
+    debug_assert_eq!(
+        weights_f16.len(),
+        rows * cols,
+        "fp16 weight dimensions mismatch"
+    );
+    debug_assert_eq!(x.len(), cols, "input dimension mismatch");
+
+    let mut out = vec![0.0_f32; rows];
+    // Thread-local dequantization buffer — stays in L1 cache
+    let mut buf = vec![0.0_f32; cols];
+
+    for tile_start in (0..rows).step_by(TILE_SIZE) {
+        let tile_end = (tile_start + TILE_SIZE).min(rows);
+
+        for i in tile_start..tile_end {
+            let row_offset = i * cols;
+            let row_f16 = &weights_f16[row_offset..row_offset + cols];
+            out[i] = super::vector::dot_f16(row_f16, x, &mut buf);
+        }
+    }
+
+    out
+}
+
+/// Tiled fp16 matrix-vector multiplication writing to pre-allocated output.
+///
+/// Zero-allocation variant for hot paths where output buffer is reused.
+#[allow(clippy::needless_range_loop)]
+pub fn tiled_matvec_f16_into(
+    weights_f16: &[u16],
+    x: &[f32],
+    out: &mut [f32],
+    rows: usize,
+    cols: usize,
+) {
+    debug_assert_eq!(
+        weights_f16.len(),
+        rows * cols,
+        "fp16 weight dimensions mismatch"
+    );
+    debug_assert_eq!(x.len(), cols, "input dimension mismatch");
+    debug_assert_eq!(out.len(), rows, "output dimension mismatch");
+
+    let mut buf = vec![0.0_f32; cols];
+
+    for tile_start in (0..rows).step_by(TILE_SIZE) {
+        let tile_end = (tile_start + TILE_SIZE).min(rows);
+
+        for i in tile_start..tile_end {
+            let row_offset = i * cols;
+            let row_f16 = &weights_f16[row_offset..row_offset + cols];
+            out[i] = super::vector::dot_f16(row_f16, x, &mut buf);
+        }
+    }
+}
+
 /// Backend category for automatic dispatch.
 ///
 /// Pattern from: `aprender/src/compute/mod.rs`
@@ -239,5 +316,64 @@ mod tests {
         let category = select_backend(1_000_000, true);
         // Falls back to parallel SIMD since GPU not actually implemented
         assert_eq!(category, BackendCategory::SimdParallel);
+    }
+
+    #[test]
+    fn test_tiled_matvec_f16() {
+        // 2x2 matrix: [[1,2],[3,4]], input: [5,6]
+        let weights_f32 = [1.0_f32, 2.0, 3.0, 4.0];
+        let weights_f16: Vec<u16> = weights_f32
+            .iter()
+            .map(|&v| half::f16::from_f32(v).to_bits())
+            .collect();
+        let x = vec![5.0, 6.0];
+        let result = tiled_matvec_f16(&weights_f16, &x, 2, 2);
+        // [1*5+2*6, 3*5+4*6] = [17, 39]
+        assert!((result[0] - 17.0).abs() < 0.1);
+        assert!((result[1] - 39.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_tiled_matvec_f16_into() {
+        let weights_f32 = [1.0_f32, 2.0, 3.0, 4.0];
+        let weights_f16: Vec<u16> = weights_f32
+            .iter()
+            .map(|&v| half::f16::from_f32(v).to_bits())
+            .collect();
+        let x = vec![5.0, 6.0];
+        let mut out = vec![0.0; 2];
+        tiled_matvec_f16_into(&weights_f16, &x, &mut out, 2, 2);
+        assert!((out[0] - 17.0).abs() < 0.1);
+        assert!((out[1] - 39.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_tiled_matvec_f16_matches_f32() {
+        // Verify fp16 path gives nearly identical results to f32 path
+        let rows = 128;
+        let cols = 64;
+        let weights_f32: Vec<f32> = (0..rows * cols).map(|i| (i as f32) * 0.001).collect();
+        let weights_f16: Vec<u16> = weights_f32
+            .iter()
+            .map(|&v| half::f16::from_f32(v).to_bits())
+            .collect();
+        let x: Vec<f32> = (0..cols).map(|i| (i as f32) * 0.01).collect();
+
+        let result_f32 = tiled_matvec(&weights_f32, &x, rows, cols);
+        let result_f16 = tiled_matvec_f16(&weights_f16, &x, rows, cols);
+
+        for i in 0..rows {
+            let rel_err = if result_f32[i].abs() > 1e-6 {
+                (result_f32[i] - result_f16[i]).abs() / result_f32[i].abs()
+            } else {
+                (result_f32[i] - result_f16[i]).abs()
+            };
+            assert!(
+                rel_err < 0.01,
+                "row {i}: f32={} f16={} rel_err={rel_err}",
+                result_f32[i],
+                result_f16[i]
+            );
+        }
     }
 }
