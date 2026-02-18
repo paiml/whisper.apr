@@ -156,10 +156,10 @@ fn decode_with_symphonia(data: &[u8], ext: &str) -> Result<Vec<f32>, AudioDecode
 
     let samples = decode_all_packets(&mut format, &mut *decoder, track_id)?;
 
-    if sample_rate != 16000 {
-        Ok(resample(&samples, sample_rate, 16000))
-    } else {
+    if sample_rate == 16000 {
         Ok(samples)
+    } else {
+        Ok(resample(&samples, sample_rate, 16000))
     }
 }
 
