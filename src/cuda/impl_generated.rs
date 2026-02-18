@@ -2832,8 +2832,9 @@ impl WhisperCuda {
             Task::Translate => tokens.push(special_tokens::TRANSLATE),
         }
 
-        // No timestamps token
-        tokens.push(specials.no_timestamps);
+        // Timestamp mode: do NOT push no_timestamps token.
+        // This enables the decoder to produce <|t.tt|> timestamp tokens
+        // which are needed for proper SRT/VTT segment timing.
 
         // Decode loop using incremental decoding with KV cache
         let max_tokens = self.config.n_text_ctx as usize;
@@ -2845,9 +2846,9 @@ impl WhisperCuda {
         // Create KV cache for incremental decoding
         let mut cache = crate::model::DecoderKVCache::new(n_layers, d_model, max_tokens);
 
-        // Create token suppressor
+        // Create token suppressor — do NOT suppress timestamps
         let suppressor = crate::inference::WhisperTokenSuppressor::new()
-            .with_timestamp_suppression(!options.word_timestamps)
+            .with_timestamp_suppression(false)
             .with_vocab_size(n_vocab);
 
         // Process initial tokens to populate cache
@@ -3314,9 +3315,24 @@ impl WhisperCuda {
         audio: &[f32],
         options: TranscribeOptions,
     ) -> WhisperResult<TranscriptionResult> {
-        // Whisper constants
         const N_SAMPLES_30S: usize = 480_000; // 30 seconds at 16kHz
-        const N_FRAMES: usize = 3000; // Whisper expects exactly 3000 frames
+
+        // Use chunked processing for audio longer than 30 seconds
+        if audio.len() > N_SAMPLES_30S {
+            return self.transcribe_gpu_chunked(audio, options);
+        }
+
+        self.transcribe_gpu_single_chunk(audio, &options)
+    }
+
+    /// Transcribe a single chunk of audio (<=30 seconds) on GPU.
+    fn transcribe_gpu_single_chunk(
+        &mut self,
+        audio: &[f32],
+        options: &TranscribeOptions,
+    ) -> WhisperResult<TranscriptionResult> {
+        const N_SAMPLES_30S: usize = 480_000;
+        const N_FRAMES: usize = 3000;
         const N_MELS: usize = 80;
 
         let profile_all = std::env::var("WHISPER_PROFILE_DECODER").is_ok();
@@ -3345,7 +3361,7 @@ impl WhisperCuda {
         // Build initial tokens
         use crate::tokenizer::special_tokens::SpecialTokens;
         let specials = SpecialTokens::for_vocab_size(self.config.n_vocab as usize);
-        let mut tokens = Self::build_initial_tokens(&specials, &options);
+        let mut tokens = Self::build_initial_tokens(&specials, options);
 
         // Hybrid GPU path:
         // - CPU decoder blocks (GPU flash_attention_cached has kernel compatibility issues)
@@ -3357,9 +3373,9 @@ impl WhisperCuda {
 
         let mut cache = DecoderKVCache::new(n_layers, d_model, max_tokens);
 
-        // Token suppressor
+        // Token suppressor — do NOT suppress timestamps (needed for segment extraction)
         let suppressor = crate::inference::WhisperTokenSuppressor::new()
-            .with_timestamp_suppression(!options.word_timestamps)
+            .with_timestamp_suppression(false)
             .with_vocab_size(n_vocab);
 
         // Process initial tokens (prefill)
@@ -3381,7 +3397,7 @@ impl WhisperCuda {
             // Trace output projection
             self.tracer.trace_lm_head(gen_idx, &logits, n_vocab);
 
-            Self::debug_logits(debug_gpu, gen_idx, &logits);
+            Self::debug_logits(profile_decoder, gen_idx, &logits);
 
             // === TRACE: SAMPLE (token selection) ===
             self.tracer.start_step(TraceStep::Sample);
@@ -3434,6 +3450,74 @@ impl WhisperCuda {
             text,
             language,
             segments,
+            profiling: None,
+        })
+    }
+
+    /// Transcribe long audio using chunked streaming on GPU.
+    ///
+    /// Splits audio into 30-second chunks, transcribes each independently,
+    /// then merges results with timestamp adjustment.
+    fn transcribe_gpu_chunked(
+        &mut self,
+        audio: &[f32],
+        options: TranscribeOptions,
+    ) -> WhisperResult<TranscriptionResult> {
+        const CHUNK_SAMPLES: usize = 480_000; // 30 seconds at 16kHz
+
+        let language = options.language.clone().unwrap_or_else(|| "en".to_string());
+        let mut all_segments: Vec<crate::Segment> = Vec::new();
+        let mut all_text = String::new();
+
+        let mut offset = 0;
+        while offset < audio.len() {
+            let chunk_end = (offset + CHUNK_SAMPLES).min(audio.len());
+            let chunk = &audio[offset..chunk_end];
+
+            // Skip very short final chunks (less than 0.5 seconds)
+            if chunk.len() < crate::audio::SAMPLE_RATE as usize / 2 {
+                break;
+            }
+
+            let chunk_options = TranscribeOptions {
+                language: Some(language.clone()),
+                task: options.task,
+                strategy: options.strategy,
+                word_timestamps: options.word_timestamps,
+                profile: options.profile,
+                prompt: options.prompt.clone(),
+                hotwords: options.hotwords.clone(),
+            };
+
+            let chunk_result = self.transcribe_gpu_single_chunk(chunk, &chunk_options)?;
+            let time_offset = offset as f32 / crate::audio::SAMPLE_RATE as f32;
+
+            // Append text
+            if !chunk_result.text.trim().is_empty() {
+                if !all_text.is_empty() {
+                    all_text.push(' ');
+                }
+                all_text.push_str(&chunk_result.text);
+            }
+
+            // Adjust segment timestamps and collect
+            for mut seg in chunk_result.segments {
+                seg.start += time_offset;
+                seg.end += time_offset;
+                all_segments.push(seg);
+            }
+
+            offset += CHUNK_SAMPLES;
+        }
+
+        // Split any remaining long segments at sentence boundaries
+        let final_segments =
+            crate::timestamps::split_long_segments(&all_segments, 10.0);
+
+        Ok(TranscriptionResult {
+            text: all_text,
+            language,
+            segments: final_segments,
             profiling: None,
         })
     }
@@ -3496,7 +3580,9 @@ impl WhisperCuda {
             Task::Transcribe => tokens.push(specials.transcribe),
             Task::Translate => tokens.push(special_tokens::TRANSLATE),
         }
-        tokens.push(specials.no_timestamps);
+        // Timestamp mode: do NOT push no_timestamps token.
+        // This enables the decoder to produce <|t.tt|> timestamp tokens
+        // which are needed for proper SRT/VTT segment timing.
         tokens
     }
 
@@ -3586,7 +3672,7 @@ impl WhisperCuda {
         tokens: &[u32],
         text: &str,
         audio_len: usize,
-        tokenizer: &crate::tokenizer::Tokenizer,
+        tokenizer: &BpeTokenizer,
     ) -> Vec<crate::Segment> {
         if crate::timestamps::has_timestamps(tokens) {
             crate::timestamps::extract_segments(tokens, |ts| tokenizer.decode(ts).ok())

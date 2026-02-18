@@ -89,6 +89,12 @@ pub struct TranscribeOptions {
     pub word_timestamps: bool,
     /// Enable detailed performance profiling (WAPR-PERF-004)
     pub profile: bool,
+    /// Initial prompt text to condition the decoder (WAPR-173).
+    /// Guides vocabulary and style. Tokenized and prepended to decoder input.
+    pub prompt: Option<String>,
+    /// Hotwords to boost during decoding (WAPR-170).
+    /// Each string is tokenized and biased positively in the logit space.
+    pub hotwords: Vec<String>,
 }
 
 /// A timestamped segment of transcription
@@ -475,8 +481,8 @@ impl WhisperApr {
         // 3. Determine language
         let language = options.language.clone().unwrap_or_else(|| "en".to_string());
 
-        // 4. Get initial tokens based on task
-        let initial_tokens = self.get_initial_tokens(&language, options.task);
+        // 4. Get initial tokens based on task, with optional prompt conditioning
+        let initial_tokens = self.build_initial_tokens(&language, options.task, options.prompt.as_deref());
 
         // 5. Decode tokens
         #[cfg(feature = "std")]
@@ -593,6 +599,8 @@ impl WhisperApr {
                 strategy: options.strategy,
                 word_timestamps: options.word_timestamps,
                 profile: options.profile,
+                prompt: options.prompt.clone(),
+                hotwords: options.hotwords.clone(),
             };
 
             let chunk_result = self.transcribe_single_chunk(chunk, chunk_options)?;
@@ -837,6 +845,39 @@ impl WhisperApr {
         tokens
     }
 
+    /// Build initial tokens with optional prompt conditioning (WAPR-173).
+    ///
+    /// When a prompt is provided, tokenizes it and prepends via the
+    /// `<|startofprev|>` token to condition the decoder on domain vocabulary.
+    fn build_initial_tokens(&self, language: &str, task: Task, prompt: Option<&str>) -> Vec<u32> {
+        let mut tokens = self.get_initial_tokens(language, task);
+
+        let prompt_text = match prompt {
+            Some(p) if !p.is_empty() => p,
+            _ => return tokens,
+        };
+
+        let prompt_tokens = match self.tokenizer.encode(prompt_text) {
+            Ok(t) if !t.is_empty() => t,
+            _ => return tokens,
+        };
+
+        // Limit prompt to avoid filling the context window
+        let max_prompt = (self.config.n_text_ctx as usize / 2).min(224);
+        let truncated = if prompt_tokens.len() > max_prompt {
+            &prompt_tokens[prompt_tokens.len() - max_prompt..]
+        } else {
+            &prompt_tokens
+        };
+
+        // Whisper convention: <|startofprev|> + prompt_tokens + <|startoftranscript|> + ...
+        let mut prefix = Vec::with_capacity(1 + truncated.len() + tokens.len());
+        prefix.push(tokenizer::special_tokens::PREV);
+        prefix.extend_from_slice(truncated);
+        prefix.append(&mut tokens);
+        prefix
+    }
+
     /// Detect language from audio
     ///
     /// Analyzes the first few seconds of audio to detect the spoken language.
@@ -905,6 +946,21 @@ impl WhisperApr {
             .with_timestamp_suppression(false)
             .with_vocab_size(n_vocab);
 
+        // Build hotword booster from text hotwords (WAPR-170)
+        let hotword_booster = if !options.hotwords.is_empty() {
+            let mut booster = crate::vocabulary::HotwordBooster::new();
+            for word in &options.hotwords {
+                if let Ok(tokens) = self.tokenizer.encode(word) {
+                    if !tokens.is_empty() {
+                        booster.add_hotword_with_tokens_default(word, tokens);
+                    }
+                }
+            }
+            if booster.is_empty() { None } else { Some(booster) }
+        } else {
+            None
+        };
+
         let logits_fn = |tokens: &[u32]| -> WhisperResult<Vec<f32>> {
             let seq_len = tokens.len();
             let already_processed = *processed_count.borrow();
@@ -923,6 +979,11 @@ impl WhisperApr {
             // Apply Whisper-specific token suppression via LogitProcessor
             // Suppresses: SOT, language tokens, task tokens, timestamps (if disabled)
             suppressor.apply(&mut logits);
+
+            // Apply hotword biasing (WAPR-170) — boost domain vocabulary
+            if let Some(ref booster) = hotword_booster {
+                booster.apply_bias(&mut logits, tokens);
+            }
 
             // N-gram repetition suppression (prevents hallucinated loops)
             let eot_id = self.eot_token();
@@ -2900,6 +2961,43 @@ mod tests {
         assert!(options.language.is_none());
         assert_eq!(options.task, Task::Transcribe);
         assert!(!options.word_timestamps);
+        assert!(options.prompt.is_none());
+        assert!(options.hotwords.is_empty());
+    }
+
+    #[test]
+    fn test_options_with_prompt() {
+        let options = TranscribeOptions {
+            prompt: Some("This lecture covers AWS, YAML, and Rust programming.".into()),
+            ..TranscribeOptions::default()
+        };
+        assert_eq!(
+            options.prompt.as_deref(),
+            Some("This lecture covers AWS, YAML, and Rust programming.")
+        );
+    }
+
+    #[test]
+    fn test_options_with_hotwords() {
+        let options = TranscribeOptions {
+            hotwords: vec!["AWS".into(), "YAML".into(), "SIMD".into(), "Rust".into()],
+            ..TranscribeOptions::default()
+        };
+        assert_eq!(options.hotwords.len(), 4);
+        assert_eq!(options.hotwords[0], "AWS");
+    }
+
+    #[test]
+    fn test_options_with_prompt_and_hotwords() {
+        let options = TranscribeOptions {
+            language: Some("en".into()),
+            prompt: Some("Technical lecture on cloud computing".into()),
+            hotwords: vec!["Kubernetes".into(), "Docker".into()],
+            ..TranscribeOptions::default()
+        };
+        assert!(options.prompt.is_some());
+        assert_eq!(options.hotwords.len(), 2);
+        assert_eq!(options.language, Some("en".into()));
     }
 
     #[test]
@@ -3020,6 +3118,7 @@ mod tests {
             strategy: DecodingStrategy::Greedy,
             word_timestamps: false,
             profile: false,
+            ..Default::default()
         };
 
         assert_eq!(options.language, Some("es".to_string()));
@@ -3037,6 +3136,7 @@ mod tests {
             },
             word_timestamps: false,
             profile: false,
+            ..Default::default()
         };
 
         assert!(matches!(
@@ -3188,6 +3288,7 @@ mod tests {
             },
             word_timestamps: false,
             profile: false,
+            ..Default::default()
         };
         assert!(matches!(
             opts_beam.strategy,
@@ -3205,6 +3306,7 @@ mod tests {
             },
             word_timestamps: true,
             profile: false,
+            ..Default::default()
         };
         assert!(matches!(
             opts_sampling.strategy,
@@ -3747,6 +3849,7 @@ mod tests {
             strategy: DecodingStrategy::Greedy,
             word_timestamps: true,
             profile: false,
+            ..Default::default()
         };
 
         let cloned = options.clone();
@@ -3855,6 +3958,7 @@ mod tests {
             },
             word_timestamps: false,
             profile: false,
+            ..Default::default()
         };
 
         assert!(matches!(
@@ -3871,6 +3975,7 @@ mod tests {
             strategy: DecodingStrategy::default(),
             word_timestamps: true,
             profile: false,
+            ..Default::default()
         };
 
         assert!(options.word_timestamps);
@@ -4523,6 +4628,8 @@ mod tests {
             },
             word_timestamps: true,
             profile: false,
+            prompt: Some("domain-specific prompt".into()),
+            hotwords: vec!["hotword1".into(), "hotword2".into()],
         };
 
         assert_eq!(options.language, Some("fr".to_string()));

@@ -92,6 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         strategy: whisper_apr::DecodingStrategy::Greedy,
         word_timestamps: false,
         profile: false,
+        ..Default::default()
     };
 
     let t0 = Instant::now();

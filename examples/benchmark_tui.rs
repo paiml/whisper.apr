@@ -467,6 +467,7 @@ mod tui_impl {
                     strategy: DecodingStrategy::Greedy,
                     word_timestamps: false,
                     profile: false,
+                    ..Default::default()
                 };
 
                 match whisper.transcribe(&self.audio_samples, options) {

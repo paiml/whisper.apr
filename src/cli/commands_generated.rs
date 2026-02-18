@@ -235,6 +235,8 @@ fn build_transcribe_options(args: &TranscribeArgs, verbose: bool) -> TranscribeO
         strategy,
         word_timestamps: args.word_timestamps,
         profile: verbose,
+        prompt: if args.prompt.is_empty() { None } else { Some(args.prompt.clone()) },
+        ..Default::default()
     }
 }
 
@@ -643,6 +645,7 @@ pub fn run_translate(args: TranslateArgs, global: &Args) -> CliResult<CommandRes
         strategy: DecodingStrategy::Greedy,
         word_timestamps: false,
         profile: false,
+        ..Default::default()
     };
 
     let result = whisper.transcribe(&samples, options)?;
@@ -1747,6 +1750,7 @@ fn transcribe_single_file(
         strategy: DecodingStrategy::Greedy,
         word_timestamps: false,
         profile: args.profile,
+        ..Default::default()
     };
 
     // Transcribe
@@ -2045,6 +2049,7 @@ fn run_transcribe_internal(
         },
         word_timestamps: args.word_timestamps,
         profile: global.verbose,
+        ..Default::default()
     };
 
     // Load model using the shared loader

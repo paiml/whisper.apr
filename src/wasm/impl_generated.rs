@@ -85,6 +85,7 @@ impl From<TranscribeOptionsWasm> for TranscribeOptions {
             strategy,
             word_timestamps: false,
             profile: false,
+            ..Default::default()
         }
     }
 }
