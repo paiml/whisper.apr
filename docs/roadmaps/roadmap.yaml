@@ -1757,3 +1757,23 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: PMAT-032
+  github_issue: null
+  item_type: task
+  title: Add rayon threading for 1.5x inference speedup
+  status: inprogress
+  priority: high
+  assigned_to: null
+  created: 2026-02-18T07:34:37Z
+  updated: 2026-02-18T07:34:41.933617484+00:00
+  spec: null
+  acceptance_criteria:
+  - Parallelize encoder batch matmul, multi-head attention, and layer processing with rayon. Expected 1.5x speedup closing half the remaining gap with whisper.cpp.
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - performance
+  - threading
+  - rayon
+  notes: null
