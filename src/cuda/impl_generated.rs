@@ -36,7 +36,7 @@
 //! }
 //! ```
 
-use crate::audio::{MelFilterbank, N_FFT, SAMPLE_RATE};
+use crate::audio::{MelConfig, MelFilterbank, SAMPLE_RATE};
 use crate::error::{WhisperError, WhisperResult};
 use crate::model::{Decoder, DecoderKVCache, Encoder, ModelConfig};
 use crate::tokenizer::BpeTokenizer;
@@ -203,7 +203,9 @@ impl WhisperCuda {
         tokenizer: BpeTokenizer,
         device_ordinal: i32,
     ) -> WhisperResult<Self> {
-        let mel_filters = MelFilterbank::new(config.n_mels as usize, N_FFT, SAMPLE_RATE);
+        let mel_filters = MelFilterbank::new(
+            &MelConfig { n_mels: config.n_mels as usize, ..MelConfig::whisper() },
+        );
         Self::new_with_components(
             encoder,
             decoder,
@@ -2794,7 +2796,8 @@ impl WhisperCuda {
         // Compute mel spectrogram
         let mut mel = self
             .mel_filters
-            .compute(&padded_audio, crate::audio::HOP_LENGTH)?;
+            .compute(&padded_audio)
+            .map_err(|e| WhisperError::Audio(e.to_string()))?;
         let actual_frames = mel.len() / N_MELS;
 
         // Ensure exactly 3000 frames (pad or truncate)
@@ -3518,7 +3521,8 @@ impl WhisperCuda {
         };
         let mut mel = self
             .mel_filters
-            .compute(&padded_audio, crate::audio::HOP_LENGTH)?;
+            .compute(&padded_audio)
+            .map_err(|e| WhisperError::Audio(e.to_string()))?;
         if profile {
             eprintln!(
                 "[PROFILE-MEL] Mel spectrogram: {:.1}ms",

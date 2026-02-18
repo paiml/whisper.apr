@@ -1629,7 +1629,8 @@ struct FolderProfileEntry {
     tokens_generated: usize,
     tokens_per_sec: f64,
     budget_met: bool,
-    // Breakdown stats (if available)
+    // Breakdown stats (if available) — BrickTracing: mel_ms split from encoder_ms
+    mel_ms: Option<f64>,
     audio_ms: Option<f64>,
     encoder_ms: Option<f64>,
     decoder_ms: Option<f64>,
@@ -1682,16 +1683,17 @@ fn process_folder_transcription(
 
     atomic_write_transcription(output_path, &content)?;
 
-    // Collect profile data for report
+    // Collect profile data for report (BrickTracing: mel_ms split from encoder_ms)
     if args.profile || args.report.is_some() {
-        let (audio_ms, encoder_ms, decoder_ms) = if let Some(stats) = &result.profiling {
+        let (mel_ms, audio_ms, encoder_ms, decoder_ms) = if let Some(stats) = &result.profiling {
             (
+                stats.breakdown.get("mel_ms").copied(),
                 stats.breakdown.get("audio_ms").copied(),
                 stats.breakdown.get("encoder_ms").copied(),
                 stats.breakdown.get("decoder_ms").copied(),
             )
         } else {
-            (None, None, None)
+            (None, None, None, None)
         };
 
         profile_entries.push(FolderProfileEntry {
@@ -1701,6 +1703,7 @@ fn process_folder_transcription(
             tokens_generated: result.tokens_generated,
             tokens_per_sec,
             budget_met,
+            mel_ms,
             audio_ms,
             encoder_ms,
             decoder_ms,
@@ -1861,20 +1864,11 @@ fn format_folder_output_with_profile(
     match format {
         OutputFormatArg::Json | OutputFormatArg::JsonFull => {
             let breakdown = if let Some(stats) = &result.profiling {
-                let mut b = String::from(r#","breakdown":{"#);
-                let mut parts = Vec::new();
-                if let Some(v) = stats.breakdown.get("audio_ms") {
-                    parts.push(format!(r#""audio_ms":{:.1}"#, v));
-                }
-                if let Some(v) = stats.breakdown.get("encoder_ms") {
-                    parts.push(format!(r#""encoder_ms":{:.1}"#, v));
-                }
-                if let Some(v) = stats.breakdown.get("decoder_ms") {
-                    parts.push(format!(r#""decoder_ms":{:.1}"#, v));
-                }
-                b.push_str(&parts.join(","));
-                b.push('}');
-                b
+                let keys = ["mel_ms", "audio_ms", "encoder_ms", "decoder_ms"];
+                let parts: Vec<String> = keys.iter()
+                    .filter_map(|k| stats.breakdown.get(*k).map(|v| format!(r#""{k}":{v:.1}"#)))
+                    .collect();
+                format!(r#","breakdown":{{{}}}"#, parts.join(","))
             } else {
                 String::new()
             };
@@ -1912,22 +1906,24 @@ fn generate_folder_profile_report(
     };
     let budget_met_count = entries.iter().filter(|e| e.budget_met).count();
 
-    // Calculate aggregated breakdown
-    let (avg_audio, avg_enc, avg_dec) = if !entries.is_empty() {
+    // Calculate aggregated breakdown (BrickTracing: mel_ms split from encoder_ms)
+    let (avg_mel, avg_audio, avg_enc, avg_dec) = if !entries.is_empty() {
+        let sum_mel: f64 = entries.iter().filter_map(|e| e.mel_ms).sum();
         let sum_audio: f64 = entries.iter().filter_map(|e| e.audio_ms).sum();
         let sum_enc: f64 = entries.iter().filter_map(|e| e.encoder_ms).sum();
         let sum_dec: f64 = entries.iter().filter_map(|e| e.decoder_ms).sum();
         let count = entries.len() as f64;
-        (sum_audio / count, sum_enc / count, sum_dec / count)
+        (sum_mel / count, sum_audio / count, sum_enc / count, sum_dec / count)
     } else {
-        (0.0, 0.0, 0.0)
+        (0.0, 0.0, 0.0, 0.0)
     };
 
     let files_json: String = entries
         .iter()
         .map(|e| {
             let breakdown = format!(
-                ",\"audio_ms\":{:.1},\"encoder_ms\":{:.1},\"decoder_ms\":{:.1}",
+                ",\"mel_ms\":{:.1},\"audio_ms\":{:.1},\"encoder_ms\":{:.1},\"decoder_ms\":{:.1}",
+                e.mel_ms.unwrap_or(0.0),
                 e.audio_ms.unwrap_or(0.0),
                 e.encoder_ms.unwrap_or(0.0),
                 e.decoder_ms.unwrap_or(0.0)
@@ -1947,13 +1943,13 @@ fn generate_folder_profile_report(
         .join(",\n");
 
     format!(
-        "{{\n  \"file_count\": {},\n  \"total_audio_secs\": {:.1},\n  \"total_elapsed_secs\": {:.1},\n  \"total_tokens\": {},\n  \"avg_tokens_per_sec\": {:.0},\n  \"avg_breakdown_ms\": {{\"audio\":{:.1},\"encoder\":{:.1},\"decoder\":{:.1}}},\n  \"budget_met_count\": {},\n  \"budget_target_tok_s\": 7692,\n  \"files\": [\n{}\n  ]\n}}",
+        "{{\n  \"file_count\": {},\n  \"total_audio_secs\": {:.1},\n  \"total_elapsed_secs\": {:.1},\n  \"total_tokens\": {},\n  \"avg_tokens_per_sec\": {:.0},\n  \"avg_breakdown_ms\": {{\"mel\":{:.1},\"audio\":{:.1},\"encoder\":{:.1},\"decoder\":{:.1}}},\n  \"budget_met_count\": {},\n  \"budget_target_tok_s\": 7692,\n  \"mel_budget_ms\": 50,\n  \"files\": [\n{}\n  ]\n}}",
         file_count,
         total_audio_secs,
         total_elapsed_secs,
         total_tokens,
         avg_tok_s,
-        avg_audio, avg_enc, avg_dec,
+        avg_mel, avg_audio, avg_enc, avg_dec,
         budget_met_count,
         files_json
     )
@@ -1971,26 +1967,28 @@ fn print_folder_profile_summary(entries: &[FolderProfileEntry], total_elapsed_se
     let budget_met_count = entries.iter().filter(|e| e.budget_met).count();
     let budget_target = 7692.0;
 
-    // Calculate aggregated breakdown
-    let (avg_audio, avg_enc, avg_dec) = {
+    // Calculate aggregated breakdown (BrickTracing: mel_ms split from encoder_ms)
+    let (avg_mel, avg_audio, avg_enc, avg_dec) = {
+        let sum_mel: f64 = entries.iter().filter_map(|e| e.mel_ms).sum();
         let sum_audio: f64 = entries.iter().filter_map(|e| e.audio_ms).sum();
         let sum_enc: f64 = entries.iter().filter_map(|e| e.encoder_ms).sum();
         let sum_dec: f64 = entries.iter().filter_map(|e| e.decoder_ms).sum();
         let count = entries.len() as f64;
-        (sum_audio / count, sum_enc / count, sum_dec / count)
+        (sum_mel / count, sum_audio / count, sum_enc / count, sum_dec / count)
     };
 
     eprintln!();
-    eprintln!("=== Folder Profiling Summary ===");
+    eprintln!("=== Folder Profiling Summary (BrickTracing) ===");
     eprintln!("Files processed:     {}", entries.len());
     eprintln!("Total audio:         {:.1}s", total_audio_secs);
     eprintln!("Total elapsed:       {:.1}s", total_elapsed_secs);
     eprintln!("Total tokens:        {}", total_tokens);
     eprintln!("Avg throughput:      {:.0} tok/s", avg_tok_s);
     eprintln!(
-        "Avg breakdown (ms):  Audio={:.1}, Enc={:.1}, Dec={:.1}",
-        avg_audio, avg_enc, avg_dec
+        "Avg breakdown (ms):  Mel={:.1}, Audio={:.1}, Enc={:.1}, Dec={:.1}",
+        avg_mel, avg_audio, avg_enc, avg_dec
     );
+    eprintln!("Mel budget:          50ms (aprender delegation)");
     eprintln!("Budget target:       {:.0} tok/s", budget_target);
     eprintln!(
         "Budget status:       {}/{} files met budget ({}%)",
@@ -3861,15 +3859,13 @@ fn decode_all_packets(
 }
 
 /// Mix interleaved multi-channel audio to mono
+///
+/// Delegates to `aprender::audio::stereo_to_mono` for 2-channel input.
 #[cfg(feature = "symphonia")]
 fn mix_to_mono(interleaved: &[f32], channels: usize, output: &mut Vec<f32>) {
     match channels {
         1 => output.extend_from_slice(interleaved),
-        2 => {
-            for chunk in interleaved.chunks_exact(2) {
-                output.push((chunk[0] + chunk[1]) / 2.0);
-            }
-        }
+        2 => output.extend(aprender::audio::stereo_to_mono(interleaved)),
         n => {
             for chunk in interleaved.chunks(n) {
                 let sum: f32 = chunk.iter().sum();

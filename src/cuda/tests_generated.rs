@@ -603,7 +603,7 @@ fn test_gpu_encoder_performance() {
 
     let mut mel = cuda_model
         .mel_filters
-        .compute(&padded_audio, crate::audio::HOP_LENGTH)
+        .compute(&padded_audio)
         .expect("Mel computation failed");
     let actual_frames = mel.len() / N_MELS;
     if actual_frames < N_FRAMES {

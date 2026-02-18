@@ -6,12 +6,14 @@ use crate::format::{FfnActivation, ModelFamily};
 use crate::model::{AttentionType, AudioFrontend, ModelConfig, PositionalEncoding};
 use crate::ModelType;
 use aprender::format::v2::AprV2Metadata;
+#[cfg(any(feature = "converter", test))]
 use serde_json::json;
 
 /// Build `AprV2Metadata` from a Whisper/Moonshine `ModelConfig`.
 ///
 /// Audio-specific fields that don't have direct `AprV2Metadata` counterparts
 /// are stored in `custom` as JSON values.
+#[cfg(any(feature = "converter", test))]
 #[must_use]
 pub fn build_whisper_metadata(config: &ModelConfig, source: &str) -> AprV2Metadata {
     let mut meta = AprV2Metadata::new("speech-recognition");
@@ -157,6 +159,7 @@ pub fn metadata_to_model_config(meta: &AprV2Metadata) -> ModelConfig {
     }
 }
 
+#[cfg(any(feature = "converter", test))]
 fn model_type_to_u8(mt: ModelType) -> u8 {
     match mt {
         ModelType::Tiny => 0,
@@ -289,6 +292,7 @@ impl MelFilterbankData {
 }
 
 /// Create a minimal valid .apr file for testing using AprV2Writer
+#[cfg(any(feature = "converter", test))]
 #[must_use]
 pub fn create_test_apr() -> Vec<u8> {
     use aprender::format::v2::AprV2Writer;

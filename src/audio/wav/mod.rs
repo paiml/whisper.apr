@@ -258,14 +258,13 @@ fn convert_32bit_float(data: &[u8]) -> Vec<f32> {
 }
 
 /// Convert multi-channel audio to mono
+///
+/// Delegates to `aprender::audio::stereo_to_mono` for 2-channel input.
 #[inline]
 pub(crate) fn convert_to_mono(samples: Vec<f32>, channels: u16) -> Result<Vec<f32>, WavError> {
     match channels {
         1 => Ok(samples),
-        2 => Ok(samples
-            .chunks_exact(2)
-            .map(|chunk| (chunk[0] + chunk[1]) / 2.0)
-            .collect()),
+        2 => Ok(aprender::audio::stereo_to_mono(&samples)),
         _ => Err(WavError::UnsupportedChannels(channels)),
     }
 }

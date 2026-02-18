@@ -36,7 +36,7 @@ mod tests;
 use crate::audio::{
     MelFilterbank, ProcessorState, StreamingConfig as AudioStreamingConfig, StreamingProcessor,
 };
-use crate::error::WhisperResult;
+use crate::error::{WhisperError, WhisperResult};
 use crate::TranscriptionResult;
 
 /// Configuration for streaming transcription
@@ -144,7 +144,7 @@ impl StreamingTranscriber {
     pub fn new(config: StreamingConfig) -> Self {
         Self {
             processor: StreamingProcessor::new(config.audio.clone()),
-            mel: MelFilterbank::new(80, 400, 16000),
+            mel: MelFilterbank::new(&aprender::audio::MelConfig::whisper()),
             config,
             state: TranscriberState::Ready,
             accumulated_text: String::new(),
@@ -223,7 +223,8 @@ impl StreamingTranscriber {
         self.state = TranscriberState::Processing;
 
         // Compute mel spectrogram
-        let mel_spec = self.mel.compute(&chunk, 160)?;
+        let mel_spec = self.mel.compute(&chunk)
+            .map_err(|e| WhisperError::Audio(e.to_string()))?;
 
         // Run inference on chunk
         let chunk_result = self.transcribe_chunk(&mel_spec)?;
@@ -280,7 +281,8 @@ impl StreamingTranscriber {
         // Process any remaining audio in buffer
         if let Some(chunk) = self.processor.flush() {
             if !chunk.is_empty() {
-                let mel_spec = self.mel.compute(&chunk, 160)?;
+                let mel_spec = self.mel.compute(&chunk)
+                    .map_err(|e| WhisperError::Audio(e.to_string()))?;
                 let chunk_result = self.transcribe_chunk(&mel_spec)?;
                 if !chunk_result.text.is_empty() {
                     if !self.accumulated_text.is_empty() {

@@ -37,7 +37,7 @@ mod tui_impl {
         time::{Duration, Instant},
     };
     use whisper_apr::{
-        audio::{self, MelFilterbank, SincResampler},
+        audio::{MelConfig, MelFilterbank, SincResampler},
         DecodingStrategy, Task, TranscribeOptions, WhisperApr,
     };
 
@@ -413,8 +413,8 @@ mod tui_impl {
 
             let start = Instant::now();
 
-            let mel_filterbank = MelFilterbank::new(80, audio::N_FFT, audio::SAMPLE_RATE);
-            match mel_filterbank.compute(&self.audio_samples, audio::HOP_LENGTH) {
+            let mel_filterbank = MelFilterbank::new(&MelConfig::whisper());
+            match mel_filterbank.compute(&self.audio_samples) {
                 Ok(mel) => {
                     self.mel_data = mel;
                 }

@@ -7,7 +7,7 @@
 //!
 //! With model file: `cargo run --example filterbank_embedding -- models/whisper-tiny.apr`
 
-use whisper_apr::audio::MelFilterbank;
+use whisper_apr::audio::{MelConfig, MelFilterbank};
 use whisper_apr::format::{
     AprV2ReaderRef, AprV2Writer, MelFilterbankData, build_whisper_metadata, metadata_to_model_config,
 };
@@ -75,7 +75,7 @@ fn inspect_apr_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
             // Compare with computed filterbank
             println!("\n=== Comparison with Computed Filterbank ===");
-            let computed = MelFilterbank::new(fb.n_mels as usize, 400, 16000);
+            let computed = MelFilterbank::new(&MelConfig { n_mels: fb.n_mels as usize, ..MelConfig::whisper() });
             let cosine_sim = cosine_similarity(&fb.data, computed.filters());
             println!("  Cosine similarity: {:.6}", cosine_sim);
 
@@ -87,7 +87,7 @@ fn inspect_apr_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Create MelFilterbank from embedded data
-            let mel = MelFilterbank::from_apr_data(fb, 16000);
+            let mel = MelFilterbank::from_filters(fb.data, &MelConfig { n_mels: fb.n_mels as usize, ..MelConfig::whisper() });
             println!(
                 "\n  Created MelFilterbank: {} mels, {} FFT, {} Hz",
                 mel.n_mels(),
@@ -162,14 +162,14 @@ fn demo_filterbank_embedding() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Match: {}", (orig_sum - read_sum).abs() < 1e-6);
 
             // Create MelFilterbank for use
-            let mel = MelFilterbank::from_apr_data(fb, 16000);
+            let mel = MelFilterbank::from_filters(fb.data, &MelConfig { n_mels: fb.n_mels as usize, ..MelConfig::whisper() });
             println!(
                 "\n  Ready to use: MelFilterbank with {} mel bands",
                 mel.n_mels()
             );
 
             // Compare with standard computed filterbank
-            let computed = MelFilterbank::new(n_mels, 400, 16000);
+            let computed = MelFilterbank::new(&MelConfig { n_mels, ..MelConfig::whisper() });
             let cosine_sim = cosine_similarity(mel.filters(), computed.filters());
             println!("\n=== Filterbank Comparison ===");
             println!(
@@ -190,8 +190,8 @@ fn demo_filterbank_embedding() -> Result<(), Box<dyn std::error::Error>> {
     println!("let reader = AprV2ReaderRef::from_bytes(&model_bytes)?;");
     println!("let mel = reader.get_tensor_data(\"__mel_filters__\")");
     println!("    .and_then(|d| MelFilterbankData::from_bytes(d).ok())");
-    println!("    .map(|fb| MelFilterbank::from_apr_data(fb, 16000))");
-    println!("    .unwrap_or_else(|| MelFilterbank::new(80, 400, 16000));");
+    println!("    .map(|fb| MelFilterbank::from_filters(fb.data, &MelConfig {{ n_mels: fb.n_mels as usize, ..MelConfig::whisper() }}))");
+    println!("    .unwrap_or_else(|| MelFilterbank::new(&MelConfig::whisper()));");
     println!("```");
 
     Ok(())

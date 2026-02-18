@@ -30,6 +30,7 @@ pub mod codegen;
 pub mod compute;
 pub mod file_info;
 pub mod html_gen;
+pub mod mel_spectrogram;
 pub mod partial_results;
 pub mod performance_stats;
 pub mod progress;
@@ -55,6 +56,7 @@ pub use compute::{
 };
 pub use file_info::{AudioFormat, FileInfo, FileInfoBrick};
 pub use html_gen::{create_whisper_brick_house, generate_index_html, HtmlConfig};
+pub use mel_spectrogram::{MelSpectrogramBrick, MelSpectrogramState};
 pub use partial_results::{PartialResultsBrick, PartialResultsState, TranscriptSegment};
 pub use performance_stats::{
     HealthStatus, MemoryStats, MemoryUnit, ModelLoadState, PerformanceStatsBrick,

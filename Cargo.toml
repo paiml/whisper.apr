@@ -100,7 +100,7 @@ trueno-gpu = { version = "0.4.17", optional = true }
 # Note: safetensors-compare pulls hf-hub which doesn't support WASM
 # Use target-specific deps below to enable it only for native builds
 # Using local path for WASM-compatible trueno
-aprender = { version = "0.25", path = "../aprender", default-features = false }
+aprender = { version = "0.25", path = "../aprender", default-features = false, features = ["audio"] }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
@@ -108,9 +108,6 @@ realizar = { version = "0.6.12", optional = true, default-features = false }
 
 # fp16 weight storage (2 bytes/weight vs 4 bytes/weight for f32)
 half = "2"
-
-# FFT for mel spectrogram computation
-rustfft = "6.2"
 
 # Optional: WASM bindings
 wasm-bindgen = { version = "0.2", optional = true }
@@ -182,6 +179,8 @@ criterion = { version = "0.5", features = ["html_reports"] }
 jugar-probar = { version = "1.0", default-features = false }
 # Tempfile for CLI tests
 tempfile = "3"
+# serde_json needed for whisper_metadata test helpers (build_whisper_metadata, create_test_apr)
+serde_json = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # Both getrandom versions need js/wasm_js feature for WASM
@@ -192,7 +191,7 @@ getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] 
 # Enable safetensors-compare only for native builds
 # safetensors-compare: pulls hf-hub which doesn't support WASM
 # Note: inference-monitoring disabled due to cyclic dependency with entrenar
-aprender = { version = "0.25", path = "../aprender", default-features = false, features = ["safetensors-compare"] }
+aprender = { version = "0.25", path = "../aprender", default-features = false, features = ["audio", "safetensors-compare"] }
 
 [profile.release]
 lto = true
@@ -207,6 +206,10 @@ opt-level = 3  # Full optimization for WASM (was "z" - kills SIMD!)
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
+
+[[example]]
+name = "filterbank_embedding"
+required-features = ["converter"]
 
 [[bench]]
 name = "inference"

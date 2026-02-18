@@ -5,7 +5,7 @@
 //! Run with: `cargo run --example basic_transcription`
 
 use whisper_apr::{
-    audio::MelFilterbank, model::ModelConfig, DecodingStrategy, Task, TranscribeOptions, WhisperApr,
+    audio::{MelConfig, MelFilterbank}, model::ModelConfig, DecodingStrategy, Task, TranscribeOptions, WhisperApr,
 };
 
 fn main() {
@@ -64,8 +64,8 @@ fn main() {
     println!();
 
     // Compute mel spectrogram
-    let mel = MelFilterbank::new(80, 400, sample_rate);
-    match mel.compute(&audio, 160) {
+    let mel = MelFilterbank::new(&MelConfig::whisper());
+    match mel.compute(&audio) {
         Ok(mel_spec) => {
             println!("Mel spectrogram computed:");
             println!("  Shape: {} mel frames x 80 mel bins", mel_spec.len() / 80);

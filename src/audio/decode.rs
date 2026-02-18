@@ -45,30 +45,47 @@ pub fn load_audio_file(path: &Path) -> Result<Vec<f32>, AudioDecodeError> {
 ///
 /// Returns mono f32 samples at 16kHz.
 pub fn load_audio_samples(data: &[u8], ext: &str) -> Result<Vec<f32>, AudioDecodeError> {
-    match ext {
+    let samples = match ext {
         "wav" => {
             let wav = parse_wav_file(data)
                 .map_err(|e| AudioDecodeError::Format(format!("WAV parse failed: {e}")))?;
-            let samples = if wav.sample_rate == 16000 {
+            if wav.sample_rate == 16000 {
                 wav.samples
             } else {
                 resample(&wav.samples, wav.sample_rate, 16000)
-            };
-            Ok(samples)
+            }
         }
         #[cfg(feature = "symphonia")]
         "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4"
-        | "webm" | "mkv" | "avi" | "opus" => decode_with_symphonia(data, ext),
+        | "webm" | "mkv" | "avi" | "opus" => decode_with_symphonia(data, ext)?,
         #[cfg(not(feature = "symphonia"))]
         "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4"
-        | "webm" | "mkv" | "avi" | "opus" => Err(AudioDecodeError::FeatureRequired(
-            format!(
-                "{ext} format requires the 'symphonia' feature. \
-                 Build with: cargo build --features symphonia"
-            ),
-        )),
-        _ => Err(AudioDecodeError::UnsupportedFormat(ext.to_string())),
+        | "webm" | "mkv" | "avi" | "opus" => {
+            return Err(AudioDecodeError::FeatureRequired(
+                format!(
+                    "{ext} format requires the 'symphonia' feature. \
+                     Build with: cargo build --features symphonia"
+                ),
+            ));
+        }
+        _ => return Err(AudioDecodeError::UnsupportedFormat(ext.to_string())),
+    };
+
+    // Validate decoded audio for NaN and Inf (aprender A14-A15 defects)
+    // Note: clipping check omitted here — lossy codecs may produce values slightly
+    // outside ±1.0; the mel filterbank normalizes anyway.
+    if aprender::audio::has_nan(&samples) {
+        return Err(AudioDecodeError::Validation(
+            "Decoded audio contains NaN values".to_string(),
+        ));
     }
+    if aprender::audio::has_inf(&samples) {
+        return Err(AudioDecodeError::Validation(
+            "Decoded audio contains Infinity values".to_string(),
+        ));
+    }
+
+    Ok(samples)
 }
 
 /// Audio decoding error type.
@@ -82,6 +99,8 @@ pub enum AudioDecodeError {
     FeatureRequired(String),
     /// Unsupported file extension.
     UnsupportedFormat(String),
+    /// Audio validation failed (NaN, Inf, or clipping detected).
+    Validation(String),
 }
 
 impl std::fmt::Display for AudioDecodeError {
@@ -93,6 +112,7 @@ impl std::fmt::Display for AudioDecodeError {
             Self::UnsupportedFormat(ext) => {
                 write!(f, "Unsupported audio format: .{ext}")
             }
+            Self::Validation(msg) => write!(f, "Audio validation failed: {msg}"),
         }
     }
 }
@@ -245,15 +265,13 @@ fn decode_all_packets(
 }
 
 /// Mix interleaved multi-channel audio to mono.
+///
+/// Delegates to `aprender::audio::stereo_to_mono` for 2-channel input.
 #[cfg(feature = "symphonia")]
 pub fn mix_to_mono(interleaved: &[f32], channels: usize, output: &mut Vec<f32>) {
     match channels {
         1 => output.extend_from_slice(interleaved),
-        2 => {
-            for chunk in interleaved.chunks_exact(2) {
-                output.push((chunk[0] + chunk[1]) / 2.0);
-            }
-        }
+        2 => output.extend(aprender::audio::stereo_to_mono(interleaved)),
         n => {
             for chunk in interleaved.chunks(n) {
                 let sum: f32 = chunk.iter().sum();
