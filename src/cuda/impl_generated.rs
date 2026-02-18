@@ -596,7 +596,10 @@ impl WhisperCuda {
         let n_layers = self.config.n_audio_layer as usize;
 
         // Step 1: Convolutional frontend (CPU - small compared to attention)
-        let conv_output = self.encoder.conv_frontend().forward(mel)?;
+        let conv_frontend = self.encoder.conv_frontend().ok_or_else(|| {
+            WhisperError::Inference("no conv frontend (Whisper models require it)".into())
+        })?;
+        let conv_output = conv_frontend.forward(mel)?;
         let seq_len = conv_output.len() / d_model;
 
         // Step 2: Add positional embedding
@@ -759,7 +762,10 @@ impl WhisperCuda {
         }
 
         let ctx = self.executor.context();
-        let conv_frontend = self.encoder.conv_frontend();
+        let conv_frontend = self
+            .encoder
+            .conv_frontend()
+            .ok_or_else(|| WhisperError::Inference("no conv frontend for GPU upload".into()))?;
 
         // Upload conv1 weights [out_channels, in_channels, kernel_size]
         let conv1_weight = GpuResidentTensor::from_host(ctx, &conv_frontend.conv1.weight)
@@ -1763,80 +1769,13 @@ impl WhisperCuda {
             .as_ref()
             .ok_or_else(|| WhisperError::Inference("GPU config not set".into()))?;
 
-        // DEBUG: Compare GPU vs CPU for first layer only
-        let debug_gpu = std::env::var("WHISPER_DEBUG_GPU").is_ok();
-        let debug_layer0_only = std::env::var("WHISPER_DEBUG_LAYER0").is_ok();
-
-        if debug_gpu {
-            // Run CPU encoder for comparison
-            let cpu_output = self.encoder.forward_mel(mel)?;
-            eprintln!("[DEBUG] CPU encoder output (full): len={}, mean={:.6}, std={:.6}, min={:.6}, max={:.6}",
-                cpu_output.len(),
-                cpu_output.iter().sum::<f32>() / cpu_output.len() as f32,
-                (cpu_output.iter().map(|x| x.powi(2)).sum::<f32>() / cpu_output.len() as f32).sqrt(),
-                cpu_output.iter().cloned().fold(f32::INFINITY, f32::min),
-                cpu_output.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
-
-            // Also run just layer 0 on CPU for comparison
-            let block0 = &self.encoder.blocks()[0];
-            let n_heads = self.config.n_audio_head as usize;
-            let _head_dim = d_model / n_heads;
-
-            // Step 1: LayerNorm
-            let ln1_out = block0.ln1.forward(&x)?;
-            eprintln!(
-                "[DEBUG-CPU] Layer 0 LN1: mean={:.6}, std={:.6}",
-                ln1_out.iter().sum::<f32>() / ln1_out.len() as f32,
-                (ln1_out.iter().map(|v| v.powi(2)).sum::<f32>() / ln1_out.len() as f32).sqrt()
-            );
-
-            // Step 2: Q/K/V projections
-            let q = block0.self_attn.w_q().forward(&ln1_out, seq_len)?;
-            let k = block0.self_attn.w_k().forward(&ln1_out, seq_len)?;
-            let v = block0.self_attn.w_v().forward(&ln1_out, seq_len)?;
-            eprintln!(
-                "[DEBUG-CPU] Q: mean={:.6}, K: mean={:.6}, V: mean={:.6}",
-                q.iter().sum::<f32>() / q.len() as f32,
-                k.iter().sum::<f32>() / k.len() as f32,
-                v.iter().sum::<f32>() / v.len() as f32
-            );
-        }
-
-        // WAPR-PERF-011: Timing instrumentation for verification matrix
-        let profile_layers = std::env::var("WHISPER_PROFILE_LAYERS").is_ok();
+        // Process all encoder layers on GPU
         let mut layer_times: Vec<u128> = Vec::new();
-
-        #[allow(clippy::needless_range_loop)]
-        // layer_idx used for debug, error messages, and indexing
         for layer_idx in 0..n_layers {
-            if debug_layer0_only && layer_idx == 1 {
-                // Get intermediate GPU output after layer 0 only
-                let gpu_layer0_out = x_gpu
-                    .to_host()
-                    .map_err(|e| WhisperError::Inference(format!("debug download: {e}")))?;
-                eprintln!("[DEBUG-GPU] After layer 0 only: len={}, mean={:.6}, std={:.6}, min={:.6}, max={:.6}",
-                    gpu_layer0_out.len(),
-                    gpu_layer0_out.iter().sum::<f32>() / gpu_layer0_out.len() as f32,
-                    (gpu_layer0_out.iter().map(|v| v.powi(2)).sum::<f32>() / gpu_layer0_out.len() as f32).sqrt(),
-                    gpu_layer0_out.iter().cloned().fold(f32::INFINITY, f32::min),
-                    gpu_layer0_out.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
-            }
-
             let layer_start = std::time::Instant::now();
             x_gpu = forward_encoder_block_gpu(ctx, &x_gpu, &weights[layer_idx], config)
                 .map_err(|e| WhisperError::Inference(format!("encoder block {layer_idx}: {e}")))?;
-            let layer_elapsed = layer_start.elapsed().as_micros();
-            layer_times.push(layer_elapsed);
-        }
-
-        // Print layer timing summary
-        if profile_layers && !layer_times.is_empty() {
-            let sum: u128 = layer_times.iter().sum();
-            let avg = sum as f64 / layer_times.len() as f64;
-            let max = layer_times.iter().max().copied().unwrap_or(0);
-            let min = layer_times.iter().min().copied().unwrap_or(0);
-            eprintln!("[PROFILE-LAYERS] {} layers, total {:.1}ms, avg {:.0}µs, min {:.0}µs, max {:.0}µs, variance {:.1}x",
-                layer_times.len(), sum as f64 / 1000.0, avg, min, max, max as f64 / (min as f64 + 1.0));
+            layer_times.push(layer_start.elapsed().as_micros());
         }
 
         // Step 5: Download output (1 D2H transfer)
@@ -1846,59 +1785,8 @@ impl WhisperCuda {
             .map_err(|e| WhisperError::Inference(format!("output download: {e}")))?;
         let download_time = download_start.elapsed();
 
-        if profile_detail {
-            eprintln!(
-                "[PROFILE-BREAKDOWN] Download: {:.1}ms",
-                download_time.as_millis()
-            );
-        }
-
-        // Log transfer stats for debugging
-        if std::env::var("WHISPER_DEBUG_GPU").is_ok() {
-            let stats = TransferStats::capture();
-            eprintln!(
-                "[GPU-TOTAL-OFFLOAD] encoder: {} H2D, {} D2H (expected: 1 H2D, 1 D2H)",
-                stats.h2d_transfers, stats.d2h_transfers
-            );
-            eprintln!("[DEBUG] GPU encoder output (before ln_post): len={}, mean={:.6}, std={:.6}, min={:.6}, max={:.6}",
-                output.len(),
-                output.iter().sum::<f32>() / output.len() as f32,
-                (output.iter().map(|x| x.powi(2)).sum::<f32>() / output.len() as f32).sqrt(),
-                output.iter().cloned().fold(f32::INFINITY, f32::min),
-                output.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
-        }
-
         // Step 6: Final layer norm (CPU - small overhead)
-        // GPU offload tracked in WAPR-PERF-008 (negligible latency vs transfer cost)
-        let ln_post_start = std::time::Instant::now();
         let result = self.encoder.ln_post().forward(&output)?;
-        let ln_post_time = ln_post_start.elapsed();
-
-        if profile_detail {
-            let total_time = total_start.elapsed();
-            let layer_sum: u128 = layer_times.iter().sum();
-            let accounted = conv_time.as_micros()
-                + pos_time.as_micros()
-                + upload_time.as_micros()
-                + layer_sum
-                + download_time.as_micros()
-                + ln_post_time.as_micros();
-            let unaccounted = total_time.as_micros().saturating_sub(accounted);
-            eprintln!(
-                "[PROFILE-BREAKDOWN] LnPost: {:.1}ms, Total: {:.1}ms",
-                ln_post_time.as_millis(),
-                total_time.as_millis()
-            );
-            eprintln!("[PROFILE-SUMMARY] Conv={:.0}µs PosEmb={:.0}µs Upload={:.0}µs Layers={:.0}µs Download={:.0}µs LnPost={:.0}µs",
-                conv_time.as_micros(), pos_time.as_micros(), upload_time.as_micros(),
-                layer_sum, download_time.as_micros(), ln_post_time.as_micros());
-            eprintln!(
-                "[PROFILE-SUMMARY] Accounted: {:.1}ms, Unaccounted: {:.1}ms ({:.1}%)",
-                accounted as f64 / 1000.0,
-                unaccounted as f64 / 1000.0,
-                unaccounted as f64 / total_time.as_micros() as f64 * 100.0
-            );
-        }
 
         Ok(result)
     }
@@ -3434,39 +3322,7 @@ impl WhisperCuda {
         // === TRACE: Mel spectrogram (mapped to EMBED step) ===
         self.tracer.start_step(TraceStep::Embed);
 
-        // Pad/truncate audio to 30 seconds
-        let mel_start = std::time::Instant::now();
-        let padded_audio = match audio.len().cmp(&N_SAMPLES_30S) {
-            std::cmp::Ordering::Equal => audio.to_vec(),
-            std::cmp::Ordering::Less => {
-                let mut padded = vec![0.0_f32; N_SAMPLES_30S];
-                padded[..audio.len()].copy_from_slice(audio);
-                padded
-            }
-            std::cmp::Ordering::Greater => audio[..N_SAMPLES_30S].to_vec(),
-        };
-
-        // Compute mel spectrogram
-        let mut mel = self
-            .mel_filters
-            .compute(&padded_audio, crate::audio::HOP_LENGTH)?;
-        if profile_all {
-            eprintln!(
-                "[PROFILE-MEL] Mel spectrogram: {:.1}ms",
-                mel_start.elapsed().as_millis()
-            );
-        }
-        let actual_frames = mel.len() / N_MELS;
-
-        // Ensure exactly 3000 frames
-        if actual_frames < N_FRAMES {
-            let pad_value = -1.0_f32;
-            let mut padded_mel = vec![pad_value; N_FRAMES * N_MELS];
-            padded_mel[..mel.len()].copy_from_slice(&mel);
-            mel = padded_mel;
-        } else if actual_frames > N_FRAMES {
-            mel.truncate(N_FRAMES * N_MELS);
-        }
+        let mel = self.prepare_mel(audio, N_SAMPLES_30S, N_FRAMES, N_MELS, profile_all)?;
 
         // Trace mel computation (token_count=N_FRAMES, hidden_dim=N_MELS)
         self.tracer.trace_embed(N_FRAMES, N_MELS, Some(&mel));
@@ -3474,45 +3330,8 @@ impl WhisperCuda {
         // === TRACE: Encoder forward pass (mapped to TRANSFORMER_BLOCK) ===
         self.tracer.start_step(TraceStep::TransformerBlock);
 
-        // Run encoder - choose path based on environment variables (WAPR-PERF-004/005)
-        // - WHISPER_GPU_TOTAL_OFFLOAD=1 + WHISPER_GPU_DECODER_OFFLOAD=1: Optimized stream pipeline
-        // - WHISPER_GPU_TOTAL_OFFLOAD=1: Full GPU encoder (2x target)
-        // - WHISPER_GPU_ENCODER=1: Partial GPU (attention only)
-        // - Default: CPU encoder with SIMD
-        // WAPR-PERF-021: Select encoder path
-        // - WHISPER_GPU_ENCODER=1: GPU attention-only encoder (correct output)
-        // - Default: CPU encoder with SIMD (fastest correct path)
-        // Note: WHISPER_GPU_TOTAL_OFFLOAD has buggy GPU convolutions, disabled
-        #[cfg(feature = "cuda")]
-        let use_gpu_total_offload = std::env::var("WHISPER_GPU_TOTAL_OFFLOAD").is_ok();
-        #[cfg(feature = "cuda")]
-        let use_gpu_encoder = std::env::var("WHISPER_GPU_ENCODER").is_ok();
-        #[cfg(feature = "cuda")]
-        let use_gpu_decoder = std::env::var("WHISPER_GPU_DECODER_OFFLOAD").is_ok();
-
-        // Debug: print env var status
-        #[cfg(feature = "cuda")]
-        eprintln!("[DEBUG] GPU flags: total_offload={use_gpu_total_offload}, encoder={use_gpu_encoder}, decoder={use_gpu_decoder}");
-
-        #[cfg(feature = "cuda")]
-        let encoder_output = {
-            if use_gpu_total_offload {
-                // WAPR-PERF-014: Full GPU encoder (2x target)
-                // Note: Has numerical divergence (max_diff ~8) but produces correct transcription
-                eprintln!("[WAPR-PERF-014] Using GPU total-offload encoder (50ms target)...");
-                self.encode_gpu_total_offload(&mel)?
-            } else if use_gpu_encoder {
-                eprintln!("[WAPR-PERF-005] Using GPU attention-only encoder...");
-                self.encode_gpu(&mel)?
-            } else {
-                eprintln!("[CPU] Using SIMD encoder...");
-                self.encoder.forward_mel(&mel)?
-            }
-        };
-        #[cfg(not(feature = "cuda"))]
-        let encoder_output = self.encoder.forward_mel(&mel)?;
-        #[cfg(not(feature = "cuda"))]
-        let use_gpu_decoder = false;
+        // Select and run encoder path
+        let encoder_output = self.run_encoder(&mel)?;
 
         // Trace encoder output (layer_idx=0 for encoder, iteration=0 for prefill)
         let d_model = self.config.n_text_state as usize;
@@ -3521,21 +3340,9 @@ impl WhisperCuda {
             .trace_layer(0, 0, Some(&encoder_output), enc_seq_len, d_model);
 
         // Build initial tokens
-        use crate::tokenizer::special_tokens::{self, SpecialTokens};
+        use crate::tokenizer::special_tokens::SpecialTokens;
         let specials = SpecialTokens::for_vocab_size(self.config.n_vocab as usize);
-        let mut tokens = vec![specials.sot];
-
-        if specials.is_multilingual {
-            let language = options.language.as_deref().unwrap_or("en");
-            let lang_offset = special_tokens::language_offset(language).unwrap_or(0);
-            tokens.push(specials.lang_base + lang_offset);
-        }
-
-        match options.task {
-            Task::Transcribe => tokens.push(specials.transcribe),
-            Task::Translate => tokens.push(special_tokens::TRANSLATE),
-        }
-        tokens.push(specials.no_timestamps);
+        let mut tokens = Self::build_initial_tokens(&specials, &options);
 
         // Hybrid GPU path:
         // - CPU decoder blocks (GPU flash_attention_cached has kernel compatibility issues)
@@ -3552,46 +3359,10 @@ impl WhisperCuda {
             .with_timestamp_suppression(!options.word_timestamps)
             .with_vocab_size(n_vocab);
 
-        // Initialize GPU decoder if enabled
-        #[cfg(feature = "cuda")]
-        if use_gpu_decoder {
-            eprintln!("[WAPR-PERF-013] Using GPU decoder...");
-            // Reset GPU decoder state for new transcription
-            self.reset_gpu_decoder_pos();
-            self.reset_gpu_decoder_kv_cache();
-            // Re-initialize head-first KV caches (WAPR-PERF-023)
-            self.init_gpu_decoder_kv_cache_head_first()?;
-        }
-
         // Process initial tokens (prefill)
-        let prefill_profile = std::env::var("WHISPER_PROFILE_DECODER").is_ok();
-        let prefill_start = std::time::Instant::now();
-        for &token in &tokens {
-            #[cfg(feature = "cuda")]
-            if use_gpu_decoder {
-                let _ = self.forward_one_gpu_total_offload(token, &encoder_output)?;
-            } else {
-                let _ = self
-                    .decoder
-                    .forward_one(token, &encoder_output, &mut cache)?;
-            }
-            #[cfg(not(feature = "cuda"))]
-            let _ = self
-                .decoder
-                .forward_one(token, &encoder_output, &mut cache)?;
-        }
-        if prefill_profile {
-            let prefill_time = prefill_start.elapsed();
-            eprintln!(
-                "[PROFILE-PREFILL] {} tokens in {:.1}ms ({:.1}ms/token)",
-                tokens.len(),
-                prefill_time.as_millis(),
-                prefill_time.as_millis() as f64 / tokens.len() as f64
-            );
-        }
+        self.prefill_tokens(&tokens, &encoder_output, &mut cache)?;
 
         // Generate tokens
-        let debug_gpu = std::env::var("WHISPER_DEBUG_GPU").is_ok();
         let profile_decoder = std::env::var("WHISPER_PROFILE_DECODER").is_ok();
         let mut decoder_token_times: Vec<u128> = Vec::new();
         let decoder_start = std::time::Instant::now();
@@ -3599,70 +3370,23 @@ impl WhisperCuda {
             let token_start = std::time::Instant::now();
             let last_token = *tokens.last().unwrap_or(&specials.sot);
 
-            if debug_gpu && gen_idx < 5 {
-                eprintln!(
-                    "[DEBUG] gen_idx={} last_token={} tokens={:?}",
-                    gen_idx, last_token, &tokens
-                );
-            }
-
             // === TRACE: LM_HEAD (output projection) ===
             self.tracer.start_step(TraceStep::LmHead);
 
-            // WAPR-PERF-013: Use GPU decoder when enabled
-            // WAPR-PERF-024: FALSIFIED - executor path is 2.7x slower due to gemv_cached overhead
-            // Keeping forward_one_gpu_total_offload which achieves 14.6ms/token
-            #[cfg(feature = "cuda")]
-            let mut logits = if use_gpu_decoder {
-                self.forward_one_gpu_total_offload(last_token, &encoder_output)?
-            } else {
-                self.forward_one_gpu(last_token, &encoder_output, &mut cache)?
-            };
-            #[cfg(not(feature = "cuda"))]
             let mut logits = self.forward_one_gpu(last_token, &encoder_output, &mut cache)?;
 
             // Trace output projection
             self.tracer.trace_lm_head(gen_idx, &logits, n_vocab);
 
-            // Debug: print logits stats on first few tokens
-            if debug_gpu && gen_idx < 3 {
-                let logits_mean = logits.iter().sum::<f32>() / logits.len() as f32;
-                let logits_max = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                let argmax = logits
-                    .iter()
-                    .enumerate()
-                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                    .map(|(i, _)| i)
-                    .unwrap_or(0);
-                eprintln!(
-                    "[DEBUG-LOGITS] gen_idx={} len={} mean={:.4} max={:.4} argmax={}",
-                    gen_idx,
-                    logits.len(),
-                    logits_mean,
-                    logits_max,
-                    argmax
-                );
-            }
+            Self::debug_logits(debug_gpu, gen_idx, &logits);
 
             // === TRACE: SAMPLE (token selection) ===
             self.tracer.start_step(TraceStep::Sample);
 
             suppressor.apply(&mut logits);
 
-            let next_token = match options.strategy {
-                DecodingStrategy::Greedy => logits
-                    .iter()
-                    .enumerate()
-                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                    .map(|(idx, _)| idx as u32)
-                    .unwrap_or(eot_token),
-                DecodingStrategy::BeamSearch { .. } | DecodingStrategy::Sampling { .. } => logits
-                    .iter()
-                    .enumerate()
-                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                    .map(|(idx, _)| idx as u32)
-                    .unwrap_or(eot_token),
-            };
+            // All strategies currently use greedy argmax
+            let next_token = crate::simd::argmax(&logits) as u32;
 
             // Trace sampling result (temperature=0.0 for greedy, top_k=1)
             self.tracer
@@ -3680,22 +3404,7 @@ impl WhisperCuda {
             tokens.push(next_token);
         }
 
-        // Print decoder profiling summary
-        if profile_decoder && !decoder_token_times.is_empty() {
-            let decoder_total = decoder_start.elapsed();
-            let sum: u128 = decoder_token_times.iter().sum();
-            let avg = sum as f64 / decoder_token_times.len() as f64;
-            let max = decoder_token_times.iter().max().copied().unwrap_or(0);
-            let min = decoder_token_times.iter().min().copied().unwrap_or(0);
-            eprintln!(
-                "[PROFILE-DECODER] {} tokens, total {:.1}ms, avg {:.1}ms, min {:.1}ms, max {:.1}ms",
-                decoder_token_times.len(),
-                decoder_total.as_millis(),
-                avg / 1000.0,
-                min as f64 / 1000.0,
-                max as f64 / 1000.0
-            );
-        }
+        Self::print_decoder_profile(profile_decoder, &decoder_token_times, &decoder_start);
 
         // === TRACE: DECODE (detokenization) ===
         self.tracer.start_step(TraceStep::Decode);
@@ -3715,12 +3424,180 @@ impl WhisperCuda {
             );
         }
 
+        let segments =
+            Self::build_segments(&tokens, &text, audio.len(), &self.tokenizer);
+
         Ok(TranscriptionResult {
             text,
             language,
-            segments: Vec::new(),
+            segments,
             profiling: None,
         })
+    }
+
+    /// Select and run the encoder path based on environment variables.
+    fn run_encoder(&mut self, mel: &[f32]) -> WhisperResult<Vec<f32>> {
+        #[cfg(feature = "cuda")]
+        {
+            let use_gpu_total_offload = std::env::var("WHISPER_GPU_TOTAL_OFFLOAD").is_ok();
+            let use_gpu_encoder = std::env::var("WHISPER_GPU_ENCODER").is_ok();
+            if use_gpu_total_offload {
+                eprintln!("[WAPR-PERF-014] Using GPU total-offload encoder...");
+                return self.encode_gpu_total_offload(mel);
+            } else if use_gpu_encoder {
+                eprintln!("[WAPR-PERF-005] Using GPU attention-only encoder...");
+                return self.encode_gpu(mel);
+            }
+        }
+        self.encoder.forward_mel(mel)
+    }
+
+    /// Run decoder prefill on initial tokens.
+    fn prefill_tokens(
+        &mut self,
+        tokens: &[u32],
+        encoder_output: &[f32],
+        cache: &mut DecoderKVCache,
+    ) -> WhisperResult<()> {
+        let prefill_start = std::time::Instant::now();
+        for &token in tokens {
+            let _ = self
+                .decoder
+                .forward_one(token, encoder_output, cache)?;
+        }
+        if std::env::var("WHISPER_PROFILE_DECODER").is_ok() {
+            let prefill_time = prefill_start.elapsed();
+            eprintln!(
+                "[PROFILE-PREFILL] {} tokens in {:.1}ms ({:.1}ms/token)",
+                tokens.len(),
+                prefill_time.as_millis(),
+                prefill_time.as_millis() as f64 / tokens.len() as f64
+            );
+        }
+        Ok(())
+    }
+
+    /// Build the initial token sequence for decoder prefill.
+    fn build_initial_tokens(
+        specials: &crate::tokenizer::special_tokens::SpecialTokens,
+        options: &TranscribeOptions,
+    ) -> Vec<u32> {
+        use crate::tokenizer::special_tokens;
+        let mut tokens = vec![specials.sot];
+        if specials.is_multilingual {
+            let language = options.language.as_deref().unwrap_or("en");
+            let lang_offset = special_tokens::language_offset(language).unwrap_or(0);
+            tokens.push(specials.lang_base + lang_offset);
+        }
+        match options.task {
+            Task::Transcribe => tokens.push(specials.transcribe),
+            Task::Translate => tokens.push(special_tokens::TRANSLATE),
+        }
+        tokens.push(specials.no_timestamps);
+        tokens
+    }
+
+    /// Prepare mel spectrogram from audio (pad/truncate + compute + frame normalization).
+    fn prepare_mel(
+        &self,
+        audio: &[f32],
+        n_samples_30s: usize,
+        n_frames: usize,
+        n_mels: usize,
+        profile: bool,
+    ) -> WhisperResult<Vec<f32>> {
+        let mel_start = std::time::Instant::now();
+        let padded_audio = match audio.len().cmp(&n_samples_30s) {
+            std::cmp::Ordering::Equal => audio.to_vec(),
+            std::cmp::Ordering::Less => {
+                let mut padded = vec![0.0_f32; n_samples_30s];
+                padded[..audio.len()].copy_from_slice(audio);
+                padded
+            }
+            std::cmp::Ordering::Greater => audio[..n_samples_30s].to_vec(),
+        };
+        let mut mel = self
+            .mel_filters
+            .compute(&padded_audio, crate::audio::HOP_LENGTH)?;
+        if profile {
+            eprintln!(
+                "[PROFILE-MEL] Mel spectrogram: {:.1}ms",
+                mel_start.elapsed().as_millis()
+            );
+        }
+        let actual_frames = mel.len() / n_mels;
+        if actual_frames < n_frames {
+            let mut padded_mel = vec![-1.0_f32; n_frames * n_mels];
+            padded_mel[..mel.len()].copy_from_slice(&mel);
+            mel = padded_mel;
+        } else if actual_frames > n_frames {
+            mel.truncate(n_frames * n_mels);
+        }
+        Ok(mel)
+    }
+
+    /// Print debug logits stats for early generation steps.
+    fn debug_logits(enabled: bool, gen_idx: usize, logits: &[f32]) {
+        if enabled && gen_idx < 3 {
+            let logits_mean = logits.iter().sum::<f32>() / logits.len() as f32;
+            let logits_max = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let argmax = logits
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            eprintln!(
+                "[DEBUG-LOGITS] gen_idx={gen_idx} len={} mean={logits_mean:.4} max={logits_max:.4} argmax={argmax}",
+                logits.len(),
+            );
+        }
+    }
+
+    /// Print decoder profiling summary if enabled.
+    fn print_decoder_profile(
+        enabled: bool,
+        token_times: &[u128],
+        decoder_start: &std::time::Instant,
+    ) {
+        if enabled && !token_times.is_empty() {
+            let decoder_total = decoder_start.elapsed();
+            let sum: u128 = token_times.iter().sum();
+            let avg = sum as f64 / token_times.len() as f64;
+            let max = token_times.iter().max().copied().unwrap_or(0);
+            let min = token_times.iter().min().copied().unwrap_or(0);
+            eprintln!(
+                "[PROFILE-DECODER] {} tokens, total {:.1}ms, avg {:.1}ms, min {:.1}ms, max {:.1}ms",
+                token_times.len(),
+                decoder_total.as_millis(),
+                avg / 1000.0,
+                min as f64 / 1000.0,
+                max as f64 / 1000.0
+            );
+        }
+    }
+
+    /// Build segments from decoded tokens (mirrors CPU path).
+    fn build_segments(
+        tokens: &[u32],
+        text: &str,
+        audio_len: usize,
+        tokenizer: &crate::tokenizer::Tokenizer,
+    ) -> Vec<crate::Segment> {
+        if crate::timestamps::has_timestamps(tokens) {
+            crate::timestamps::extract_segments(tokens, |ts| tokenizer.decode(ts).ok())
+        } else if !text.trim().is_empty() {
+            let duration = audio_len as f32 / crate::audio::SAMPLE_RATE as f32;
+            let single = vec![crate::Segment {
+                start: 0.0,
+                end: duration,
+                text: text.to_string(),
+                tokens: tokens.to_vec(),
+            }];
+            crate::timestamps::split_long_segments(&single, 10.0)
+        } else {
+            Vec::new()
+        }
     }
 
     /// Print trace summary to stderr.

@@ -86,7 +86,7 @@ pub(super) fn run_sign(
         emit_output(
             global,
             || {
-                println!("{{\"status\":\"signed\",\"output\":\"{out_display}\",\"pubkey_hex\":\"{pk_hex}\"}}")
+                println!("{{\"status\":\"signed\",\"output\":\"{out_display}\",\"pubkey_hex\":\"{pk_hex}\"}}");
             },
             || {
                 println!("Signed: {out_display}");
@@ -251,7 +251,7 @@ pub(super) fn run_encrypt(
             || {
                 println!(
                     "{{\"status\":\"encrypted\",\"output\":\"{out_display}\",\"size\":{out_len}}}"
-                )
+                );
             },
             || {
                 println!("Encrypted: {out_display}");
@@ -340,7 +340,7 @@ pub(super) fn run_decrypt(
             || {
                 println!(
                     "{{\"status\":\"decrypted\",\"output\":\"{out_display}\",\"size\":{pt_len}}}"
-                )
+                );
             },
             || {
                 println!("Decrypted: {out_display}");
