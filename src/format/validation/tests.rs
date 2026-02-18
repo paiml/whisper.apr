@@ -1,5 +1,13 @@
 use super::*;
-use crate::format::AprWriter;
+use crate::format::{build_whisper_metadata, AprV2ReaderRef, AprV2Writer};
+use crate::model::ModelConfig;
+
+// Helper: create an AprV2Writer pre-configured for tiny model
+fn test_writer() -> AprV2Writer {
+    let config = ModelConfig::tiny();
+    let meta = build_whisper_metadata(&config, "test");
+    AprV2Writer::new(meta)
+}
 
 // =========================================================================
 // TensorStats Tests
@@ -160,131 +168,133 @@ fn test_validation_report_by_category() {
 // =========================================================================
 
 fn create_valid_test_apr() -> Vec<u8> {
-    let mut writer = AprWriter::tiny();
+    let mut writer = test_writer();
 
-    writer.add(
+    writer.add_f32_tensor(
         "decoder.token_embedding",
         vec![51865, 384],
-        vec![0.02; 51865 * 384],
+        &vec![0.02; 51865 * 384],
     );
 
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.positional_embedding",
         vec![1500, 384],
-        vec![0.01; 1500 * 384],
+        &vec![0.01; 1500 * 384],
     );
-    writer.add(
+    writer.add_f32_tensor(
         "decoder.positional_embedding",
         vec![448, 384],
-        vec![0.01; 448 * 384],
+        &vec![0.01; 448 * 384],
     );
 
     let ln_weight: Vec<f32> = (0..384).map(|i| 0.9 + 0.2 * (i as f32 / 384.0)).collect();
-    writer.add("encoder.layer_norm.weight", vec![384], ln_weight.clone());
-    writer.add("decoder.layer_norm.weight", vec![384], ln_weight.clone());
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &ln_weight);
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &ln_weight);
 
     let ln_bias: Vec<f32> = (0..384).map(|i| -0.1 + 0.2 * (i as f32 / 384.0)).collect();
-    writer.add("encoder.layer_norm.bias", vec![384], ln_bias.clone());
-    writer.add("decoder.layer_norm.bias", vec![384], ln_bias.clone());
+    writer.add_f32_tensor("encoder.layer_norm.bias", vec![384], &ln_bias);
+    writer.add_f32_tensor("decoder.layer_norm.bias", vec![384], &ln_bias);
 
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.conv1.weight",
         vec![384, 80, 3],
-        vec![0.05; 384 * 80 * 3],
+        &vec![0.05; 384 * 80 * 3],
     );
-    writer.add("encoder.conv1.bias", vec![384], vec![0.01; 384]);
+    writer.add_f32_tensor("encoder.conv1.bias", vec![384], &vec![0.01; 384]);
 
     let attn_weight: Vec<f32> = vec![0.02; 384 * 384];
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn.q_proj.weight",
         vec![384, 384],
-        attn_weight.clone(),
+        &attn_weight,
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn.k_proj.weight",
         vec![384, 384],
-        attn_weight.clone(),
+        &attn_weight,
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn.v_proj.weight",
         vec![384, 384],
-        attn_weight.clone(),
+        &attn_weight,
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn.out_proj.weight",
         vec![384, 384],
-        attn_weight.clone(),
+        &attn_weight,
     );
 
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.fc1.weight",
         vec![1536, 384],
-        vec![0.02; 1536 * 384],
+        &vec![0.02; 1536 * 384],
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.fc2.weight",
         vec![384, 1536],
-        vec![0.02; 384 * 1536],
+        &vec![0.02; 384 * 1536],
     );
 
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn_layer_norm.weight",
         vec![384],
-        ln_weight.clone(),
+        &ln_weight,
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn_layer_norm.bias",
         vec![384],
-        ln_bias.clone(),
+        &ln_bias,
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.final_layer_norm.weight",
         vec![384],
-        ln_weight.clone(),
+        &ln_weight,
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.final_layer_norm.bias",
         vec![384],
-        ln_bias.clone(),
+        &ln_bias,
     );
 
-    writer.to_bytes().expect("should serialize")
+    writer.write().expect("should serialize")
 }
 
 fn create_bad_ln_apr() -> Vec<u8> {
-    let mut writer = AprWriter::tiny();
+    let mut writer = test_writer();
 
-    writer.add("decoder.layer_norm.weight", vec![384], vec![11.0; 384]);
-    writer.add("decoder.layer_norm.bias", vec![384], vec![0.0; 384]);
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![11.0; 384]);
+    writer.add_f32_tensor("decoder.layer_norm.bias", vec![384], &vec![0.0; 384]);
 
-    writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.add("encoder.layer_norm.bias", vec![384], vec![0.0; 384]);
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("encoder.layer_norm.bias", vec![384], &vec![0.0; 384]);
 
-    writer.add(
+    writer.add_f32_tensor(
         "decoder.token_embedding",
         vec![51865, 384],
-        vec![0.02; 51865 * 384],
+        &vec![0.02; 51865 * 384],
     );
 
-    writer.to_bytes().expect("should serialize")
+    writer.write().expect("should serialize")
+}
+
+fn parse_and_validate(data: &[u8]) -> ValidationReport {
+    let reader = AprV2ReaderRef::from_bytes(data).expect("should parse");
+    let config = metadata_to_model_config(reader.metadata());
+    let validator = AprValidator::new(&reader, config);
+    validator.validate_all()
 }
 
 #[test]
 fn test_validator_valid_apr() {
     let data = create_valid_test_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
-
+    let report = parse_and_validate(&data);
     assert!(report.score >= 15);
 }
 
 #[test]
 fn test_validator_bad_ln_apr() {
     let data = create_bad_ln_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
 
     let check_7 = report
         .checks
@@ -298,9 +308,7 @@ fn test_validator_bad_ln_apr() {
 #[test]
 fn test_validator_detects_ln_bug() {
     let data = create_bad_ln_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
 
     assert!(!report.passed);
     assert!(!report.critical_failures.is_empty());
@@ -313,14 +321,14 @@ fn test_validator_detects_ln_bug() {
 #[test]
 fn test_quick_validate_valid() {
     let data = create_valid_test_apr();
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     assert!(quick_validate(&reader).is_ok());
 }
 
 #[test]
 fn test_quick_validate_bad_ln() {
     let data = create_bad_ln_apr();
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     let result = quick_validate(&reader);
     assert!(result.is_err());
     let err = result.expect_err("expected error for bad ln").to_string();
@@ -334,9 +342,7 @@ fn test_quick_validate_bad_ln() {
 #[test]
 fn test_check_magic() {
     let data = create_valid_test_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     let check = report.checks.iter().find(|c| c.id == 1).unwrap();
     assert!(check.passed);
 }
@@ -344,9 +350,7 @@ fn test_check_magic() {
 #[test]
 fn test_check_header() {
     let data = create_valid_test_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     let check = report.checks.iter().find(|c| c.id == 2).unwrap();
     assert!(check.passed);
 }
@@ -354,9 +358,7 @@ fn test_check_header() {
 #[test]
 fn test_check_tensor_count() {
     let data = create_valid_test_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     let check = report.checks.iter().find(|c| c.id == 3).unwrap();
     assert!(check.passed || check.message.contains("tensors"));
 }
@@ -364,9 +366,7 @@ fn test_check_tensor_count() {
 #[test]
 fn test_check_encoder_ln_weight_valid() {
     let data = create_valid_test_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     let check = report.checks.iter().find(|c| c.id == 6).unwrap();
     assert!(check.passed, "Encoder LN should pass: {}", check.message);
 }
@@ -374,9 +374,7 @@ fn test_check_encoder_ln_weight_valid() {
 #[test]
 fn test_check_decoder_ln_weight_bad() {
     let data = create_bad_ln_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     let check = report.checks.iter().find(|c| c.id == 7).unwrap();
     assert!(!check.passed, "Decoder LN should fail: {}", check.message);
     assert!(check.message.contains("11"));
@@ -385,9 +383,7 @@ fn test_check_decoder_ln_weight_bad() {
 #[test]
 fn test_check_ln_nan_inf_clean() {
     let data = create_valid_test_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     let check = report.checks.iter().find(|c| c.id == 10).unwrap();
     assert!(check.passed);
 }
@@ -395,9 +391,7 @@ fn test_check_ln_nan_inf_clean() {
 #[test]
 fn test_check_no_zero_tensors_pass() {
     let data = create_valid_test_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     let check = report.checks.iter().find(|c| c.id == 14).unwrap();
     assert!(check.passed);
 }
@@ -405,9 +399,7 @@ fn test_check_no_zero_tensors_pass() {
 #[test]
 fn test_check_token_embedding_shape() {
     let data = create_valid_test_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     let check = report.checks.iter().find(|c| c.id == 16).unwrap();
     assert!(check.passed, "Token embedding shape: {}", check.message);
 }
@@ -415,9 +407,7 @@ fn test_check_token_embedding_shape() {
 #[test]
 fn test_check_vocab_size() {
     let data = create_valid_test_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     let check = report.checks.iter().find(|c| c.id == 20).unwrap();
     assert!(check.passed, "Vocab size: {}", check.message);
 }
@@ -427,104 +417,102 @@ fn test_check_vocab_size() {
 // =========================================================================
 
 fn create_minimal_apr() -> Vec<u8> {
-    let mut writer = AprWriter::tiny();
-    writer.add(
+    let mut writer = test_writer();
+    writer.add_f32_tensor(
         "decoder.token_embedding",
         vec![51865, 384],
-        vec![0.02; 51865 * 384],
+        &vec![0.02; 51865 * 384],
     );
-    writer.to_bytes().expect("should serialize")
+    writer.write().expect("should serialize")
 }
 
 fn create_zero_tensor_apr() -> Vec<u8> {
-    let mut writer = AprWriter::tiny();
-    writer.add(
+    let mut writer = test_writer();
+    writer.add_f32_tensor(
         "decoder.token_embedding",
         vec![51865, 384],
-        vec![0.0; 51865 * 384],
+        &vec![0.0; 51865 * 384],
     );
-    writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.add("encoder.layer_norm.bias", vec![384], vec![0.0; 384]);
-    writer.add("decoder.layer_norm.bias", vec![384], vec![0.0; 384]);
-    writer.to_bytes().expect("should serialize")
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("encoder.layer_norm.bias", vec![384], &vec![0.0; 384]);
+    writer.add_f32_tensor("decoder.layer_norm.bias", vec![384], &vec![0.0; 384]);
+    writer.write().expect("should serialize")
 }
 
 fn create_bad_embedding_stats_apr() -> Vec<u8> {
-    let mut writer = AprWriter::tiny();
+    let mut writer = test_writer();
     // Embedding with bad stats: high mean, low std
-    writer.add(
+    writer.add_f32_tensor(
         "decoder.token_embedding",
         vec![51865, 384],
-        vec![5.0; 51865 * 384],
+        &vec![5.0; 51865 * 384],
     );
     // Wrong-shaped positional embeddings
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.positional_embedding",
         vec![100, 384],
-        vec![0.01; 100 * 384],
+        &vec![0.01; 100 * 384],
     );
-    writer.add(
+    writer.add_f32_tensor(
         "decoder.positional_embedding",
         vec![100, 384],
-        vec![0.01; 100 * 384],
+        &vec![0.01; 100 * 384],
     );
-    writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.to_bytes().expect("should serialize")
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.write().expect("should serialize")
 }
 
 fn create_bad_weight_std_apr() -> Vec<u8> {
-    let mut writer = AprWriter::tiny();
-    writer.add(
+    let mut writer = test_writer();
+    writer.add_f32_tensor(
         "decoder.token_embedding",
         vec![51865, 384],
-        vec![0.02; 51865 * 384],
+        &vec![0.02; 51865 * 384],
     );
-    writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
     // Weights with extreme std (all same value = std ~0)
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn.q_proj.weight",
         vec![384, 384],
-        vec![0.5; 384 * 384],
+        &vec![0.5; 384 * 384],
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn.k_proj.weight",
         vec![384, 384],
-        vec![0.5; 384 * 384],
+        &vec![0.5; 384 * 384],
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn.v_proj.weight",
         vec![384, 384],
-        vec![0.5; 384 * 384],
+        &vec![0.5; 384 * 384],
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn.out_proj.weight",
         vec![384, 384],
-        vec![0.5; 384 * 384],
+        &vec![0.5; 384 * 384],
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.fc1.weight",
         vec![1536, 384],
-        vec![0.5; 1536 * 384],
+        &vec![0.5; 1536 * 384],
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.fc2.weight",
         vec![384, 1536],
-        vec![0.5; 384 * 1536],
+        &vec![0.5; 384 * 1536],
     );
     // Bad bias
-    writer.add("encoder.conv1.bias", vec![384], vec![5.0; 384]);
-    writer.to_bytes().expect("should serialize")
+    writer.add_f32_tensor("encoder.conv1.bias", vec![384], &vec![5.0; 384]);
+    writer.write().expect("should serialize")
 }
 
 #[test]
 fn test_validator_missing_embeddings() {
     let data = create_minimal_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     // Missing LN weights should produce fails in checks 6-7
     let check_6 = report.checks.iter().find(|c| c.id == 6).unwrap();
     assert!(!check_6.passed);
@@ -535,9 +523,7 @@ fn test_validator_missing_embeddings() {
 #[test]
 fn test_validator_zero_tensors_detected() {
     let data = create_zero_tensor_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     // Check 14: no zero tensors - should fail because embedding is all zeros
     let check_14 = report.checks.iter().find(|c| c.id == 14).unwrap();
     assert!(
@@ -550,9 +536,7 @@ fn test_validator_zero_tensors_detected() {
 #[test]
 fn test_validator_bad_embedding_stats() {
     let data = create_bad_embedding_stats_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     // Check 17: token embedding stats - mean too high
     let check_17 = report.checks.iter().find(|c| c.id == 17).unwrap();
     assert!(!check_17.passed, "Should fail: {}", check_17.message);
@@ -564,9 +548,7 @@ fn test_validator_bad_embedding_stats() {
 #[test]
 fn test_validator_bad_weight_std() {
     let data = create_bad_weight_std_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     // Check 13: weight std - should fail (all-same values = ~0 std)
     let check_13 = report.checks.iter().find(|c| c.id == 13).unwrap();
     assert!(
@@ -586,9 +568,7 @@ fn test_validator_bad_weight_std() {
 #[test]
 fn test_validator_qkv_proj_means_bad() {
     let data = create_bad_weight_std_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     // Check 11: QKV proj means - 0.5 is out of [-0.1, 0.1]
     let check_11 = report.checks.iter().find(|c| c.id == 11).unwrap();
     assert!(
@@ -608,9 +588,7 @@ fn test_validator_qkv_proj_means_bad() {
 #[test]
 fn test_validator_positional_embedding_stats_bad() {
     let data = create_bad_embedding_stats_apr();
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     // Check 19: positional embedding stats
     let check_19 = report.checks.iter().find(|c| c.id == 19).unwrap();
     // Stats may or may not fail depending on the data, just ensure the check ran
@@ -620,32 +598,30 @@ fn test_validator_positional_embedding_stats_bad() {
 #[test]
 fn test_validate_apr_bytes_convenience() {
     let data = create_valid_test_apr();
-    let report = validate_apr_bytes(data).expect("should validate");
+    let report = validate_apr_bytes(&data).expect("should validate");
     assert!(report.score >= 15);
 }
 
 #[test]
 fn test_validator_tensor_shapes_bad() {
-    let mut writer = AprWriter::tiny();
+    let mut writer = test_writer();
     // Wrong-shaped token embedding (shape[1] != d_model)
-    writer.add(
+    writer.add_f32_tensor(
         "decoder.token_embedding",
         vec![51865, 128],
-        vec![0.02; 51865 * 128],
+        &vec![0.02; 51865 * 128],
     );
     // Wrong-shaped conv1 (shape[0] != d_model)
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.conv1.weight",
         vec![128, 80, 3],
-        vec![0.05; 128 * 80 * 3],
+        &vec![0.05; 128 * 80 * 3],
     );
-    writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     let check_4 = report.checks.iter().find(|c| c.id == 4).unwrap();
     assert!(
         !check_4.passed,
@@ -656,20 +632,18 @@ fn test_validator_tensor_shapes_bad() {
 
 #[test]
 fn test_validator_vocab_size_mismatch() {
-    let mut writer = AprWriter::tiny();
+    let mut writer = test_writer();
     // Wrong vocab size in embedding (384 != 51865)
-    writer.add(
+    writer.add_f32_tensor(
         "decoder.token_embedding",
         vec![384, 384],
-        vec![0.02; 384 * 384],
+        &vec![0.02; 384 * 384],
     );
-    writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     let check_20 = report.checks.iter().find(|c| c.id == 20).unwrap();
     assert!(
         !check_20.passed,
@@ -680,38 +654,36 @@ fn test_validator_vocab_size_mismatch() {
 
 #[test]
 fn test_validator_ln_with_nan_inf() {
-    let mut writer = AprWriter::tiny();
-    writer.add(
+    let mut writer = test_writer();
+    writer.add_f32_tensor(
         "decoder.token_embedding",
         vec![51865, 384],
-        vec![0.02; 51865 * 384],
+        &vec![0.02; 51865 * 384],
     );
     // LN weight with NaN
     let mut ln_data = vec![1.0f32; 384];
     ln_data[0] = f32::NAN;
-    writer.add("encoder.layer_norm.weight", vec![384], ln_data);
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &ln_data);
     // LN weight with Inf
     let mut ln_data2 = vec![1.0f32; 384];
     ln_data2[0] = f32::INFINITY;
-    writer.add("decoder.layer_norm.weight", vec![384], ln_data2);
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &ln_data2);
     // Block LN with bad mean
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn_layer_norm.weight",
         vec![384],
-        vec![11.0; 384],
+        &vec![11.0; 384],
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn_layer_norm.bias",
         vec![384],
-        vec![0.0; 384],
+        &vec![0.0; 384],
     );
-    writer.add("encoder.layer_norm.bias", vec![384], vec![5.0; 384]);
-    writer.add("decoder.layer_norm.bias", vec![384], vec![0.0; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    writer.add_f32_tensor("encoder.layer_norm.bias", vec![384], &vec![5.0; 384]);
+    writer.add_f32_tensor("decoder.layer_norm.bias", vec![384], &vec![0.0; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     // Check 10: NaN/Inf in LN - should detect both
     let check_10 = report.checks.iter().find(|c| c.id == 10).unwrap();
     assert!(
@@ -737,65 +709,63 @@ fn test_validator_ln_with_nan_inf() {
 
 #[test]
 fn test_validator_weight_std_minor_outlier() {
-    let mut writer = AprWriter::tiny();
-    writer.add(
+    let mut writer = test_writer();
+    writer.add_f32_tensor(
         "decoder.token_embedding",
         vec![51865, 384],
-        vec![0.02; 51865 * 384],
+        &vec![0.02; 51865 * 384],
     );
     // LN weights with varying values (so they have valid std when checked as .weight)
     let ln_weight: Vec<f32> = (0..384).map(|i| 0.9 + 0.2 * (i as f32 / 384.0)).collect();
-    writer.add("encoder.layer_norm.weight", vec![384], ln_weight.clone());
-    writer.add("decoder.layer_norm.weight", vec![384], ln_weight);
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &ln_weight);
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &ln_weight);
     // Many good weights with proper std (range gives std ~0.03)
     let good_weight: Vec<f32> = (0..384 * 384)
         .map(|i| ((i % 100) as f32 - 50.0) * 0.001)
         .collect();
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn.q_proj.weight",
         vec![384, 384],
-        good_weight.clone(),
+        &good_weight,
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn.k_proj.weight",
         vec![384, 384],
-        good_weight.clone(),
+        &good_weight,
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn.v_proj.weight",
         vec![384, 384],
-        good_weight.clone(),
+        &good_weight,
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.self_attn.out_proj.weight",
         vec![384, 384],
-        good_weight,
+        &good_weight,
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.fc1.weight",
         vec![1536, 384],
-        (0..1536 * 384)
+        &(0..1536 * 384)
             .map(|i| ((i % 100) as f32 - 50.0) * 0.001)
-            .collect(),
+            .collect::<Vec<f32>>(),
     );
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.layers.0.fc2.weight",
         vec![384, 1536],
-        (0..384 * 1536)
+        &(0..384 * 1536)
             .map(|i| ((i % 100) as f32 - 50.0) * 0.001)
-            .collect(),
+            .collect::<Vec<f32>>(),
     );
     // One weight with bad std (all same = ~0 std) as minor outlier
-    writer.add(
+    writer.add_f32_tensor(
         "encoder.conv1.weight",
         vec![384, 80, 3],
-        vec![0.05; 384 * 80 * 3],
+        &vec![0.05; 384 * 80 * 3],
     );
-    let data = writer.to_bytes().expect("should serialize");
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     // Check 13: 1 outlier in 9 weights = ~11% < 25%, so passes with "minor outliers"
     let check_13 = report.checks.iter().find(|c| c.id == 13).unwrap();
     assert!(
@@ -812,15 +782,13 @@ fn test_validator_weight_std_minor_outlier() {
 
 #[test]
 fn test_validator_no_token_embedding() {
-    let mut writer = AprWriter::tiny();
+    let mut writer = test_writer();
     // No token embedding at all
-    writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     // Check 16: token embedding shape - not found
     let check_16 = report.checks.iter().find(|c| c.id == 16).unwrap();
     assert!(!check_16.passed, "Missing embedding: {}", check_16.message);
@@ -838,15 +806,13 @@ fn test_validator_no_token_embedding() {
 
 #[test]
 fn test_validator_tensor_count_insufficient() {
-    let mut writer = AprWriter::tiny();
+    let mut writer = test_writer();
     // Only a few tensors (way less than expected for tiny model)
-    writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
-    let validator = AprValidator::new(&reader);
-    let report = validator.validate_all();
+    let report = parse_and_validate(&data);
     let check_3 = report.checks.iter().find(|c| c.id == 3).unwrap();
     assert!(
         !check_3.passed,
@@ -861,20 +827,17 @@ fn test_validator_tensor_count_insufficient() {
 
 #[test]
 fn test_quick_validate_bad_encoder_ln() {
-    // Cover the branch where encoder LN weight mean is outside [0.5, 3.0]
-    let mut writer = AprWriter::tiny();
-    // Good decoder LN weight
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    // Bad encoder LN weight with mean = 11.0 (outside range)
-    writer.add("encoder.layer_norm.weight", vec![384], vec![11.0; 384]);
-    writer.add(
+    let mut writer = test_writer();
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![11.0; 384]);
+    writer.add_f32_tensor(
         "decoder.token_embedding",
         vec![51865, 384],
-        vec![0.02; 51865 * 384],
+        &vec![0.02; 51865 * 384],
     );
-    let data = writer.to_bytes().expect("should serialize");
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     let result = quick_validate(&reader);
     assert!(result.is_err());
     let err = result
@@ -885,19 +848,17 @@ fn test_quick_validate_bad_encoder_ln() {
 
 #[test]
 fn test_quick_validate_bad_encoder_ln_low_mean() {
-    // Cover the branch where encoder LN weight mean < 0.5
-    let mut writer = AprWriter::tiny();
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    // Very low values so mean < 0.5
-    writer.add("encoder.layer_norm.weight", vec![384], vec![0.1; 384]);
-    writer.add(
+    let mut writer = test_writer();
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![0.1; 384]);
+    writer.add_f32_tensor(
         "decoder.token_embedding",
         vec![51865, 384],
-        vec![0.02; 51865 * 384],
+        &vec![0.02; 51865 * 384],
     );
-    let data = writer.to_bytes().expect("should serialize");
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     let result = quick_validate(&reader);
     assert!(result.is_err());
     let err = result.expect_err("expected error").to_string();
@@ -906,30 +867,26 @@ fn test_quick_validate_bad_encoder_ln_low_mean() {
 
 #[test]
 fn test_quick_validate_no_ln_tensors() {
-    // Cover the path where neither LN tensor exists (both if-lets fail)
-    let mut writer = AprWriter::tiny();
-    writer.add(
+    let mut writer = test_writer();
+    writer.add_f32_tensor(
         "decoder.token_embedding",
         vec![51865, 384],
-        vec![0.02; 51865 * 384],
+        &vec![0.02; 51865 * 384],
     );
-    let data = writer.to_bytes().expect("should serialize");
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     let result = quick_validate(&reader);
-    // Should succeed - no LN tensors to validate
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_quick_validate_only_decoder_ln() {
-    // Cover the path where only decoder LN exists (and is bad)
-    let mut writer = AprWriter::tiny();
-    writer.add("decoder.layer_norm.weight", vec![384], vec![0.1; 384]);
-    // No encoder LN tensor
-    let data = writer.to_bytes().expect("should serialize");
+    let mut writer = test_writer();
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![0.1; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     let result = quick_validate(&reader);
     assert!(result.is_err());
     let err = result.expect_err("expected error").to_string();
@@ -938,39 +895,34 @@ fn test_quick_validate_only_decoder_ln() {
 
 #[test]
 fn test_quick_validate_only_encoder_ln() {
-    // Cover the path where only encoder LN exists (and is valid)
-    let mut writer = AprWriter::tiny();
-    writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    // No decoder LN tensor
-    let data = writer.to_bytes().expect("should serialize");
+    let mut writer = test_writer();
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     let result = quick_validate(&reader);
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_quick_validate_both_valid() {
-    // Both LN tensors present and valid
-    let mut writer = AprWriter::tiny();
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    let mut writer = test_writer();
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     assert!(quick_validate(&reader).is_ok());
 }
 
 #[test]
 fn test_quick_validate_decoder_bad_high_encoder_valid() {
-    // Decoder LN bad (mean > 3.0), encoder valid
-    // Should fail on decoder check before reaching encoder
-    let mut writer = AprWriter::tiny();
-    writer.add("decoder.layer_norm.weight", vec![384], vec![5.0; 384]);
-    writer.add("encoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    let mut writer = test_writer();
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![5.0; 384]);
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     let result = quick_validate(&reader);
     assert!(result.is_err());
     let err = result.expect_err("expected error").to_string();
@@ -983,81 +935,74 @@ fn test_quick_validate_decoder_bad_high_encoder_valid() {
 
 #[test]
 fn test_quick_validate_decoder_at_lower_boundary() {
-    // Decoder LN mean exactly 0.5 -> should pass (>= 0.5)
-    let mut writer = AprWriter::tiny();
-    writer.add("decoder.layer_norm.weight", vec![384], vec![0.5; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    let mut writer = test_writer();
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![0.5; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     assert!(quick_validate(&reader).is_ok());
 }
 
 #[test]
 fn test_quick_validate_decoder_at_upper_boundary() {
-    // Decoder LN mean exactly 3.0 -> should pass (<= 3.0)
-    let mut writer = AprWriter::tiny();
-    writer.add("decoder.layer_norm.weight", vec![384], vec![3.0; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    let mut writer = test_writer();
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![3.0; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     assert!(quick_validate(&reader).is_ok());
 }
 
 #[test]
 fn test_quick_validate_decoder_just_below_lower() {
-    // Decoder LN mean just below 0.5 -> should fail
-    let mut writer = AprWriter::tiny();
-    writer.add("decoder.layer_norm.weight", vec![384], vec![0.499; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    let mut writer = test_writer();
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![0.499; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     assert!(quick_validate(&reader).is_err());
 }
 
 #[test]
 fn test_quick_validate_decoder_just_above_upper() {
-    // Decoder LN mean just above 3.0 -> should fail
-    let mut writer = AprWriter::tiny();
-    writer.add("decoder.layer_norm.weight", vec![384], vec![3.001; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    let mut writer = test_writer();
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![3.001; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     assert!(quick_validate(&reader).is_err());
 }
 
 #[test]
 fn test_quick_validate_encoder_at_lower_boundary() {
-    // Decoder valid, encoder LN mean exactly 0.5 -> both pass
-    let mut writer = AprWriter::tiny();
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.add("encoder.layer_norm.weight", vec![384], vec![0.5; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    let mut writer = test_writer();
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![0.5; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     assert!(quick_validate(&reader).is_ok());
 }
 
 #[test]
 fn test_quick_validate_encoder_at_upper_boundary() {
-    // Decoder valid, encoder LN mean exactly 3.0 -> both pass
-    let mut writer = AprWriter::tiny();
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.add("encoder.layer_norm.weight", vec![384], vec![3.0; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    let mut writer = test_writer();
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![3.0; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     assert!(quick_validate(&reader).is_ok());
 }
 
 #[test]
 fn test_quick_validate_encoder_just_below_lower() {
-    // Decoder valid, encoder LN mean just below 0.5 -> encoder fails
-    let mut writer = AprWriter::tiny();
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.add("encoder.layer_norm.weight", vec![384], vec![0.499; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    let mut writer = test_writer();
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![0.499; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     let result = quick_validate(&reader);
     assert!(result.is_err());
     let err = result.expect_err("expected encoder error").to_string();
@@ -1066,13 +1011,12 @@ fn test_quick_validate_encoder_just_below_lower() {
 
 #[test]
 fn test_quick_validate_encoder_just_above_upper() {
-    // Decoder valid, encoder LN mean just above 3.0 -> encoder fails
-    let mut writer = AprWriter::tiny();
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    writer.add("encoder.layer_norm.weight", vec![384], vec![3.001; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    let mut writer = test_writer();
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![3.001; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     let result = quick_validate(&reader);
     assert!(result.is_err());
     let err = result.expect_err("expected encoder error").to_string();
@@ -1081,23 +1025,21 @@ fn test_quick_validate_encoder_just_above_upper() {
 
 #[test]
 fn test_quick_validate_decoder_valid_encoder_missing() {
-    // Decoder valid, encoder missing -> should succeed (encoder if-let skips)
-    let mut writer = AprWriter::tiny();
-    writer.add("decoder.layer_norm.weight", vec![384], vec![1.0; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    let mut writer = test_writer();
+    writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![1.0; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     assert!(quick_validate(&reader).is_ok());
 }
 
 #[test]
 fn test_quick_validate_decoder_missing_encoder_bad() {
-    // Decoder missing, encoder bad -> encoder error
-    let mut writer = AprWriter::tiny();
-    writer.add("encoder.layer_norm.weight", vec![384], vec![11.0; 384]);
-    let data = writer.to_bytes().expect("should serialize");
+    let mut writer = test_writer();
+    writer.add_f32_tensor("encoder.layer_norm.weight", vec![384], &vec![11.0; 384]);
+    let data = writer.write().expect("should serialize");
 
-    let reader = AprReader::new(data).expect("should parse");
+    let reader = AprV2ReaderRef::from_bytes(&data).expect("should parse");
     let result = quick_validate(&reader);
     assert!(result.is_err());
     let err = result.expect_err("expected encoder error").to_string();

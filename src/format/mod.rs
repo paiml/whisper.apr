@@ -31,26 +31,27 @@
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! ## Example: Creating model with filterbank
+//! ## Example: Creating model with AprV2Writer
 //!
 //! ```rust,ignore
-//! use whisper_apr::format::{AprWriter, WhisperMetadata};
+//! use whisper_apr::format::{AprV2Writer, build_whisper_metadata};
+//! use whisper_apr::model::ModelConfig;
 //!
-//! let mut writer = AprWriter::new();
-//! let metadata = WhisperMetadata::tiny();
-//! writer.set_metadata(metadata);
-//! writer.add_tensor_f32("encoder.conv1.weight", vec![384, 80, 3], &weights);
-//! writer.write("model.apr")?;
+//! let config = ModelConfig::tiny();
+//! let meta = build_whisper_metadata(&config, "test");
+//! let mut writer = AprV2Writer::new(meta);
+//! writer.add_f32_tensor("encoder.conv1.weight", vec![384, 80, 3], &weights);
+//! let bytes = writer.write()?;
 //! ```
 
 pub mod apr2;
-pub mod checksum;
 mod compress;
 pub mod export;
 #[cfg(feature = "cli")]
 pub mod gguf_loader;
 pub mod safetensors_loader;
 pub mod validation;
+pub mod whisper_metadata;
 
 // Re-export canonical APR v2 format from aprender
 pub use aprender::format::v2::{
@@ -64,7 +65,6 @@ pub use apr2::{
     FfnActivation, LayerType, Lfm2Config, Lfm2WasmConfig, ModelFamily, QuantConfig, APR2_VERSION,
     MAGIC_APR2,
 };
-pub use checksum::{crc32, Crc32};
 pub use compress::Decompressor;
 #[cfg(feature = "cli")]
 pub use gguf_loader::{load_gguf_whisper, map_gguf_whisper_tensor_name};
@@ -77,10 +77,23 @@ pub use validation::{
     quick_validate, validate_apr_bytes, AprValidator, TensorStats, ValidationCheck,
     ValidationReport,
 };
+pub use whisper_metadata::{
+    build_whisper_metadata, create_test_apr, metadata_to_model_config, MelFilterbankData,
+};
 
-// Implementation and types
-#[path = "impl_generated.rs"]
-#[allow(clippy::all)]
-mod impl_;
-
-pub use impl_::*;
+/// CRC32 (IEEE) checksum for APR2 format compatibility
+#[must_use]
+pub fn crc32(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &byte in data {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
