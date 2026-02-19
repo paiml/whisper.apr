@@ -120,15 +120,11 @@ impl FeedForward {
     }
 }
 
-/// GELU activation function (approximate)
-///
-/// GELU(x) ≈ 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3)))
+/// GELU activation (UCBD §4 ONE PATH: delegates to `trueno::gelu_scalar`)
 #[inline]
 #[must_use]
 pub fn gelu(x: f32) -> f32 {
-    let sqrt_2_over_pi = 0.797_884_6;
-    let coef = 0.044_715;
-    0.5 * x * (1.0 + (sqrt_2_over_pi * (x + coef * x.powi(3))).tanh())
+    trueno::gelu_scalar(x)
 }
 
 #[cfg(test)]

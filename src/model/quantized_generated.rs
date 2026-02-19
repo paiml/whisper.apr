@@ -972,125 +972,23 @@ impl QuantizedLinearQ2K {
 }
 
 // ============================================================================
-// F16 Lookup Table Optimization (aprender/realizar pattern - WAPR-PERF-004)
+// F16 Conversion (UCBD §4 ONE PATH: delegates to trueno canonical)
 // ============================================================================
-//
-// Pre-computed 256KB lookup table for f16→f32 conversion.
-// Provides ~3x speedup vs per-call computation by trading memory for speed.
-// All 65536 possible f16 bit patterns are pre-computed at initialization.
 
-#[cfg(feature = "std")]
-use std::sync::OnceLock;
-
-#[cfg(feature = "std")]
-static F16_TO_F32_LUT: OnceLock<Box<[f32; 65536]>> = OnceLock::new();
-
-/// Initialize and get the F16→F32 lookup table (256KB)
+/// Convert fp16 bits to f32
 ///
-/// Uses `OnceLock` for thread-safe lazy initialization.
-/// First call computes all 65536 conversions; subsequent calls return cached table.
-#[cfg(feature = "std")]
-#[inline]
-fn get_f16_lut() -> &'static [f32; 65536] {
-    F16_TO_F32_LUT.get_or_init(|| {
-        let mut lut = Box::new([0.0f32; 65536]);
-        for bits in 0..=u16::MAX {
-            lut[bits as usize] = f16_to_f32_compute(bits);
-        }
-        lut
-    })
-}
-
-/// Convert fp16 bits to f32 using lookup table (fast path)
-///
-/// 3x faster than computational conversion for hot paths like Q8_0/Q4_K dequantization.
-#[cfg(feature = "std")]
+/// ONE PATH: Delegates to `trueno::f16_to_f32` (UCBD §4).
 #[inline]
 fn f16_to_f32(bits: u16) -> f32 {
-    get_f16_lut()[bits as usize]
-}
-
-/// Convert fp16 bits to f32 (fallback for no_std)
-#[cfg(not(feature = "std"))]
-#[inline]
-fn f16_to_f32(bits: u16) -> f32 {
-    f16_to_f32_compute(bits)
-}
-
-/// Convert fp16 bits to f32 (computational implementation)
-///
-/// IEEE 754 half-precision to single-precision conversion.
-/// Used for LUT initialization and no_std builds.
-#[inline]
-fn f16_to_f32_compute(bits: u16) -> f32 {
-    let sign = ((bits >> 15) & 1) as u32;
-    let exp = ((bits >> 10) & 0x1F) as u32;
-    let mantissa = (bits & 0x3FF) as u32;
-
-    if exp == 0 {
-        // Denormalized or zero
-        if mantissa == 0 {
-            return if sign == 1 { -0.0 } else { 0.0 };
-        }
-        // Denormalized
-        let f = mantissa as f32 / 1024.0;
-        let result = f * 2.0f32.powi(-14);
-        if sign == 1 {
-            -result
-        } else {
-            result
-        }
-    } else if exp == 31 {
-        // Infinity or NaN
-        if mantissa == 0 {
-            if sign == 1 {
-                f32::NEG_INFINITY
-            } else {
-                f32::INFINITY
-            }
-        } else {
-            f32::NAN
-        }
-    } else {
-        // Normalized
-        let f32_exp = (exp as i32 - 15 + 127) as u32;
-        let f32_mantissa = mantissa << 13;
-        let f32_bits = (sign << 31) | (f32_exp << 23) | f32_mantissa;
-        f32::from_bits(f32_bits)
-    }
+    trueno::f16_to_f32(bits)
 }
 
 /// Convert f32 to fp16 bits
+///
+/// ONE PATH: Delegates to `trueno::f32_to_f16` (UCBD §4).
 #[inline]
 fn f32_to_f16(value: f32) -> u16 {
-    let bits = value.to_bits();
-    let sign = ((bits >> 31) & 1) as u16;
-    let exp = ((bits >> 23) & 0xFF) as i32;
-    let mantissa = bits & 0x7FFFFF;
-
-    if exp == 0 {
-        // Zero or denormalized (flush to zero for fp16)
-        return sign << 15;
-    } else if exp == 255 {
-        // Infinity or NaN
-        if mantissa == 0 {
-            return (sign << 15) | 0x7C00; // Infinity
-        } else {
-            return (sign << 15) | 0x7E00; // NaN
-        }
-    }
-
-    let f16_exp = exp - 127 + 15;
-    if f16_exp <= 0 {
-        // Underflow to zero
-        return sign << 15;
-    } else if f16_exp >= 31 {
-        // Overflow to infinity
-        return (sign << 15) | 0x7C00;
-    }
-
-    let f16_mantissa = (mantissa >> 13) as u16;
-    (sign << 15) | ((f16_exp as u16) << 10) | f16_mantissa
+    trueno::f32_to_f16(value)
 }
 
 /// Quantize f32 tensor to Q2_K format
