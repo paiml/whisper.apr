@@ -179,6 +179,9 @@ pub enum Command {
 
     /// Run self-test (diagnose + backend test + optional transcription)
     Selftest(SelftestArgs),
+
+    /// Score SRT transcript quality (word count, vocabulary, timing)
+    Score(ScoreArgs),
 }
 
 /// Arguments for transcribe command
@@ -1169,6 +1172,22 @@ pub enum ValidateOutputFormat {
     Json,
     /// Markdown format
     Markdown,
+}
+
+/// Arguments for score command (SRT transcript quality scoring)
+#[derive(Parser, Debug, Clone)]
+pub struct ScoreArgs {
+    /// Input SRT file to score
+    #[arg(short = 'f', long = "file")]
+    pub input: PathBuf,
+
+    /// Minimum passing score (0-100)
+    #[arg(long, default_value = "60")]
+    pub min_score: u32,
+
+    /// Expected video duration in seconds (for silence ratio calc)
+    #[arg(long)]
+    pub duration: Option<f64>,
 }
 
 /// Arguments for diagnose command
@@ -2280,6 +2299,59 @@ mod tests {
             }
             _ => panic!("Expected Selftest command"),
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Score command tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_score_minimal() {
+        let args = Args::try_parse_from(["whisper-apr", "score", "-f", "transcript.srt"]);
+        assert!(args.is_ok(), "Should parse minimal score command");
+        let args = args.expect("test parse should succeed");
+        match args.command {
+            Command::Score(s) => {
+                assert_eq!(s.input, PathBuf::from("transcript.srt"));
+                assert_eq!(s.min_score, 60);
+                assert!(s.duration.is_none());
+            }
+            _ => panic!("Expected Score command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_score_all_options() {
+        let args = Args::try_parse_from([
+            "whisper-apr",
+            "score",
+            "-f",
+            "video.srt",
+            "--min-score",
+            "75",
+            "--duration",
+            "120.5",
+        ]);
+        assert!(args.is_ok(), "Should parse score with all options");
+        let args = args.expect("test parse should succeed");
+        match args.command {
+            Command::Score(s) => {
+                assert_eq!(s.input, PathBuf::from("video.srt"));
+                assert_eq!(s.min_score, 75);
+                assert!((s.duration.unwrap() - 120.5).abs() < 0.01);
+            }
+            _ => panic!("Expected Score command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_score_with_json_flag() {
+        let args =
+            Args::try_parse_from(["whisper-apr", "--json", "score", "-f", "transcript.srt"]);
+        assert!(args.is_ok(), "Should parse score with global --json");
+        let args = args.expect("test parse should succeed");
+        assert!(args.json);
+        assert!(matches!(args.command, Command::Score(_)));
     }
 
     #[test]

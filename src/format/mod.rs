@@ -47,7 +47,7 @@
 pub mod apr2;
 mod compress;
 pub mod export;
-#[cfg(feature = "cli")]
+#[cfg(all(feature = "cli", feature = "converter"))]
 pub mod gguf_loader;
 pub mod safetensors_loader;
 pub mod validation;
@@ -66,7 +66,7 @@ pub use apr2::{
     MAGIC_APR2,
 };
 pub use compress::Decompressor;
-#[cfg(feature = "cli")]
+#[cfg(all(feature = "cli", feature = "converter"))]
 pub use gguf_loader::{load_gguf_whisper, map_gguf_whisper_tensor_name};
 #[cfg(feature = "cli")]
 pub use safetensors_loader::SafeTensorsLoader;

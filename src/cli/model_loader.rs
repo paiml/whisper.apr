@@ -107,6 +107,7 @@ pub fn is_model_cached(size: ModelSize) -> bool {
 /// Downloads SafeTensors weights and converts them to .apr format.
 /// Whisper models include mel filterbank and vocabulary embedding.
 /// Moonshine models use their own tensor name mapping (no mel/vocab).
+#[cfg(feature = "converter")]
 fn download_model(size: ModelSize, verbose: bool) -> ModelLoaderResult<PathBuf> {
     use hf_hub::api::sync::Api;
 
@@ -217,6 +218,7 @@ fn convert_tensor_to_f32(tensor: &safetensors::tensor::TensorView<'_>) -> Option
 }
 
 /// Convert safetensors to .apr format
+#[cfg(feature = "converter")]
 fn convert_safetensors_to_apr(
     safetensors_path: &std::path::Path,
     vocab_path: &std::path::Path,
@@ -320,6 +322,7 @@ fn convert_safetensors_to_apr(
 /// Moonshine models use different tensor naming, no mel filterbank,
 /// and BPE tokenizer from tokenizer.json. Tied embeddings
 /// (proj_out = embed_tokens) are handled by cloning.
+#[cfg(feature = "converter")]
 fn convert_moonshine_safetensors_to_apr(
     safetensors_path: &std::path::Path,
     tokenizer_path: &std::path::Path,
@@ -732,6 +735,7 @@ fn load_model_from_path(path: &std::path::Path) -> ModelLoaderResult<WhisperApr>
     let bytes = fs::read(path)?;
 
     // Check for GGUF magic in first 4 bytes
+    #[cfg(feature = "converter")]
     if bytes.len() >= 4 {
         let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         if magic == GGUF_MAGIC {
@@ -775,11 +779,21 @@ pub fn load_or_download_model(
         return load_model_from_path(&cache_path);
     }
 
-    if verbose {
-        eprintln!("[INFO] Model not cached, downloading...");
+    #[cfg(feature = "converter")]
+    {
+        if verbose {
+            eprintln!("[INFO] Model not cached, downloading...");
+        }
+        let downloaded_path = download_model(size, verbose)?;
+        return load_model_from_path(&downloaded_path);
     }
-    let downloaded_path = download_model(size, verbose)?;
-    load_model_from_path(&downloaded_path)
+
+    #[cfg(not(feature = "converter"))]
+    Err(ModelLoaderError::Download(format!(
+        "Model {:?} not cached and auto-download requires 'converter' feature. \
+         Use --model-path to specify a .apr file.",
+        size
+    )))
 }
 
 #[cfg(test)]
