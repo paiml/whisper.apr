@@ -65,7 +65,7 @@ parallel = ["rayon"]
 wasm-threads = ["wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
 converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs", "zip"]
-cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "symphonia", "dirs", "parallel"]
+cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "symphonia", "dirs", "parallel", "dep:apr-cli"]
 # Multi-format audio decoding (MP3, FLAC, OGG, AAC, etc.)
 symphonia = ["dep:symphonia"]
 benchmark-tui = ["ratatui", "crossterm"]
@@ -101,6 +101,9 @@ trueno-gpu = { version = "0.4.17", optional = true }
 # Use target-specific deps below to enable it only for native builds
 # Using local path for WASM-compatible trueno
 aprender = { version = "0.25", path = "../aprender", default-features = false, features = ["audio"] }
+
+# APR CLI (proxied commands: pull, list)
+apr-cli = { version = "0.2", optional = true }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
@@ -290,5 +293,9 @@ used_underscore_binding = "allow"
 # Local development: patch crates.io deps to use local versions with WASM fixes
 [patch.crates-io]
 trueno = { path = "../trueno" }
+trueno-gpu = { path = "../trueno/trueno-gpu" }
+trueno-explain = { path = "../trueno/trueno-explain" }
 aprender = { path = "../aprender" }
+apr-cli = { path = "../aprender/crates/apr-cli" }
+realizar = { path = "../realizar" }
 jugar-probar = { path = "../probar/crates/probar" }

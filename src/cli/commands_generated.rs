@@ -31,8 +31,8 @@ use crate::cli::args::{
     Args, BackendArg, BatchArgs, BenchmarkArgs, Command, CommandArgs, ConvertArgs, DiagnoseArgs,
     ExportArgs, ExportFormatArg, ModelAction, ModelArgs, ModelFamilyArg, OutputFormatArg,
     ParityArgs, QuantizeArgs, QuantizeMethodArg, RecordArgs, SelftestArgs, ServeArgs, StreamArgs,
-    SummarizeArgs, SummarizeFormat, TestArgs, TranscribeArgs, TranscribeFolderArgs, TranslateArgs,
-    ValidateArgs, ValidateOutputFormat,
+    ScoreArgs, SummarizeArgs, SummarizeFormat, TestArgs, TranscribeArgs, TranscribeFolderArgs,
+    TranslateArgs, ValidateArgs, ValidateOutputFormat,
 };
 
 use crate::cli::output::{format_output, OutputFormat};
@@ -167,6 +167,7 @@ pub fn run(args: Args) -> CliResult<CommandResult> {
         Command::Export(e) => run_export(e.clone(), &args),
         Command::Apr(a) => crate::cli::apr_commands::run_apr(a, &args),
         Command::Selftest(s) => run_selftest(s.clone(), &args),
+        Command::Score(s) => run_score(s.clone(), &args),
     }
 }
 
@@ -3026,6 +3027,157 @@ pub fn run_validate(args: ValidateArgs, global: &Args) -> CliResult<CommandResul
             report.score, report.max_score, args.min_score
         )))
     }
+}
+
+/// Run score command (SRT transcript quality scoring)
+///
+/// Pure SRT parsing — no model loading required.
+/// Computes word count, TTR, silence ratio, and composite score.
+pub fn run_score(args: ScoreArgs, global: &Args) -> CliResult<CommandResult> {
+    if !args.input.exists() {
+        return Err(CliError::FileNotFound(args.input.display().to_string()));
+    }
+
+    let content = fs::read_to_string(&args.input)?;
+    let entries = parse_srt_entries(&content);
+
+    if entries.is_empty() {
+        return Ok(CommandResult::failure("No SRT entries found"));
+    }
+
+    // Collect words, filtering [TAG] patterns like [MUSIC], [Swoosh]
+    let mut all_words: Vec<String> = Vec::new();
+    let mut total_speech_secs: f64 = 0.0;
+
+    for entry in &entries {
+        total_speech_secs += entry.end_secs - entry.start_secs;
+        for word in entry.text.split_whitespace() {
+            let is_tag = word.starts_with('[') && word.ends_with(']');
+            if !is_tag {
+                all_words.push(word.to_lowercase());
+            }
+        }
+    }
+
+    let word_count = all_words.len();
+    let unique_words: std::collections::HashSet<&str> =
+        all_words.iter().map(String::as_str).collect();
+    let unique_count = unique_words.len();
+    let ttr = if word_count > 0 {
+        unique_count as f64 / word_count as f64
+    } else {
+        0.0
+    };
+    let segment_count = entries.len();
+    let avg_segment_words = if segment_count > 0 {
+        word_count as f64 / segment_count as f64
+    } else {
+        0.0
+    };
+
+    // Coverage and silence ratio
+    let (silence_ratio, coverage_score) = if let Some(duration) = args.duration {
+        if duration > 0.0 {
+            let coverage = total_speech_secs / duration;
+            let sr = 1.0 - coverage;
+            let cs = ((coverage - 0.5) / 0.3).clamp(0.0, 1.0) * 100.0;
+            (Some(sr), cs)
+        } else {
+            (None, 50.0)
+        }
+    } else {
+        (None, 50.0)
+    };
+
+    // Composite score
+    let word_score = ((word_count as f64 - 10.0) / 40.0).clamp(0.0, 1.0) * 100.0;
+    let ttr_score = ((ttr - 0.1) / 0.2).clamp(0.0, 1.0) * 100.0;
+    let score = (0.30 * word_score + 0.30 * ttr_score + 0.40 * coverage_score).round() as u32;
+    let pass = score >= args.min_score;
+
+    if global.json {
+        let silence_field = silence_ratio
+            .map(|sr| format!("\"silence_ratio\": {sr:.2},\n  "))
+            .unwrap_or_default();
+        let json = format!(
+            "{{\n  \"file\": \"{}\",\n  \"word_count\": {word_count},\n  \"unique_words\": {unique_count},\n  \"type_token_ratio\": {ttr:.2},\n  \"segment_count\": {segment_count},\n  \"avg_segment_words\": {avg_segment_words:.1},\n  \"total_speech_secs\": {total_speech_secs:.1},\n  {silence_field}\"score\": {score},\n  \"pass\": {pass}\n}}",
+            args.input.display()
+        );
+        println!("{json}");
+    } else {
+        let silence_str = silence_ratio
+            .map(|sr| format!(" silence={:.0}%", sr * 100.0))
+            .unwrap_or_default();
+        let status = if pass { "PASS" } else { "FAIL" };
+        println!(
+            "{}: score={score}/100 ({status}) words={word_count} unique={unique_count} TTR={ttr:.2} segments={segment_count}{silence_str}",
+            args.input.display()
+        );
+    }
+
+    if pass {
+        Ok(CommandResult::success(format!("Score: {score}/100 (PASS)")))
+    } else {
+        Ok(CommandResult::failure(format!(
+            "Score: {score}/100 (FAIL, min: {})",
+            args.min_score
+        )))
+    }
+}
+
+/// A parsed SRT entry
+struct SrtEntry {
+    start_secs: f64,
+    end_secs: f64,
+    text: String,
+}
+
+/// Parse SRT file content into entries
+fn parse_srt_entries(content: &str) -> Vec<SrtEntry> {
+    let mut entries = Vec::new();
+    // Normalize line endings and split on blank lines
+    let normalized = content.replace("\r\n", "\n");
+    for block in normalized.split("\n\n") {
+        let lines: Vec<&str> = block.trim().lines().collect();
+        if lines.len() < 3 {
+            continue;
+        }
+        // line 0 = sequence number, line 1 = timestamps, lines 2+ = text
+        if let Some((start, end)) = parse_srt_timestamp_line(lines[1]) {
+            let text = lines[2..].join(" ");
+            entries.push(SrtEntry {
+                start_secs: start,
+                end_secs: end,
+                text,
+            });
+        }
+    }
+    entries
+}
+
+/// Parse an SRT timestamp line like "00:00:01,500 --> 00:00:04,200"
+fn parse_srt_timestamp_line(line: &str) -> Option<(f64, f64)> {
+    let parts: Vec<&str> = line.split("-->").collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let start = parse_srt_time(parts[0].trim())?;
+    let end = parse_srt_time(parts[1].trim())?;
+    Some((start, end))
+}
+
+/// Parse a single SRT timestamp "HH:MM:SS,mmm" to seconds
+fn parse_srt_time(s: &str) -> Option<f64> {
+    // Format: HH:MM:SS,mmm
+    let s = s.replace(',', ".");
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let hours: f64 = parts[0].parse().ok()?;
+    let minutes: f64 = parts[1].parse().ok()?;
+    let seconds: f64 = parts[2].parse().ok()?;
+    Some(hours * 3600.0 + minutes * 60.0 + seconds)
 }
 
 /// Run stream command (real-time microphone transcription)

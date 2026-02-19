@@ -105,6 +105,13 @@ pub enum AprAction {
 
     /// Check model configuration against known reference configs
     ConfigCheck(AprConfigCheckArgs),
+
+    /// Pull a model from HuggingFace (proxied from aprender's `apr` CLI)
+    Pull(AprPullArgs),
+
+    /// List cached models (proxied from aprender's `apr` CLI)
+    #[command(name = "ls")]
+    PullList(AprPullListArgs),
 }
 
 // ============================================================================
@@ -693,4 +700,27 @@ pub struct AprConfigCheckArgs {
     /// Show all checked parameters (not just mismatches)
     #[arg(long)]
     pub verbose: bool,
+}
+
+// ============================================================================
+// Proxy Commands (delegated to aprender's `apr` CLI)
+// ============================================================================
+
+/// Arguments for `apr pull` (proxied from aprender's `apr` CLI)
+#[derive(Args, Debug, Clone)]
+pub struct AprPullArgs {
+    /// Model reference (e.g. `openai/whisper-base`, `hf://org/repo/file.safetensors`)
+    pub model_ref: String,
+
+    /// Force re-download even if cached
+    #[arg(long)]
+    pub force: bool,
+}
+
+/// Arguments for `apr ls` (proxied from aprender's `apr` CLI)
+#[derive(Args, Debug, Clone)]
+pub struct AprPullListArgs {
+    /// Output as JSON
+    #[arg(long)]
+    pub json: bool,
 }

@@ -31,7 +31,8 @@ use aprender::format::{apr_export, ExportFormat, ExportOptions};
 use super::apr_args::{
     AprAction, AprArgs, AprCanaryArgs, AprCompareArgs, AprContractArgs, AprDiffArgs, AprExportArgs,
     AprF16AuditArgs, AprFlowArgs, AprGoldenArgs, AprHexArgs, AprImportArgs, AprInspectArgs,
-    AprLintArgs, AprMergeArgs, AprTensorsArgs, AprTreeArgs, AprValidateArgs, FamilyAction,
+    AprLintArgs, AprMergeArgs, AprPullArgs, AprPullListArgs, AprTensorsArgs, AprTreeArgs,
+    AprValidateArgs, FamilyAction,
 };
 use super::commands::{CliError, CliResult, CommandResult};
 
@@ -93,6 +94,8 @@ fn subcommand_name(action: &AprAction) -> &'static str {
         AprAction::Probe(_) => "probe",
         AprAction::Parity(_) => "parity",
         AprAction::ConfigCheck(_) => "config-check",
+        AprAction::Pull(_) => "pull",
+        AprAction::PullList(_) => "ls",
     }
 }
 
@@ -127,6 +130,8 @@ fn dispatch_apr(args: &AprArgs, global: &super::args::Args) -> CliResult<Command
         AprAction::Probe(a) => probe::run_probe(a, global),
         AprAction::Parity(a) => probe::run_parity(a, global),
         AprAction::ConfigCheck(a) => probe::run_config_check(a, global),
+        AprAction::Pull(a) => run_pull(a),
+        AprAction::PullList(a) => run_pull_list(a),
     }
 }
 
@@ -1161,6 +1166,22 @@ fn run_f16_audit(args: &AprF16AuditArgs, global: &super::args::Args) -> CliResul
     Ok(CommandResult::success(format!(
         "F16 audit {status}: {unsafe_count} unsafe scales"
     )))
+}
+
+// ============================================================================
+// Proxy Commands (delegated to aprender's apr-cli)
+// ============================================================================
+
+fn run_pull(args: &AprPullArgs) -> CliResult<CommandResult> {
+    apr_cli::model_pull::run(&args.model_ref, args.force)
+        .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
+    Ok(CommandResult::success(format!("Pulled {}", args.model_ref)))
+}
+
+fn run_pull_list(args: &AprPullListArgs) -> CliResult<CommandResult> {
+    apr_cli::model_pull::list(args.json)
+        .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
+    Ok(CommandResult::success("Listed cached models"))
 }
 
 // ============================================================================
