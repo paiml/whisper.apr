@@ -2,7 +2,7 @@
 //!
 //! Provides a unified audio loading API that supports:
 //! - WAV natively (always available)
-//! - MP3, FLAC, OGG, M4A, AAC, MP4, WebM, MKV, AVI, Opus via symphonia
+//! - MP3, FLAC, OGG, M4A, AAC, MP4, MOV, WebM, MKV, AVI, Opus via symphonia
 //!   (requires `symphonia` feature)
 //!
 //! All output is mono f32 samples at 16kHz, ready for Whisper inference.
@@ -13,7 +13,7 @@ use std::path::Path;
 /// Supported audio/media file extensions.
 pub const SUPPORTED_EXTENSIONS: &[&str] = &[
     "wav", "mp3", "flac", "ogg", "m4a", "aac",
-    "mp4", "webm", "mkv", "avi", "opus",
+    "mp4", "mov", "webm", "mkv", "avi", "opus",
 ];
 
 /// Check if a file extension is supported for audio decoding.
@@ -56,10 +56,10 @@ pub fn load_audio_samples(data: &[u8], ext: &str) -> Result<Vec<f32>, AudioDecod
             }
         }
         #[cfg(feature = "symphonia")]
-        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4"
+        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov"
         | "webm" | "mkv" | "avi" | "opus" => decode_with_symphonia(data, ext)?,
         #[cfg(not(feature = "symphonia"))]
-        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4"
+        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov"
         | "webm" | "mkv" | "avi" | "opus" => {
             return Err(AudioDecodeError::FeatureRequired(
                 format!(
@@ -290,8 +290,23 @@ mod tests {
         assert!(is_supported_extension("wav"));
         assert!(is_supported_extension("mp4"));
         assert!(is_supported_extension("MP3"));
+        assert!(is_supported_extension("mov"));
+        assert!(is_supported_extension("MOV"));
         assert!(!is_supported_extension("txt"));
         assert!(!is_supported_extension("pdf"));
+    }
+
+    #[test]
+    fn test_mov_dispatches_to_symphonia() {
+        // .mov should not return UnsupportedFormat — it should attempt decoding
+        let result = load_audio_samples(b"not-real-mov-data", "mov");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        // Should get a format/probe error, NOT an "Unsupported audio format" error
+        assert!(
+            !err_msg.contains("Unsupported audio format"),
+            "mov should be recognized, got: {err_msg}"
+        );
     }
 
     #[test]

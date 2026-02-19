@@ -1000,7 +1000,7 @@ pub fn run_record(args: RecordArgs, _global: &Args) -> CliResult<CommandResult> 
 
 /// Supported audio extensions for batch processing
 const AUDIO_EXTENSIONS: &[&str] = &[
-    "wav", "mp3", "flac", "ogg", "m4a", "webm", "aac", "mp4", "mkv",
+    "wav", "mp3", "flac", "ogg", "m4a", "webm", "aac", "mp4", "mov", "mkv",
 ];
 
 /// Discover audio files from inputs (files or directories).
@@ -3723,11 +3723,11 @@ pub(crate) fn load_audio_samples(path: &Path, data: &[u8]) -> CliResult<Vec<f32>
             Ok(samples)
         }
         #[cfg(feature = "symphonia")]
-        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "webm" | "mkv" | "avi" | "opus" => {
+        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov" | "webm" | "mkv" | "avi" | "opus" => {
             decode_with_symphonia(data, &ext)
         }
         #[cfg(not(feature = "symphonia"))]
-        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "webm" | "mkv" | "avi" | "opus" => {
+        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov" | "webm" | "mkv" | "avi" | "opus" => {
             Err(CliError::NotImplemented(format!(
                 "{ext} format requires 'symphonia' feature. Build with: cargo build --features cli"
             )))
