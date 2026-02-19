@@ -221,21 +221,17 @@ fn swish(x: f32) -> f32 {
     x * sigmoid(x)
 }
 
-/// Sigmoid function: 1 / (1 + exp(-x))
+/// Sigmoid function (UCBD §4 ONE PATH: delegates to `trueno::sigmoid_scalar`)
 #[inline]
 fn sigmoid(x: f32) -> f32 {
-    1.0 / (1.0 + (-x).exp())
+    trueno::sigmoid_scalar(x)
 }
 
-/// GELU activation function (for comparison)
-///
-/// GELU(x) ≈ 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))
+/// GELU activation (UCBD §4 ONE PATH: delegates to `trueno::gelu_scalar`)
 #[inline]
 #[allow(dead_code)]
 fn gelu(x: f32) -> f32 {
-    const SQRT_2_OVER_PI: f32 = 0.797_884_6;
-    const COEFF: f32 = 0.044_715;
-    0.5 * x * (1.0 + (SQRT_2_OVER_PI * (x + COEFF * x * x * x)).tanh())
+    trueno::gelu_scalar(x)
 }
 
 // =============================================================================

@@ -282,18 +282,16 @@ fn linear(
     output
 }
 
-/// GELU activation: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+/// GELU activation (UCBD §4 ONE PATH: delegates to `trueno::gelu_scalar`)
 #[inline]
 fn gelu(x: f32) -> f32 {
-    const SQRT_2_OVER_PI: f32 = 0.797_884_6;
-    const COEFF: f32 = 0.044_715;
-    0.5 * x * (1.0 + (SQRT_2_OVER_PI * (x + COEFF * x * x * x)).tanh())
+    trueno::gelu_scalar(x)
 }
 
-/// SiLU/Swish activation: x * sigmoid(x)
+/// SiLU/Swish activation (UCBD §4 ONE PATH: delegates to `trueno::silu_scalar`)
 #[inline]
 fn silu(x: f32) -> f32 {
-    x / (1.0 + (-x).exp())
+    trueno::silu_scalar(x)
 }
 
 #[cfg(test)]

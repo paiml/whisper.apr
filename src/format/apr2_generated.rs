@@ -1253,36 +1253,11 @@ impl Apr2Reader {
 }
 
 /// Convert half-precision (f16) bits to f32
+///
+/// ONE PATH: Delegates to `trueno::f16_to_f32` (UCBD §4).
 #[inline]
 fn half_to_f32(bits: u16) -> f32 {
-    let sign = ((bits >> 15) & 1) as u32;
-    let exp = ((bits >> 10) & 0x1F) as u32;
-    let mant = (bits & 0x3FF) as u32;
-
-    if exp == 0 {
-        // Subnormal or zero
-        if mant == 0 {
-            f32::from_bits(sign << 31)
-        } else {
-            // Subnormal: normalize
-            let mut m = mant;
-            let mut e = 0i32;
-            while (m & 0x400) == 0 {
-                m <<= 1;
-                e -= 1;
-            }
-            m &= 0x3FF;
-            let new_exp = (127 - 15 + 1 + e) as u32;
-            f32::from_bits((sign << 31) | (new_exp << 23) | (m << 13))
-        }
-    } else if exp == 31 {
-        // Inf or NaN
-        f32::from_bits((sign << 31) | (0xFF << 23) | (mant << 13))
-    } else {
-        // Normal
-        let new_exp = exp + 127 - 15;
-        f32::from_bits((sign << 31) | (new_exp << 23) | (mant << 13))
-    }
+    trueno::f16_to_f32(bits)
 }
 
 /// Convert bfloat16 bits to f32
