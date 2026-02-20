@@ -14,9 +14,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let reader_fb = AprV2ReaderRef::from_bytes(&bytes_fb)?;
 
     // Compare decoder.layer_norm.weight
-    let orig = reader_orig.get_tensor_as_f32("decoder.layer_norm.weight")
+    let orig = reader_orig
+        .get_tensor_as_f32("decoder.layer_norm.weight")
         .ok_or("decoder.layer_norm.weight not found in original")?;
-    let fb = reader_fb.get_tensor_as_f32("decoder.layer_norm.weight")
+    let fb = reader_fb
+        .get_tensor_as_f32("decoder.layer_norm.weight")
         .ok_or("decoder.layer_norm.weight not found in fb")?;
 
     println!("decoder.layer_norm.weight:");
@@ -30,9 +32,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Compare encoder.layer_norm.weight
-    let orig = reader_orig.get_tensor_as_f32("encoder.layer_norm.weight")
+    let orig = reader_orig
+        .get_tensor_as_f32("encoder.layer_norm.weight")
         .ok_or("encoder.layer_norm.weight not found in original")?;
-    let fb = reader_fb.get_tensor_as_f32("encoder.layer_norm.weight")
+    let fb = reader_fb
+        .get_tensor_as_f32("encoder.layer_norm.weight")
         .ok_or("encoder.layer_norm.weight not found in fb")?;
 
     println!("\nencoder.layer_norm.weight:");
@@ -46,9 +50,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Compare decoder.layers.0.self_attn_layer_norm.weight
-    let orig = reader_orig.get_tensor_as_f32("decoder.layers.0.self_attn_layer_norm.weight")
+    let orig = reader_orig
+        .get_tensor_as_f32("decoder.layers.0.self_attn_layer_norm.weight")
         .ok_or("decoder.layers.0.self_attn_layer_norm.weight not found in original")?;
-    let fb = reader_fb.get_tensor_as_f32("decoder.layers.0.self_attn_layer_norm.weight")
+    let fb = reader_fb
+        .get_tensor_as_f32("decoder.layers.0.self_attn_layer_norm.weight")
         .ok_or("decoder.layers.0.self_attn_layer_norm.weight not found in fb")?;
 
     println!("\ndecoder.layers.0.self_attn_layer_norm.weight:");

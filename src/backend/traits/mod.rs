@@ -264,23 +264,24 @@ impl ComputeOp for MatMulOp {
         {
             // Only dispatch to GPU if input data is attached
             if let (Some(a), Some(b)) = (&self.a_data, &self.b_data) {
-                use crate::gpu::{ExecutorConfig, GpuExecutorSync};
                 use crate::gpu::ops::matmul::GpuMatMul;
+                use crate::gpu::{ExecutorConfig, GpuExecutorSync};
 
                 let gpu_op = GpuMatMul::simple(self.m as u32, self.k as u32, self.n as u32)
-                    .map_err(|e| crate::error::WhisperError::Inference(
-                        format!("GPU matmul setup failed: {e}")
-                    ))?;
+                    .map_err(|e| {
+                        crate::error::WhisperError::Inference(format!(
+                            "GPU matmul setup failed: {e}"
+                        ))
+                    })?;
 
-                let executor = GpuExecutorSync::new(&ExecutorConfig::for_inference())
-                    .map_err(|e| crate::error::WhisperError::Inference(
-                        format!("GPU init failed: {e}")
-                    ))?;
+                let executor =
+                    GpuExecutorSync::new(&ExecutorConfig::for_inference()).map_err(|e| {
+                        crate::error::WhisperError::Inference(format!("GPU init failed: {e}"))
+                    })?;
 
-                let result = executor.execute_matmul(&gpu_op, a, b)
-                    .map_err(|e| crate::error::WhisperError::Inference(
-                        format!("GPU matmul failed: {e}")
-                    ))?;
+                let result = executor.execute_matmul(&gpu_op, a, b).map_err(|e| {
+                    crate::error::WhisperError::Inference(format!("GPU matmul failed: {e}"))
+                })?;
 
                 return Ok(result);
             }

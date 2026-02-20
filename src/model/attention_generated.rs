@@ -288,8 +288,7 @@ impl LinearWeights {
                 let mut out = vec![0.0_f32; total_tokens * self.out_features];
                 for t in 0..total_tokens {
                     let tok_in = &input[t * self.in_features..(t + 1) * self.in_features];
-                    let tok_out =
-                        &mut out[t * self.out_features..(t + 1) * self.out_features];
+                    let tok_out = &mut out[t * self.out_features..(t + 1) * self.out_features];
                     simd::tiled_matvec_f16_into(
                         w_f16,
                         tok_in,

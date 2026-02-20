@@ -2346,8 +2346,7 @@ mod tests {
 
     #[test]
     fn test_parse_score_with_json_flag() {
-        let args =
-            Args::try_parse_from(["whisper-apr", "--json", "score", "-f", "transcript.srt"]);
+        let args = Args::try_parse_from(["whisper-apr", "--json", "score", "-f", "transcript.srt"]);
         assert!(args.is_ok(), "Should parse score with global --json");
         let args = args.expect("test parse should succeed");
         assert!(args.json);

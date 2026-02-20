@@ -9,7 +9,8 @@
 
 use whisper_apr::audio::{MelConfig, MelFilterbank};
 use whisper_apr::format::{
-    AprV2ReaderRef, AprV2Writer, MelFilterbankData, build_whisper_metadata, metadata_to_model_config,
+    build_whisper_metadata, metadata_to_model_config, AprV2ReaderRef, AprV2Writer,
+    MelFilterbankData,
 };
 use whisper_apr::model::ModelConfig;
 
@@ -50,8 +51,14 @@ fn inspect_apr_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     println!("Embedded Data:");
-    println!("  Has vocabulary: {}", reader.get_tensor("__vocab__").is_some());
-    println!("  Has filterbank: {}", reader.get_tensor("__mel_filters__").is_some());
+    println!(
+        "  Has vocabulary: {}",
+        reader.get_tensor("__vocab__").is_some()
+    );
+    println!(
+        "  Has filterbank: {}",
+        reader.get_tensor("__mel_filters__").is_some()
+    );
 
     if let Some(vocab_data) = reader.get_tensor_data("__vocab__") {
         if let Some(vocab) = whisper_apr::tokenizer::Vocabulary::from_bytes(vocab_data) {
@@ -75,7 +82,10 @@ fn inspect_apr_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
             // Compare with computed filterbank
             println!("\n=== Comparison with Computed Filterbank ===");
-            let computed = MelFilterbank::new(&MelConfig { n_mels: fb.n_mels as usize, ..MelConfig::whisper() });
+            let computed = MelFilterbank::new(&MelConfig {
+                n_mels: fb.n_mels as usize,
+                ..MelConfig::whisper()
+            });
             let cosine_sim = cosine_similarity(&fb.data, computed.filters());
             println!("  Cosine similarity: {:.6}", cosine_sim);
 
@@ -87,7 +97,13 @@ fn inspect_apr_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Create MelFilterbank from embedded data
-            let mel = MelFilterbank::from_filters(fb.data, &MelConfig { n_mels: fb.n_mels as usize, ..MelConfig::whisper() });
+            let mel = MelFilterbank::from_filters(
+                fb.data,
+                &MelConfig {
+                    n_mels: fb.n_mels as usize,
+                    ..MelConfig::whisper()
+                },
+            );
             println!(
                 "\n  Created MelFilterbank: {} mels, {} FFT, {} Hz",
                 mel.n_mels(),
@@ -162,14 +178,23 @@ fn demo_filterbank_embedding() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Match: {}", (orig_sum - read_sum).abs() < 1e-6);
 
             // Create MelFilterbank for use
-            let mel = MelFilterbank::from_filters(fb.data, &MelConfig { n_mels: fb.n_mels as usize, ..MelConfig::whisper() });
+            let mel = MelFilterbank::from_filters(
+                fb.data,
+                &MelConfig {
+                    n_mels: fb.n_mels as usize,
+                    ..MelConfig::whisper()
+                },
+            );
             println!(
                 "\n  Ready to use: MelFilterbank with {} mel bands",
                 mel.n_mels()
             );
 
             // Compare with standard computed filterbank
-            let computed = MelFilterbank::new(&MelConfig { n_mels, ..MelConfig::whisper() });
+            let computed = MelFilterbank::new(&MelConfig {
+                n_mels,
+                ..MelConfig::whisper()
+            });
             let cosine_sim = cosine_similarity(mel.filters(), computed.filters());
             println!("\n=== Filterbank Comparison ===");
             println!(

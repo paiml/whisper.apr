@@ -161,7 +161,9 @@ impl BatchPreprocessor {
         let mut max_frames = 0_usize;
 
         for samples in batch.segments() {
-            let mel = self.filterbank.compute(samples)
+            let mel = self
+                .filterbank
+                .compute(samples)
                 .map_err(|e| WhisperError::Audio(e.to_string()))?;
             let frames = mel.len() / self.config.n_mels;
             frame_counts.push(frames);

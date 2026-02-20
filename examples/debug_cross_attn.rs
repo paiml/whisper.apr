@@ -11,7 +11,7 @@
 //! Run with: cargo run --release --example debug_cross_attn
 
 use std::path::Path;
-use whisper_apr::format::{AprV2ReaderRef, metadata_to_model_config};
+use whisper_apr::format::{metadata_to_model_config, AprV2ReaderRef};
 
 fn test_h3_weight_loading(reader: &AprV2ReaderRef<'_>) -> (usize, usize) {
     println!("=== H3: CROSS-ATTENTION WEIGHT LOADING ===\n");
@@ -46,7 +46,9 @@ fn test_h3_weight_loading(reader: &AprV2ReaderRef<'_>) -> (usize, usize) {
                 } else if pct < 50.0 {
                     println!("  {name} - sparse ({pct:.1}% non-zero, norm={norm:.4})");
                 } else {
-                    println!("  {name} - loaded (norm={norm:.4}, max={max_abs:.4}, {pct:.1}% non-zero)");
+                    println!(
+                        "  {name} - loaded (norm={norm:.4}, max={max_abs:.4}, {pct:.1}% non-zero)"
+                    );
                 }
             }
             None => {
@@ -103,7 +105,9 @@ fn test_h2_encoder_shape(model: &whisper_apr::WhisperApr, d_model: usize) {
         return;
     }
 
-    let Ok(audio_bytes) = std::fs::read(audio_path) else { return };
+    let Ok(audio_bytes) = std::fs::read(audio_path) else {
+        return;
+    };
     let samples: Vec<f32> = audio_bytes[44..]
         .chunks_exact(2)
         .map(|chunk| {
@@ -112,8 +116,12 @@ fn test_h2_encoder_shape(model: &whisper_apr::WhisperApr, d_model: usize) {
         })
         .collect();
 
-    let Ok(mel) = model.compute_mel(&samples) else { return };
-    let Ok(encoded) = model.encode(&mel) else { return };
+    let Ok(mel) = model.compute_mel(&samples) else {
+        return;
+    };
+    let Ok(encoded) = model.encode(&mel) else {
+        return;
+    };
 
     let expected = 1500 * d_model;
     println!("  Expected: [1, 1500, {d_model}] = {expected} elements");
@@ -159,7 +167,9 @@ fn test_h1_input(model: &whisper_apr::WhisperApr) {
         return;
     }
 
-    let Ok(audio_bytes) = std::fs::read(audio_path) else { return };
+    let Ok(audio_bytes) = std::fs::read(audio_path) else {
+        return;
+    };
     let samples: Vec<f32> = audio_bytes[44..]
         .chunks_exact(2)
         .map(|chunk| {
@@ -169,16 +179,33 @@ fn test_h1_input(model: &whisper_apr::WhisperApr) {
         .collect();
 
     let opts = whisper_apr::TranscribeOptions::default();
-    let Ok(result) = model.transcribe(&samples, opts.clone()) else { return };
-    println!("  Real audio: {:?}", &result.text[..result.text.len().min(100)]);
+    let Ok(result) = model.transcribe(&samples, opts.clone()) else {
+        return;
+    };
+    println!(
+        "  Real audio: {:?}",
+        &result.text[..result.text.len().min(100)]
+    );
 
     let silence = vec![0.0; samples.len()];
-    let Ok(silence_result) = model.transcribe(&silence, opts.clone()) else { return };
-    println!("  Silence:    {:?}", &silence_result.text[..silence_result.text.len().min(100)]);
+    let Ok(silence_result) = model.transcribe(&silence, opts.clone()) else {
+        return;
+    };
+    println!(
+        "  Silence:    {:?}",
+        &silence_result.text[..silence_result.text.len().min(100)]
+    );
 
-    let noise: Vec<f32> = (0..samples.len()).map(|i| (i as f32 * 0.1).sin() * 0.1).collect();
-    let Ok(noise_result) = model.transcribe(&noise, opts) else { return };
-    println!("  Noise:      {:?}", &noise_result.text[..noise_result.text.len().min(100)]);
+    let noise: Vec<f32> = (0..samples.len())
+        .map(|i| (i as f32 * 0.1).sin() * 0.1)
+        .collect();
+    let Ok(noise_result) = model.transcribe(&noise, opts) else {
+        return;
+    };
+    println!(
+        "  Noise:      {:?}",
+        &noise_result.text[..noise_result.text.len().min(100)]
+    );
 
     if result.text == silence_result.text && result.text == noise_result.text {
         println!("\n  H1 LIKELY FAILED: Same output for different inputs!");

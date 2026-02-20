@@ -314,9 +314,10 @@ impl WhisperApr {
         // Dispatch audio frontend based on model config
         let (mel_filters, conv_stem) = match config.audio_frontend {
             model::AudioFrontend::MelFilterbank => (
-                Some(audio::MelFilterbank::new(
-                    &audio::MelConfig { n_mels: config.n_mels as usize, ..audio::MelConfig::whisper() },
-                )),
+                Some(audio::MelFilterbank::new(&audio::MelConfig {
+                    n_mels: config.n_mels as usize,
+                    ..audio::MelConfig::whisper()
+                })),
                 None,
             ),
             model::AudioFrontend::LearnedConv => (
@@ -482,7 +483,8 @@ impl WhisperApr {
         let language = options.language.clone().unwrap_or_else(|| "en".to_string());
 
         // 4. Get initial tokens based on task, with optional prompt conditioning
-        let initial_tokens = self.build_initial_tokens(&language, options.task, options.prompt.as_deref());
+        let initial_tokens =
+            self.build_initial_tokens(&language, options.task, options.prompt.as_deref());
 
         // 5. Decode tokens
         #[cfg(feature = "std")]
@@ -778,7 +780,8 @@ impl WhisperApr {
         let mel_fb = self.mel_filters.as_ref().ok_or_else(|| {
             WhisperError::Audio("mel filterbank not available (Moonshine model?)".into())
         })?;
-        let mut mel = mel_fb.compute(&padded_audio)
+        let mut mel = mel_fb
+            .compute(&padded_audio)
             .map_err(|e| WhisperError::Audio(e.to_string()))?;
         let actual_frames = mel.len() / N_MELS;
 
@@ -956,7 +959,11 @@ impl WhisperApr {
                     }
                 }
             }
-            if booster.is_empty() { None } else { Some(booster) }
+            if booster.is_empty() {
+                None
+            } else {
+                Some(booster)
+            }
         } else {
             None
         };
@@ -1244,11 +1251,12 @@ impl WhisperApr {
         callback(&tracker.to_progress());
         let (mel_filters, conv_stem) = match config.audio_frontend {
             model::AudioFrontend::MelFilterbank => {
-                let mel_config = audio::MelConfig { n_mels: config.n_mels as usize, ..audio::MelConfig::whisper() };
+                let mel_config = audio::MelConfig {
+                    n_mels: config.n_mels as usize,
+                    ..audio::MelConfig::whisper()
+                };
                 let mf = Self::read_mel_filterbank(&reader).map_or_else(
-                    || {
-                        audio::MelFilterbank::new(&mel_config)
-                    },
+                    || audio::MelFilterbank::new(&mel_config),
                     |fb| audio::MelFilterbank::from_filters(fb.data, &mel_config),
                 );
                 (Some(mf), None)
@@ -1770,7 +1778,11 @@ impl WhisperApr {
     }
 
     /// Load feed-forward network weights (HuggingFace naming: fc1, fc2)
-    fn load_ffn_weights(reader: &format::AprV2ReaderRef<'_>, prefix: &str, ffn: &mut model::FeedForward) {
+    fn load_ffn_weights(
+        reader: &format::AprV2ReaderRef<'_>,
+        prefix: &str,
+        ffn: &mut model::FeedForward,
+    ) {
         if let Some(fc1_weight) = reader.get_tensor_as_f32(&format!("{prefix}.fc1.weight")) {
             ffn.fc1.set_weight(&fc1_weight);
         }
@@ -1795,16 +1807,16 @@ impl WhisperApr {
         attn: &mut model::MultiHeadAttention,
     ) {
         // Weights: load as raw fp16 u16 bit patterns
-        if let Some(q_weight) = Self::load_f16_raw(reader,&format!("{prefix}.q_proj.weight")) {
+        if let Some(q_weight) = Self::load_f16_raw(reader, &format!("{prefix}.q_proj.weight")) {
             attn.set_query_weight_f16(&q_weight);
         }
-        if let Some(k_weight) = Self::load_f16_raw(reader,&format!("{prefix}.k_proj.weight")) {
+        if let Some(k_weight) = Self::load_f16_raw(reader, &format!("{prefix}.k_proj.weight")) {
             attn.set_key_weight_f16(&k_weight);
         }
-        if let Some(v_weight) = Self::load_f16_raw(reader,&format!("{prefix}.v_proj.weight")) {
+        if let Some(v_weight) = Self::load_f16_raw(reader, &format!("{prefix}.v_proj.weight")) {
             attn.set_value_weight_f16(&v_weight);
         }
-        if let Some(out_weight) = Self::load_f16_raw(reader,&format!("{prefix}.out_proj.weight")) {
+        if let Some(out_weight) = Self::load_f16_raw(reader, &format!("{prefix}.out_proj.weight")) {
             attn.set_out_weight_f16(&out_weight);
         }
         // Biases: always load as f32 (negligible size, needed at full precision)
@@ -1830,13 +1842,13 @@ impl WhisperApr {
         prefix: &str,
         ffn: &mut model::FeedForward,
     ) {
-        if let Some(fc1_weight) = Self::load_f16_raw(reader,&format!("{prefix}.fc1.weight")) {
+        if let Some(fc1_weight) = Self::load_f16_raw(reader, &format!("{prefix}.fc1.weight")) {
             ffn.fc1.set_weight_f16(&fc1_weight);
         }
         if let Some(fc1_bias) = reader.get_tensor_as_f32(&format!("{prefix}.fc1.bias")) {
             ffn.fc1.set_bias(&fc1_bias);
         }
-        if let Some(fc2_weight) = Self::load_f16_raw(reader,&format!("{prefix}.fc2.weight")) {
+        if let Some(fc2_weight) = Self::load_f16_raw(reader, &format!("{prefix}.fc2.weight")) {
             ffn.fc2.set_weight_f16(&fc2_weight);
         }
         if let Some(fc2_bias) = reader.get_tensor_as_f32(&format!("{prefix}.fc2.bias")) {

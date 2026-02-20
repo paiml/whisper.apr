@@ -30,8 +30,8 @@ use crate::{DecodingStrategy, ProfilingStats, Task, TranscribeOptions, WhisperAp
 use crate::cli::args::{
     Args, BackendArg, BatchArgs, BenchmarkArgs, Command, CommandArgs, ConvertArgs, DiagnoseArgs,
     ExportArgs, ExportFormatArg, ModelAction, ModelArgs, ModelFamilyArg, OutputFormatArg,
-    ParityArgs, QuantizeArgs, QuantizeMethodArg, RecordArgs, SelftestArgs, ServeArgs, StreamArgs,
-    ScoreArgs, SummarizeArgs, SummarizeFormat, TestArgs, TranscribeArgs, TranscribeFolderArgs,
+    ParityArgs, QuantizeArgs, QuantizeMethodArg, RecordArgs, ScoreArgs, SelftestArgs, ServeArgs,
+    StreamArgs, SummarizeArgs, SummarizeFormat, TestArgs, TranscribeArgs, TranscribeFolderArgs,
     TranslateArgs, ValidateArgs, ValidateOutputFormat,
 };
 
@@ -236,7 +236,11 @@ fn build_transcribe_options(args: &TranscribeArgs, verbose: bool) -> TranscribeO
         strategy,
         word_timestamps: args.word_timestamps,
         profile: verbose,
-        prompt: if args.prompt.is_empty() { None } else { Some(args.prompt.clone()) },
+        prompt: if args.prompt.is_empty() {
+            None
+        } else {
+            Some(args.prompt.clone())
+        },
         ..Default::default()
     }
 }
@@ -1870,7 +1874,8 @@ fn format_folder_output_with_profile(
         OutputFormatArg::Json | OutputFormatArg::JsonFull => {
             let breakdown = if let Some(stats) = &result.profiling {
                 let keys = ["mel_ms", "audio_ms", "encoder_ms", "decoder_ms"];
-                let parts: Vec<String> = keys.iter()
+                let parts: Vec<String> = keys
+                    .iter()
                     .filter_map(|k| stats.breakdown.get(*k).map(|v| format!(r#""{k}":{v:.1}"#)))
                     .collect();
                 format!(r#","breakdown":{{{}}}"#, parts.join(","))
@@ -1918,7 +1923,12 @@ fn generate_folder_profile_report(
         let sum_enc: f64 = entries.iter().filter_map(|e| e.encoder_ms).sum();
         let sum_dec: f64 = entries.iter().filter_map(|e| e.decoder_ms).sum();
         let count = entries.len() as f64;
-        (sum_mel / count, sum_audio / count, sum_enc / count, sum_dec / count)
+        (
+            sum_mel / count,
+            sum_audio / count,
+            sum_enc / count,
+            sum_dec / count,
+        )
     } else {
         (0.0, 0.0, 0.0, 0.0)
     };
@@ -1979,7 +1989,12 @@ fn print_folder_profile_summary(entries: &[FolderProfileEntry], total_elapsed_se
         let sum_enc: f64 = entries.iter().filter_map(|e| e.encoder_ms).sum();
         let sum_dec: f64 = entries.iter().filter_map(|e| e.decoder_ms).sum();
         let count = entries.len() as f64;
-        (sum_mel / count, sum_audio / count, sum_enc / count, sum_dec / count)
+        (
+            sum_mel / count,
+            sum_audio / count,
+            sum_enc / count,
+            sum_dec / count,
+        )
     };
 
     eprintln!();
@@ -2988,8 +3003,8 @@ pub fn run_validate(args: ValidateArgs, global: &Args) -> CliResult<CommandResul
     }
 
     let data = fs::read(&args.file)?;
-    let reader = AprV2ReaderRef::from_bytes(&data)
-        .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
+    let reader =
+        AprV2ReaderRef::from_bytes(&data).map_err(|e| CliError::InvalidArgument(e.to_string()))?;
 
     if args.quick {
         return run_quick_validation(&reader, global);
@@ -3875,15 +3890,13 @@ pub(crate) fn load_audio_samples(path: &Path, data: &[u8]) -> CliResult<Vec<f32>
             Ok(samples)
         }
         #[cfg(feature = "symphonia")]
-        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov" | "webm" | "mkv" | "avi" | "opus" => {
-            decode_with_symphonia(data, &ext)
-        }
+        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov" | "webm" | "mkv" | "avi"
+        | "opus" => decode_with_symphonia(data, &ext),
         #[cfg(not(feature = "symphonia"))]
-        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov" | "webm" | "mkv" | "avi" | "opus" => {
-            Err(CliError::NotImplemented(format!(
-                "{ext} format requires 'symphonia' feature. Build with: cargo build --features cli"
-            )))
-        }
+        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov" | "webm" | "mkv" | "avi"
+        | "opus" => Err(CliError::NotImplemented(format!(
+            "{ext} format requires 'symphonia' feature. Build with: cargo build --features cli"
+        ))),
         _ => Err(CliError::UnsupportedFormat(ext)),
     }
 }
@@ -4242,12 +4255,12 @@ fn extract_tensors_for_export(
     let mut tensors: BTreeMap<String, TensorData> = BTreeMap::new();
 
     for name in reader.tensor_names() {
-        let tensor_entry = reader.get_tensor(name).ok_or_else(|| {
-            CliError::InvalidArgument(format!("Tensor not found: {name}"))
-        })?;
-        let tensor_data = reader.get_tensor_as_f32(name).ok_or_else(|| {
-            CliError::InvalidArgument(format!("Failed to load tensor {name}"))
-        })?;
+        let tensor_entry = reader
+            .get_tensor(name)
+            .ok_or_else(|| CliError::InvalidArgument(format!("Tensor not found: {name}")))?;
+        let tensor_data = reader
+            .get_tensor_as_f32(name)
+            .ok_or_else(|| CliError::InvalidArgument(format!("Failed to load tensor {name}")))?;
 
         let shape: Vec<usize> = tensor_entry.shape.clone();
 

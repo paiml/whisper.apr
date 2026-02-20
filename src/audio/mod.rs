@@ -4,6 +4,7 @@
 
 pub mod batch;
 pub mod conv_stem;
+pub mod decode;
 /// OpenAI reference mel filterbank data for exact numerical matching
 #[path = "mel_filterbank_data_generated.rs"]
 #[allow(clippy::all)]
@@ -12,11 +13,10 @@ mod resampler;
 mod ring_buffer;
 mod streaming;
 pub mod wav;
-pub mod decode;
 
+pub use aprender::audio::{MelConfig, MelFilterbank};
 pub use batch::{split_into_chunks, AudioBatch, BatchMelResult, BatchPreprocessor};
 pub use conv_stem::{ConvStem, GroupNorm, CONV_STEM_TOTAL_STRIDE};
-pub use aprender::audio::{MelConfig, MelFilterbank};
 pub use resampler::{Resampler, SincResampler};
 pub use ring_buffer::RingBuffer;
 pub use streaming::{
@@ -26,7 +26,10 @@ pub use streaming::{
     LOW_LATENCY_MIN_SPEECH_MS, LOW_LATENCY_PARTIAL_THRESHOLD, MIN_SPEECH_DURATION_MS,
 };
 
-pub use decode::{load_audio_file, load_audio_samples, AudioDecodeError, SUPPORTED_EXTENSIONS, is_supported_extension};
+pub use decode::{
+    is_supported_extension, load_audio_file, load_audio_samples, AudioDecodeError,
+    SUPPORTED_EXTENSIONS,
+};
 // Re-export VAD types from root module for audio pipeline integration
 pub use crate::vad::{
     SpeechSegment, StreamingVad, VadConfig, VadEvent, VadState, VoiceActivityDetector,

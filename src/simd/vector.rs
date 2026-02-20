@@ -250,7 +250,10 @@ pub fn dot_f16(a_f16: &[u16], b: &[f32], buf: &mut [f32]) -> f32 {
 
     #[cfg(target_arch = "x86_64")]
     {
-        if is_x86_feature_detected!("f16c") && is_x86_feature_detected!("avx") && is_x86_feature_detected!("fma") {
+        if is_x86_feature_detected!("f16c")
+            && is_x86_feature_detected!("avx")
+            && is_x86_feature_detected!("fma")
+        {
             // SAFETY: CPU features verified at runtime. Lengths are equal per debug_assert.
             return unsafe { dot_f16_fused_f16c(a_f16, b) };
         }

@@ -29,9 +29,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::path::PathBuf;
-use whisper_apr::format::{
-    build_whisper_metadata, AprV2Writer, MelFilterbankData, TensorDType,
-};
+use whisper_apr::format::{build_whisper_metadata, AprV2Writer, MelFilterbankData, TensorDType};
 use whisper_apr::model::ModelConfig;
 use whisper_apr::tokenizer::Vocabulary;
 

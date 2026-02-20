@@ -269,7 +269,10 @@ fn convert_safetensors_to_apr(
         }
         writer.add_f32_tensor(
             "__mel_filters__",
-            vec![mel_filterbank.n_mels as usize, mel_filterbank.n_freqs as usize],
+            vec![
+                mel_filterbank.n_mels as usize,
+                mel_filterbank.n_freqs as usize,
+            ],
             &mel_filterbank.data,
         );
     }

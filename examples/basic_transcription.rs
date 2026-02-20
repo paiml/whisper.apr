@@ -5,7 +5,9 @@
 //! Run with: `cargo run --example basic_transcription`
 
 use whisper_apr::{
-    audio::{MelConfig, MelFilterbank}, model::ModelConfig, DecodingStrategy, Task, TranscribeOptions, WhisperApr,
+    audio::{MelConfig, MelFilterbank},
+    model::ModelConfig,
+    DecodingStrategy, Task, TranscribeOptions, WhisperApr,
 };
 
 fn main() {

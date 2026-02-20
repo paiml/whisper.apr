@@ -7,7 +7,7 @@
 //!   cargo run --example inspect_model -- models/whisper-tiny-fb.apr --compare-wcpp
 
 use std::path::Path;
-use whisper_apr::format::{AprV2ReaderRef, MelFilterbankData, metadata_to_model_config};
+use whisper_apr::format::{metadata_to_model_config, AprV2ReaderRef, MelFilterbankData};
 use whisper_apr::model::ModelConfig;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -58,7 +58,10 @@ fn print_human(reader: &AprV2ReaderRef<'_>, path: &str) -> Result<(), Box<dyn st
     );
 
     println!("\n=== Header ===");
-    println!("  Version:        {}.{}", header.version.0, header.version.1);
+    println!(
+        "  Version:        {}.{}",
+        header.version.0, header.version.1
+    );
     println!(
         "  Model Type:     {:?} ({})",
         config.model_type,
@@ -157,15 +160,21 @@ fn print_json(reader: &AprV2ReaderRef<'_>) -> Result<(), Box<dyn std::error::Err
     let config = metadata_to_model_config(reader.metadata());
 
     println!("{{");
-    println!("  \"version\": \"{}.{}\",", header.version.0, header.version.1);
-    println!("  \"model_type\": \"{:?}\",", config.model_type);
     println!(
-        "  \"model_type_name\": \"{}\",",
-        model_type_name(&config)
+        "  \"version\": \"{}.{}\",",
+        header.version.0, header.version.1
     );
+    println!("  \"model_type\": \"{:?}\",", config.model_type);
+    println!("  \"model_type_name\": \"{}\",", model_type_name(&config));
     println!("  \"n_tensors\": {},", header.tensor_count);
-    println!("  \"has_vocab\": {},", reader.get_tensor("__vocab__").is_some());
-    println!("  \"has_filterbank\": {},", reader.get_tensor("__mel_filters__").is_some());
+    println!(
+        "  \"has_vocab\": {},",
+        reader.get_tensor("__vocab__").is_some()
+    );
+    println!(
+        "  \"has_filterbank\": {},",
+        reader.get_tensor("__mel_filters__").is_some()
+    );
     println!("  \"n_vocab\": {},", config.n_vocab);
     println!("  \"n_mels\": {},", config.n_mels);
     println!("  \"n_audio_state\": {},", config.n_audio_state);
@@ -201,11 +210,7 @@ fn compare_with_whisper_cpp(reader: &AprV2ReaderRef<'_>) -> Result<(), Box<dyn s
     if let Some(fb_data) = reader.get_tensor_data("__mel_filters__") {
         if let Ok(our_fb) = MelFilterbankData::from_bytes(fb_data) {
             let cosine = cosine_similarity(&wcpp_fb, &our_fb.data);
-            let status = if cosine > 0.9999 {
-                "MATCH"
-            } else {
-                "DIFFER"
-            };
+            let status = if cosine > 0.9999 { "MATCH" } else { "DIFFER" };
 
             println!("  whisper.cpp: {} values", wcpp_fb.len());
             println!("  ours:        {} values", our_fb.data.len());
