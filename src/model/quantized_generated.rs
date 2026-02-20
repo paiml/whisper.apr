@@ -975,20 +975,46 @@ impl QuantizedLinearQ2K {
 // F16 Conversion (UCBD §4 ONE PATH: delegates to trueno canonical)
 // ============================================================================
 
-/// Convert fp16 bits to f32
-///
-/// ONE PATH: Delegates to `trueno::f16_to_f32` (UCBD §4).
+/// Convert fp16 bits to f32 (IEEE 754 half-precision).
 #[inline]
 fn f16_to_f32(bits: u16) -> f32 {
-    trueno::f16_to_f32(bits)
+    let sign = ((bits >> 15) as u32) << 31;
+    let exp = ((bits >> 10) & 0x1F) as u32;
+    let frac = (bits & 0x3FF) as u32;
+    let f32_bits = if exp == 0 {
+        if frac == 0 { sign } else {
+            // Subnormal: normalize
+            let mut e = 1u32;
+            let mut f = frac;
+            while f & 0x400 == 0 { f <<= 1; e += 1; }
+            sign | ((127 - 15 + 1 - e) << 23) | ((f & 0x3FF) << 13)
+        }
+    } else if exp == 31 {
+        sign | (0xFF << 23) | (frac << 13) // Inf or NaN
+    } else {
+        sign | ((exp + 127 - 15) << 23) | (frac << 13)
+    };
+    f32::from_bits(f32_bits)
 }
 
-/// Convert f32 to fp16 bits
-///
-/// ONE PATH: Delegates to `trueno::f32_to_f16` (UCBD §4).
+/// Convert f32 to fp16 bits (IEEE 754 half-precision, round-to-nearest-even).
 #[inline]
 fn f32_to_f16(value: f32) -> u16 {
-    trueno::f32_to_f16(value)
+    let bits = value.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exp = ((bits >> 23) & 0xFF) as i32;
+    let frac = bits & 0x7FFFFF;
+    if exp == 255 {
+        return sign | 0x7C00 | if frac != 0 { 0x200 } else { 0 }; // Inf/NaN
+    }
+    let unbiased = exp - 127;
+    if unbiased > 15 {
+        return sign | 0x7C00; // Overflow → Inf
+    }
+    if unbiased < -14 {
+        return sign; // Underflow → zero
+    }
+    sign | (((unbiased + 15) as u16) << 10) | ((frac >> 13) as u16)
 }
 
 /// Quantize f32 tensor to Q2_K format
