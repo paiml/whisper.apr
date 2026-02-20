@@ -287,7 +287,7 @@ mod tests {
         // .mov should not return UnsupportedFormat — it should attempt decoding
         let result = load_audio_samples(b"not-real-mov-data", "mov");
         assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
+        let err_msg = result.expect_err("expected error for fake mov data").to_string();
         // Should get a format/probe error, NOT an "Unsupported audio format" error
         assert!(
             !err_msg.contains("Unsupported audio format"),
@@ -299,7 +299,7 @@ mod tests {
     fn test_unsupported_format_error() {
         let result = load_audio_samples(b"fake", "xyz");
         assert!(result.is_err());
-        let err = result.unwrap_err();
+        let err = result.expect_err("expected error for unsupported format");
         assert!(err.to_string().contains("Unsupported"));
     }
 

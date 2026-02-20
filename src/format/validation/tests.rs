@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 use super::*;
 use crate::format::{build_whisper_metadata, AprV2ReaderRef, AprV2Writer};
 use crate::model::ModelConfig;

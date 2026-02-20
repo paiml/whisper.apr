@@ -332,7 +332,7 @@ mod tests {
     fn test_find_model_by_name() {
         let model = find_model("whisper-tiny");
         assert!(model.is_some());
-        let m = model.unwrap();
+        let m = model.expect("whisper-tiny should be found");
         assert_eq!(m.name, "whisper-tiny");
         assert_eq!(m.params, "39M");
     }
@@ -341,14 +341,20 @@ mod tests {
     fn test_find_model_by_repo_id() {
         let model = find_model("openai/whisper-base");
         assert!(model.is_some());
-        assert_eq!(model.unwrap().name, "whisper-base");
+        assert_eq!(
+            model.expect("whisper-base should be found").name,
+            "whisper-base"
+        );
     }
 
     #[test]
     fn test_find_model_case_insensitive() {
         let model = find_model("WHISPER-TINY");
         assert!(model.is_some());
-        assert_eq!(model.unwrap().name, "whisper-tiny");
+        assert_eq!(
+            model.expect("case-insensitive lookup should work").name,
+            "whisper-tiny"
+        );
     }
 
     #[test]
@@ -395,7 +401,7 @@ mod tests {
     fn test_lfm2_model_info() {
         let model = find_model("lfm2-2.6b-transcript");
         assert!(model.is_some());
-        let m = model.unwrap();
+        let m = model.expect("lfm2 model should be found");
         assert_eq!(m.family, ModelFamily::Lfm2);
         assert_eq!(m.repo_id, "LiquidAI/LFM2-2.6B-Transcript");
         assert_eq!(m.wasm_quant, "int4-awq");

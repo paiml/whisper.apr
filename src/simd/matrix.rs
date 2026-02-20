@@ -222,7 +222,8 @@ mod tests {
     #[test]
     fn test_matmul_with_matrix() {
         let a = vec![1.0, 2.0, 3.0, 4.0]; // 2x2
-        let b_matrix = Matrix::from_vec(2, 2, vec![5.0, 6.0, 7.0, 8.0]).unwrap();
+        let b_matrix = Matrix::from_vec(2, 2, vec![5.0, 6.0, 7.0, 8.0])
+            .expect("2x2 matrix creation should succeed");
         let result = matmul_with_matrix(&a, &b_matrix, 2, 2);
         assert!(vec_approx_eq(&result, &[19.0, 22.0, 43.0, 50.0]));
     }
@@ -230,7 +231,8 @@ mod tests {
     #[test]
     fn test_matmul_with_matrix_rectangular() {
         let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]; // 2x3
-        let b_matrix = Matrix::from_vec(3, 2, vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0]).unwrap();
+        let b_matrix = Matrix::from_vec(3, 2, vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0])
+            .expect("3x2 matrix creation should succeed");
         let result = matmul_with_matrix(&a, &b_matrix, 2, 3);
         assert!(vec_approx_eq(&result, &[58.0, 64.0, 139.0, 154.0]));
     }
