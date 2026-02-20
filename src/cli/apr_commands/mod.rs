@@ -1062,6 +1062,7 @@ fn run_export(args: &AprExportArgs, global: &super::args::Args) -> CliResult<Com
         quantize: None,
         include_tokenizer: false,
         include_config: false,
+        ..Default::default()
     };
 
     if !global.quiet {

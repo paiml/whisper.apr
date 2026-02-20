@@ -37,7 +37,17 @@ pub fn load_audio_file(path: &Path) -> Result<Vec<f32>, AudioDecodeError> {
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-    load_audio_samples(&data, &ext)
+    match load_audio_samples(&data, &ext) {
+        Ok(samples) => Ok(samples),
+        Err(e) => {
+            // Fallback to ffmpeg for codecs symphonia can't handle (e.g. HE-AAC)
+            if matches!(e, AudioDecodeError::Format(_)) {
+                decode_with_ffmpeg(path)
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 /// Load audio samples from raw bytes with a known format extension.
@@ -120,6 +130,55 @@ impl std::error::Error for AudioDecodeError {
             Self::Io(e) => Some(e),
             _ => None,
         }
+    }
+}
+
+/// Decode audio by shelling out to ffmpeg as a fallback.
+///
+/// Converts any ffmpeg-supported format to mono 16kHz PCM WAV on stdout,
+/// then parses with the native WAV decoder. Used when symphonia fails
+/// (e.g. HE-AAC/SBR profiles in .mov containers).
+pub fn decode_with_ffmpeg(path: &Path) -> Result<Vec<f32>, AudioDecodeError> {
+    use std::process::Command;
+
+    let output = Command::new("ffmpeg")
+        .args([
+            "-i",
+            path.to_str().unwrap_or(""),
+            "-f",
+            "wav",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "pipe:1",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| {
+            AudioDecodeError::Format(format!("ffmpeg not available: {e}"))
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AudioDecodeError::Format(format!(
+            "ffmpeg failed: {}",
+            stderr.lines().last().unwrap_or("unknown error")
+        )));
+    }
+
+    let wav = parse_wav_file(&output.stdout)
+        .map_err(|e| AudioDecodeError::Format(format!("ffmpeg WAV parse failed: {e}")))?;
+
+    // Already 16kHz mono from ffmpeg args, but verify
+    if wav.sample_rate == 16000 {
+        Ok(wav.samples)
+    } else {
+        Ok(resample(&wav.samples, wav.sample_rate, 16000))
     }
 }
 
@@ -325,6 +384,37 @@ mod tests {
 
         let unsup_err = AudioDecodeError::UnsupportedFormat("xyz".into());
         assert!(unsup_err.to_string().contains("xyz"));
+    }
+
+    #[test]
+    fn test_ffmpeg_fallback_produces_samples() {
+        // Generate a tiny WAV with ffmpeg (if available) and verify fallback works
+        let tmp = std::env::temp_dir().join("wapr_test_ffmpeg_fallback.wav");
+        let status = std::process::Command::new("ffmpeg")
+            .args([
+                "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5",
+                "-ar", "16000", "-ac", "1",
+                tmp.to_str().unwrap(),
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        if status.is_err() || !status.unwrap().success() {
+            // ffmpeg not available — skip test
+            return;
+        }
+        let result = decode_with_ffmpeg(&tmp);
+        let _ = std::fs::remove_file(&tmp);
+        let samples = result.expect("ffmpeg fallback should produce samples");
+        // 0.5s at 16kHz = ~8000 samples
+        assert!(samples.len() > 7000 && samples.len() < 9000,
+            "expected ~8000 samples, got {}", samples.len());
+    }
+
+    #[test]
+    fn test_ffmpeg_fallback_nonexistent_file() {
+        let result = decode_with_ffmpeg(Path::new("/tmp/wapr_nonexistent_file.mov"));
+        assert!(result.is_err());
     }
 
     #[test]

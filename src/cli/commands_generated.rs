@@ -3879,7 +3879,7 @@ pub(crate) fn load_audio_samples(path: &Path, data: &[u8]) -> CliResult<Vec<f32>
         .unwrap_or("")
         .to_lowercase();
 
-    match ext.as_str() {
+    let result = match ext.as_str() {
         "wav" => {
             let wav = parse_wav_file(data)?;
             let samples = if wav.sample_rate == 16000 {
@@ -3887,7 +3887,7 @@ pub(crate) fn load_audio_samples(path: &Path, data: &[u8]) -> CliResult<Vec<f32>
             } else {
                 resample(&wav.samples, wav.sample_rate, 16000)
             };
-            Ok(samples)
+            return Ok(samples);
         }
         #[cfg(feature = "symphonia")]
         "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov" | "webm" | "mkv" | "avi"
@@ -3898,6 +3898,13 @@ pub(crate) fn load_audio_samples(path: &Path, data: &[u8]) -> CliResult<Vec<f32>
             "{ext} format requires 'symphonia' feature. Build with: cargo build --features cli"
         ))),
         _ => Err(CliError::UnsupportedFormat(ext)),
+    };
+
+    // Fallback to ffmpeg for codecs symphonia can't handle (e.g. HE-AAC)
+    match result {
+        Ok(samples) => Ok(samples),
+        Err(_) => crate::audio::decode_with_ffmpeg(path)
+            .map_err(|e| CliError::InvalidArgument(e.to_string())),
     }
 }
 
