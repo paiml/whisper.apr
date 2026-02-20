@@ -111,8 +111,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Compare mel values at same positions
     println!("\n=== MEL COMPARISON (FIRST 10 FRAMES) ===\n");
     for frame in 0..10 {
-        let hf_idx = 0 * 3000 + frame; // First mel bin, frame N
-        let our_idx = 0 * 3000 + frame; // Same
+        let hf_idx = frame; // First mel bin (index 0), frame N
+        let our_idx = frame; // Same (mel bin 0 starts at offset 0)
         println!(
             "Frame {} mel[0]: HF={:.4}, ours={:.4}",
             frame, hf_mel_full[hf_idx], padded_mel[our_idx]

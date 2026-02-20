@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for name in reader.tensor_names() {
         if name.contains("decoder.layers.0") {
-            let entry = reader.get_tensor(name).unwrap();
+            let entry = reader.get_tensor(name).expect("tensor must exist for listed name");
             println!("  {:50} shape={:?}", name, &entry.shape);
         }
     }
@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for name in reader.tensor_names() {
         if name.contains("encoder.layers.0") {
-            let entry = reader.get_tensor(name).unwrap();
+            let entry = reader.get_tensor(name).expect("tensor must exist for listed name");
             println!("  {:50} shape={:?}", name, &entry.shape);
         }
     }

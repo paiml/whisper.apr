@@ -6,7 +6,7 @@ use whisper_apr::format::AprV2ReaderRef;
 
 fn print_ln_stats(reader: &AprV2ReaderRef<'_>, name: &str) {
     if let Some(values) = reader.get_tensor_as_f32(name) {
-        let entry = reader.get_tensor(name).unwrap();
+        let entry = reader.get_tensor(name).expect("tensor must exist since get_tensor_as_f32 succeeded");
         let mean = values.iter().sum::<f32>() / values.len() as f32;
         let min = values.iter().cloned().fold(f32::INFINITY, f32::min);
         let max = values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
