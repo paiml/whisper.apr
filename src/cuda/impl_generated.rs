@@ -68,10 +68,10 @@ use trueno_gpu::memory::resident::{
     TransferStats,
 };
 
-/// GELU activation (UCBD §4 ONE PATH: delegates to `trueno::gelu_scalar`)
+/// GELU activation function.
 #[inline]
 fn gelu(x: f32) -> f32 {
-    trueno::gelu_scalar(x)
+    0.5 * x * (1.0 + ((2.0_f32 / std::f32::consts::PI).sqrt() * (x + 0.044715 * x * x * x)).tanh())
 }
 
 /// GPU-accelerated Whisper model.
