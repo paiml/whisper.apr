@@ -24,7 +24,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("╚══════════════════════════════════════════════════════════════╝\n");
 
     // Print system info
-    println!("  CPUs: {}", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
+    println!(
+        "  CPUs: {}",
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    );
     println!("  SIMD: {}", whisper_apr::simd::backend_name());
     println!();
 
@@ -46,125 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("│         Multiple audio durations to isolate decoder impact.  │");
     println!("└─────────────────────────────────────────────────────────────┘\n");
 
-    let f32_model_path = resolve_f32_model()?;
-    let f16_model_path = Path::new("models/whisper-tiny-f16.apr");
-
-    if !f16_model_path.exists() {
-        eprintln!("  fp16 model not found: {}. Skipping e2e benchmark.", f16_model_path.display());
-        return Ok(());
-    }
-
-    // Load models once
-    println!("  Loading f32 model: {} ({:.1} MB)", f32_model_path.display(),
-        std::fs::metadata(&f32_model_path)?.len() as f64 / 1_000_000.0);
-    let f32_data = std::fs::read(&f32_model_path)?;
-    let f32_model = whisper_apr::WhisperApr::load_from_apr(&f32_data)?;
-
-    println!("  Loading fp16 model: {} ({:.1} MB)", f16_model_path.display(),
-        std::fs::metadata(f16_model_path)?.len() as f64 / 1_000_000.0);
-    let f16_data = std::fs::read(f16_model_path)?;
-    let f16_model = whisper_apr::WhisperApr::load_from_apr(&f16_data)?;
-
-    println!("  File size ratio: {:.1}%\n",
-        std::fs::metadata(f16_model_path)?.len() as f64 /
-        std::fs::metadata(&f32_model_path)?.len() as f64 * 100.0);
-
-    // Test multiple audio durations
-    let audio_files: Vec<(&str, &str, usize)> = vec![
-        ("demos/test-audio/test-speech-1.5s.wav", "1.5s speech", 5),
-        ("demos/test-audio/test-speech-3s.wav", "3s speech", 5),
-        ("demos/test-audio/test-speech-full.wav", "~35s speech", 3),
-        ("demos/test-audio/test-30s.wav", "30s mixed", 3),
-        ("demos/test-audio/test-60s.wav", "60s mixed", 2),
-    ];
-
-    println!("  ══════════════════════════════════════════════════════════════════════");
-    println!("  {:20} {:>9} {:>9} {:>8} {:>8}  {}", "Audio", "f32 (ms)", "fp16 (ms)", "Speedup", "Tokens", "Match?");
-    println!("  ──────────────────────────────────────────────────────────────────────");
-
-    for (path, label, iters) in &audio_files {
-        let audio_path = Path::new(path);
-        if !audio_path.exists() {
-            println!("  {:20} [not found, skipping]", label);
-            continue;
-        }
-
-        let audio_bytes = std::fs::read(audio_path)?;
-        let wav = parse_wav_file(&audio_bytes)?;
-        let audio_samples = if wav.sample_rate == 16000 {
-            wav.samples
-        } else {
-            whisper_apr::audio::wav::resample(&wav.samples, wav.sample_rate, 16000)
-        };
-        let duration_s = audio_samples.len() as f64 / 16000.0;
-
-        let options = || TranscribeOptions {
-            language: Some("en".to_string()),
-            ..Default::default()
-        };
-
-        // Warmup
-        let _ = f32_model.transcribe(&audio_samples, options());
-        let _ = f16_model.transcribe(&audio_samples, options());
-
-        // Benchmark f32
-        let mut f32_times = Vec::new();
-        let mut f32_text = String::new();
-        let mut f32_tokens = 0usize;
-        for i in 0..*iters {
-            let t0 = Instant::now();
-            let result = f32_model.transcribe(&audio_samples, options());
-            f32_times.push(t0.elapsed().as_secs_f64());
-            if i == 0 {
-                if let Ok(ref r) = result {
-                    f32_text = r.text.clone();
-                    // Count output tokens (rough: split on whitespace)
-                    f32_tokens = r.text.split_whitespace().count();
-                }
-            }
-        }
-
-        // Benchmark fp16
-        let mut f16_times = Vec::new();
-        let mut f16_text = String::new();
-        for i in 0..*iters {
-            let t0 = Instant::now();
-            let result = f16_model.transcribe(&audio_samples, options());
-            f16_times.push(t0.elapsed().as_secs_f64());
-            if i == 0 {
-                if let Ok(ref r) = result {
-                    f16_text = r.text.clone();
-                }
-            }
-        }
-
-        f32_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        f16_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-        let f32_median = f32_times[f32_times.len() / 2];
-        let f16_median = f16_times[f16_times.len() / 2];
-        let speedup = f32_median / f16_median;
-        let matched = f32_text.trim() == f16_text.trim();
-
-        let marker = if speedup > 1.5 { " <<" } else if speedup > 1.2 { " <" } else { "" };
-        println!(
-            "  {:20} {:>8.1} {:>9.1} {:>7.2}x{:3} {:>6}  {}",
-            format!("{label} ({duration_s:.1}s)"),
-            f32_median * 1000.0,
-            f16_median * 1000.0,
-            speedup,
-            marker,
-            f32_tokens,
-            if matched { "YES" } else { "DIFF" }
-        );
-
-        // Print transcription for verification on speech files
-        if label.contains("speech") && !matched {
-            println!("    f32: {:?}", f32_text.trim());
-            println!("    f16: {:?}", f16_text.trim());
-        }
-    }
-    println!("  ══════════════════════════════════════════════════════════════════════\n");
+    run_e2e_benchmark()?;
 
     // =========================================================================
     // PART 3: Summary
@@ -180,6 +67,189 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     Ok(())
+}
+
+/// Load f32 and fp16 models, returning both or an early-exit error.
+fn load_models(
+) -> Result<Option<(whisper_apr::WhisperApr, whisper_apr::WhisperApr)>, Box<dyn std::error::Error>>
+{
+    let f32_model_path = resolve_f32_model()?;
+    let f16_model_path = Path::new("models/whisper-tiny-f16.apr");
+
+    if !f16_model_path.exists() {
+        eprintln!(
+            "  fp16 model not found: {}. Skipping e2e benchmark.",
+            f16_model_path.display()
+        );
+        return Ok(None);
+    }
+
+    println!(
+        "  Loading f32 model: {} ({:.1} MB)",
+        f32_model_path.display(),
+        std::fs::metadata(&f32_model_path)?.len() as f64 / 1_000_000.0
+    );
+    let f32_data = std::fs::read(&f32_model_path)?;
+    let f32_model = whisper_apr::WhisperApr::load_from_apr(&f32_data)?;
+
+    println!(
+        "  Loading fp16 model: {} ({:.1} MB)",
+        f16_model_path.display(),
+        std::fs::metadata(f16_model_path)?.len() as f64 / 1_000_000.0
+    );
+    let f16_data = std::fs::read(f16_model_path)?;
+    let f16_model = whisper_apr::WhisperApr::load_from_apr(&f16_data)?;
+
+    println!(
+        "  File size ratio: {:.1}%\n",
+        std::fs::metadata(f16_model_path)?.len() as f64
+            / std::fs::metadata(&f32_model_path)?.len() as f64
+            * 100.0
+    );
+
+    Ok(Some((f32_model, f16_model)))
+}
+
+/// Run end-to-end transcription benchmarks across multiple audio durations.
+fn run_e2e_benchmark() -> Result<(), Box<dyn std::error::Error>> {
+    let models = load_models()?;
+    let (f32_model, f16_model) = match models {
+        Some(pair) => pair,
+        None => return Ok(()),
+    };
+
+    let audio_files: Vec<(&str, &str, usize)> = vec![
+        ("demos/test-audio/test-speech-1.5s.wav", "1.5s speech", 5),
+        ("demos/test-audio/test-speech-3s.wav", "3s speech", 5),
+        ("demos/test-audio/test-speech-full.wav", "~35s speech", 3),
+        ("demos/test-audio/test-30s.wav", "30s mixed", 3),
+        ("demos/test-audio/test-60s.wav", "60s mixed", 2),
+    ];
+
+    println!("  ══════════════════════════════════════════════════════════════════════");
+    println!(
+        "  {:20} {:>9} {:>9} {:>8} {:>8}  {}",
+        "Audio", "f32 (ms)", "fp16 (ms)", "Speedup", "Tokens", "Match?"
+    );
+    println!("  ──────────────────────────────────────────────────────────────────────");
+
+    for (path, label, iters) in &audio_files {
+        bench_single_audio(&f32_model, &f16_model, path, label, *iters)?;
+    }
+    println!("  ══════════════════════════════════════════════════════════════════════\n");
+
+    Ok(())
+}
+
+/// Benchmark a single audio file with both f32 and fp16 models.
+fn bench_single_audio(
+    f32_model: &whisper_apr::WhisperApr,
+    f16_model: &whisper_apr::WhisperApr,
+    path: &str,
+    label: &str,
+    iters: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let audio_path = Path::new(path);
+    if !audio_path.exists() {
+        println!("  {:20} [not found, skipping]", label);
+        return Ok(());
+    }
+
+    let audio_samples = load_audio_samples(audio_path)?;
+    let duration_s = audio_samples.len() as f64 / 16000.0;
+
+    let options = || TranscribeOptions {
+        language: Some("en".to_string()),
+        ..Default::default()
+    };
+
+    // Warmup
+    let _ = f32_model.transcribe(&audio_samples, options());
+    let _ = f16_model.transcribe(&audio_samples, options());
+
+    // Benchmark both models
+    let (f32_times, f32_text, f32_tokens) =
+        run_transcription_iters(f32_model, &audio_samples, &options, iters);
+    let (f16_times, f16_text, _) =
+        run_transcription_iters(f16_model, &audio_samples, &options, iters);
+
+    let f32_median = median(&f32_times);
+    let f16_median = median(&f16_times);
+    let speedup = f32_median / f16_median;
+    let matched = f32_text.trim() == f16_text.trim();
+
+    let marker = speedup_marker(speedup);
+    println!(
+        "  {:20} {:>8.1} {:>9.1} {:>7.2}x{:3} {:>6}  {}",
+        format!("{label} ({duration_s:.1}s)"),
+        f32_median * 1000.0,
+        f16_median * 1000.0,
+        speedup,
+        marker,
+        f32_tokens,
+        if matched { "YES" } else { "DIFF" }
+    );
+
+    if label.contains("speech") && !matched {
+        println!("    f32: {:?}", f32_text.trim());
+        println!("    f16: {:?}", f16_text.trim());
+    }
+
+    Ok(())
+}
+
+/// Load and resample audio to 16 kHz mono.
+fn load_audio_samples(path: &Path) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let audio_bytes = std::fs::read(path)?;
+    let wav = parse_wav_file(&audio_bytes)?;
+    let samples = if wav.sample_rate == 16000 {
+        wav.samples
+    } else {
+        whisper_apr::audio::wav::resample(&wav.samples, wav.sample_rate, 16000)
+    };
+    Ok(samples)
+}
+
+/// Run transcription `iters` times, collecting timings and first-run text/token count.
+fn run_transcription_iters(
+    model: &whisper_apr::WhisperApr,
+    audio_samples: &[f32],
+    options: &dyn Fn() -> TranscribeOptions,
+    iters: usize,
+) -> (Vec<f64>, String, usize) {
+    let mut times = Vec::with_capacity(iters);
+    let mut text = String::new();
+    let mut tokens = 0usize;
+    for i in 0..iters {
+        let t0 = Instant::now();
+        let result = model.transcribe(audio_samples, options());
+        times.push(t0.elapsed().as_secs_f64());
+        if i == 0 {
+            if let Ok(ref r) = result {
+                text = r.text.clone();
+                tokens = r.text.split_whitespace().count();
+            }
+        }
+    }
+    (times, text, tokens)
+}
+
+/// Compute median of a slice (sorts a copy).
+fn median(values: &[f64]) -> f64 {
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted[sorted.len() / 2]
+}
+
+/// Return a visual marker for speedup significance.
+fn speedup_marker(speedup: f64) -> &'static str {
+    if speedup > 1.5 {
+        " <<"
+    } else if speedup > 1.2 {
+        " <"
+    } else {
+        ""
+    }
 }
 
 fn resolve_f32_model() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
@@ -207,13 +277,16 @@ fn micro_benchmark_linear_weights() {
         (5120, 1280, "large FFN fc2 (5120->1280)"),
     ];
 
-    println!("  {:42} {:>10} {:>10} {:>8}", "Layer", "f32 (us)", "fp16 (us)", "Speedup");
+    println!(
+        "  {:42} {:>10} {:>10} {:>8}",
+        "Layer", "f32 (us)", "fp16 (us)", "Speedup"
+    );
     println!("  {}", "-".repeat(74));
 
     for (in_feat, out_feat, label) in &configs {
         let (f32_us, f16_us) = bench_linear_forward(*in_feat, *out_feat);
         let speedup = f32_us / f16_us;
-        let marker = if speedup > 1.5 { " <<" } else if speedup > 1.2 { " <" } else { "" };
+        let marker = speedup_marker(speedup);
         println!(
             "  {:42} {:>10.1} {:>10.1} {:>7.2}x{}",
             label, f32_us, f16_us, speedup, marker
@@ -236,7 +309,9 @@ fn bench_linear_forward(in_features: usize, out_features: usize) -> (f64, f64) {
     }
     linear_f16.convert_to_f16();
 
-    let input: Vec<f32> = (0..in_features).map(|i| ((i as f32) * 0.01).cos() * 0.1).collect();
+    let input: Vec<f32> = (0..in_features)
+        .map(|i| ((i as f32) * 0.01).cos() * 0.1)
+        .collect();
 
     // Warmup
     for _ in 0..50 {
@@ -271,7 +346,10 @@ fn bench_linear_forward(in_features: usize, out_features: usize) -> (f64, f64) {
         }
     }
     if violations > 0 {
-        eprintln!("    WARNING: {violations}/{} elements exceed {rtol:.0}% rel error", out_f32.len());
+        eprintln!(
+            "    WARNING: {violations}/{} elements exceed {rtol:.0}% rel error",
+            out_f32.len()
+        );
     }
 
     (f32_us, f16_us)
