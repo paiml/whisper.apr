@@ -223,7 +223,9 @@ impl StreamingTranscriber {
         self.state = TranscriberState::Processing;
 
         // Compute mel spectrogram
-        let mel_spec = self.mel.compute(&chunk)
+        let mel_spec = self
+            .mel
+            .compute(&chunk)
             .map_err(|e| WhisperError::Audio(e.to_string()))?;
 
         // Run inference on chunk
@@ -281,7 +283,9 @@ impl StreamingTranscriber {
         // Process any remaining audio in buffer
         if let Some(chunk) = self.processor.flush() {
             if !chunk.is_empty() {
-                let mel_spec = self.mel.compute(&chunk)
+                let mel_spec = self
+                    .mel
+                    .compute(&chunk)
                     .map_err(|e| WhisperError::Audio(e.to_string()))?;
                 let chunk_result = self.transcribe_chunk(&mel_spec)?;
                 if !chunk_result.text.is_empty() {

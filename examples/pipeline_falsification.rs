@@ -55,9 +55,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut all_pass = true;
     let mut first_failure: Option<&str> = None;
 
-    run_step("Step A: Audio Samples", step_a_audio, &mut all_pass, &mut first_failure);
-    run_step("Step B: Filterbank", step_b_filterbank, &mut all_pass, &mut first_failure);
-    run_step("Step C: Mel Spectrogram", step_c_mel, &mut all_pass, &mut first_failure);
+    run_step(
+        "Step A: Audio Samples",
+        step_a_audio,
+        &mut all_pass,
+        &mut first_failure,
+    );
+    run_step(
+        "Step B: Filterbank",
+        step_b_filterbank,
+        &mut all_pass,
+        &mut first_failure,
+    );
+    run_step(
+        "Step C: Mel Spectrogram",
+        step_c_mel,
+        &mut all_pass,
+        &mut first_failure,
+    );
 
     println!("=== Steps D-G: Encoder ===\n");
     match steps_encoder() {
@@ -153,8 +168,16 @@ fn step_c_mel() -> Result<bool, Box<dyn std::error::Error>> {
     let samples = load_wav_samples("demos/test-audio/test-speech-1.5s.wav")?;
     let our_mel = model.compute_mel(&samples)?;
 
-    println!("  Ground truth: {} values ({} frames)", gt_mel.len(), gt_mel.len() / 80);
-    println!("  Our mel:      {} values ({} frames)", our_mel.len(), our_mel.len() / 80);
+    println!(
+        "  Ground truth: {} values ({} frames)",
+        gt_mel.len(),
+        gt_mel.len() / 80
+    );
+    println!(
+        "  Our mel:      {} values ({} frames)",
+        our_mel.len(),
+        our_mel.len() / 80
+    );
 
     let min_len = gt_mel.len().min(our_mel.len());
     let cosine = cosine_similarity(&gt_mel[..min_len], &our_mel[..min_len]);
@@ -175,11 +198,15 @@ fn steps_encoder() -> Result<(bool, Vec<f32>), Box<dyn std::error::Error>> {
     let encoded = model.encode(&mel)?;
 
     let mean: f32 = encoded.iter().sum::<f32>() / encoded.len() as f32;
-    let std = (encoded.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / encoded.len() as f32).sqrt();
+    let std =
+        (encoded.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / encoded.len() as f32).sqrt();
     let nan_count = encoded.iter().filter(|x| x.is_nan()).count();
     let inf_count = encoded.iter().filter(|x| x.is_infinite()).count();
 
-    println!("  Encoder: {} values, mean={mean:.6}, std={std:.4}", encoded.len());
+    println!(
+        "  Encoder: {} values, mean={mean:.6}, std={std:.4}",
+        encoded.len()
+    );
     println!("  NaN: {nan_count}, Inf: {inf_count}");
 
     let pass = nan_count == 0 && inf_count == 0;
@@ -206,7 +233,10 @@ fn steps_decoder(encoded: &[f32]) -> Result<bool, Box<dyn std::error::Error>> {
         let already = *processed.borrow();
         let mut logits = vec![f32::NEG_INFINITY; n_vocab];
         for i in already..tokens.len() {
-            logits = model.decoder_mut().forward_one(tokens[i], encoded, &mut cache.borrow_mut())?;
+            logits =
+                model
+                    .decoder_mut()
+                    .forward_one(tokens[i], encoded, &mut cache.borrow_mut())?;
         }
         *processed.borrow_mut() = tokens.len();
         Ok(logits)
@@ -232,7 +262,10 @@ fn steps_decoder(encoded: &[f32]) -> Result<bool, Box<dyn std::error::Error>> {
             .map(|(i, &v)| (i as u32, v))
             .unwrap_or((0, 0.0));
 
-        println!("    Step {step:2}: token {tok:5} ({}) logit={logit:.4}", categorize_token(tok));
+        println!(
+            "    Step {step:2}: token {tok:5} ({}) logit={logit:.4}",
+            categorize_token(tok)
+        );
 
         if first_token.is_none() {
             first_token = Some(tok);
@@ -240,7 +273,9 @@ fn steps_decoder(encoded: &[f32]) -> Result<bool, Box<dyn std::error::Error>> {
             all_same = false;
         }
 
-        if tok == eot { break; }
+        if tok == eot {
+            break;
+        }
         tokens.push(tok);
     }
 
@@ -255,8 +290,12 @@ fn steps_decoder(encoded: &[f32]) -> Result<bool, Box<dyn std::error::Error>> {
 fn suppress_tokens(logits: &mut [f32]) {
     let n = logits.len();
     for &t in &[
-        special_tokens::SOT, special_tokens::NO_SPEECH, special_tokens::TRANSLATE,
-        special_tokens::TRANSCRIBE, special_tokens::PREV, special_tokens::SPEAKER_TURN,
+        special_tokens::SOT,
+        special_tokens::NO_SPEECH,
+        special_tokens::TRANSLATE,
+        special_tokens::TRANSCRIBE,
+        special_tokens::PREV,
+        special_tokens::SPEAKER_TURN,
         special_tokens::NO_TIMESTAMPS,
     ] {
         logits[t as usize] = f32::NEG_INFINITY;
@@ -301,10 +340,15 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         na += (x as f64).powi(2);
         nb += (y as f64).powi(2);
     }
-    if na == 0.0 || nb == 0.0 { return 0.0; }
+    if na == 0.0 || nb == 0.0 {
+        return 0.0;
+    }
     (dot / (na.sqrt() * nb.sqrt())) as f32
 }
 
 fn max_abs_diff(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).fold(0.0_f32, f32::max)
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| (x - y).abs())
+        .fold(0.0_f32, f32::max)
 }

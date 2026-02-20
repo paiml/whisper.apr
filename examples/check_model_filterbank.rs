@@ -32,7 +32,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let max = fb.data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
             let min = fb.data.iter().cloned().fold(f32::INFINITY, f32::min);
             let mean = fb.data.iter().sum::<f32>() / fb.data.len() as f32;
-            let var = fb.data.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / fb.data.len() as f32;
+            let var =
+                fb.data.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / fb.data.len() as f32;
             let std = var.sqrt();
             let nonzero = fb.data.iter().filter(|&&x| x > 1e-10).count();
 

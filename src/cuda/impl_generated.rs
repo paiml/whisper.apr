@@ -203,9 +203,10 @@ impl WhisperCuda {
         tokenizer: BpeTokenizer,
         device_ordinal: i32,
     ) -> WhisperResult<Self> {
-        let mel_filters = MelFilterbank::new(
-            &MelConfig { n_mels: config.n_mels as usize, ..MelConfig::whisper() },
-        );
+        let mel_filters = MelFilterbank::new(&MelConfig {
+            n_mels: config.n_mels as usize,
+            ..MelConfig::whisper()
+        });
         Self::new_with_components(
             encoder,
             decoder,
@@ -3443,8 +3444,7 @@ impl WhisperCuda {
             );
         }
 
-        let segments =
-            Self::build_segments(&tokens, &text, audio.len(), &self.tokenizer);
+        let segments = Self::build_segments(&tokens, &text, audio.len(), &self.tokenizer);
 
         Ok(TranscriptionResult {
             text,
@@ -3511,8 +3511,7 @@ impl WhisperCuda {
         }
 
         // Split any remaining long segments at sentence boundaries
-        let final_segments =
-            crate::timestamps::split_long_segments(&all_segments, 10.0);
+        let final_segments = crate::timestamps::split_long_segments(&all_segments, 10.0);
 
         Ok(TranscriptionResult {
             text: all_text,
@@ -3548,9 +3547,7 @@ impl WhisperCuda {
     ) -> WhisperResult<()> {
         let prefill_start = std::time::Instant::now();
         for &token in tokens {
-            let _ = self
-                .decoder
-                .forward_one(token, encoder_output, cache)?;
+            let _ = self.decoder.forward_one(token, encoder_output, cache)?;
         }
         if std::env::var("WHISPER_PROFILE_DECODER").is_ok() {
             let prefill_time = prefill_start.elapsed();

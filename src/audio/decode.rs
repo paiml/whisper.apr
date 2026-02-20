@@ -12,8 +12,7 @@ use std::path::Path;
 
 /// Supported audio/media file extensions.
 pub const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "wav", "mp3", "flac", "ogg", "m4a", "aac",
-    "mp4", "mov", "webm", "mkv", "avi", "opus",
+    "wav", "mp3", "flac", "ogg", "m4a", "aac", "mp4", "mov", "webm", "mkv", "avi", "opus",
 ];
 
 /// Check if a file extension is supported for audio decoding.
@@ -56,17 +55,15 @@ pub fn load_audio_samples(data: &[u8], ext: &str) -> Result<Vec<f32>, AudioDecod
             }
         }
         #[cfg(feature = "symphonia")]
-        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov"
-        | "webm" | "mkv" | "avi" | "opus" => decode_with_symphonia(data, ext)?,
+        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov" | "webm" | "mkv" | "avi"
+        | "opus" => decode_with_symphonia(data, ext)?,
         #[cfg(not(feature = "symphonia"))]
-        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov"
-        | "webm" | "mkv" | "avi" | "opus" => {
-            return Err(AudioDecodeError::FeatureRequired(
-                format!(
-                    "{ext} format requires the 'symphonia' feature. \
+        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov" | "webm" | "mkv" | "avi"
+        | "opus" => {
+            return Err(AudioDecodeError::FeatureRequired(format!(
+                "{ext} format requires the 'symphonia' feature. \
                      Build with: cargo build --features symphonia"
-                ),
-            ));
+            )));
         }
         _ => return Err(AudioDecodeError::UnsupportedFormat(ext.to_string())),
     };
@@ -158,10 +155,7 @@ fn decode_with_symphonia(data: &[u8], ext: &str) -> Result<Vec<f32>, AudioDecode
     let track = format
         .tracks()
         .iter()
-        .find(|t| {
-            t.codec_params.codec
-                != symphonia::core::codecs::CODEC_TYPE_NULL
-        })
+        .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)
         .ok_or_else(|| AudioDecodeError::Format("No audio track found".into()))?;
 
     let track_id = track.id;
@@ -199,9 +193,9 @@ fn next_packet_for_track(
                 return Ok(None);
             }
             Err(e) => {
-                return Err(AudioDecodeError::Format(
-                    format!("Failed to read packet: {e}"),
-                ));
+                return Err(AudioDecodeError::Format(format!(
+                    "Failed to read packet: {e}"
+                )));
             }
         }
     }
@@ -225,21 +219,13 @@ fn read_next_audio_packet(
         match decoder.decode(&packet) {
             Ok(decoded) => {
                 let spec = *decoded.spec();
-                let mut buf = SampleBuffer::<f32>::new(
-                    decoded.capacity() as u64,
-                    spec,
-                );
+                let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
                 buf.copy_interleaved_ref(decoded);
-                return Ok(Some((
-                    buf.samples().to_vec(),
-                    spec.channels.count(),
-                )));
+                return Ok(Some((buf.samples().to_vec(), spec.channels.count())));
             }
             Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
             Err(e) => {
-                return Err(AudioDecodeError::Format(
-                    format!("Decode error: {e}"),
-                ));
+                return Err(AudioDecodeError::Format(format!("Decode error: {e}")));
             }
         }
     }
@@ -325,9 +311,10 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        let io_err = AudioDecodeError::Io(
-            std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
-        );
+        let io_err = AudioDecodeError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "not found",
+        ));
         assert!(io_err.to_string().contains("I/O"));
 
         let fmt_err = AudioDecodeError::Format("bad header".into());
@@ -342,9 +329,10 @@ mod tests {
 
     #[test]
     fn test_error_source() {
-        let io_err = AudioDecodeError::Io(
-            std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
-        );
+        let io_err = AudioDecodeError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "not found",
+        ));
         assert!(std::error::Error::source(&io_err).is_some());
 
         let fmt_err = AudioDecodeError::Format("test".into());

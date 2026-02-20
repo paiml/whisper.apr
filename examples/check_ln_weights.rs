@@ -44,7 +44,10 @@ fn check_specific_ln(reader: &AprV2ReaderRef<'_>) {
         println!("  range: [{min:.4}, {max:.4}]");
         println!(
             "  first 10: {:?}",
-            &values[..10].iter().map(|x| format!("{x:.4}")).collect::<Vec<_>>()
+            &values[..10]
+                .iter()
+                .map(|x| format!("{x:.4}"))
+                .collect::<Vec<_>>()
         );
 
         if mean.abs() > 2.0 {

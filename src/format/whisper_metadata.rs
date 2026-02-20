@@ -41,10 +41,11 @@ pub fn build_whisper_metadata(config: &ModelConfig, source: &str) -> AprV2Metada
         .insert("n_audio_ctx".into(), json!(config.n_audio_ctx));
     meta.custom
         .insert("n_text_ctx".into(), json!(config.n_text_ctx));
-    meta.custom
-        .insert("n_mels".into(), json!(config.n_mels));
-    meta.custom
-        .insert("model_type_id".into(), json!(model_type_to_u8(config.model_type)));
+    meta.custom.insert("n_mels".into(), json!(config.n_mels));
+    meta.custom.insert(
+        "model_type_id".into(),
+        json!(model_type_to_u8(config.model_type)),
+    );
 
     // Audio frontend and encoding types
     let frontend_str = match config.audio_frontend {
@@ -68,8 +69,7 @@ pub fn build_whisper_metadata(config: &ModelConfig, source: &str) -> AprV2Metada
         ModelFamily::Llama => "llama",
         ModelFamily::Generic => "generic",
     };
-    meta.custom
-        .insert("model_family".into(), json!(family_str));
+    meta.custom.insert("model_family".into(), json!(family_str));
 
     meta
 }
@@ -101,11 +101,7 @@ pub fn metadata_to_model_config(meta: &AprV2Metadata) -> ModelConfig {
 
     let model_type = u8_to_model_type(model_type_id);
 
-    let audio_frontend = match meta
-        .custom
-        .get("audio_frontend")
-        .and_then(|v| v.as_str())
-    {
+    let audio_frontend = match meta.custom.get("audio_frontend").and_then(|v| v.as_str()) {
         Some("learned_conv") => AudioFrontend::LearnedConv,
         _ => AudioFrontend::MelFilterbank,
     };

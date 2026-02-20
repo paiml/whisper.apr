@@ -10,9 +10,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_bytes_copy = fs::read("models/whisper-tiny-fb.apr")?;
     let reader = AprV2ReaderRef::from_bytes(&model_bytes_copy)?;
 
-    let enc_ln_weight = reader.get_tensor_as_f32("encoder.layer_norm.weight")
+    let enc_ln_weight = reader
+        .get_tensor_as_f32("encoder.layer_norm.weight")
         .ok_or("encoder.layer_norm.weight not found")?;
-    let enc_ln_bias = reader.get_tensor_as_f32("encoder.layer_norm.bias")
+    let enc_ln_bias = reader
+        .get_tensor_as_f32("encoder.layer_norm.bias")
         .ok_or("encoder.layer_norm.bias not found")?;
 
     println!(

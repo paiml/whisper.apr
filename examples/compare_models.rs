@@ -18,9 +18,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Compare decoder.layer_norm.weight
     println!("\n=== decoder.layer_norm.weight ===\n");
 
-    let orig_ln = original.get_tensor_as_f32("decoder.layer_norm.weight")
+    let orig_ln = original
+        .get_tensor_as_f32("decoder.layer_norm.weight")
         .ok_or("decoder.layer_norm.weight not found in original")?;
-    let fb_ln = fb.get_tensor_as_f32("decoder.layer_norm.weight")
+    let fb_ln = fb
+        .get_tensor_as_f32("decoder.layer_norm.weight")
         .ok_or("decoder.layer_norm.weight not found in fb")?;
 
     let orig_mean = orig_ln.iter().sum::<f32>() / orig_ln.len() as f32;

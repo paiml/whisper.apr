@@ -27,7 +27,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let entry = reader.get_tensor(name).unwrap();
         let prefix = name.split('.').next().unwrap_or("other").to_string();
         let n_elements = entry.element_count();
-        by_prefix.entry(prefix).or_default().push((name, &entry.shape, entry.size, n_elements));
+        by_prefix
+            .entry(prefix)
+            .or_default()
+            .push((name, &entry.shape, entry.size, n_elements));
     }
 
     for (prefix, tensors) in &by_prefix {

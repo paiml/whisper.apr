@@ -37,11 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Check for close matches
             for name in reader.tensor_names() {
                 if name.starts_with("decoder.token") {
-                    println!(
-                        "  Close match: {:?} (len {})",
-                        name,
-                        name.len()
-                    );
+                    println!("  Close match: {:?} (len {})", name, name.len());
                     // Show difference
                     println!("    Expected bytes: {:?}", exact.as_bytes());
                     println!("    Actual bytes:   {:?}", name.as_bytes());

@@ -1179,8 +1179,7 @@ fn run_pull(args: &AprPullArgs) -> CliResult<CommandResult> {
 }
 
 fn run_pull_list(args: &AprPullListArgs) -> CliResult<CommandResult> {
-    apr_cli::model_pull::list(args.json)
-        .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
+    apr_cli::model_pull::list(args.json).map_err(|e| CliError::InvalidArgument(e.to_string()))?;
     Ok(CommandResult::success("Listed cached models"))
 }
 

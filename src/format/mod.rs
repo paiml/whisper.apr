@@ -77,13 +77,9 @@ pub use validation::{
     quick_validate, validate_apr_bytes, AprValidator, TensorStats, ValidationCheck,
     ValidationReport,
 };
-pub use whisper_metadata::{
-    metadata_to_model_config, MelFilterbankData,
-};
 #[cfg(any(feature = "converter", test))]
-pub use whisper_metadata::{
-    build_whisper_metadata, create_test_apr,
-};
+pub use whisper_metadata::{build_whisper_metadata, create_test_apr};
+pub use whisper_metadata::{metadata_to_model_config, MelFilterbankData};
 
 /// CRC32 (IEEE) checksum for APR2 format compatibility
 #[must_use]

@@ -1,7 +1,7 @@
 //! List ALL tensors in an .apr model file (no limit)
 
 use std::path::Path;
-use whisper_apr::format::{AprV2ReaderRef, metadata_to_model_config};
+use whisper_apr::format::{metadata_to_model_config, AprV2ReaderRef};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== APR MODEL FULL TENSOR LIST ===\n");
