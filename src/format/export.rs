@@ -260,7 +260,11 @@ mod tests {
         let data = fs::read(&path).expect("Should read file");
 
         // First 8 bytes are header length
-        let header_len = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
+        let header_len = u64::from_le_bytes(
+            data[0..8]
+                .try_into()
+                .expect("header length should be 8 bytes"),
+        ) as usize;
         assert!(header_len > 0);
 
         // Header should contain tensor names
@@ -286,7 +290,11 @@ mod tests {
         SafeTensorsExporter::save(&path, &tensors).expect("Export should succeed");
 
         let data = fs::read(&path).expect("Should read file");
-        let header_len = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
+        let header_len = u64::from_le_bytes(
+            data[0..8]
+                .try_into()
+                .expect("header length should be 8 bytes"),
+        ) as usize;
 
         // Header length should be 8-byte aligned
         assert_eq!(header_len % 8, 0, "Header length should be 8-byte aligned");
@@ -333,7 +341,11 @@ mod tests {
             .expect("Export should succeed");
 
         let data = fs::read(&path).expect("Should read file");
-        let header_len = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
+        let header_len = u64::from_le_bytes(
+            data[0..8]
+                .try_into()
+                .expect("header length should be 8 bytes"),
+        ) as usize;
         let header_str = std::str::from_utf8(&data[8..8 + header_len])
             .expect("Header should be UTF-8")
             .trim();
@@ -390,9 +402,13 @@ mod tests {
             .expect("should succeed");
 
         let data = fs::read(&path).expect("read");
-        let header_len = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
+        let header_len = u64::from_le_bytes(
+            data[0..8]
+                .try_into()
+                .expect("header length should be 8 bytes"),
+        ) as usize;
         let header_str = std::str::from_utf8(&data[8..8 + header_len])
-            .unwrap()
+            .expect("header should be valid UTF-8")
             .trim();
         // Empty metadata should not add __metadata__ key
         assert!(!header_str.contains("__metadata__"));
@@ -415,7 +431,11 @@ mod tests {
         SafeTensorsExporter::save(&path, &tensors).expect("save");
 
         let data = fs::read(&path).expect("read");
-        let header_len = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
+        let header_len = u64::from_le_bytes(
+            data[0..8]
+                .try_into()
+                .expect("header length should be 8 bytes"),
+        ) as usize;
 
         // After header, first tensor data is 2 f32s = 8 bytes, then 3 f32s = 12 bytes
         let data_start = 8 + header_len;

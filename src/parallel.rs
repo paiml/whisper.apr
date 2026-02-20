@@ -238,7 +238,7 @@ mod tests {
         // First call should succeed
         let result = configure_thread_pool(Some(2));
         assert!(result.is_ok());
-        let threads = result.unwrap();
+        let threads = result.expect("configure_thread_pool should succeed");
         assert!(threads >= 1);
     }
 
@@ -265,6 +265,6 @@ mod tests {
     fn test_parallel_try_map_empty() {
         let results: WhisperResult<Vec<i32>> = parallel_try_map(0..0, |i| Ok(i as i32));
         assert!(results.is_ok());
-        assert!(results.unwrap().is_empty());
+        assert!(results.expect("parallel_try_map should succeed on empty").is_empty());
     }
 }
