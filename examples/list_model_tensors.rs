@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::collections::BTreeMap::new();
 
     for name in reader.tensor_names() {
-        let entry = reader.get_tensor(name).unwrap();
+        let entry = reader.get_tensor(name).expect("tensor must exist for listed name");
         let prefix = name.split('.').next().unwrap_or("other").to_string();
         let n_elements = entry.element_count();
         by_prefix
@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut total_bytes: u64 = 0;
     let mut total_elements: usize = 0;
     for name in reader.tensor_names() {
-        let entry = reader.get_tensor(name).unwrap();
+        let entry = reader.get_tensor(name).expect("tensor must exist for listed name");
         total_bytes += entry.size;
         total_elements += entry.element_count();
     }

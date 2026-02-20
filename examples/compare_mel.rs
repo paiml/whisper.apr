@@ -88,12 +88,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nFirst frame comparison (mel 0-9):");
     println!("HF:  ");
     for mel_idx in 0..10 {
-        print!("{:.3} ", hf_mel[mel_idx * n_frames + 0]); // HF: [mel][frame]
+        print!("{:.3} ", hf_mel[mel_idx * n_frames]); // HF: [mel][frame=0]
     }
     println!();
     println!("Ours:");
     for mel_idx in 0..10 {
-        print!("{:.3} ", our_mel[0 * n_mels + mel_idx]); // Ours: [frame][mel]
+        print!("{:.3} ", our_mel[mel_idx]); // Ours: [frame=0][mel]
     }
     println!();
 
@@ -127,8 +127,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nFrame 0 detailed comparison (all 80 mels):");
     let mut diffs = Vec::new();
     for mel in 0..n_mels {
-        let hf_val = hf_mel[mel * n_frames + 0];
-        let our_val = our_mel[0 * n_mels + mel];
+        let hf_val = hf_mel[mel * n_frames]; // frame=0
+        let our_val = our_mel[mel]; // frame=0, mel offset
         let diff = hf_val - our_val;
         diffs.push((mel, hf_val, our_val, diff));
     }
