@@ -27,8 +27,8 @@ pub use streaming::{
 };
 
 pub use decode::{
-    is_supported_extension, load_audio_file, load_audio_samples, AudioDecodeError,
-    SUPPORTED_EXTENSIONS,
+    decode_with_ffmpeg, is_supported_extension, load_audio_file, load_audio_samples,
+    AudioDecodeError, SUPPORTED_EXTENSIONS,
 };
 // Re-export VAD types from root module for audio pipeline integration
 pub use crate::vad::{

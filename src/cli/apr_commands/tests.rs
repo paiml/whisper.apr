@@ -1217,6 +1217,7 @@ fn falsification_f6_export_preserves_tensors() {
         quantize: None,
         include_tokenizer: false,
         include_config: false,
+        ..Default::default()
     };
     let export_report = apr_export(&st_path, &export_path, options).expect("export should succeed");
 
