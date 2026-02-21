@@ -334,8 +334,12 @@ fn bench_linear_forward(in_features: usize, out_features: usize) -> (f64, f64) {
     let f16_us = t0.elapsed().as_secs_f64() * 1_000_000.0 / MICRO_ITERS as f64;
 
     // Verify correctness
-    let out_f32 = linear_f32.forward_simd(&input, 1).expect("f32 forward_simd failed");
-    let out_f16 = linear_f16.forward_simd(&input, 1).expect("f16 forward_simd failed");
+    let out_f32 = linear_f32
+        .forward_simd(&input, 1)
+        .expect("f32 forward_simd failed");
+    let out_f16 = linear_f16
+        .forward_simd(&input, 1)
+        .expect("f16 forward_simd failed");
     let atol = 1e-4;
     let rtol = 0.02;
     let mut violations = 0usize;

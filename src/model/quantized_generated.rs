@@ -982,11 +982,16 @@ fn f16_to_f32(bits: u16) -> f32 {
     let exp = ((bits >> 10) & 0x1F) as u32;
     let frac = (bits & 0x3FF) as u32;
     let f32_bits = if exp == 0 {
-        if frac == 0 { sign } else {
+        if frac == 0 {
+            sign
+        } else {
             // Subnormal: normalize
             let mut e = 1u32;
             let mut f = frac;
-            while f & 0x400 == 0 { f <<= 1; e += 1; }
+            while f & 0x400 == 0 {
+                f <<= 1;
+                e += 1;
+            }
             sign | ((127 - 15 + 1 - e) << 23) | ((f & 0x3FF) << 13)
         }
     } else if exp == 31 {

@@ -1,0 +1,1294 @@
+{
+  "version": "1.0",
+  "generated": "2026-02-20T12:35:22.980741360+00:00",
+  "files": {
+    "src/vocabulary/hotwords/tests.rs": {
+      "lines": 382,
+      "test_lines": 370,
+      "tlr": 0.9685864,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/wasm/capabilities/tests.rs": {
+      "lines": 433,
+      "test_lines": 370,
+      "tlr": 0.85450345,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/wasm/vocabulary/mod.rs": {
+      "lines": 452,
+      "test_lines": 807,
+      "tlr": 1.7853982,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/model/lfm2/model/mod.rs": {
+      "lines": 514,
+      "test_lines": 3,
+      "tlr": 0.0058365758,
+      "health": 45,
+      "status": "warning"
+    },
+    "src/wasm/diarization/extractor.rs": {
+      "lines": 83,
+      "test_lines": 20,
+      "tlr": 0.24096386,
+      "health": 92,
+      "status": "ideal"
+    },
+    "src/tui/visualization.rs": {
+      "lines": 430,
+      "test_lines": 178,
+      "tlr": 0.41395348,
+      "health": 78,
+      "status": "acceptable"
+    },
+    "src/diarization/embedding/tests.rs": {
+      "lines": 274,
+      "test_lines": 290,
+      "tlr": 1.0583942,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/wasm/diarization/detector.rs": {
+      "lines": 79,
+      "test_lines": 20,
+      "tlr": 0.25316456,
+      "health": 93,
+      "status": "ideal"
+    },
+    "src/inference/beam/mod.rs": {
+      "lines": 421,
+      "test_lines": 2,
+      "tlr": 0.004750594,
+      "health": 50,
+      "status": "acceptable"
+    },
+    "src/diarization/clustering/mod.rs": {
+      "lines": 580,
+      "test_lines": 2,
+      "tlr": 0.0034482758,
+      "health": 45,
+      "status": "warning"
+    },
+    "src/diarization/embedding/mod.rs": {
+      "lines": 590,
+      "test_lines": 2,
+      "tlr": 0.0033898305,
+      "health": 45,
+      "status": "warning"
+    },
+    "src/backend/traits/mod.rs": {
+      "lines": 452,
+      "test_lines": 2,
+      "tlr": 0.0044247787,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/wasm/threading.rs": {
+      "lines": 319,
+      "test_lines": 130,
+      "tlr": 0.4075235,
+      "health": 78,
+      "status": "acceptable"
+    },
+    "src/cli/args.rs": {
+      "lines": 7,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/timestamps/interpolation/tests.rs": {
+      "lines": 254,
+      "test_lines": 220,
+      "tlr": 0.86614174,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/vocabulary/trie/mod.rs": {
+      "lines": 376,
+      "test_lines": 2,
+      "tlr": 0.005319149,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/backend/selector/mod.rs": {
+      "lines": 382,
+      "test_lines": 3,
+      "tlr": 0.007853403,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/tui/app.rs": {
+      "lines": 528,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 45,
+      "status": "warning"
+    },
+    "src/tokenizer/sentencepiece.rs": {
+      "lines": 250,
+      "test_lines": 171,
+      "tlr": 0.684,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/gpu/capabilities.rs": {
+      "lines": 407,
+      "test_lines": 316,
+      "tlr": 0.7764128,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/wasm/gpu/limits.rs": {
+      "lines": 92,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/wasm/gpu/detection.rs": {
+      "lines": 190,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/gpu/buffer.rs": {
+      "lines": 509,
+      "test_lines": 202,
+      "tlr": 0.39685658,
+      "health": 60,
+      "status": "warning"
+    },
+    "src/memory/zram.rs": {
+      "lines": 387,
+      "test_lines": 2,
+      "tlr": 0.005167959,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/gpu/error.rs": {
+      "lines": 199,
+      "test_lines": 145,
+      "tlr": 0.72864324,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/cli/output.rs": {
+      "lines": 686,
+      "test_lines": 617,
+      "tlr": 0.8994169,
+      "health": 80,
+      "status": "warning"
+    },
+    "src/cli/apr_args.rs": {
+      "lines": 726,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 25,
+      "status": "warning"
+    },
+    "src/cli/apr_commands/probe.rs": {
+      "lines": 458,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 40,
+      "status": "acceptable"
+    },
+    "src/cli/apr_commands/phase3.rs": {
+      "lines": 798,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 35,
+      "status": "warning"
+    },
+    "src/wasm/vocabulary/customizer.rs": {
+      "lines": 78,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/model/encoder/layers.rs": {
+      "lines": 195,
+      "test_lines": 146,
+      "tlr": 0.74871796,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/model/lfm2/mod.rs": {
+      "lines": 49,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/format/validation/validator.rs": {
+      "lines": 585,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 45,
+      "status": "warning"
+    },
+    "src/model/download.rs": {
+      "lines": 431,
+      "test_lines": 225,
+      "tlr": 0.52204174,
+      "health": 84,
+      "status": "acceptable"
+    },
+    "src/wasm/mod.rs": {
+      "lines": 84,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 55,
+      "status": "ideal"
+    },
+    "src/cli/apr_commands/rosetta.rs": {
+      "lines": 336,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 35,
+      "status": "acceptable"
+    },
+    "src/vad/config.rs": {
+      "lines": 267,
+      "test_lines": 149,
+      "tlr": 0.5580524,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/format/validation/check.rs": {
+      "lines": 84,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/wasm/diarization/result.rs": {
+      "lines": 251,
+      "test_lines": 136,
+      "tlr": 0.5418327,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/vad/mod.rs": {
+      "lines": 353,
+      "test_lines": 2,
+      "tlr": 0.0056657223,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/format/validation/tests.rs": {
+      "lines": 1049,
+      "test_lines": 590,
+      "tlr": 0.5624404,
+      "health": 49,
+      "status": "problem"
+    },
+    "src/gpu/executor.rs": {
+      "lines": 504,
+      "test_lines": 103,
+      "tlr": 0.20436507,
+      "health": 53,
+      "status": "warning"
+    },
+    "src/gpu/ops/mel.rs": {
+      "lines": 509,
+      "test_lines": 226,
+      "tlr": 0.44400784,
+      "health": 62,
+      "status": "warning"
+    },
+    "src/format/export.rs": {
+      "lines": 464,
+      "test_lines": 372,
+      "tlr": 0.80172414,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/inference/streaming/mod.rs": {
+      "lines": 343,
+      "test_lines": 2,
+      "tlr": 0.005830904,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/audio/batch.rs": {
+      "lines": 519,
+      "test_lines": 515,
+      "tlr": 0.9922929,
+      "health": 84,
+      "status": "warning"
+    },
+    "src/diarization/tests.rs": {
+      "lines": 1808,
+      "test_lines": 780,
+      "tlr": 0.43141592,
+      "health": 46,
+      "status": "problem"
+    },
+    "src/vocabulary/adapter/mod.rs": {
+      "lines": 467,
+      "test_lines": 2,
+      "tlr": 0.004282655,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/gpu/pipeline/mod.rs": {
+      "lines": 722,
+      "test_lines": 2,
+      "tlr": 0.002770083,
+      "health": 45,
+      "status": "warning"
+    },
+    "src/model/lfm2/tokenizer/tests.rs": {
+      "lines": 228,
+      "test_lines": 180,
+      "tlr": 0.7894737,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/simd/fft.rs": {
+      "lines": 72,
+      "test_lines": 68,
+      "tlr": 0.9444444,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/model/mod.rs": {
+      "lines": 908,
+      "test_lines": 685,
+      "tlr": 0.75440526,
+      "health": 75,
+      "status": "warning"
+    },
+    "src/simd/property_tests.rs": {
+      "lines": 78,
+      "test_lines": 136,
+      "tlr": 1.7435898,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/gpu/detect/mod.rs": {
+      "lines": 648,
+      "test_lines": 2,
+      "tlr": 0.0030864198,
+      "health": 45,
+      "status": "warning"
+    },
+    "src/model/lfm2/wasm_config.rs": {
+      "lines": 251,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/timestamps/mod.rs": {
+      "lines": 254,
+      "test_lines": 191,
+      "tlr": 0.7519685,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/cuda/mod.rs": {
+      "lines": 10,
+      "test_lines": 2,
+      "tlr": 0.2,
+      "health": 86,
+      "status": "ideal"
+    },
+    "src/audio/resampler/mod.rs": {
+      "lines": 301,
+      "test_lines": 2,
+      "tlr": 0.006644518,
+      "health": 50,
+      "status": "acceptable"
+    },
+    "src/format/gguf_loader.rs": {
+      "lines": 725,
+      "test_lines": 727,
+      "tlr": 1.0027586,
+      "health": 85,
+      "status": "warning"
+    },
+    "src/audio/wav/tests.rs": {
+      "lines": 824,
+      "test_lines": 430,
+      "tlr": 0.5218447,
+      "health": 65,
+      "status": "warning"
+    },
+    "src/gpu/ops/layernorm.rs": {
+      "lines": 617,
+      "test_lines": 364,
+      "tlr": 0.5899514,
+      "health": 68,
+      "status": "warning"
+    },
+    "src/memory/pool_tests.rs": {
+      "lines": 278,
+      "test_lines": 230,
+      "tlr": 0.82733816,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/simd/vector.rs": {
+      "lines": 611,
+      "test_lines": 626,
+      "tlr": 1.02455,
+      "health": 85,
+      "status": "warning"
+    },
+    "src/wasm/vocabulary/domain.rs": {
+      "lines": 321,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/gpu/mod.rs": {
+      "lines": 81,
+      "test_lines": 42,
+      "tlr": 0.5185185,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/gpu/ops/matmul.rs": {
+      "lines": 604,
+      "test_lines": 396,
+      "tlr": 0.65562916,
+      "health": 71,
+      "status": "warning"
+    },
+    "src/memory/zram_tests.rs": {
+      "lines": 991,
+      "test_lines": 1090,
+      "tlr": 1.099899,
+      "health": 85,
+      "status": "warning"
+    },
+    "src/vad/tests.rs": {
+      "lines": 2192,
+      "test_lines": 890,
+      "tlr": 0.4060219,
+      "health": 40,
+      "status": "critical"
+    },
+    "src/gpu/detect/tests.rs": {
+      "lines": 241,
+      "test_lines": 250,
+      "tlr": 1.0373445,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/simd/attention.rs": {
+      "lines": 166,
+      "test_lines": 95,
+      "tlr": 0.57228917,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/gpu/pipeline/tests.rs": {
+      "lines": 254,
+      "test_lines": 290,
+      "tlr": 1.1417323,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/progress.rs": {
+      "lines": 545,
+      "test_lines": 494,
+      "tlr": 0.906422,
+      "health": 81,
+      "status": "warning"
+    },
+    "src/wasm/diarization/mod.rs": {
+      "lines": 106,
+      "test_lines": 100,
+      "tlr": 0.9433962,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/cli/model_loader.rs": {
+      "lines": 885,
+      "test_lines": 144,
+      "tlr": 0.16271186,
+      "health": 51,
+      "status": "warning"
+    },
+    "src/model/encoder/mod.rs": {
+      "lines": 946,
+      "test_lines": 485,
+      "tlr": 0.512685,
+      "health": 65,
+      "status": "warning"
+    },
+    "src/model/lfm2/layer.rs": {
+      "lines": 498,
+      "test_lines": 214,
+      "tlr": 0.42971888,
+      "health": 79,
+      "status": "acceptable"
+    },
+    "src/model/lfm2/tokenizer/mod.rs": {
+      "lines": 713,
+      "test_lines": 2,
+      "tlr": 0.002805049,
+      "health": 45,
+      "status": "warning"
+    },
+    "src/cli/apr_commands/tests.rs": {
+      "lines": 1742,
+      "test_lines": 710,
+      "tlr": 0.40757748,
+      "health": 45,
+      "status": "problem"
+    },
+    "src/format/apr2.rs": {
+      "lines": 7,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/vocabulary/trie/tests.rs": {
+      "lines": 366,
+      "test_lines": 340,
+      "tlr": 0.92896175,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/cli/commands.rs": {
+      "lines": 7,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/format/compress/mod.rs": {
+      "lines": 388,
+      "test_lines": 5,
+      "tlr": 0.012886598,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/error.rs": {
+      "lines": 138,
+      "test_lines": 171,
+      "tlr": 1.2391304,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/cli/apr_commands/mod.rs": {
+      "lines": 1522,
+      "test_lines": 2,
+      "tlr": 0.0013140604,
+      "health": 35,
+      "status": "problem"
+    },
+    "src/inference/greedy.rs": {
+      "lines": 614,
+      "test_lines": 659,
+      "tlr": 1.0732899,
+      "health": 85,
+      "status": "warning"
+    },
+    "src/format/mod.rs": {
+      "lines": 99,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 55,
+      "status": "ideal"
+    },
+    "src/model/quantized.rs": {
+      "lines": 7,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/wasm/diarization/segment.rs": {
+      "lines": 87,
+      "test_lines": 31,
+      "tlr": 0.35632184,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/simd/layer.rs": {
+      "lines": 176,
+      "test_lines": 225,
+      "tlr": 1.2784091,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/lib.rs": {
+      "lines": 138,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 55,
+      "status": "ideal"
+    },
+    "src/model/encoder/block.rs": {
+      "lines": 183,
+      "test_lines": 97,
+      "tlr": 0.5300546,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/diarization/segmentation/mod.rs": {
+      "lines": 447,
+      "test_lines": 3,
+      "tlr": 0.0067114094,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/publish/tests.rs": {
+      "lines": 373,
+      "test_lines": 310,
+      "tlr": 0.8310992,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/memory/mmap/mod.rs": {
+      "lines": 445,
+      "test_lines": 2,
+      "tlr": 0.004494382,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/model/lfm2/swiglu.rs": {
+      "lines": 374,
+      "test_lines": 214,
+      "tlr": 0.5721925,
+      "health": 87,
+      "status": "acceptable"
+    },
+    "src/wasm/worker.rs": {
+      "lines": 663,
+      "test_lines": 448,
+      "tlr": 0.67571646,
+      "health": 72,
+      "status": "warning"
+    },
+    "src/detection/tests.rs": {
+      "lines": 422,
+      "test_lines": 310,
+      "tlr": 0.73459715,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/backend/traits/tests.rs": {
+      "lines": 345,
+      "test_lines": 460,
+      "tlr": 1.3333334,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/timestamps/alignment/tests.rs": {
+      "lines": 401,
+      "test_lines": 340,
+      "tlr": 0.8478803,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/simd/matrix.rs": {
+      "lines": 329,
+      "test_lines": 335,
+      "tlr": 1.0182371,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/memory/pool.rs": {
+      "lines": 358,
+      "test_lines": 2,
+      "tlr": 0.005586592,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/model/lfm2/gqa.rs": {
+      "lines": 1483,
+      "test_lines": 684,
+      "tlr": 0.46122724,
+      "health": 47,
+      "status": "problem"
+    },
+    "src/parallel.rs": {
+      "lines": 270,
+      "test_lines": 209,
+      "tlr": 0.7740741,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/wasm/diarization/config.rs": {
+      "lines": 160,
+      "test_lines": 80,
+      "tlr": 0.5,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/gpu/ops/attention.rs": {
+      "lines": 615,
+      "test_lines": 279,
+      "tlr": 0.45365855,
+      "health": 63,
+      "status": "warning"
+    },
+    "src/tui/panels.rs": {
+      "lines": 434,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/wasm/gpu/mod.rs": {
+      "lines": 619,
+      "test_lines": 959,
+      "tlr": 1.549273,
+      "health": 85,
+      "status": "warning"
+    },
+    "src/wasm/lfm2.rs": {
+      "lines": 709,
+      "test_lines": 90,
+      "tlr": 0.12693936,
+      "health": 50,
+      "status": "warning"
+    },
+    "src/timestamps/alignment/mod.rs": {
+      "lines": 433,
+      "test_lines": 2,
+      "tlr": 0.0046189376,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/audio/streaming.rs": {
+      "lines": 7,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/trace.rs": {
+      "lines": 102,
+      "test_lines": 21,
+      "tlr": 0.20588236,
+      "health": 76,
+      "status": "ideal"
+    },
+    "src/format/validation/mod.rs": {
+      "lines": 68,
+      "test_lines": 2,
+      "tlr": 0.029411765,
+      "health": 58,
+      "status": "ideal"
+    },
+    "src/wasm/gpu/selector.rs": {
+      "lines": 221,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/format/compress/tests.rs": {
+      "lines": 313,
+      "test_lines": 290,
+      "tlr": 0.92651755,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/tui/mod.rs": {
+      "lines": 52,
+      "test_lines": 2,
+      "tlr": 0.03846154,
+      "health": 65,
+      "status": "ideal"
+    },
+    "src/model/encoder/conv.rs": {
+      "lines": 279,
+      "test_lines": 219,
+      "tlr": 0.78494626,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/bin/whisper-apr-cli.rs": {
+      "lines": 47,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/format/validation/stats.rs": {
+      "lines": 121,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/vocabulary/hotwords/mod.rs": {
+      "lines": 343,
+      "test_lines": 2,
+      "tlr": 0.005830904,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/detection/mod.rs": {
+      "lines": 431,
+      "test_lines": 2,
+      "tlr": 0.004640371,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/model/attention.rs": {
+      "lines": 7,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/wasm/timestamps/mod.rs": {
+      "lines": 596,
+      "test_lines": 2,
+      "tlr": 0.0033557047,
+      "health": 45,
+      "status": "warning"
+    },
+    "src/wasm/gpu/backend.rs": {
+      "lines": 168,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/model/moonshine/encoder_block.rs": {
+      "lines": 234,
+      "test_lines": 101,
+      "tlr": 0.43162394,
+      "health": 89,
+      "status": "acceptable"
+    },
+    "src/tui/tests.rs": {
+      "lines": 983,
+      "test_lines": 430,
+      "tlr": 0.43743643,
+      "health": 62,
+      "status": "warning"
+    },
+    "src/timestamps/boundaries/tests.rs": {
+      "lines": 388,
+      "test_lines": 380,
+      "tlr": 0.97938144,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/model/lfm2/conv.rs": {
+      "lines": 558,
+      "test_lines": 269,
+      "tlr": 0.48207885,
+      "health": 64,
+      "status": "warning"
+    },
+    "src/simd/mod.rs": {
+      "lines": 149,
+      "test_lines": 73,
+      "tlr": 0.4899329,
+      "health": 99,
+      "status": "ideal"
+    },
+    "src/wasm/diarization/diarizer.rs": {
+      "lines": 102,
+      "test_lines": 68,
+      "tlr": 0.6666667,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/wasm/diarization/embedding.rs": {
+      "lines": 152,
+      "test_lines": 116,
+      "tlr": 0.7631579,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/audio/wav/mod.rs": {
+      "lines": 302,
+      "test_lines": 2,
+      "tlr": 0.0066225166,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/format/safetensors_loader.rs": {
+      "lines": 1287,
+      "test_lines": 1022,
+      "tlr": 0.7940948,
+      "health": 56,
+      "status": "problem"
+    },
+    "src/cli/mod.rs": {
+      "lines": 38,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/model/lfm2/model/tests.rs": {
+      "lines": 826,
+      "test_lines": 400,
+      "tlr": 0.4842615,
+      "health": 64,
+      "status": "warning"
+    },
+    "src/tokenizer/vocab/tests.rs": {
+      "lines": 668,
+      "test_lines": 510,
+      "tlr": 0.76347303,
+      "health": 75,
+      "status": "warning"
+    },
+    "src/cli/parity/tests.rs": {
+      "lines": 347,
+      "test_lines": 350,
+      "tlr": 1.0086455,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/memory/mmap/tests.rs": {
+      "lines": 404,
+      "test_lines": 440,
+      "tlr": 1.089109,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/gpu/ops/softmax.rs": {
+      "lines": 565,
+      "test_lines": 342,
+      "tlr": 0.6053097,
+      "health": 69,
+      "status": "warning"
+    },
+    "src/simd/optimized.rs": {
+      "lines": 427,
+      "test_lines": 239,
+      "tlr": 0.55971897,
+      "health": 86,
+      "status": "acceptable"
+    },
+    "src/model/decoder.rs": {
+      "lines": 7,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/gpu/ops/gelu.rs": {
+      "lines": 591,
+      "test_lines": 429,
+      "tlr": 0.7258883,
+      "health": 74,
+      "status": "warning"
+    },
+    "src/wasm/vocabulary/trie.rs": {
+      "lines": 184,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/tokenizer/vocab/mod.rs": {
+      "lines": 498,
+      "test_lines": 2,
+      "tlr": 0.004016064,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/model/moonshine/decoder_block.rs": {
+      "lines": 456,
+      "test_lines": 156,
+      "tlr": 0.34210527,
+      "health": 74,
+      "status": "acceptable"
+    },
+    "src/model/lfm2/mlp.rs": {
+      "lines": 465,
+      "test_lines": 299,
+      "tlr": 0.64301074,
+      "health": 91,
+      "status": "acceptable"
+    },
+    "src/audio/resampler/tests.rs": {
+      "lines": 396,
+      "test_lines": 280,
+      "tlr": 0.7070707,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/gpu/ops/mod.rs": {
+      "lines": 60,
+      "test_lines": 39,
+      "tlr": 0.65,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/model/lfm2/rope.rs": {
+      "lines": 501,
+      "test_lines": 318,
+      "tlr": 0.6347305,
+      "health": 70,
+      "status": "warning"
+    },
+    "src/inference/beam/tests.rs": {
+      "lines": 473,
+      "test_lines": 250,
+      "tlr": 0.5285412,
+      "health": 85,
+      "status": "acceptable"
+    },
+    "src/diarization/segmentation/tests.rs": {
+      "lines": 240,
+      "test_lines": 230,
+      "tlr": 0.9583333,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/wasm/timestamps/tests.rs": {
+      "lines": 279,
+      "test_lines": 310,
+      "tlr": 1.1111112,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/verify/tests.rs": {
+      "lines": 641,
+      "test_lines": 470,
+      "tlr": 0.73322934,
+      "health": 74,
+      "status": "warning"
+    },
+    "src/verify/mod.rs": {
+      "lines": 386,
+      "test_lines": 2,
+      "tlr": 0.005181347,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/wasm/vocabulary/hotword.rs": {
+      "lines": 237,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/format/whisper_metadata.rs": {
+      "lines": 306,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/backend/mod.rs": {
+      "lines": 45,
+      "test_lines": 29,
+      "tlr": 0.64444447,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/wasm/gpu/capabilities.rs": {
+      "lines": 106,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/diarization/mod.rs": {
+      "lines": 377,
+      "test_lines": 2,
+      "tlr": 0.0053050397,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/vocabulary/mod.rs": {
+      "lines": 271,
+      "test_lines": 246,
+      "tlr": 0.90774906,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/audio/decode.rs": {
+      "lines": 341,
+      "test_lines": 132,
+      "tlr": 0.38709676,
+      "health": 77,
+      "status": "acceptable"
+    },
+    "src/simd/activation.rs": {
+      "lines": 281,
+      "test_lines": 455,
+      "tlr": 1.619217,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/tokenizer/mod.rs": {
+      "lines": 679,
+      "test_lines": 806,
+      "tlr": 1.1870397,
+      "health": 85,
+      "status": "warning"
+    },
+    "src/audio/ring_buffer.rs": {
+      "lines": 675,
+      "test_lines": 576,
+      "tlr": 0.85333335,
+      "health": 79,
+      "status": "warning"
+    },
+    "src/model/moonshine/mod.rs": {
+      "lines": 13,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/cli/parity/mod.rs": {
+      "lines": 386,
+      "test_lines": 2,
+      "tlr": 0.005181347,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/probe.rs": {
+      "lines": 320,
+      "test_lines": 237,
+      "tlr": 0.740625,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/vocabulary/adapter/tests.rs": {
+      "lines": 362,
+      "test_lines": 320,
+      "tlr": 0.8839779,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/vad/models.rs": {
+      "lines": 105,
+      "test_lines": 118,
+      "tlr": 1.1238096,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/memory/mod.rs": {
+      "lines": 15,
+      "test_lines": 0,
+      "tlr": 0.0,
+      "health": 60,
+      "status": "ideal"
+    },
+    "src/wasm/capabilities/mod.rs": {
+      "lines": 311,
+      "test_lines": 2,
+      "tlr": 0.006430868,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/diarization/clustering/tests.rs": {
+      "lines": 1186,
+      "test_lines": 550,
+      "tlr": 0.4637437,
+      "health": 47,
+      "status": "problem"
+    },
+    "src/backend/selector/tests.rs": {
+      "lines": 2004,
+      "test_lines": 1470,
+      "tlr": 0.7335329,
+      "health": 49,
+      "status": "critical"
+    },
+    "src/timestamps/segment/tests.rs": {
+      "lines": 765,
+      "test_lines": 520,
+      "tlr": 0.6797386,
+      "health": 72,
+      "status": "warning"
+    },
+    "src/publish/mod.rs": {
+      "lines": 347,
+      "test_lines": 2,
+      "tlr": 0.0057636886,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/inference/mod.rs": {
+      "lines": 96,
+      "test_lines": 38,
+      "tlr": 0.39583334,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/timestamps/boundaries/mod.rs": {
+      "lines": 389,
+      "test_lines": 2,
+      "tlr": 0.005141388,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/inference/processors.rs": {
+      "lines": 390,
+      "test_lines": 366,
+      "tlr": 0.93846154,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/inference/streaming/tests.rs": {
+      "lines": 1621,
+      "test_lines": 770,
+      "tlr": 0.47501543,
+      "health": 47,
+      "status": "problem"
+    },
+    "src/gpu/device.rs": {
+      "lines": 347,
+      "test_lines": 244,
+      "tlr": 0.70317,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/audio/mod.rs": {
+      "lines": 176,
+      "test_lines": 256,
+      "tlr": 1.4545455,
+      "health": 100,
+      "status": "ideal"
+    },
+    "src/timestamps/interpolation/mod.rs": {
+      "lines": 426,
+      "test_lines": 2,
+      "tlr": 0.0046948357,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/vad/silence.rs": {
+      "lines": 464,
+      "test_lines": 440,
+      "tlr": 0.94827586,
+      "health": 95,
+      "status": "acceptable"
+    },
+    "src/timestamps/segment/mod.rs": {
+      "lines": 317,
+      "test_lines": 2,
+      "tlr": 0.0063091484,
+      "health": 55,
+      "status": "acceptable"
+    },
+    "src/audio/conv_stem.rs": {
+      "lines": 502,
+      "test_lines": 371,
+      "tlr": 0.73904383,
+      "health": 74,
+      "status": "warning"
+    }
+  }
+}

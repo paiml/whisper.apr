@@ -159,9 +159,7 @@ pub fn decode_with_ffmpeg(path: &Path) -> Result<Vec<f32>, AudioDecodeError> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .output()
-        .map_err(|e| {
-            AudioDecodeError::Format(format!("ffmpeg not available: {e}"))
-        })?;
+        .map_err(|e| AudioDecodeError::Format(format!("ffmpeg not available: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -346,7 +344,9 @@ mod tests {
         // .mov should not return UnsupportedFormat — it should attempt decoding
         let result = load_audio_samples(b"not-real-mov-data", "mov");
         assert!(result.is_err());
-        let err_msg = result.expect_err("expected error for fake mov data").to_string();
+        let err_msg = result
+            .expect_err("expected error for fake mov data")
+            .to_string();
         // Should get a format/probe error, NOT an "Unsupported audio format" error
         assert!(
             !err_msg.contains("Unsupported audio format"),
@@ -392,8 +392,15 @@ mod tests {
         let tmp = std::env::temp_dir().join("wapr_test_ffmpeg_fallback.wav");
         let status = std::process::Command::new("ffmpeg")
             .args([
-                "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5",
-                "-ar", "16000", "-ac", "1",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=0.5",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
                 tmp.to_str().unwrap(),
             ])
             .stdout(std::process::Stdio::null())
@@ -407,8 +414,11 @@ mod tests {
         let _ = std::fs::remove_file(&tmp);
         let samples = result.expect("ffmpeg fallback should produce samples");
         // 0.5s at 16kHz = ~8000 samples
-        assert!(samples.len() > 7000 && samples.len() < 9000,
-            "expected ~8000 samples, got {}", samples.len());
+        assert!(
+            samples.len() > 7000 && samples.len() < 9000,
+            "expected ~8000 samples, got {}",
+            samples.len()
+        );
     }
 
     #[test]

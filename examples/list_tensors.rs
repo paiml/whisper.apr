@@ -30,7 +30,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut other_tensors = Vec::new();
 
     for name in reader.tensor_names() {
-        let entry = reader.get_tensor(name).expect("tensor must exist for listed name");
+        let entry = reader
+            .get_tensor(name)
+            .expect("tensor must exist for listed name");
         let size = entry.element_count();
 
         if name.starts_with("encoder") {
