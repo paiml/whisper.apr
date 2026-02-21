@@ -265,6 +265,8 @@ mod tests {
     fn test_parallel_try_map_empty() {
         let results: WhisperResult<Vec<i32>> = parallel_try_map(0..0, |i| Ok(i as i32));
         assert!(results.is_ok());
-        assert!(results.expect("parallel_try_map should succeed on empty").is_empty());
+        assert!(results
+            .expect("parallel_try_map should succeed on empty")
+            .is_empty());
     }
 }

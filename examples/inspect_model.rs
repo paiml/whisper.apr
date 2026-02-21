@@ -118,7 +118,9 @@ fn print_human(reader: &AprV2ReaderRef<'_>, path: &str) -> Result<(), Box<dyn st
 
     let tensor_names = reader.tensor_names();
     for name in &tensor_names {
-        let entry = reader.get_tensor(name).expect("tensor must exist for listed name");
+        let entry = reader
+            .get_tensor(name)
+            .expect("tensor must exist for listed name");
         let params: usize = entry.shape.iter().product();
         total_params += params;
         if name.starts_with("encoder") {
@@ -148,7 +150,9 @@ fn print_human(reader: &AprV2ReaderRef<'_>, path: &str) -> Result<(), Box<dyn st
     // Show first few tensors
     println!("\n=== First 10 Tensors ===");
     for (i, name) in tensor_names.iter().take(10).enumerate() {
-        let entry = reader.get_tensor(name).expect("tensor must exist for listed name");
+        let entry = reader
+            .get_tensor(name)
+            .expect("tensor must exist for listed name");
         println!("  {:2}. {} {:?}", i, name, entry.shape);
     }
 
