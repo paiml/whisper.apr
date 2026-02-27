@@ -100,7 +100,7 @@ trueno-gpu = { version = "0.4.17", optional = true }
 # Note: safetensors-compare pulls hf-hub which doesn't support WASM
 # Use target-specific deps below to enable it only for native builds
 # Using local path for WASM-compatible trueno
-aprender = { version = "0.26", path = "../aprender", default-features = false, features = ["audio"] }
+aprender = { version = ">=0.26", path = "../aprender", default-features = false, features = ["audio"] }
 
 # APR CLI (proxied commands: pull, list)
 apr-cli = { version = "0.3", optional = true }
@@ -194,7 +194,7 @@ getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] 
 # Enable safetensors-compare only for native builds
 # safetensors-compare: pulls hf-hub which doesn't support WASM
 # Note: inference-monitoring disabled due to cyclic dependency with entrenar
-aprender = { version = "0.26", path = "../aprender", default-features = false, features = ["audio", "safetensors-compare"] }
+aprender = { version = ">=0.26", path = "../aprender", default-features = false, features = ["audio", "safetensors-compare"] }
 
 [profile.release]
 lto = true
@@ -290,12 +290,3 @@ unnecessary_wraps = "allow"
 unreadable_literal = "allow"
 used_underscore_binding = "allow"
 
-# Local development: patch crates.io deps to use local versions with WASM fixes
-[patch.crates-io]
-trueno = { path = "../trueno" }
-trueno-gpu = { path = "../trueno/trueno-gpu" }
-trueno-explain = { path = "../trueno/trueno-explain" }
-aprender = { path = "../aprender" }
-apr-cli = { path = "../aprender/crates/apr-cli" }
-realizar = { path = "../realizar" }
-jugar-probar = { path = "../probar/crates/probar" }
