@@ -1,4 +1,10 @@
-# Temporary coverage config - DO NOT COMMIT
-# Replaces project config during coverage runs
-[build]
-target-dir = "/mnt/nvme-raid0/coverage/whisper.apr"
+# Local development overrides — NOT shipped with `cargo publish`
+# Moved from Cargo.toml [patch.crates-io] for clean-room publishability (PMAT-029)
+[patch.crates-io]
+trueno = { path = "../trueno" }
+trueno-gpu = { path = "../trueno/trueno-gpu" }
+trueno-explain = { path = "../trueno/trueno-explain" }
+aprender = { path = "../aprender" }
+apr-cli = { path = "../aprender/crates/apr-cli" }
+realizar = { path = "../realizar" }
+jugar-probar = { path = "../probar/crates/probar" }
