@@ -615,6 +615,16 @@ fn test_verifier_meets_threshold_empty_report() {
 fn test_verify_apr_permission_denied() {
     use std::os::unix::fs::PermissionsExt;
 
+    // Root bypasses file permission checks, so this test is meaningless as root
+    if std::env::var("USER").unwrap_or_default() == "root"
+        || std::fs::read_to_string("/proc/self/status")
+            .map(|s| s.lines().any(|l| l.starts_with("Uid:\t0\t")))
+            .unwrap_or(false)
+    {
+        eprintln!("skipping test_verify_apr_permission_denied: running as root");
+        return;
+    }
+
     let mut file = NamedTempFile::new().unwrap();
     file.write_all(b"APR\0").unwrap();
     file.write_all(&[0u8; 60]).unwrap();
