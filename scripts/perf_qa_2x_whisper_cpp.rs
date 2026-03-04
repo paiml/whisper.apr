@@ -64,12 +64,14 @@ fn validate_section_a_baseline() {
 
     // Point 12: Weak Baseline Configuration check
     echo("  [A.12] Checking whisper.cpp optimization flags...");
-    exec("ldd /home/noah/.local/bin/main 2>/dev/null | grep -i blas | head -1 || echo '    No BLAS linked'");
-    exec("ldd /home/noah/.local/bin/main 2>/dev/null | grep -i cuda | head -1 || echo '    CUDA linked: YES'");
+    exec("WHISPER_CPP_BIN=\"${WHISPER_CPP_BIN:-$(which main 2>/dev/null || echo $HOME/.local/bin/main)}\"");
+    exec("ldd \"$WHISPER_CPP_BIN\" 2>/dev/null | grep -i blas | head -1 || echo '    No BLAS linked'");
+    exec("ldd \"$WHISPER_CPP_BIN\" 2>/dev/null | grep -i cuda | head -1 || echo '    CUDA linked: YES'");
 
     // Point 3: Model mismatch check
     echo("  [A.3] Validating model files exist...");
-    exec("test -f /home/noah/src/whisper.cpp/models/ggml-tiny.bin && echo '    ggml-tiny.bin: OK' || echo '    ggml-tiny.bin: MISSING'");
+    exec("WHISPER_CPP_MODELS=\"${WHISPER_CPP_MODELS:-$HOME/src/whisper.cpp/models}\"");
+    exec("test -f \"$WHISPER_CPP_MODELS/ggml-tiny.bin\" && echo '    ggml-tiny.bin: OK' || echo '    ggml-tiny.bin: MISSING'");
     exec("test -f models/whisper-tiny.apr && echo '    whisper-tiny.apr: OK' || echo '    whisper-tiny.apr: MISSING'");
 
     // Point 5: GPU availability
@@ -238,7 +240,7 @@ fn validate_benchmark() {
 
     // Run whisper.cpp baseline
     echo("  Running whisper.cpp (GPU)...");
-    exec("time /home/noah/.local/bin/main -m /home/noah/src/whisper.cpp/models/ggml-tiny.bin -f demos/test-audio/test-speech-1.5s.wav 2>&1 | tail -5");
+    exec("time \"$WHISPER_CPP_BIN\" -m \"$WHISPER_CPP_MODELS/ggml-tiny.bin\" -f demos/test-audio/test-speech-1.5s.wav 2>&1 | tail -5");
 
     echo("");
     echo("  Running whisper.apr (CPU)...");

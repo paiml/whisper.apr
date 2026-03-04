@@ -29,7 +29,9 @@ fn main() {
 
     // Run whisper.cpp
     echo("[2/3] whisper.cpp:");
-    exec("/home/noah/.local/bin/main -m /home/noah/src/whisper.cpp/models/ggml-tiny.bin -f demos/test-audio/test-speech-1.5s.wav 2>/dev/null");
+    exec("WHISPER_CPP_BIN=\"${WHISPER_CPP_BIN:-$(which main 2>/dev/null || echo $HOME/.local/bin/main)}\"");
+    exec("WHISPER_CPP_MODELS=\"${WHISPER_CPP_MODELS:-$HOME/src/whisper.cpp/models}\"");
+    exec("\"$WHISPER_CPP_BIN\" -m \"$WHISPER_CPP_MODELS/ggml-tiny.bin\" -f demos/test-audio/test-speech-1.5s.wav 2>/dev/null");
 
     echo("");
 
