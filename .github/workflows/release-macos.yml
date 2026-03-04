@@ -193,7 +193,7 @@ jobs:
           ls -lh target/*.dmg
 
       - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Whisper.apr-macos-dmg
           path: target/*.dmg
@@ -242,7 +242,7 @@ jobs:
           ls -la dist/ || true
 
       - name: Upload CLI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: dist/*

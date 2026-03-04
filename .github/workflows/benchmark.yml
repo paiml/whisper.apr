@@ -128,7 +128,7 @@ jobs:
 
       - name: Upload criterion results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: criterion-results-${{ github.sha }}
           path: target/criterion/
@@ -136,7 +136,7 @@ jobs:
 
       - name: Upload benchmark outputs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-output-${{ github.sha }}
           path: |
