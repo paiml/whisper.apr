@@ -34,7 +34,7 @@ echo ""
 
 echo "[2/3] whisper.cpp ($MODEL_SIZE):"
 if check_model "$WCPP_MODEL"; then
-  /home/noah/.local/bin/main -m "$WCPP_MODEL" -f "$TEST_AUDIO" 2>/dev/null || echo "FAILED"
+  $HOME/.local/bin/main -m "$WCPP_MODEL" -f "$TEST_AUDIO" 2>/dev/null || echo "FAILED"
 else
   echo "Model not found: $WCPP_MODEL"
 fi

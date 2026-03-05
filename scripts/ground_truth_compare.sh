@@ -190,7 +190,7 @@ main() {
         cargo run --release --bin whisper-apr-cli --features cli -- transcribe --model-path models/whisper-tiny.apr -q demos/test-audio/test-speech-1.5s.wav 2>/dev/null || true
         echo ''
         echo '[2/3] whisper.cpp:'
-        /home/noah/.local/bin/main -m /home/noah/src/whisper.cpp/models/ggml-tiny.bin -f demos/test-audio/test-speech-1.5s.wav 2>/dev/null || true
+        $HOME/.local/bin/main -m $HOME/src/whisper.cpp/models/ggml-tiny.bin -f demos/test-audio/test-speech-1.5s.wav 2>/dev/null || true
         echo ''
         echo '[3/3] HuggingFace (via uv):'
         uv run scripts/hf_transcribe.py demos/test-audio/test-speech-1.5s.wav || true
