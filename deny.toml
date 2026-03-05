@@ -1,13 +1,18 @@
-# cargo-deny configuration (0.18.x)
-# https://embarkstudios.github.io/cargo-deny/
+# cargo-deny configuration
+# Deployed from paiml/infra — do not edit manually.
+# Spec: docs/specifications/unified-ci-pipeline.md
+
+[graph]
+targets = []
+all-features = false
+no-default-features = false
 
 [advisories]
-# Transitive unmaintained crates from wgpu — no action possible
-ignore = [
-    "RUSTSEC-2025-0141",  # bincode unmaintained (transitive via wgpu)
-    "RUSTSEC-2025-0119",  # number_prefix unmaintained (transitive via wgpu)
-    "RUSTSEC-2024-0436",  # paste unmaintained (transitive via wgpu)
-]
+vulnerability = "deny"
+unmaintained = "warn"
+yanked = "deny"
+notice = "warn"
+ignore = []
 
 [licenses]
 allow = [
@@ -17,25 +22,24 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "Zlib",
-    "MPL-2.0",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "BSL-1.0",
+    "OpenSSL",
+    "0BSD",
     "CC0-1.0",
-    "CDLA-Permissive-2.0",
+    "MPL-2.0",
 ]
+confidence-threshold = 0.8
 
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
 highlight = "all"
 
-deny = [
-    { name = "cargo-tarpaulin", reason = "Use cargo-llvm-cov for coverage" },
-    { name = "tarpaulin", reason = "Use cargo-llvm-cov for coverage" },
-]
-
 [sources]
 unknown-registry = "deny"
-unknown-git = "warn"
+unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
