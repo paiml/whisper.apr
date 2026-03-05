@@ -29,7 +29,7 @@ fn main() {
 
     // Run whisper.cpp
     echo("[2/3] whisper.cpp:");
-    exec("/home/noah/.local/bin/main -m /home/noah/src/whisper.cpp/models/ggml-tiny.bin -f demos/test-audio/test-speech-1.5s.wav 2>/dev/null");
+    exec("$HOME/.local/bin/main -m $HOME/src/whisper.cpp/models/ggml-tiny.bin -f demos/test-audio/test-speech-1.5s.wav 2>/dev/null");
 
     echo("");
 

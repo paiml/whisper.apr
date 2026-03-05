@@ -189,8 +189,8 @@ print_header() {
 
 validate_baseline() {
         echo '[Phase 1/3] Validating whisper.cpp baseline...'
-        eval 'ldd /home/noah/.local/bin/main 2>/dev/null | grep -i blas | head -1'
-        eval 'ldd /home/noah/.local/bin/main 2>/dev/null | grep -i cuda | head -1'
+        eval 'ldd "$HOME/.local/bin/main" 2>/dev/null | grep -i blas | head -1'
+        eval 'ldd "$HOME/.local/bin/main" 2>/dev/null | grep -i cuda | head -1'
         echo '  Baseline validation complete'
         echo ''
 }
@@ -200,9 +200,9 @@ run_benchmarks() {
         echo '[Phase 2/3] Running benchmarks (10 iterations each)...'
         echo ''
         echo '  whisper.cpp tiny CPU:'
-        eval '/home/noah/.local/bin/main -m /home/noah/src/whisper.cpp/models/ggml-tiny.bin -f demos/test-audio/test-speech-30s.wav --no-timestamps -ng -t 8 2>&1 | grep total'
+        eval '"$HOME/.local/bin/main" -m "$HOME/src/whisper.cpp/models/ggml-tiny.bin" -f demos/test-audio/test-speech-30s.wav --no-timestamps -ng -t 8 2>&1 | grep total'
         echo '  whisper.cpp tiny GPU:'
-        eval '/home/noah/.local/bin/main -m /home/noah/src/whisper.cpp/models/ggml-tiny.bin -f demos/test-audio/test-speech-30s.wav --no-timestamps -t 8 2>&1 | grep total'
+        eval '"$HOME/.local/bin/main" -m "$HOME/src/whisper.cpp/models/ggml-tiny.bin" -f demos/test-audio/test-speech-30s.wav --no-timestamps -t 8 2>&1 | grep total'
         echo '  whisper.apr tiny CPU:'
         eval 'whisper-apr-cli transcribe --file demos/test-audio/test-speech-30s.wav --model tiny -v 2>&1 | grep Total'
         echo ''

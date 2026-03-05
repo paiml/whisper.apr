@@ -192,10 +192,10 @@ validate_section_a_baseline() {
         echo '  Validating whisper.cpp baseline configuration...'
         echo ''
         echo '  [A.12] Checking whisper.cpp optimization flags...'
-        eval 'ldd /home/noah/.local/bin/main 2>/dev/null | grep -i blas | head -1 || echo '"'"'    No BLAS linked'"'"''
-        eval 'ldd /home/noah/.local/bin/main 2>/dev/null | grep -i cuda | head -1 || echo '"'"'    No CUDA linked'"'"''
+        eval 'ldd $HOME/.local/bin/main 2>/dev/null | grep -i blas | head -1 || echo '"'"'    No BLAS linked'"'"''
+        eval 'ldd $HOME/.local/bin/main 2>/dev/null | grep -i cuda | head -1 || echo '"'"'    No CUDA linked'"'"''
         echo '  [A.3] Validating model files exist...'
-        eval 'test -f /home/noah/src/whisper.cpp/models/ggml-tiny.bin && echo '"'"'    ggml-tiny.bin: OK'"'"' || echo '"'"'    ggml-tiny.bin: MISSING'"'"''
+        eval 'test -f $HOME/src/whisper.cpp/models/ggml-tiny.bin && echo '"'"'    ggml-tiny.bin: OK'"'"' || echo '"'"'    ggml-tiny.bin: MISSING'"'"''
         echo '  Section A: VALIDATED'
         echo ''
 }

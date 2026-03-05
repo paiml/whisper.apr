@@ -10,19 +10,19 @@ MODEL_SIZE="${1:-tiny}"
 case "$MODEL_SIZE" in
   tiny)
     WAPR_MODEL='models/whisper-tiny.apr'
-    WCPP_MODEL='/home/noah/src/whisper.cpp/models/ggml-tiny.bin'
+    WCPP_MODEL='$HOME/src/whisper.cpp/models/ggml-tiny.bin'
     HF_MODEL='openai/whisper-tiny'
     EXPECTED_PARAMS='39M'
     ;;
   base)
     WAPR_MODEL='models/whisper-base.apr'
-    WCPP_MODEL='/home/noah/src/whisper.cpp/models/ggml-base.en.bin'
+    WCPP_MODEL='$HOME/src/whisper.cpp/models/ggml-base.en.bin'
     HF_MODEL='openai/whisper-base.en'
     EXPECTED_PARAMS='74M'
     ;;
   small)
     WAPR_MODEL='models/whisper-small.apr'
-    WCPP_MODEL='/home/noah/src/whisper.cpp/models/ggml-small.bin'
+    WCPP_MODEL='$HOME/src/whisper.cpp/models/ggml-small.bin'
     HF_MODEL='openai/whisper-small'
     EXPECTED_PARAMS='244M'
     ;;
