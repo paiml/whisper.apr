@@ -32,14 +32,23 @@ impl LayerNorm {
 
     /// Apply layer normalization
     pub fn forward(&self, input: &[f32]) -> WhisperResult<Vec<f32>> {
+        let mut output = vec![0.0_f32; input.len()];
+        self.forward_into(input, &mut output)?;
+        Ok(output)
+    }
+
+    /// Apply layer normalization into a pre-allocated buffer (PMAT-014 O1).
+    ///
+    /// `output` must have the same length as `input`.
+    pub fn forward_into(&self, input: &[f32], output: &mut [f32]) -> WhisperResult<()> {
         if input.len() % self.normalized_shape != 0 {
             return Err(WhisperError::Model(
                 "input size mismatch for layer norm".into(),
             ));
         }
+        debug_assert_eq!(input.len(), output.len());
 
         let seq_len = input.len() / self.normalized_shape;
-        let mut output = vec![0.0_f32; input.len()];
 
         for s in 0..seq_len {
             let start = s * self.normalized_shape;
@@ -58,7 +67,7 @@ impl LayerNorm {
             }
         }
 
-        Ok(output)
+        Ok(())
     }
 }
 
@@ -99,6 +108,28 @@ impl FeedForward {
 
         // Second linear
         self.fc2.forward_simd(&hidden, seq_len)
+    }
+
+    /// Forward pass into pre-allocated buffers (PMAT-014 O1).
+    ///
+    /// `hidden` must be `seq_len * d_ff` elements.
+    /// `output` must be `seq_len * d_model` elements.
+    pub fn forward_into(
+        &self,
+        input: &[f32],
+        hidden: &mut [f32],
+        output: &mut [f32],
+    ) -> WhisperResult<()> {
+        let seq_len = input.len() / self.d_model;
+
+        // First linear into hidden + GELU in-place
+        self.fc1.forward_simd_into(input, seq_len, hidden)?;
+        for x in hidden.iter_mut() {
+            *x = gelu(*x);
+        }
+
+        // Second linear into output
+        self.fc2.forward_simd_into(hidden, seq_len, output)
     }
 
     /// Finalize weights for optimized SIMD matmul

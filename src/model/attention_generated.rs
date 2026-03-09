@@ -350,6 +350,90 @@ impl LinearWeights {
 
         Ok(output)
     }
+
+    /// Forward pass into a pre-allocated output buffer (PMAT-014 O1).
+    ///
+    /// For single-token decoder inference this avoids per-token allocation.
+    /// `output` must be at least `total_tokens * out_features` elements.
+    pub fn forward_simd_into(
+        &self,
+        input: &[f32],
+        seq_len: usize,
+        output: &mut [f32],
+    ) -> WhisperResult<()> {
+        if input.len() % (seq_len * self.in_features) != 0 {
+            return Err(WhisperError::Model("input size mismatch".into()));
+        }
+
+        let batch_size = input.len() / (seq_len * self.in_features);
+        let total_tokens = batch_size * seq_len;
+
+        // fp16 weight path
+        if let Some(ref w_f16) = self.weight_f16 {
+            const FP16_MATVEC_BATCH_LIMIT: usize = 8;
+            if total_tokens <= FP16_MATVEC_BATCH_LIMIT {
+                for t in 0..total_tokens {
+                    let tok_in = &input[t * self.in_features..(t + 1) * self.in_features];
+                    let tok_out = &mut output[t * self.out_features..(t + 1) * self.out_features];
+                    simd::tiled_matvec_f16_into(
+                        w_f16,
+                        tok_in,
+                        tok_out,
+                        self.out_features,
+                        self.in_features,
+                    );
+                }
+            } else {
+                let mut buf = vec![0.0_f32; w_f16.len()];
+                simd::dequant_f16_row(w_f16, &mut buf);
+                let weight_t = simd::transpose(&buf, self.out_features, self.in_features);
+                let tmp = simd::matmul(
+                    input,
+                    &weight_t,
+                    total_tokens,
+                    self.in_features,
+                    self.out_features,
+                );
+                output[..tmp.len()].copy_from_slice(&tmp);
+            }
+            simd::broadcast_add_inplace(output, &self.bias, total_tokens, self.out_features);
+            return Ok(());
+        }
+
+        // Single-token: tiled_matvec_into (zero-alloc)
+        if total_tokens == 1 {
+            simd::tiled_matvec_into(
+                &self.weight,
+                input,
+                output,
+                self.out_features,
+                self.in_features,
+            );
+        } else if let Some(weight_matrix) = &self.weight_matrix {
+            let tmp =
+                simd::matmul_with_matrix(input, weight_matrix, total_tokens, self.in_features);
+            output[..tmp.len()].copy_from_slice(&tmp);
+        } else {
+            let weight_t_owned;
+            let weight_t: &[f32] = if let Some(cached) = &self.weight_transposed {
+                cached
+            } else {
+                weight_t_owned = simd::transpose(&self.weight, self.out_features, self.in_features);
+                &weight_t_owned
+            };
+            let tmp = simd::matmul(
+                input,
+                weight_t,
+                total_tokens,
+                self.in_features,
+                self.out_features,
+            );
+            output[..tmp.len()].copy_from_slice(&tmp);
+        }
+
+        simd::broadcast_add_inplace(output, &self.bias, total_tokens, self.out_features);
+        Ok(())
+    }
 }
 
 /// Default block size for Flash Attention (tuned for L1 cache)
