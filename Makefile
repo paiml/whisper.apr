@@ -321,7 +321,7 @@ bench-tui-playbook: ## Validate TUI playbook specification
 # PROFILING & GOLDEN TRACES (Aprender Pattern)
 # Reference: docs/specifications/benchmark-whisper-steps-a-z.md (Appendix C)
 # ============================================================================
-.PHONY: profile golden-traces profile-pipeline
+.PHONY: profile golden-traces profile-pipeline profile-heap profile-heap-clean
 
 profile: ## Profile pipeline with renacer tracing
 	@echo "🔍 Profiling pipeline (renacer required)..."
@@ -342,6 +342,17 @@ profile-pipeline: ## Detailed pipeline profiling with Chrome trace output
 	else \
 		echo "⚠️  renacer not installed. Install with: cargo install renacer"; \
 	fi
+
+profile-heap: ## Heap profile with dhat-rs (outputs dhat-heap.json)
+	@echo "🔬 Running dhat-rs heap profiler..."
+	@cargo run --example dhat_profile --features dhat-profiler --release
+	@echo ""
+	@echo "📊 Output: dhat-heap.json"
+	@echo "   View at: https://nnethercote.github.io/dh_view/dh_view.html"
+
+profile-heap-clean: ## Clean dhat profiling artifacts
+	@rm -f dhat-heap.json
+	@echo "✓ dhat artifacts cleaned"
 
 golden-traces: ## Capture golden trace baselines
 	@echo "📸 Capturing golden traces..."

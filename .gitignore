@@ -54,5 +54,8 @@ models/*.safetensors
 .pmat/metrics/
 .pmat-work/
 
+# dhat-rs profiling output
+dhat-heap.json
+
 # IDE
 .idea/

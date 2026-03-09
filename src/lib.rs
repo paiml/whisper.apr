@@ -34,6 +34,10 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
+#[cfg(feature = "dhat-profiler")]
+#[doc(hidden)]
+pub use dhat;
+
 pub mod audio;
 pub mod detection;
 pub mod error;

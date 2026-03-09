@@ -28,6 +28,7 @@ exclude = [
     "*.profraw",
     "*.profdata",
     "proptest-regressions/",
+    "dhat-heap.json",
 ]
 
 default-run = "whisper-apr"
@@ -85,6 +86,8 @@ format-signing = ["aprender/format-signing", "ed25519-dalek", "hex"]
 format-encryption = ["aprender/format-encryption", "aes-gcm", "argon2", "rand"]
 format-quantize = ["aprender/format-quantize"]
 format-homomorphic = ["aprender/format-homomorphic"]
+# Heap profiling via dhat-rs (DHAT-compatible JSON output)
+dhat-profiler = ["dep:dhat"]
 
 [dependencies]
 # Core dependencies
@@ -160,6 +163,9 @@ rand = { version = "0.8", optional = true }
 # Optional: TUI benchmark dependencies
 ratatui = { version = "0.30", optional = true }
 crossterm = { version = "0.28", optional = true }
+
+# Optional: Heap profiling
+dhat = { version = "0.3", optional = true }
 
 # Optional: Multi-format audio decoding (MP3, FLAC, OGG, AAC, M4A, etc.)
 # Pure Rust - no system dependencies required
