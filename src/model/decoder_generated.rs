@@ -1597,8 +1597,6 @@ pub struct DecoderScratch {
 /// Split into its own struct so the borrow checker allows simultaneous
 /// immutable access to Q/K/V projections and mutable access to these buffers.
 pub struct AttentionScratch {
-    /// Per-head query extraction (d_head)
-    q_head: Vec<f32>,
     /// Per-head key extraction (max_len × d_head)
     k_head: Vec<f32>,
     /// Per-head value extraction (max_len × d_head)
@@ -1609,8 +1607,6 @@ pub struct AttentionScratch {
     scores: Vec<f32>,
     /// Softmax weights buffer (max_len)
     weights: Vec<f32>,
-    /// Per-head attention output (d_head)
-    head_out: Vec<f32>,
 }
 
 impl DecoderScratch {
@@ -1639,13 +1635,11 @@ impl DecoderScratch {
             logits: vec![0.0; n_vocab],
             qkv: vec![0.0; 3 * d_model],
             attn: AttentionScratch {
-                q_head: vec![0.0; d_head],
                 k_head: vec![0.0; max_len * d_head],
                 v_head: vec![0.0; max_len * d_head],
                 output: vec![0.0; d_model],
                 scores: vec![0.0; max_len],
                 weights: vec![0.0; max_len],
-                head_out: vec![0.0; d_head],
             },
         }
     }

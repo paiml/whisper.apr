@@ -11,11 +11,6 @@ use crate::error::WhisperError;
 #[cfg(feature = "realizar-inference")]
 use realizar::layers::FusedLayerNormLinear;
 
-/// Element-wise vector addition for residual connections
-fn add_residual(x: &[f32], y: &[f32]) -> Vec<f32> {
-    x.iter().zip(y.iter()).map(|(a, b)| a + b).collect()
-}
-
 /// Generate flat identity matrix of dimension d x d
 #[cfg(feature = "realizar-inference")]
 fn identity_flat(d: usize) -> Vec<f32> {
@@ -53,8 +48,11 @@ impl EncoderBlock {
     pub fn forward(&self, x: &[f32]) -> WhisperResult<Vec<f32>> {
         // Pre-norm self-attention with residual
         let normed = self.ln1.forward(x)?;
-        let attn_out = self.self_attn.forward(&normed, None)?;
-        let mut residual = add_residual(x, &attn_out);
+        let mut residual = self.self_attn.forward(&normed, None)?;
+        // In-place residual add: reuse attn_out buffer instead of allocating a new Vec
+        for (r, &xi) in residual.iter_mut().zip(x.iter()) {
+            *r += xi;
+        }
 
         // Pre-norm FFN with residual
         let normed = self.ln2.forward(&residual)?;
@@ -106,8 +104,10 @@ impl EncoderBlock {
 
         let normed = normed_tensor.data().to_vec();
 
-        let attn_out = self.self_attn.forward(&normed, None)?;
-        let mut residual = add_residual(x, &attn_out);
+        let mut residual = self.self_attn.forward(&normed, None)?;
+        for (r, &xi) in residual.iter_mut().zip(x.iter()) {
+            *r += xi;
+        }
 
         let mut fused_ln2 = FusedLayerNormLinear::new(d_model, d_model, self.ln2.eps)
             .map_err(|e| WhisperError::Model(format!("FusedLayerNormLinear error: {e}")))?;

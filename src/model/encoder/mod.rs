@@ -513,6 +513,10 @@ impl Encoder {
 
     /// Finalize all weights by caching transposed/pre-computed data
     pub fn finalize_weights(&mut self) {
+        // Cache transposed conv frontend weights (avoid reshape+transpose per forward call)
+        if let Some(ref mut frontend) = self.conv_frontend {
+            frontend.finalize_weights();
+        }
         for block in &mut self.blocks {
             block.finalize_weights();
         }

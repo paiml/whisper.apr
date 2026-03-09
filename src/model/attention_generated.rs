@@ -137,7 +137,9 @@ impl LinearWeights {
     /// Also caches a trueno Matrix for zero-copy matmul operations.
     /// Skips caching if weights are stored as fp16 (fp16 path uses tiled_matvec_f16 directly).
     pub fn finalize_weights(&mut self) {
-        // fp16 weights use tiled_matvec_f16 directly — no transpose/Matrix cache needed
+        // fp16 weights use tiled_matvec_f16 directly — no transpose/Matrix cache needed.
+        // Caching f32 dequanted weights would add ~75MB for decoder, causing L3 cache pressure
+        // that hurts fp16 matvec performance for the 23 subsequent single-token decodes.
         if self.weight_f16.is_some() {
             return;
         }

@@ -23,6 +23,9 @@ pub struct Conv1d {
     pub stride: usize,
     /// Padding
     pub padding: usize,
+    /// Cached transposed weight for im2col matmul (patch_size × out_channels)
+    /// Precomputed by `finalize_weights()` to avoid per-call reshape + transpose.
+    weight_t_cached: Option<Vec<f32>>,
 }
 
 impl Conv1d {
@@ -43,7 +46,33 @@ impl Conv1d {
             kernel_size,
             stride,
             padding,
+            weight_t_cached: None,
         }
+    }
+
+    /// Precompute transposed weight matrix for im2col matmul.
+    ///
+    /// Reshapes weight from `[out_channels][in_channels][kernel_size]` to
+    /// `[out_channels][patch_size]` then transposes to `[patch_size][out_channels]`.
+    /// This avoids ~1-2ms of reshape+transpose per forward call.
+    pub fn finalize_weights(&mut self) {
+        let patch_size = self.kernel_size * self.in_channels;
+        let mut weight_reshaped = vec![0.0_f32; self.out_channels * patch_size];
+        for out_ch in 0..self.out_channels {
+            for k in 0..self.kernel_size {
+                for in_ch in 0..self.in_channels {
+                    let old_idx =
+                        out_ch * self.in_channels * self.kernel_size + in_ch * self.kernel_size + k;
+                    let new_idx = out_ch * patch_size + k * self.in_channels + in_ch;
+                    weight_reshaped[new_idx] = self.weight[old_idx];
+                }
+            }
+        }
+        self.weight_t_cached = Some(crate::simd::transpose(
+            &weight_reshaped,
+            self.out_channels,
+            patch_size,
+        ));
     }
 
     /// Forward pass using SIMD-accelerated im2col + matmul
@@ -82,26 +111,32 @@ impl Conv1d {
             }
         }
 
-        // Reshape weights
-        let mut weight_reshaped = vec![0.0_f32; self.out_channels * patch_size];
-        for out_ch in 0..self.out_channels {
-            for k in 0..self.kernel_size {
-                for in_ch in 0..self.in_channels {
-                    let old_idx =
-                        out_ch * self.in_channels * self.kernel_size + in_ch * self.kernel_size + k;
-                    let new_idx = out_ch * patch_size + k * self.in_channels + in_ch;
-                    weight_reshaped[new_idx] = self.weight[old_idx];
+        // Use cached transposed weight if available, otherwise compute on the fly
+        let weight_t_owned;
+        let weight_t = if let Some(ref cached) = self.weight_t_cached {
+            cached.as_slice()
+        } else {
+            let mut weight_reshaped = vec![0.0_f32; self.out_channels * patch_size];
+            for out_ch in 0..self.out_channels {
+                for k in 0..self.kernel_size {
+                    for in_ch in 0..self.in_channels {
+                        let old_idx = out_ch * self.in_channels * self.kernel_size
+                            + in_ch * self.kernel_size
+                            + k;
+                        let new_idx = out_ch * patch_size + k * self.in_channels + in_ch;
+                        weight_reshaped[new_idx] = self.weight[old_idx];
+                    }
                 }
             }
-        }
-
-        // Transpose weights
-        let weight_t = crate::simd::transpose(&weight_reshaped, self.out_channels, patch_size);
+            weight_t_owned =
+                crate::simd::transpose(&weight_reshaped, self.out_channels, patch_size);
+            &weight_t_owned
+        };
 
         // SIMD matmul
         let mut output = crate::simd::matmul(
             &patches,
-            &weight_t,
+            weight_t,
             out_seq_len,
             patch_size,
             self.out_channels,
@@ -151,6 +186,12 @@ impl ConvFrontend {
             n_mels,
             d_model,
         }
+    }
+
+    /// Precompute transposed weights for both conv layers
+    pub fn finalize_weights(&mut self) {
+        self.conv1.finalize_weights();
+        self.conv2.finalize_weights();
     }
 
     /// Forward pass through convolutional frontend
