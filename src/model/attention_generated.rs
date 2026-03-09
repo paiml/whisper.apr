@@ -1595,11 +1595,10 @@ impl MultiHeadAttention {
         let mut head_data = vec![0.0_f32; seq_len * self.d_head];
 
         for s in 0..seq_len {
-            for d in 0..self.d_head {
-                let src_idx = s * self.d_model + head * self.d_head + d;
-                let dst_idx = s * self.d_head + d;
-                head_data[dst_idx] = tensor[src_idx];
-            }
+            let src_offset = s * self.d_model + head * self.d_head;
+            let dst_offset = s * self.d_head;
+            head_data[dst_offset..dst_offset + self.d_head]
+                .copy_from_slice(&tensor[src_offset..src_offset + self.d_head]);
         }
 
         head_data
@@ -1611,11 +1610,10 @@ impl MultiHeadAttention {
 
         for (head, head_data) in heads.iter().enumerate() {
             for s in 0..seq_len {
-                for d in 0..self.d_head {
-                    let src_idx = s * self.d_head + d;
-                    let dst_idx = s * self.d_model + head * self.d_head + d;
-                    concat[dst_idx] = head_data[src_idx];
-                }
+                let src_offset = s * self.d_head;
+                let dst_offset = s * self.d_model + head * self.d_head;
+                concat[dst_offset..dst_offset + self.d_head]
+                    .copy_from_slice(&head_data[src_offset..src_offset + self.d_head]);
             }
         }
 
