@@ -1585,6 +1585,8 @@ pub struct DecoderScratch {
     ln_post_out: Vec<f32>,
     /// Vocabulary logits output (n_vocab)
     logits: Vec<f32>,
+    /// Fused QKV projection buffer (3 * d_model) — pv:fused-qkv-projection-v1
+    qkv: Vec<f32>,
 
     /// Attention scratch buffers (split struct for borrow splitting)
     attn: AttentionScratch,
@@ -1635,6 +1637,7 @@ impl DecoderScratch {
             ffn_out: vec![0.0; d_model],
             ln_post_out: vec![0.0; d_model],
             logits: vec![0.0; n_vocab],
+            qkv: vec![0.0; 3 * d_model],
             attn: AttentionScratch {
                 q_head: vec![0.0; d_head],
                 k_head: vec![0.0; max_len * d_head],
@@ -1773,7 +1776,9 @@ impl DecoderBlock {
     /// Call this after loading all weights to optimize SIMD matmul performance.
     pub fn finalize_weights(&mut self) {
         self.self_attn.finalize_weights();
+        self.self_attn.fuse_qkv_weights();
         self.cross_attn.finalize_weights();
+        self.cross_attn.fuse_qkv_weights();
         self.ffn.finalize_weights();
     }
 
@@ -3062,19 +3067,14 @@ impl Decoder {
         // Pre-norm
         block.ln1.forward_into(x, &mut scratch.normed)?;
 
-        // Q, K, V projections into scratch
+        // Fused Q+K+V projection (pv:fused-qkv-projection-v1)
+        let d = self.d_model;
         block
             .self_attn
-            .w_q()
-            .forward_simd_into(&scratch.normed, 1, &mut scratch.q)?;
-        block
-            .self_attn
-            .w_k()
-            .forward_simd_into(&scratch.normed, 1, &mut scratch.k_new)?;
-        block
-            .self_attn
-            .w_v()
-            .forward_simd_into(&scratch.normed, 1, &mut scratch.v_new)?;
+            .forward_qkv_into(&scratch.normed, &mut scratch.qkv)?;
+        scratch.q.copy_from_slice(&scratch.qkv[..d]);
+        scratch.k_new.copy_from_slice(&scratch.qkv[d..2 * d]);
+        scratch.v_new.copy_from_slice(&scratch.qkv[2 * d..3 * d]);
 
         // Append new K, V to cache
         cache.self_attn_cache[layer_idx].append(&scratch.k_new, &scratch.v_new)?;

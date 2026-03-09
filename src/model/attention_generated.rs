@@ -148,6 +148,12 @@ impl LinearWeights {
         self.weight_transposed.is_some()
     }
 
+    /// Get fp16 weight storage, if present.
+    #[must_use]
+    pub fn weight_f16(&self) -> Option<&[u16]> {
+        self.weight_f16.as_deref()
+    }
+
     /// Clear cached transposed weights (useful after modifying weights)
     pub fn invalidate_cache(&mut self) {
         self.weight_transposed = None;
@@ -757,6 +763,11 @@ pub struct MultiHeadAttention {
     w_o: LinearWeights,
     /// Scale factor for attention scores (1/sqrt(d_head))
     scale: f32,
+    /// Fused QKV weights (pv:fused-qkv-projection-v1): [W_q; W_k; W_v] concatenated fp16.
+    /// When present, `forward_qkv_into` does a single matvec instead of three.
+    w_qkv_f16: Option<Vec<u16>>,
+    /// Fused QKV bias: [b_q; b_k; b_v] concatenated.
+    b_qkv: Option<Vec<f32>>,
 }
 
 impl MultiHeadAttention {
@@ -786,6 +797,8 @@ impl MultiHeadAttention {
             w_v: LinearWeights::new(d_model, d_model),
             w_o: LinearWeights::new(d_model, d_model),
             scale: 1.0 / (d_head as f32).sqrt(),
+            w_qkv_f16: None,
+            b_qkv: None,
         }
     }
 
@@ -1684,6 +1697,68 @@ impl MultiHeadAttention {
     /// Get mutable output weights reference (for loading weights)
     pub fn w_o_mut(&mut self) -> &mut LinearWeights {
         &mut self.w_o
+    }
+
+    /// Fuse Q, K, V fp16 weights into a single contiguous `W_qkv` matrix (pv:fused-qkv-projection-v1).
+    ///
+    /// After calling this, `forward_qkv_into` will use a single matvec instead of three.
+    /// Must be called after weights are loaded (e.g., after `set_*_weight_f16`).
+    pub fn fuse_qkv_weights(&mut self) {
+        let Some(wq) = self.w_q.weight_f16() else {
+            return;
+        };
+        let Some(wk) = self.w_k.weight_f16() else {
+            return;
+        };
+        let Some(wv) = self.w_v.weight_f16() else {
+            return;
+        };
+
+        // Concatenate: [W_q; W_k; W_v] row-major
+        let mut fused = Vec::with_capacity(wq.len() + wk.len() + wv.len());
+        fused.extend_from_slice(wq);
+        fused.extend_from_slice(wk);
+        fused.extend_from_slice(wv);
+        self.w_qkv_f16 = Some(fused);
+
+        // Concatenate biases: [b_q; b_k; b_v]
+        let mut b = Vec::with_capacity(self.d_model * 3);
+        b.extend_from_slice(&self.w_q.bias);
+        b.extend_from_slice(&self.w_k.bias);
+        b.extend_from_slice(&self.w_v.bias);
+        self.b_qkv = Some(b);
+    }
+
+    /// Check whether fused QKV weights are available.
+    #[must_use]
+    pub fn has_fused_qkv(&self) -> bool {
+        self.w_qkv_f16.is_some()
+    }
+
+    /// Fused Q+K+V projection into pre-allocated buffer (pv:fused-qkv-projection-v1).
+    ///
+    /// Single `tiled_matvec_f16_into` call for `[W_q; W_k; W_v] @ input`,
+    /// then adds fused bias. Output layout: `[q[0..d]; k[d..2d]; v[2d..3d]]`.
+    ///
+    /// Falls back to three separate projections if fused weights are not available.
+    pub fn forward_qkv_into(&self, input: &[f32], qkv_out: &mut [f32]) -> WhisperResult<()> {
+        let d = self.d_model;
+        debug_assert_eq!(qkv_out.len(), 3 * d);
+
+        if let (Some(w_qkv), Some(b_qkv)) = (&self.w_qkv_f16, &self.b_qkv) {
+            // Fused path: single matvec
+            simd::tiled_matvec_f16_into(w_qkv, input, qkv_out, 3 * d, d);
+            simd::broadcast_add_inplace(qkv_out, b_qkv, 1, 3 * d);
+            Ok(())
+        } else {
+            // Fallback: three separate projections
+            self.w_q.forward_simd_into(input, 1, &mut qkv_out[..d])?;
+            self.w_k
+                .forward_simd_into(input, 1, &mut qkv_out[d..2 * d])?;
+            self.w_v
+                .forward_simd_into(input, 1, &mut qkv_out[2 * d..3 * d])?;
+            Ok(())
+        }
     }
 }
 
@@ -2875,5 +2950,160 @@ mod tests {
             "Auto-dispatch forward_cross completed with {} elements",
             output.len()
         );
+    }
+
+    // =========================================================================
+    // Fused QKV Property Tests (pv:fused-qkv-projection-v1)
+    // =========================================================================
+
+    /// Helper: create MHA with random fp16 weights for testing fused QKV.
+    fn make_fused_mha(d_model: usize) -> MultiHeadAttention {
+        let n_heads = if d_model >= 8 { d_model / 64.max(1) } else { 1 };
+        let adjusted_d = n_heads * (d_model / n_heads); // ensure divisible
+        let n_heads = if adjusted_d == 0 {
+            1
+        } else {
+            adjusted_d / (adjusted_d / n_heads)
+        };
+        let mut attn = MultiHeadAttention::new(n_heads, d_model);
+        // Fill with deterministic pseudo-random fp16 weights
+        let n = d_model * d_model;
+        let make_f16 = |seed: u32| -> Vec<u16> {
+            (0..n)
+                .map(|i| {
+                    let v = ((i as f32 + seed as f32) * 0.001).sin() * 0.1;
+                    half::f16::from_f32(v).to_bits()
+                })
+                .collect()
+        };
+        attn.set_query_weight_f16(&make_f16(1));
+        attn.set_key_weight_f16(&make_f16(7));
+        attn.set_value_weight_f16(&make_f16(13));
+        // Set biases
+        let make_bias = |seed: u32| -> Vec<f32> {
+            (0..d_model)
+                .map(|i| ((i as f32 + seed as f32) * 0.01).cos() * 0.05)
+                .collect()
+        };
+        attn.set_query_bias(&make_bias(2));
+        attn.set_key_bias(&make_bias(8));
+        attn.set_value_bias(&make_bias(14));
+        attn.fuse_qkv_weights();
+        attn
+    }
+
+    #[test]
+    fn pv_fused_qkv_equivalence() {
+        let d = 384; // Whisper tiny
+        let attn = make_fused_mha(d);
+        assert!(attn.has_fused_qkv());
+
+        let input: Vec<f32> = (0..d).map(|i| (i as f32 * 0.01).sin()).collect();
+
+        // Separate path
+        let mut q_sep = vec![0.0f32; d];
+        let mut k_sep = vec![0.0f32; d];
+        let mut v_sep = vec![0.0f32; d];
+        attn.w_q().forward_simd_into(&input, 1, &mut q_sep).unwrap();
+        attn.w_k().forward_simd_into(&input, 1, &mut k_sep).unwrap();
+        attn.w_v().forward_simd_into(&input, 1, &mut v_sep).unwrap();
+
+        // Fused path
+        let mut qkv = vec![0.0f32; 3 * d];
+        attn.forward_qkv_into(&input, &mut qkv).unwrap();
+
+        for i in 0..d {
+            let diff_q = (q_sep[i] - qkv[i]).abs();
+            let diff_k = (k_sep[i] - qkv[d + i]).abs();
+            let diff_v = (v_sep[i] - qkv[2 * d + i]).abs();
+            assert!(
+                diff_q < 1e-4,
+                "q[{i}]: sep={}, fused={}, diff={diff_q}",
+                q_sep[i],
+                qkv[i]
+            );
+            assert!(
+                diff_k < 1e-4,
+                "k[{i}]: sep={}, fused={}, diff={diff_k}",
+                k_sep[i],
+                qkv[d + i]
+            );
+            assert!(
+                diff_v < 1e-4,
+                "v[{i}]: sep={}, fused={}, diff={diff_v}",
+                v_sep[i],
+                qkv[2 * d + i]
+            );
+        }
+    }
+
+    #[test]
+    fn pv_fused_qkv_output_dimension() {
+        for d in [64, 384, 512, 768] {
+            let n_heads = d / 64;
+            let mut attn = MultiHeadAttention::new(n_heads, d);
+            let n = d * d;
+            let zeros_f16: Vec<u16> = vec![0; n];
+            attn.set_query_weight_f16(&zeros_f16);
+            attn.set_key_weight_f16(&zeros_f16);
+            attn.set_value_weight_f16(&zeros_f16);
+            attn.fuse_qkv_weights();
+
+            let input = vec![1.0f32; d];
+            let mut qkv = vec![0.0f32; 3 * d];
+            attn.forward_qkv_into(&input, &mut qkv).unwrap();
+            assert_eq!(qkv.len(), 3 * d, "d_model={d}");
+        }
+    }
+
+    #[test]
+    fn pv_fused_qkv_weight_layout() {
+        let d = 64;
+        let attn = make_fused_mha(d);
+        let w_qkv = attn.w_qkv_f16.as_ref().unwrap();
+        let wq = attn.w_q.weight_f16().unwrap();
+        let wk = attn.w_k.weight_f16().unwrap();
+        let wv = attn.w_v.weight_f16().unwrap();
+
+        let n = d * d;
+        assert_eq!(w_qkv.len(), 3 * n);
+        assert_eq!(&w_qkv[..n], wq);
+        assert_eq!(&w_qkv[n..2 * n], wk);
+        assert_eq!(&w_qkv[2 * n..3 * n], wv);
+    }
+
+    #[test]
+    fn pv_fused_qkv_bias_layout() {
+        let d = 64;
+        let attn = make_fused_mha(d);
+        let b_qkv = attn.b_qkv.as_ref().unwrap();
+
+        assert_eq!(b_qkv.len(), 3 * d);
+        assert_eq!(&b_qkv[..d], attn.w_q.bias.as_slice());
+        assert_eq!(&b_qkv[d..2 * d], attn.w_k.bias.as_slice());
+        assert_eq!(&b_qkv[2 * d..3 * d], attn.w_v.bias.as_slice());
+    }
+
+    #[test]
+    fn pv_fused_qkv_whisper_dimensions() {
+        // Test all Whisper model sizes: tiny=384, base=512, small=768, medium=1024, large=1280
+        for d in [384, 512, 768, 1024, 1280] {
+            let n_heads = d / 64;
+            let attn = make_fused_mha(d);
+            assert!(attn.has_fused_qkv(), "d_model={d}");
+
+            let input: Vec<f32> = (0..d).map(|i| (i as f32 * 0.005).sin()).collect();
+            let mut qkv = vec![0.0f32; 3 * d];
+            attn.forward_qkv_into(&input, &mut qkv).unwrap();
+
+            // Verify each sub-vector has non-trivial values (not all zero)
+            let q_sum: f32 = qkv[..d].iter().map(|x| x.abs()).sum();
+            let k_sum: f32 = qkv[d..2 * d].iter().map(|x| x.abs()).sum();
+            let v_sum: f32 = qkv[2 * d..].iter().map(|x| x.abs()).sum();
+            assert!(q_sum > 0.0, "d={d}: Q all zero");
+            assert!(k_sum > 0.0, "d={d}: K all zero");
+            assert!(v_sum > 0.0, "d={d}: V all zero");
+            let _ = n_heads;
+        }
     }
 }
