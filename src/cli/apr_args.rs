@@ -612,10 +612,6 @@ pub struct AprProfileArgs {
     /// Show per-token decoder timing
     #[arg(long)]
     pub per_token: bool,
-
-    /// Compare against whisper.cpp timing (if available)
-    #[arg(long)]
-    pub compare_cpp: bool,
 }
 
 // ============================================================================

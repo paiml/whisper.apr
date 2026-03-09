@@ -599,10 +599,12 @@ pub(super) fn run_he_inspect(
 // Tier C — Profiling (renacer integration)
 // ============================================================================
 
-/// Run renacer-instrumented transcription with per-step timing breakdown.
+/// Run instrumented transcription with per-step timing breakdown.
 ///
-/// Measures: model load, mel spectrogram, encoder, decoder (per-token), detokenize.
-/// Outputs text, JSON, or renacer trace format.
+/// Uses `TranscribeOptions { profile: true }` so mel, encoder, and decoder
+/// timings come from direct instrumentation inside `transcribe_single_chunk`
+/// rather than approximate subtraction. Outputs text, JSON, or renacer
+/// (Chrome Trace Event) format.
 pub(super) fn run_profile(
     args: &AprProfileArgs,
     global: &super::super::args::Args,
@@ -626,40 +628,37 @@ pub(super) fn run_profile(
     let total_runs = args.warmup + args.runs;
     let mut run_results: Vec<ProfileRun> = Vec::with_capacity(args.runs);
 
+    let mut options = TranscribeOptions::default();
+    options.profile = true;
+
     for run_idx in 0..total_runs {
         let is_warmup = run_idx < args.warmup;
 
-        // Step 1: Mel spectrogram
-        let mel_start = Instant::now();
-        let mel = whisper
-            .compute_mel(&samples)
-            .map_err(|e| CliError::InvalidArgument(format!("Mel: {e}")))?;
-        let mel_ms = mel_start.elapsed().as_secs_f64() * 1000.0;
-
-        // Step 2: Encoder
-        let enc_start = Instant::now();
-        let _encoded = whisper
-            .encode(&mel)
-            .map_err(|e| CliError::InvalidArgument(format!("Encode: {e}")))?;
-        let enc_ms = enc_start.elapsed().as_secs_f64() * 1000.0;
-
-        // Step 3: Full transcription (includes decoder + detokenize)
-        let transcribe_start = Instant::now();
+        // Single transcribe() call with profile: true — no redundant mel+encode
+        let run_start = Instant::now();
         let result = whisper
-            .transcribe(&samples, TranscribeOptions::default())
+            .transcribe(&samples, options.clone())
             .map_err(|e| CliError::InvalidArgument(format!("Transcribe: {e}")))?;
-        let transcribe_ms = transcribe_start.elapsed().as_secs_f64() * 1000.0;
+        let wall_ms = run_start.elapsed().as_secs_f64() * 1000.0;
 
-        // Decoder time = transcribe - mel - encode (approximate)
-        let decode_ms = (transcribe_ms - mel_ms - enc_ms).max(0.0);
-        let total_ms = transcribe_ms;
+        // Extract directly-instrumented timings from ProfilingStats breakdown
+        let (mel_ms, enc_ms, dec_ms, total_ms) = if let Some(ref prof) = result.profiling {
+            let mel = prof.breakdown.get("mel_ms").copied().unwrap_or(0.0);
+            let enc = prof.breakdown.get("encoder_ms").copied().unwrap_or(0.0);
+            let dec = prof.breakdown.get("decoder_ms").copied().unwrap_or(0.0);
+            (mel, enc, dec, prof.total_ms)
+        } else {
+            // Fallback: use wall-clock time if profiling somehow absent
+            (0.0, 0.0, 0.0, wall_ms)
+        };
+
         let token_count: usize = result.segments.iter().map(|s| s.tokens.len()).sum();
 
         if !is_warmup {
             run_results.push(ProfileRun {
                 mel_ms,
                 encode_ms: enc_ms,
-                decode_ms,
+                decode_ms: dec_ms,
                 total_ms,
                 rtf: total_ms / 1000.0 / audio_duration_s,
                 token_count,
@@ -683,15 +682,21 @@ pub(super) fn run_profile(
         audio_duration_s,
     };
 
-    if args.format == "json" {
-        let json = summary.format_json(args);
-        if let Some(ref out) = args.output {
-            fs::write(out, &json).map_err(|e| CliError::InvalidArgument(format!("Write: {e}")))?;
-        } else {
-            println!("{json}");
+    let output_str = match args.format.as_str() {
+        "json" => summary.format_json(args),
+        "renacer" => summary.format_renacer(args),
+        _ => {
+            // Text output — use emit_output for quiet/json global flags
+            emit_output(global, || {}, || summary.print_table(args));
+            return Ok(CommandResult::success("Profile complete"));
         }
+    };
+
+    if let Some(ref out) = args.output {
+        fs::write(out, &output_str)
+            .map_err(|e| CliError::InvalidArgument(format!("Write: {e}")))?;
     } else {
-        emit_output(global, || {}, || summary.print_table(args));
+        println!("{output_str}");
     }
 
     Ok(CommandResult::success("Profile complete"))
@@ -744,6 +749,89 @@ impl ProfileSummary<'_> {
             self.avg_rtf,
             self.avg_tokens,
             self.text.replace('"', "\\\"")
+        )
+    }
+
+    /// Format as Chrome Trace Event JSON (renacer-compatible).
+    ///
+    /// Produces a `traceEvents` array with duration ("X") events for each
+    /// pipeline stage. Timestamps are in microseconds. Compatible with
+    /// `chrome://tracing`, Perfetto UI, and `renacer --format json`.
+    fn format_renacer(&self, args: &AprProfileArgs) -> String {
+        let mut events = Vec::new();
+        let mut ts_us: f64 = 0.0;
+
+        // Model load
+        let load_dur = self.load_ms * 1000.0;
+        events.push(format!(
+            concat!(
+                "{{\"name\":\"model_load\",\"cat\":\"apr_profile\",\"ph\":\"X\",",
+                "\"ts\":{:.0},\"dur\":{:.0},\"pid\":1,\"tid\":1,",
+                "\"args\":{{\"model\":\"{}\"}}}}"
+            ),
+            ts_us,
+            load_dur,
+            args.model.display()
+        ));
+        ts_us += load_dur;
+
+        // Mel spectrogram
+        let mel_dur = self.avg_mel * 1000.0;
+        events.push(format!(
+            concat!(
+                "{{\"name\":\"mel_spectrogram\",\"cat\":\"apr_profile\",\"ph\":\"X\",",
+                "\"ts\":{:.0},\"dur\":{:.0},\"pid\":1,\"tid\":1}}"
+            ),
+            ts_us, mel_dur
+        ));
+        ts_us += mel_dur;
+
+        // Encoder
+        let enc_dur = self.avg_enc * 1000.0;
+        events.push(format!(
+            concat!(
+                "{{\"name\":\"encoder\",\"cat\":\"apr_profile\",\"ph\":\"X\",",
+                "\"ts\":{:.0},\"dur\":{:.0},\"pid\":1,\"tid\":1}}"
+            ),
+            ts_us, enc_dur
+        ));
+        ts_us += enc_dur;
+
+        // Decoder
+        let dec_dur = self.avg_dec * 1000.0;
+        events.push(format!(
+            concat!(
+                "{{\"name\":\"decoder\",\"cat\":\"apr_profile\",\"ph\":\"X\",",
+                "\"ts\":{:.0},\"dur\":{:.0},\"pid\":1,\"tid\":1,",
+                "\"args\":{{\"tokens\":{},\"ms_per_token\":{:.1}}}}}"
+            ),
+            ts_us,
+            dec_dur,
+            self.avg_tokens,
+            if self.avg_tokens > 0 {
+                self.avg_dec / self.avg_tokens as f64
+            } else {
+                0.0
+            }
+        ));
+
+        // Metadata event
+        let meta = format!(
+            concat!(
+                "{{\"name\":\"process_name\",\"cat\":\"__metadata\",\"ph\":\"M\",",
+                "\"ts\":0,\"pid\":1,\"tid\":0,",
+                "\"args\":{{\"name\":\"apr profile ({} runs)\"}}}}"
+            ),
+            args.runs
+        );
+
+        format!(
+            "{{\"traceEvents\":[{},{}],\"metadata\":{{\"audio\":\"{}\",\"audio_duration_s\":{:.3},\"rtf\":{:.3}}}}}",
+            meta,
+            events.join(","),
+            args.audio.display(),
+            self.audio_duration_s,
+            self.avg_rtf,
         )
     }
 
