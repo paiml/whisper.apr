@@ -1173,15 +1173,31 @@ fn run_f16_audit(args: &AprF16AuditArgs, global: &super::args::Args) -> CliResul
 // Proxy Commands (delegated to aprender's apr-cli)
 // ============================================================================
 
+#[cfg(feature = "cli-full")]
 fn run_pull(args: &AprPullArgs) -> CliResult<CommandResult> {
     apr_cli::model_pull::run(&args.model_ref, args.force)
         .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
     Ok(CommandResult::success(format!("Pulled {}", args.model_ref)))
 }
 
+#[cfg(not(feature = "cli-full"))]
+fn run_pull(_args: &AprPullArgs) -> CliResult<CommandResult> {
+    Err(CliError::InvalidArgument(
+        "apr pull requires the 'cli-full' feature (includes apr-cli dependency)".into(),
+    ))
+}
+
+#[cfg(feature = "cli-full")]
 fn run_pull_list(args: &AprPullListArgs) -> CliResult<CommandResult> {
     apr_cli::model_pull::list(args.json).map_err(|e| CliError::InvalidArgument(e.to_string()))?;
     Ok(CommandResult::success("Listed cached models"))
+}
+
+#[cfg(not(feature = "cli-full"))]
+fn run_pull_list(_args: &AprPullListArgs) -> CliResult<CommandResult> {
+    Err(CliError::InvalidArgument(
+        "apr ls requires the 'cli-full' feature (includes apr-cli dependency)".into(),
+    ))
 }
 
 // ============================================================================
