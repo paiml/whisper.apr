@@ -2589,7 +2589,23 @@ impl Decoder {
     pub fn create_decoder_scratch(&self) -> DecoderScratch {
         let d_ff = self.d_model * 4;
         let d_head = self.d_model / self.n_heads;
-        DecoderScratch::new_with_attn(self.d_model, d_ff, d_head, self.max_len)
+        // Attention buffers must fit both self-attention (max_len) and
+        // cross-attention (encoder context, typically 1500 for Whisper).
+        // Use 1500 as default encoder context; callers needing more can
+        // use create_decoder_scratch_with_enc_len().
+        let attn_max_kv = self.max_len.max(1500);
+        DecoderScratch::new_with_attn(self.d_model, d_ff, d_head, attn_max_kv)
+    }
+
+    /// Create scratch buffers with explicit encoder context length.
+    ///
+    /// Use when encoder output exceeds the default 1500-frame context.
+    #[must_use]
+    pub fn create_decoder_scratch_with_enc_len(&self, enc_ctx_len: usize) -> DecoderScratch {
+        let d_ff = self.d_model * 4;
+        let d_head = self.d_model / self.n_heads;
+        let attn_max_kv = self.max_len.max(enc_ctx_len);
+        DecoderScratch::new_with_attn(self.d_model, d_ff, d_head, attn_max_kv)
     }
 
     /// Create a new paged KV cache for this decoder
