@@ -968,6 +968,9 @@ impl WhisperApr {
             None
         };
 
+        // Pre-allocate decoder scratch buffers (PMAT-014 O1)
+        let scratch = std::cell::RefCell::new(self.decoder.create_decoder_scratch());
+
         let logits_fn = |tokens: &[u32]| -> WhisperResult<Vec<f32>> {
             let seq_len = tokens.len();
             let already_processed = *processed_count.borrow();
@@ -976,9 +979,12 @@ impl WhisperApr {
             let mut logits = vec![f32::NEG_INFINITY; n_vocab];
 
             for &token in tokens.iter().take(seq_len).skip(already_processed) {
-                logits =
-                    self.decoder
-                        .forward_one(token, audio_features, &mut cache.borrow_mut())?;
+                logits = self.decoder.forward_one_with_scratch(
+                    token,
+                    audio_features,
+                    &mut cache.borrow_mut(),
+                    &mut scratch.borrow_mut(),
+                )?;
             }
 
             *processed_count.borrow_mut() = seq_len;

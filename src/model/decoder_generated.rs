@@ -1538,6 +1538,74 @@ impl BatchDecoderOutput {
     }
 }
 
+// ============================================================================
+// Decoder Scratch Buffers (PMAT-014 O1)
+// ============================================================================
+
+/// Pre-allocated scratch buffers for the decoder hot path.
+///
+/// Created once via [`Decoder::create_decoder_scratch`] and reused across
+/// all tokens during autoregressive generation. Eliminates ~12 heap
+/// allocations per decoder block per token (LayerNorm, linear projections,
+/// FFN, residual connections).
+///
+/// # Usage
+///
+/// ```ignore
+/// let mut scratch = decoder.create_decoder_scratch();
+/// for token in tokens {
+///     let logits = decoder.forward_one_with_scratch(token, enc_out, &mut cache, &mut scratch)?;
+/// }
+/// ```
+pub struct DecoderScratch {
+    // — Per-block reusable buffers (d_model each) —
+    /// LayerNorm output for self-attention pre-norm
+    normed: Vec<f32>,
+    /// Query projection
+    q: Vec<f32>,
+    /// Key projection (new token)
+    k_new: Vec<f32>,
+    /// Value projection (new token)
+    v_new: Vec<f32>,
+    /// Self-attention output projection
+    sa_proj: Vec<f32>,
+    /// LayerNorm output for cross-attention pre-norm
+    normed2: Vec<f32>,
+    /// Cross-attention query projection
+    cross_q: Vec<f32>,
+    /// Cross-attention output projection
+    cross_proj: Vec<f32>,
+    /// LayerNorm output for FFN pre-norm
+    normed3: Vec<f32>,
+    /// FFN hidden layer (d_ff = 4 * d_model)
+    ffn_hidden: Vec<f32>,
+    /// FFN output
+    ffn_out: Vec<f32>,
+    /// Final layer norm output
+    ln_post_out: Vec<f32>,
+}
+
+impl DecoderScratch {
+    /// Create scratch buffers for a decoder with given dimensions.
+    #[must_use]
+    pub fn new(d_model: usize, d_ff: usize) -> Self {
+        Self {
+            normed: vec![0.0; d_model],
+            q: vec![0.0; d_model],
+            k_new: vec![0.0; d_model],
+            v_new: vec![0.0; d_model],
+            sa_proj: vec![0.0; d_model],
+            normed2: vec![0.0; d_model],
+            cross_q: vec![0.0; d_model],
+            cross_proj: vec![0.0; d_model],
+            normed3: vec![0.0; d_model],
+            ffn_hidden: vec![0.0; d_ff],
+            ffn_out: vec![0.0; d_model],
+            ln_post_out: vec![0.0; d_model],
+        }
+    }
+}
+
 /// Single transformer decoder block
 ///
 /// Contains masked self-attention, cross-attention to encoder, and FFN.
@@ -2480,6 +2548,16 @@ impl Decoder {
         }
     }
 
+    /// Create pre-allocated scratch buffers for zero-alloc decoding (PMAT-014 O1).
+    ///
+    /// Call once before the token generation loop, then pass to
+    /// [`forward_one_with_scratch`] on every token.
+    #[must_use]
+    pub fn create_decoder_scratch(&self) -> DecoderScratch {
+        let d_ff = self.d_model * 4;
+        DecoderScratch::new(self.d_model, d_ff)
+    }
+
     /// Create a new paged KV cache for this decoder
     ///
     /// Uses realizar's PagedKvCache for memory-efficient KV caching.
@@ -2802,6 +2880,201 @@ impl Decoder {
             let x = self.ln_post.forward(&x)?;
             Ok(self.project_to_vocab(&x, 1))
         }
+    }
+
+    /// Forward pass for a single token using pre-allocated scratch buffers (PMAT-014 O1).
+    ///
+    /// Eliminates ~12 heap allocations per decoder block per token by reusing
+    /// scratch buffers for LayerNorm, linear projections, FFN, and residual
+    /// connections. Only the Whisper path is optimized; Moonshine falls back to
+    /// the allocating `forward_one`.
+    ///
+    /// # Arguments
+    /// * `token` - Single token ID to process
+    /// * `encoder_output` - Encoder hidden states (enc_len x d_model)
+    /// * `cache` - Mutable reference to KV cache
+    /// * `scratch` - Pre-allocated scratch buffers from [`create_decoder_scratch`]
+    ///
+    /// # Returns
+    /// Logits over vocabulary for the new token (n_vocab)
+    #[allow(clippy::needless_range_loop)]
+    pub fn forward_one_with_scratch(
+        &self,
+        token: u32,
+        encoder_output: &[f32],
+        cache: &mut DecoderKVCache,
+        scratch: &mut DecoderScratch,
+    ) -> WhisperResult<Vec<f32>> {
+        // Moonshine path: fall back to allocating variant
+        if self.rope.is_some() {
+            return self.forward_one(token, encoder_output, cache);
+        }
+
+        let pos = cache.seq_len();
+
+        if pos >= self.max_len {
+            return Err(WhisperError::Model(format!(
+                "cache position {} exceeds max {}",
+                pos, self.max_len
+            )));
+        }
+
+        if token as usize >= self.n_vocab {
+            return Err(WhisperError::Model(format!(
+                "token {} out of vocabulary range {}",
+                token, self.n_vocab
+            )));
+        }
+
+        // Embed the new token (single allocation — unavoidable, becomes `x`)
+        let emb_start = (token as usize) * self.d_model;
+        let mut x: Vec<f32> = self.token_embedding[emb_start..emb_start + self.d_model].to_vec();
+
+        // Add positional embedding
+        let pos_start = pos * self.d_model;
+        for d in 0..self.d_model {
+            x[d] += self.positional_embedding[pos_start + d];
+        }
+
+        // Pass through decoder blocks with scratch buffers
+        for (layer_idx, block) in self.blocks.iter().enumerate() {
+            self.forward_block_cached_with_scratch(
+                block,
+                &mut x,
+                encoder_output,
+                layer_idx,
+                cache,
+                scratch,
+            )?;
+        }
+
+        if !cache.cross_attn_cached {
+            cache.cross_attn_cached = true;
+        }
+
+        // Final layer norm into scratch
+        self.ln_post.forward_into(&x, &mut scratch.ln_post_out)?;
+
+        Ok(self.project_to_vocab(&scratch.ln_post_out, 1))
+    }
+
+    /// Forward pass through a single decoder block with scratch buffers (PMAT-014 O1).
+    ///
+    /// Mutates `x` in-place (residual accumulation) instead of returning a new Vec.
+    /// Uses `scratch` for all intermediate computations.
+    fn forward_block_cached_with_scratch(
+        &self,
+        block: &DecoderBlock,
+        x: &mut [f32],
+        encoder_output: &[f32],
+        layer_idx: usize,
+        cache: &mut DecoderKVCache,
+        scratch: &mut DecoderScratch,
+    ) -> WhisperResult<()> {
+        // ── Self-attention ──────────────────────────────────────────
+        // Pre-norm
+        block.ln1.forward_into(x, &mut scratch.normed)?;
+
+        // Q, K, V projections into scratch
+        block
+            .self_attn
+            .w_q()
+            .forward_simd_into(&scratch.normed, 1, &mut scratch.q)?;
+        block
+            .self_attn
+            .w_k()
+            .forward_simd_into(&scratch.normed, 1, &mut scratch.k_new)?;
+        block
+            .self_attn
+            .w_v()
+            .forward_simd_into(&scratch.normed, 1, &mut scratch.v_new)?;
+
+        // Append new K, V to cache
+        cache.self_attn_cache[layer_idx].append(&scratch.k_new, &scratch.v_new)?;
+
+        // Get full K, V from cache
+        let k_full = cache.self_attn_cache[layer_idx].get_key();
+        let v_full = cache.self_attn_cache[layer_idx].get_value();
+
+        // Attention (still allocates internally — addressed in O3)
+        let attn_out =
+            self.compute_attention_cached(&block.self_attn, &scratch.q, k_full, v_full)?;
+
+        // Output projection into scratch
+        block
+            .self_attn
+            .w_o()
+            .forward_simd_into(&attn_out, 1, &mut scratch.sa_proj)?;
+
+        // Residual connection in-place
+        for (xi, &pi) in x.iter_mut().zip(scratch.sa_proj.iter()) {
+            *xi += pi;
+        }
+
+        // ── Cross-attention ─────────────────────────────────────────
+        block.ln2.forward_into(x, &mut scratch.normed2)?;
+
+        if !cache.cross_attn_cached || cache.cross_attn_cache[layer_idx].is_empty() {
+            // First token: compute and cache encoder K/V (one-time allocation)
+            let enc_len = encoder_output.len() / self.d_model;
+            let k_enc = block
+                .cross_attn
+                .w_k()
+                .forward_simd(encoder_output, enc_len)?;
+            let v_enc = block
+                .cross_attn
+                .w_v()
+                .forward_simd(encoder_output, enc_len)?;
+            cache.cross_attn_cache[layer_idx].append(&k_enc, &v_enc)?;
+
+            block
+                .cross_attn
+                .w_q()
+                .forward_simd_into(&scratch.normed2, 1, &mut scratch.cross_q)?;
+            let attn_out =
+                self.compute_attention_cached(&block.cross_attn, &scratch.cross_q, &k_enc, &v_enc)?;
+            block
+                .cross_attn
+                .w_o()
+                .forward_simd_into(&attn_out, 1, &mut scratch.cross_proj)?;
+        } else {
+            // Reuse cached encoder K/V
+            let k_cached = cache.cross_attn_cache[layer_idx].get_key();
+            let v_cached = cache.cross_attn_cache[layer_idx].get_value();
+
+            block
+                .cross_attn
+                .w_q()
+                .forward_simd_into(&scratch.normed2, 1, &mut scratch.cross_q)?;
+            let attn_out = self.compute_attention_cached(
+                &block.cross_attn,
+                &scratch.cross_q,
+                k_cached,
+                v_cached,
+            )?;
+            block
+                .cross_attn
+                .w_o()
+                .forward_simd_into(&attn_out, 1, &mut scratch.cross_proj)?;
+        }
+
+        // Cross-attention residual
+        for (xi, &ci) in x.iter_mut().zip(scratch.cross_proj.iter()) {
+            *xi += ci;
+        }
+
+        // ── FFN ─────────────────────────────────────────────────────
+        block.ln3.forward_into(x, &mut scratch.normed3)?;
+        block.ffn.forward_into(
+            &scratch.normed3,
+            &mut scratch.ffn_hidden,
+            &mut scratch.ffn_out,
+        )?;
+        for (xi, &fi) in x.iter_mut().zip(scratch.ffn_out.iter()) {
+            *xi += fi;
+        }
+
+        Ok(())
     }
 
     /// Forward pass for a single token, returning hidden state before output projection.
@@ -3211,11 +3484,13 @@ impl Decoder {
         eos_token: u32,
     ) -> WhisperResult<Vec<u32>> {
         let mut cache = self.create_kv_cache();
+        let mut scratch = self.create_decoder_scratch();
         let mut tokens = initial_tokens.to_vec();
 
         // Process initial tokens (prime the cache)
         for &token in initial_tokens {
-            let _ = self.forward_one(token, encoder_output, &mut cache)?;
+            let _ =
+                self.forward_one_with_scratch(token, encoder_output, &mut cache, &mut scratch)?;
         }
 
         // Generate new tokens
@@ -3224,7 +3499,12 @@ impl Decoder {
                 .last()
                 .ok_or_else(|| WhisperError::Model("empty token sequence".into()))?;
 
-            let logits = self.forward_one(last_token, encoder_output, &mut cache)?;
+            let logits = self.forward_one_with_scratch(
+                last_token,
+                encoder_output,
+                &mut cache,
+                &mut scratch,
+            )?;
 
             // Greedy selection (argmax)
             let next_token = logits

@@ -15,8 +15,8 @@ pub use attention::{
     FLASH_ATTENTION_BLOCK_SIZE, FLASH_ATTENTION_THRESHOLD,
 };
 pub use decoder::{
-    BatchDecoderCache, BatchDecoderOutput, Decoder, DecoderBlock, DecoderKVCache, LayerKVCache,
-    StreamingCacheStats, StreamingKVCache,
+    BatchDecoderCache, BatchDecoderOutput, Decoder, DecoderBlock, DecoderKVCache, DecoderScratch,
+    LayerKVCache, StreamingCacheStats, StreamingKVCache,
 };
 pub use encoder::{Conv1d, ConvFrontend, Encoder, EncoderBlock, FeedForward, LayerNorm};
 pub use moonshine::{MoonshineDecoderBlock, MoonshineEncoderBlock};
