@@ -12,16 +12,144 @@ pub fn dot(a: &[f32], b: &[f32]) -> f32 {
     va.dot(&vb).unwrap_or(0.0)
 }
 
-/// Zero-allocation dot product (PMAT-014 O5).
+/// Zero-allocation dot product with AVX2+FMA runtime dispatch (PMAT-014 O5, pv:avx2-fma-dot-v1).
 ///
-/// Avoids trueno `Vector::from_slice` overhead (2 heap allocs per call).
-/// Auto-vectorizes with `-O2` and appropriate target features (AVX2/SSE2).
-/// Use in tight loops (e.g., `tiled_matvec_into`) where per-call alloc overhead dominates.
+/// Uses explicit `vfmadd231ps` intrinsics with 4 independent accumulators to saturate
+/// the FMA execution unit. Falls back to scalar loop on non-AVX2 hardware.
+/// Zero heap allocations in all paths.
 #[inline]
 #[must_use]
 pub fn dot_nalloc(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len(), "dot product requires equal lengths");
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("fma") && is_x86_feature_detected!("avx2") {
+            // SAFETY: CPU features verified at runtime. Lengths equal per debug_assert.
+            return unsafe { dot_fma_avx2(a, b) };
+        }
+    }
+
+    dot_scalar(a, b)
+}
+
+/// Scalar dot product fallback (no SIMD).
+#[inline]
+#[must_use]
+pub fn dot_scalar(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+}
+
+/// AVX2+FMA dot product with 4 independent accumulators (pv:avx2-fma-dot-v1).
+///
+/// Processes 32 elements per iteration (4 × 8-wide FMA). The 4 independent
+/// accumulators hide the 5-cycle FMA latency (0.5c throughput × 10 in-flight = 5 accumulators
+/// needed; 4 is close enough and simplifies the reduction).
+///
+/// # Safety
+/// Requires AVX2 and FMA CPU features (checked by caller via `is_x86_feature_detected!`).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn dot_fma_avx2(a: &[f32], b: &[f32]) -> f32 {
+    use std::arch::x86_64::{
+        __m256, _mm256_add_ps, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_setzero_ps,
+        _mm256_storeu_ps,
+    };
+
+    let n = a.len();
+    let mut i = 0;
+
+    // 4 independent accumulators to hide FMA latency
+    let mut acc0: __m256;
+    let mut acc1: __m256;
+    let mut acc2: __m256;
+    let mut acc3: __m256;
+
+    unsafe {
+        acc0 = _mm256_setzero_ps();
+        acc1 = _mm256_setzero_ps();
+        acc2 = _mm256_setzero_ps();
+        acc3 = _mm256_setzero_ps();
+
+        // Main loop: 32 elements per iteration (4 × 8)
+        while i + 32 <= n {
+            let a0 = _mm256_loadu_ps(a.as_ptr().add(i));
+            let b0 = _mm256_loadu_ps(b.as_ptr().add(i));
+            acc0 = _mm256_fmadd_ps(a0, b0, acc0);
+
+            let a1 = _mm256_loadu_ps(a.as_ptr().add(i + 8));
+            let b1 = _mm256_loadu_ps(b.as_ptr().add(i + 8));
+            acc1 = _mm256_fmadd_ps(a1, b1, acc1);
+
+            let a2 = _mm256_loadu_ps(a.as_ptr().add(i + 16));
+            let b2 = _mm256_loadu_ps(b.as_ptr().add(i + 16));
+            acc2 = _mm256_fmadd_ps(a2, b2, acc2);
+
+            let a3 = _mm256_loadu_ps(a.as_ptr().add(i + 24));
+            let b3 = _mm256_loadu_ps(b.as_ptr().add(i + 24));
+            acc3 = _mm256_fmadd_ps(a3, b3, acc3);
+
+            i += 32;
+        }
+
+        // Handle remaining 8-element chunks
+        while i + 8 <= n {
+            let av = _mm256_loadu_ps(a.as_ptr().add(i));
+            let bv = _mm256_loadu_ps(b.as_ptr().add(i));
+            acc0 = _mm256_fmadd_ps(av, bv, acc0);
+            i += 8;
+        }
+
+        // Reduce 4 accumulators to 1
+        acc0 = _mm256_add_ps(acc0, acc1);
+        acc2 = _mm256_add_ps(acc2, acc3);
+        acc0 = _mm256_add_ps(acc0, acc2);
+
+        // Horizontal sum of 8 f32 lanes
+        let mut buf = [0.0_f32; 8];
+        _mm256_storeu_ps(buf.as_mut_ptr(), acc0);
+        let mut sum = buf[0] + buf[1] + buf[2] + buf[3] + buf[4] + buf[5] + buf[6] + buf[7];
+
+        // Scalar tail for remaining elements
+        while i < n {
+            sum += a[i] * b[i];
+            i += 1;
+        }
+
+        sum
+    }
+}
+
+/// Online softmax: two-pass normalizer calculation (pv:online-softmax-v1).
+///
+/// Milakov & Gimelshein (2018): fuses max-finding and sum-of-exp into a single pass
+/// using a running (max, sum_exp) pair, then normalizes in a second pass.
+/// Saves one full read of the scores array vs standard 3-pass softmax.
+pub fn softmax_online_inplace(scores: &[f32], weights: &mut [f32]) {
+    debug_assert_eq!(scores.len(), weights.len());
+
+    if scores.is_empty() {
+        return;
+    }
+
+    // Pass 1: online max + running sum of exp
+    let mut max_val = scores[0];
+    let mut sum_exp = 1.0_f32;
+
+    for &s in &scores[1..] {
+        if s > max_val {
+            sum_exp = sum_exp * (max_val - s).exp() + 1.0;
+            max_val = s;
+        } else {
+            sum_exp += (s - max_val).exp();
+        }
+    }
+
+    // Pass 2: normalize
+    let inv_sum = 1.0 / sum_exp;
+    for (w, &s) in weights.iter_mut().zip(scores.iter()) {
+        *w = (s - max_val).exp() * inv_sum;
+    }
 }
 
 /// SIMD-accelerated vector addition
@@ -619,5 +747,132 @@ mod tests {
     fn test_quant_f32_to_f16_empty() {
         let result = quant_f32_to_f16(&[]);
         assert!(result.is_empty());
+    }
+
+    // === pv:avx2-fma-dot-v1 property tests ===
+
+    #[test]
+    fn pv_dot_fma_scalar_equivalence() {
+        use std::f32::consts::PI;
+        for len in [1, 7, 8, 15, 16, 31, 32, 63, 64, 128, 384, 1536] {
+            let a: Vec<f32> = (0..len).map(|i| (i as f32 * 0.01 * PI).sin()).collect();
+            let b: Vec<f32> = (0..len).map(|i| (i as f32 * 0.017 + 0.3).cos()).collect();
+            let scalar = dot_scalar(&a, &b);
+            let nalloc = dot_nalloc(&a, &b);
+            let diff = (scalar - nalloc).abs();
+            let tol = len as f32 * f32::EPSILON * scalar.abs().max(1.0);
+            assert!(
+                diff < tol,
+                "len={len}: scalar={scalar}, nalloc={nalloc}, diff={diff}, tol={tol}"
+            );
+        }
+    }
+
+    #[test]
+    fn pv_dot_empty_and_unit() {
+        assert_eq!(dot_nalloc(&[], &[]), 0.0);
+        assert_eq!(dot_nalloc(&[3.0], &[7.0]), 21.0);
+    }
+
+    #[test]
+    fn pv_dot_commutativity() {
+        let a: Vec<f32> = (0..384).map(|i| (i as f32 * 0.1).sin()).collect();
+        let b: Vec<f32> = (0..384).map(|i| (i as f32 * 0.2).cos()).collect();
+        let ab = dot_nalloc(&a, &b);
+        let ba = dot_nalloc(&b, &a);
+        assert!((ab - ba).abs() < 1e-6, "ab={ab}, ba={ba}");
+    }
+
+    #[test]
+    fn pv_dot_self_non_negative() {
+        let a: Vec<f32> = (0..384).map(|i| (i as f32 - 192.0) * 0.01).collect();
+        assert!(dot_nalloc(&a, &a) >= 0.0);
+    }
+
+    #[test]
+    fn pv_dot_nan_propagation() {
+        let a = [f32::NAN, 1.0];
+        let b = [1.0, 1.0];
+        assert!(dot_nalloc(&a, &b).is_nan());
+    }
+
+    // === pv:online-softmax-v1 property tests ===
+
+    fn softmax_standard(scores: &[f32]) -> Vec<f32> {
+        let max_s = scores.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        let exps: Vec<f32> = scores.iter().map(|&s| (s - max_s).exp()).collect();
+        let sum: f32 = exps.iter().sum();
+        exps.iter().map(|&e| e / sum).collect()
+    }
+
+    #[test]
+    fn pv_softmax_online_matches_standard() {
+        for len in [1, 2, 6, 64, 384, 448, 1500] {
+            let scores: Vec<f32> = (0..len)
+                .map(|i| (i as f32 * 0.1 - len as f32 * 0.05))
+                .collect();
+            let reference = softmax_standard(&scores);
+            let mut online = vec![0.0_f32; len];
+            softmax_online_inplace(&scores, &mut online);
+            for (i, (&r, &o)) in reference.iter().zip(online.iter()).enumerate() {
+                let diff = (r - o).abs();
+                assert!(
+                    diff < 1e-5,
+                    "len={len}, i={i}: ref={r}, online={o}, diff={diff}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pv_softmax_sum_to_one() {
+        for len in [1, 6, 64, 1500] {
+            let scores: Vec<f32> = (0..len).map(|i| i as f32 * 0.3 - 5.0).collect();
+            let mut weights = vec![0.0_f32; len];
+            softmax_online_inplace(&scores, &mut weights);
+            let sum: f32 = weights.iter().sum();
+            assert!((sum - 1.0).abs() < 1e-6, "len={len}: sum={sum}");
+        }
+    }
+
+    #[test]
+    fn pv_softmax_positivity() {
+        // Range limited to avoid f32 underflow: exp(-80) ≈ 1.8e-35 > 0, but exp(-200) = 0.0
+        let scores = [-20.0_f32, -10.0, 0.0, 10.0, 20.0];
+        let mut weights = vec![0.0_f32; 5];
+        softmax_online_inplace(&scores, &mut weights);
+        for (i, &w) in weights.iter().enumerate() {
+            assert!(w > 0.0, "i={i}: weight={w} should be positive");
+        }
+    }
+
+    #[test]
+    fn pv_softmax_order_preservation() {
+        let scores = [1.0_f32, 3.0, 2.0, 5.0, 4.0];
+        let mut weights = vec![0.0_f32; 5];
+        softmax_online_inplace(&scores, &mut weights);
+        assert!(weights[3] > weights[1]); // 5.0 > 3.0
+        assert!(weights[1] > weights[2]); // 3.0 > 2.0
+        assert!(weights[2] > weights[0]); // 2.0 > 1.0
+    }
+
+    #[test]
+    fn pv_softmax_shift_invariance() {
+        let scores = [1.0_f32, 2.0, 3.0, 4.0];
+        let shifted: Vec<f32> = scores.iter().map(|&s| s + 1000.0).collect();
+        let mut w1 = vec![0.0_f32; 4];
+        let mut w2 = vec![0.0_f32; 4];
+        softmax_online_inplace(&scores, &mut w1);
+        softmax_online_inplace(&shifted, &mut w2);
+        for (i, (&a, &b)) in w1.iter().zip(w2.iter()).enumerate() {
+            assert!((a - b).abs() < 1e-6, "i={i}: w1={a}, w2={b}");
+        }
+    }
+
+    #[test]
+    fn pv_softmax_single_element() {
+        let mut w = [0.0_f32];
+        softmax_online_inplace(&[42.0], &mut w);
+        assert_eq!(w[0], 1.0);
     }
 }

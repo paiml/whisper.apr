@@ -3615,23 +3615,11 @@ impl Decoder {
                 attn_scratch.scores[pos] = dot * scale;
             }
 
-            // In-place softmax: scores → weights
-            {
-                let scores = &attn_scratch.scores[..kv_len];
-                let weights = &mut attn_scratch.weights[..kv_len];
-
-                let max_score = scores.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-                let mut sum = 0.0_f32;
-                for (w, &s) in weights.iter_mut().zip(scores.iter()) {
-                    let e = (s - max_score).exp();
-                    *w = e;
-                    sum += e;
-                }
-                let inv_sum = 1.0 / sum;
-                for w in weights.iter_mut() {
-                    *w *= inv_sum;
-                }
-            }
+            // Online softmax: scores → weights (Milakov & Gimelshein 2018, pv:online-softmax-v1)
+            crate::simd::softmax_online_inplace(
+                &attn_scratch.scores[..kv_len],
+                &mut attn_scratch.weights[..kv_len],
+            );
 
             // Weighted sum of V → head_out
             for d in 0..d_head {

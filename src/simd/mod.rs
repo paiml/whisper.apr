@@ -38,9 +38,9 @@ pub use optimized::{
     tiled_matvec_into, BackendCategory, GPU_THRESHOLD, PARALLEL_THRESHOLD, TILE_SIZE,
 };
 pub use vector::{
-    add, add_inplace, argmax, axpy, broadcast_add_inplace, dequant_f16_row, dot, dot_f16, max,
-    max_element, mean, min, mul, quant_f32_to_f16, scale, scale_inplace, std_dev, sub, sum,
-    variance,
+    add, add_inplace, argmax, axpy, broadcast_add_inplace, dequant_f16_row, dot, dot_f16,
+    dot_nalloc, dot_scalar, max, max_element, mean, min, mul, quant_f32_to_f16, scale,
+    scale_inplace, softmax_online_inplace, std_dev, sub, sum, variance,
 };
 
 use trueno::Backend;
