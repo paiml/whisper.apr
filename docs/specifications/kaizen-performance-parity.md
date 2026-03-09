@@ -63,6 +63,15 @@ whisper-cpp/build/bin/whisper-cli -m models/ggml-tiny.bin \
 | Decoder | 109 ms (batched) | 206 ms | +97 ms | 1.89x slower |
 | **Total (inference)** | **527 ms** | **792 ms** | **+265 ms** | **1.50x slower** |
 
+**After Cycle 3 (flash attention block_size 128):**
+
+| Stage | whisper.cpp | whisper.apr | Gap | Ratio |
+|---|---|---|---|---|
+| Mel spectrogram | 6 ms | 32 ms | +26 ms | 5.3x slower |
+| Encoder | 411 ms | 517 ms | +106 ms | 1.26x slower |
+| Decoder | 109 ms (batched) | 190 ms | +81 ms | 1.74x slower |
+| **Total (inference)** | **527 ms** | **739 ms** | **+212 ms** | **1.40x slower** |
+
 ### Key differences explaining the gap
 
 | Factor | whisper.cpp | whisper.apr |
@@ -74,15 +83,18 @@ whisper-cpp/build/bin/whisper-cli -m models/ggml-tiny.bin \
 | Mel computation | Optimized C + SIMD | Rust FFT |
 | Model loading | Memory-mapped | Full file read + deserialize |
 
-### Pareto analysis (biggest bang-for-buck)
+### Pareto analysis (updated after Cycle 3, gap = 212 ms)
 
-| Optimization | Est. savings | % of total gap | Difficulty |
+| Optimization | Est. savings | % of remaining gap | Difficulty |
 |---|---|---|---|
-| Encoder INT8 quantization | 200-300 ms | 34-51% | Medium |
-| Encoder fused QKV | 50-100 ms | 9-17% | Easy (decoder done) |
-| Model mmap loading | 400-500 ms | N/A (load time) | Medium |
-| Batched decode | 100-200 ms | 17-34% | Hard |
-| Mel SIMD optimization | 20-25 ms | 3-4% | Easy |
+| Encoder attention/FFN tuning | 50-100 ms | 24-47% | Medium |
+| Mel SIMD optimization | 20-25 ms | 9-12% | Easy |
+| Decoder further optimization | 30-50 ms | 14-24% | Medium |
+| Model mmap loading | 600+ ms | N/A (load time) | Medium |
+| Batched decode | 50-80 ms | 24-38% | Hard |
+
+**Note:** Encoder INT8 was tried and failed (compute-bound, not memory-bound).
+Encoder is now 1.26x cpp — close to parity. Decoder (1.74x) is the new bottleneck.
 
 ---
 
@@ -162,21 +174,44 @@ After:   Decoder 206 ms ( 8.6 ms/token), Total  792 ms (1.50x cpp)
 
 ---
 
-### Cycle 3: Model loading (mmap)
+### Cycle 3: Flash Attention Block Size Tuning (DONE)
 
-**Target:** Reduce load from 552 ms → ~60 ms (match whisper.cpp)
+**Target:** Reduce total from 792 ms → ~740 ms
+
+**Root cause:** Flash Attention block_size=32 creates excessive per-block overhead for
+1500-token encoder sequences (47 iterations per head). Block size 128 reduces to 12
+iterations, improving both encoder and decoder attention.
 
 **Actions:**
-- [ ] Implement memory-mapped `.apr` loading (read tensor offsets, mmap pages on demand)
-- [ ] Profile load time before/after
+- [x] Change `FLASH_ATTENTION_BLOCK_SIZE` from 32 to 128
+- [x] Profile before/after (3-run average)
+
+**Result:**
+```
+Before:  Encoder 553 ms, Decoder 206 ms, Total 792 ms (1.50x cpp)
+After:   Encoder 517 ms, Decoder 190 ms, Total 739 ms (1.40x cpp)
+                  -7%             -8%            -7%
+```
+
+---
+
+### Cycle 4: Decoder optimization (NEXT)
+
+**Target:** Reduce decoder from 190 ms → ~140 ms (ms/token from 7.9 → 5.8)
+
+**Actions:**
+- [ ] Profile decoder per-token breakdown (attention vs FFN vs layer norm)
+- [ ] Identify memory-bandwidth bottleneck in cross-attention
+- [ ] Explore KV cache layout optimization
+- [ ] Profile before/after
 
 **Result:** _pending_
 
 ---
 
-### Cycle 4: Mel spectrogram SIMD
+### Cycle 5: Mel spectrogram SIMD
 
-**Target:** Reduce mel from 31 ms → ~10 ms
+**Target:** Reduce mel from 32 ms → ~10 ms
 
 **Actions:**
 - [ ] Profile mel computation breakdown (FFT vs filterbank multiply vs log)
@@ -187,14 +222,13 @@ After:   Decoder 206 ms ( 8.6 ms/token), Total  792 ms (1.50x cpp)
 
 ---
 
-### Cycle 5: Batched decode
+### Cycle 6: Model loading (mmap)
 
-**Target:** Reduce decoder ms/token from 14 ms → 2 ms
+**Target:** Reduce load from 717 ms → ~60 ms (match whisper.cpp)
 
 **Actions:**
-- [ ] Implement batched KV-cache decode (process multiple beam hypotheses together)
-- [ ] Use tiled matmul for batch dimension
-- [ ] Profile before/after
+- [ ] Implement memory-mapped `.apr` loading (read tensor offsets, mmap pages on demand)
+- [ ] Profile load time before/after
 
 **Result:** _pending_
 
@@ -202,18 +236,20 @@ After:   Decoder 206 ms ( 8.6 ms/token), Total  792 ms (1.50x cpp)
 
 ## 4. Parity target
 
-| Stage | Target | whisper.cpp ref |
-|---|---|---|
-| Total inference | ≤ 700 ms | 527 ms |
-| Encoder | ≤ 500 ms | 411 ms |
-| Decoder | ≤ 150 ms | 109 ms |
-| Mel | ≤ 10 ms | 6 ms |
-| Load | ≤ 100 ms | 59 ms |
-| RTF (11s audio) | ≤ 0.06x | 0.05x |
+| Stage | Current | Target | whisper.cpp ref | Gap to target |
+|---|---|---|---|---|
+| Total inference | 739 ms | ≤ 685 ms | 527 ms | -54 ms needed |
+| Encoder | 517 ms | ≤ 500 ms | 411 ms | -17 ms needed |
+| Decoder | 190 ms | ≤ 142 ms | 109 ms | -48 ms needed |
+| Mel | 32 ms | ≤ 10 ms | 6 ms | -22 ms needed |
+| Load | 717 ms | ≤ 100 ms | 59 ms | -617 ms needed |
+| RTF (11s audio) | 0.067x | ≤ 0.062x | 0.048x | close |
 
 **Parity definition:** Total inference time within 1.3x of whisper.cpp on the same
-hardware, same audio, same model size. This accounts for Rust vs C overhead that
-is irreducible without unsafe GGML-style graph execution.
+hardware, same audio, same model size (1.3x × 527 ms = 685 ms).
+
+**Current status:** 1.40x (739 ms). Need to close 54 ms gap.
+Best paths: decoder optimization (-48 ms) + mel SIMD (-22 ms) = -70 ms → well under target.
 
 ---
 
@@ -222,11 +258,12 @@ is irreducible without unsafe GGML-style graph execution.
 Improvements to `apr profile` discovered during kaizen:
 
 - [ ] Add `--threads N` flag to control rayon thread pool size
-- [ ] Add encoder/decoder sub-step breakdown (conv, attention, FFN separately)
+- [x] Add encoder sub-step breakdown (conv_frontend, encoder_blocks) — done Cycle 1
+- [ ] Add decoder sub-step breakdown (attention, cross-attention, FFN separately)
 - [ ] Add memory peak tracking (RSS before/after)
 - [ ] Add `--compare` flag that auto-runs whisper.cpp and diffs
 - [ ] Add `--model-info` to print weight format, quantization, fused status
-- [ ] Show whether INT8/fused QKV optimizations are active in profile output
+- [ ] Show whether fused QKV optimizations are active in profile output
 - [ ] Per-token decode timing histogram (not just average)
 
 ---
