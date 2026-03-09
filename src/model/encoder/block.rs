@@ -68,6 +68,10 @@ impl EncoderBlock {
     }
 
     /// Finalize weights by caching transposed/pre-computed data
+    ///
+    /// Encoder is compute-bound (1500-token batch matmul), not memory-bound.
+    /// INT8 quantization makes encoder slower (per-token matvec overhead).
+    /// Focus on efficient batch matmul via transposed weight caching.
     pub fn finalize_weights(&mut self) {
         self.self_attn.finalize_weights();
         self.ffn.finalize_weights();

@@ -519,7 +519,9 @@ impl LinearWeights {
 }
 
 /// Default block size for Flash Attention (tuned for L1 cache)
-pub const FLASH_ATTENTION_BLOCK_SIZE: usize = 32;
+/// Larger blocks reduce per-block overhead at the cost of more temporary memory.
+/// 128 gives ~4x fewer iterations than 32 for 1500-token encoder sequences.
+pub const FLASH_ATTENTION_BLOCK_SIZE: usize = 128;
 
 /// Threshold above which Flash Attention is used for memory efficiency
 pub const FLASH_ATTENTION_THRESHOLD: usize = 128;
