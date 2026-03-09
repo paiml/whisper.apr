@@ -183,7 +183,7 @@ pub fn tiled_matvec_f16(weights_f16: &[u16], x: &[f32], rows: usize, cols: usize
     debug_assert_eq!(x.len(), cols, "input dimension mismatch");
 
     // For large matrices, parallelize across output rows
-    // Each thread gets its own dequant buffer via dot_f16's internal buf parameter
+    // Thread-local dequant buffer avoids per-row heap allocation (PMAT-014 O5)
     #[cfg(feature = "parallel")]
     if rows * cols >= PARALLEL_THRESHOLD {
         use rayon::prelude::*;
@@ -192,9 +192,14 @@ pub fn tiled_matvec_f16(weights_f16: &[u16], x: &[f32], rows: usize, cols: usize
             .map(|i| {
                 let row_offset = i * cols;
                 let row_f16 = &weights_f16[row_offset..row_offset + cols];
-                // Each rayon task allocates its own thread-local buffer
-                let mut buf = vec![0.0_f32; cols];
-                super::vector::dot_f16(row_f16, x, &mut buf)
+                thread_local!(static BUF: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) });
+                BUF.with(|buf| {
+                    let mut buf = buf.borrow_mut();
+                    if buf.len() < cols {
+                        buf.resize(cols, 0.0);
+                    }
+                    super::vector::dot_f16(row_f16, x, &mut buf[..cols])
+                })
             })
             .collect();
     }
@@ -236,14 +241,21 @@ pub fn tiled_matvec_f16_into(
     debug_assert_eq!(out.len(), rows, "output dimension mismatch");
 
     // For large matrices, parallelize across output rows
+    // Thread-local dequant buffer avoids per-row heap allocation (PMAT-014 O5)
     #[cfg(feature = "parallel")]
     if rows * cols >= PARALLEL_THRESHOLD {
         use rayon::prelude::*;
         out.par_iter_mut().enumerate().for_each(|(i, o)| {
             let row_offset = i * cols;
             let row_f16 = &weights_f16[row_offset..row_offset + cols];
-            let mut buf = vec![0.0_f32; cols];
-            *o = super::vector::dot_f16(row_f16, x, &mut buf);
+            thread_local!(static BUF: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) });
+            BUF.with(|buf| {
+                let mut buf = buf.borrow_mut();
+                if buf.len() < cols {
+                    buf.resize(cols, 0.0);
+                }
+                *o = super::vector::dot_f16(row_f16, x, &mut buf[..cols]);
+            });
         });
         return;
     }

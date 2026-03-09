@@ -1583,6 +1583,8 @@ pub struct DecoderScratch {
     ffn_out: Vec<f32>,
     /// Final layer norm output
     ln_post_out: Vec<f32>,
+    /// Vocabulary logits output (n_vocab)
+    logits: Vec<f32>,
 
     /// Attention scratch buffers (split struct for borrow splitting)
     attn: AttentionScratch,
@@ -1612,7 +1614,13 @@ pub struct AttentionScratch {
 impl DecoderScratch {
     /// Create scratch buffers for a decoder with given dimensions.
     #[must_use]
-    pub fn new_with_attn(d_model: usize, d_ff: usize, d_head: usize, max_len: usize) -> Self {
+    pub fn new_with_attn(
+        d_model: usize,
+        d_ff: usize,
+        d_head: usize,
+        max_len: usize,
+        n_vocab: usize,
+    ) -> Self {
         Self {
             normed: vec![0.0; d_model],
             q: vec![0.0; d_model],
@@ -1626,6 +1634,7 @@ impl DecoderScratch {
             ffn_hidden: vec![0.0; d_ff],
             ffn_out: vec![0.0; d_model],
             ln_post_out: vec![0.0; d_model],
+            logits: vec![0.0; n_vocab],
             attn: AttentionScratch {
                 q_head: vec![0.0; d_head],
                 k_head: vec![0.0; max_len * d_head],
@@ -2432,6 +2441,31 @@ impl Decoder {
             )
     }
 
+    /// Project hidden states to vocabulary logits, writing into pre-allocated buffer (PMAT-014 O5).
+    ///
+    /// Zero-allocation variant for single-token decode with scratch buffers.
+    fn project_to_vocab_into(&self, x: &[f32], out: &mut [f32]) {
+        debug_assert_eq!(out.len(), self.n_vocab, "logits buffer size mismatch");
+
+        if let Some(ref emb_f16) = self.token_embedding_f16 {
+            crate::simd::tiled_matvec_f16_into(emb_f16, x, out, self.n_vocab, self.d_model);
+        } else {
+            // Fallback: trueno matmul → copy
+            let Ok(x_matrix) = Matrix::from_slice(1, self.d_model, x) else {
+                out.fill(0.0);
+                return;
+            };
+            match x_matrix.matmul(&self.token_embedding_transposed) {
+                Ok(logits) => {
+                    let src = logits.as_slice();
+                    let copy_len = src.len().min(out.len());
+                    out[..copy_len].copy_from_slice(&src[..copy_len]);
+                }
+                Err(_) => out.fill(0.0),
+            }
+        }
+    }
+
     /// Project hidden state to vocabulary logits (debug version for GPU comparison)
     ///
     /// This is the same as the internal project_to_vocab but exposed for debugging
@@ -2594,7 +2628,7 @@ impl Decoder {
         // Use 1500 as default encoder context; callers needing more can
         // use create_decoder_scratch_with_enc_len().
         let attn_max_kv = self.max_len.max(1500);
-        DecoderScratch::new_with_attn(self.d_model, d_ff, d_head, attn_max_kv)
+        DecoderScratch::new_with_attn(self.d_model, d_ff, d_head, attn_max_kv, self.n_vocab)
     }
 
     /// Create scratch buffers with explicit encoder context length.
@@ -2605,7 +2639,7 @@ impl Decoder {
         let d_ff = self.d_model * 4;
         let d_head = self.d_model / self.n_heads;
         let attn_max_kv = self.max_len.max(enc_ctx_len);
-        DecoderScratch::new_with_attn(self.d_model, d_ff, d_head, attn_max_kv)
+        DecoderScratch::new_with_attn(self.d_model, d_ff, d_head, attn_max_kv, self.n_vocab)
     }
 
     /// Create a new paged KV cache for this decoder
@@ -3005,7 +3039,10 @@ impl Decoder {
         // Final layer norm into scratch
         self.ln_post.forward_into(&x, &mut scratch.ln_post_out)?;
 
-        Ok(self.project_to_vocab(&scratch.ln_post_out, 1))
+        // Project to vocabulary into scratch logits buffer (PMAT-014 O5)
+        self.project_to_vocab_into(&scratch.ln_post_out, &mut scratch.logits);
+
+        Ok(scratch.logits.clone())
     }
 
     /// Forward pass through a single decoder block with scratch buffers (PMAT-014 O1).
