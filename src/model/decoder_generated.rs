@@ -3571,10 +3571,11 @@ impl Decoder {
     /// Zero-allocation variant of `compute_attention_cached`. Uses scratch
     /// buffers for head extraction, scores, softmax weights, and per-head output.
     /// Eliminates all per-head and per-call allocations.
-    /// Compute attention with pre-allocated scratch buffers (PMAT-014 O3).
     ///
-    /// Zero-allocation variant of `compute_attention_cached`. Uses scratch
-    /// buffers for head extraction, scores, softmax weights, and per-head output.
+    /// K/V are extracted from the interleaved cache into contiguous scratch buffers
+    /// before compute. This is faster than strided access during dot products because
+    /// the sequential extraction benefits from hardware prefetch, while strided access
+    /// during FMA causes cache misses (kv_len × d_model stride exceeds L1/L2).
     /// Result is written to `attn_scratch.output`.
     fn compute_attention_cached_with_scratch(
         &self,
@@ -3590,27 +3591,25 @@ impl Decoder {
         let scale = 1.0 / (d_head as f32).sqrt();
 
         for head in 0..n_heads {
-            // Extract Q for this head
-            for d in 0..d_head {
-                attn_scratch.q_head[d] = q[head * d_head + d];
-            }
+            let head_offset = head * d_head;
 
-            // Extract K, V for this head (all cached positions)
+            // Extract K, V for this head into contiguous scratch (cache-friendly prefetch)
             for pos in 0..kv_len {
-                for d in 0..d_head {
-                    attn_scratch.k_head[pos * d_head + d] =
-                        k[pos * self.d_model + head * d_head + d];
-                    attn_scratch.v_head[pos * d_head + d] =
-                        v[pos * self.d_model + head * d_head + d];
-                }
+                let src_base = pos * self.d_model + head_offset;
+                let dst_base = pos * d_head;
+                attn_scratch.k_head[dst_base..dst_base + d_head]
+                    .copy_from_slice(&k[src_base..src_base + d_head]);
+                attn_scratch.v_head[dst_base..dst_base + d_head]
+                    .copy_from_slice(&v[src_base..src_base + d_head]);
             }
 
-            // Compute scores: Q · K^T (dot products for seq_len=1)
+            // Compute scores: Q · K^T (sequential access on contiguous k_head)
+            let q_head = &q[head_offset..head_offset + d_head];
             for pos in 0..kv_len {
                 let k_start = pos * d_head;
                 let mut dot = 0.0_f32;
                 for d in 0..d_head {
-                    dot += attn_scratch.q_head[d] * attn_scratch.k_head[k_start + d];
+                    dot += q_head[d] * attn_scratch.k_head[k_start + d];
                 }
                 attn_scratch.scores[pos] = dot * scale;
             }
@@ -3621,21 +3620,17 @@ impl Decoder {
                 &mut attn_scratch.weights[..kv_len],
             );
 
-            // Weighted sum of V → head_out
+            // Weighted sum of V → output (sequential access on contiguous v_head)
+            let out_start = head * d_head;
             for d in 0..d_head {
-                attn_scratch.head_out[d] = 0.0;
+                attn_scratch.output[out_start + d] = 0.0;
             }
             for pos in 0..kv_len {
                 let weight = attn_scratch.weights[pos];
                 let v_start = pos * d_head;
                 for d in 0..d_head {
-                    attn_scratch.head_out[d] += weight * attn_scratch.v_head[v_start + d];
+                    attn_scratch.output[out_start + d] += weight * attn_scratch.v_head[v_start + d];
                 }
-            }
-
-            // Copy head output to multi-head output buffer
-            for d in 0..d_head {
-                attn_scratch.output[head * d_head + d] = attn_scratch.head_out[d];
             }
         }
 
