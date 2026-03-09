@@ -4101,13 +4101,25 @@ impl Decoder {
     ) -> WhisperResult<Vec<u32>> {
         let mut draft_cache = draft_decoder.create_kv_cache();
         let mut target_cache = self.create_kv_cache();
+        let mut draft_scratch = draft_decoder.create_decoder_scratch();
+        let mut target_scratch = self.create_decoder_scratch();
 
         let mut tokens = initial_tokens.to_vec();
 
-        // Prime both caches with initial tokens
+        // Prime both caches with initial tokens (using scratch buffers)
         for &token in initial_tokens {
-            let _ = draft_decoder.forward_one(token, encoder_output, &mut draft_cache)?;
-            let _ = self.forward_one(token, encoder_output, &mut target_cache)?;
+            let _ = draft_decoder.forward_one_with_scratch(
+                token,
+                encoder_output,
+                &mut draft_cache,
+                &mut draft_scratch,
+            )?;
+            let _ = self.forward_one_with_scratch(
+                token,
+                encoder_output,
+                &mut target_cache,
+                &mut target_scratch,
+            )?;
         }
 
         // Main speculative decoding loop
@@ -4120,8 +4132,12 @@ impl Decoder {
                 .ok_or_else(|| WhisperError::Model("empty token sequence".into()))?;
 
             for _ in 0..config.lookahead {
-                let draft_logits =
-                    draft_decoder.forward_one(current_token, encoder_output, &mut draft_cache)?;
+                let draft_logits = draft_decoder.forward_one_with_scratch(
+                    current_token,
+                    encoder_output,
+                    &mut draft_cache,
+                    &mut draft_scratch,
+                )?;
 
                 // Greedy sample from draft
                 let (next_token, prob) = sample_with_prob(&draft_logits);
@@ -4141,8 +4157,7 @@ impl Decoder {
                 break;
             }
 
-            // Phase 2: Target model verifies all K tokens in parallel (single forward pass)
-            // We process each drafted token and check if target agrees
+            // Phase 2: Target model verifies draft tokens sequentially
             let mut accepted_count = 0;
             for (i, &draft_token) in draft_tokens.iter().enumerate() {
                 let prev_token = if i == 0 {
@@ -4153,11 +4168,15 @@ impl Decoder {
                     draft_tokens[i - 1]
                 };
 
-                let target_logits =
-                    self.forward_one(prev_token, encoder_output, &mut target_cache)?;
+                let target_logits = self.forward_one_with_scratch(
+                    prev_token,
+                    encoder_output,
+                    &mut target_cache,
+                    &mut target_scratch,
+                )?;
                 let (target_token, target_prob) = sample_with_prob(&target_logits);
 
-                // Accept if tokens match and probability ratio is acceptable
+                // Accept if tokens match
                 if draft_token == target_token {
                     tokens.push(draft_token);
                     accepted_count += 1;
@@ -4172,7 +4191,12 @@ impl Decoder {
                     // Rollback draft cache to match target
                     draft_cache.clear();
                     for &t in &tokens[..tokens.len() - 1] {
-                        let _ = draft_decoder.forward_one(t, encoder_output, &mut draft_cache)?;
+                        let _ = draft_decoder.forward_one_with_scratch(
+                            t,
+                            encoder_output,
+                            &mut draft_cache,
+                            &mut draft_scratch,
+                        )?;
                     }
 
                     if target_token == config.eos_token {
@@ -4181,12 +4205,10 @@ impl Decoder {
                     break;
                 }
 
-                // Suppress unused variable warning - prob tracking for future sampling modes
                 let _ = target_prob;
                 let _ = draft_probs[i];
             }
 
-            // If all tokens were accepted, we already advanced the target cache correctly
             if accepted_count < draft_tokens.len() {
                 // Cache was rolled back above, continue from rejection point
             }

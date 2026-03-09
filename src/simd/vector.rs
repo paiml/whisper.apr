@@ -451,6 +451,121 @@ unsafe fn dot_f16_fused_f16c(a_f16: &[u16], b: &[f32]) -> f32 {
     result
 }
 
+// =========================================================================
+// INT8 Symmetric Per-Row Quantization (pv:int8-symmetric-quant-v1)
+// =========================================================================
+
+/// Quantize a single row of f32 weights to symmetric INT8.
+///
+/// Returns (quantized_row, scale) where scale = max(|row|) / 127.
+/// The original value can be recovered as: `w_f32 ≈ w_i8 * scale`.
+pub fn quant_f32_row_to_i8(row: &[f32]) -> (Vec<i8>, f32) {
+    let abs_max = row.iter().fold(0.0_f32, |m, &v| m.max(v.abs()));
+    if abs_max == 0.0 {
+        return (vec![0i8; row.len()], 0.0);
+    }
+    let scale = abs_max / 127.0;
+    let inv_scale = 127.0 / abs_max;
+    let quantized: Vec<i8> = row
+        .iter()
+        .map(|&v| (v * inv_scale).round().clamp(-127.0, 127.0) as i8)
+        .collect();
+    (quantized, scale)
+}
+
+/// Compute dot product of an INT8 weight row with an f32 input vector.
+///
+/// `dot_i8(w_i8, x, scale) = scale * Σ(w_i8[i] * x[i])`
+///
+/// The INT8 values are widened to f32 and accumulated, then multiplied by scale once.
+/// This halves memory bandwidth vs fp16 (1 byte/weight vs 2 bytes/weight).
+#[must_use]
+pub fn dot_i8(a_i8: &[i8], b: &[f32], scale: f32) -> f32 {
+    debug_assert_eq!(a_i8.len(), b.len(), "dot_i8 requires equal lengths");
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            return unsafe { dot_i8_avx2(a_i8, b, scale) };
+        }
+    }
+
+    dot_i8_scalar(a_i8, b, scale)
+}
+
+/// Scalar fallback for INT8 dot product.
+fn dot_i8_scalar(a_i8: &[i8], b: &[f32], scale: f32) -> f32 {
+    let mut sum = 0.0_f32;
+    for (&a, &x) in a_i8.iter().zip(b.iter()) {
+        sum += (a as f32) * x;
+    }
+    sum * scale
+}
+
+/// AVX2+FMA accelerated INT8 dot product.
+///
+/// Loads 8 i8 values at a time, sign-extends to i32 via VPMOVSXBD, converts to f32,
+/// then FMA-accumulates with the input vector. Final horizontal sum scaled by row scale.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn dot_i8_avx2(a_i8: &[i8], b: &[f32], scale: f32) -> f32 {
+    use std::arch::x86_64::{
+        _mm256_add_ps, _mm256_cvtepi32_ps, _mm256_cvtepi8_epi32, _mm256_fmadd_ps, _mm256_loadu_ps,
+        _mm256_setzero_ps, _mm256_storeu_ps, _mm_loadl_epi64,
+    };
+
+    let n = a_i8.len();
+    let mut i = 0;
+
+    unsafe {
+        let mut acc0 = _mm256_setzero_ps();
+        let mut acc1 = _mm256_setzero_ps();
+
+        // Process 16 elements per iteration (2 × 8)
+        while i + 16 <= n {
+            // First 8: load i8 → i32 → f32, FMA with input
+            let i8_0 = _mm_loadl_epi64(a_i8.as_ptr().add(i).cast());
+            let i32_0 = _mm256_cvtepi8_epi32(i8_0);
+            let f32_0 = _mm256_cvtepi32_ps(i32_0);
+            let b0 = _mm256_loadu_ps(b.as_ptr().add(i));
+            acc0 = _mm256_fmadd_ps(f32_0, b0, acc0);
+
+            // Second 8
+            let i8_1 = _mm_loadl_epi64(a_i8.as_ptr().add(i + 8).cast());
+            let i32_1 = _mm256_cvtepi8_epi32(i8_1);
+            let f32_1 = _mm256_cvtepi32_ps(i32_1);
+            let b1 = _mm256_loadu_ps(b.as_ptr().add(i + 8));
+            acc1 = _mm256_fmadd_ps(f32_1, b1, acc1);
+
+            i += 16;
+        }
+
+        // Remainder: 8 at a time
+        while i + 8 <= n {
+            let i8_r = _mm_loadl_epi64(a_i8.as_ptr().add(i).cast());
+            let i32_r = _mm256_cvtepi8_epi32(i8_r);
+            let f32_r = _mm256_cvtepi32_ps(i32_r);
+            let br = _mm256_loadu_ps(b.as_ptr().add(i));
+            acc0 = _mm256_fmadd_ps(f32_r, br, acc0);
+            i += 8;
+        }
+
+        acc0 = _mm256_add_ps(acc0, acc1);
+
+        let mut buf = [0.0_f32; 8];
+        _mm256_storeu_ps(buf.as_mut_ptr(), acc0);
+        let mut sum = buf[0] + buf[1] + buf[2] + buf[3] + buf[4] + buf[5] + buf[6] + buf[7];
+
+        // Scalar tail
+        while i < n {
+            sum += (a_i8[i] as f32) * b[i];
+            i += 1;
+        }
+
+        sum * scale
+    }
+}
+
 /// Quantize f32 values to fp16, returning u16 bit patterns.
 ///
 /// Uses IEEE 754 half-precision format via the `half` crate.
@@ -874,5 +989,78 @@ mod tests {
         let mut w = [0.0_f32];
         softmax_online_inplace(&[42.0], &mut w);
         assert_eq!(w[0], 1.0);
+    }
+
+    // === pv:int8-symmetric-quant-v1 property tests ===
+
+    #[test]
+    fn pv_i8q_roundtrip_accuracy() {
+        // Quantize → dequant should be within tolerance
+        let row: Vec<f32> = (0..384).map(|i| (i as f32 * 0.01).sin() * 0.5).collect();
+        let (q, scale) = quant_f32_row_to_i8(&row);
+        for (i, (&orig, &qi)) in row.iter().zip(q.iter()).enumerate() {
+            let recovered = qi as f32 * scale;
+            let diff = (orig - recovered).abs();
+            // Tolerance: scale / 127 ≈ quantization step
+            assert!(
+                diff < scale + 1e-6,
+                "i={i}: orig={orig}, recovered={recovered}, diff={diff}"
+            );
+        }
+    }
+
+    #[test]
+    fn pv_i8q_zero_row() {
+        let row = vec![0.0_f32; 64];
+        let (q, scale) = quant_f32_row_to_i8(&row);
+        assert_eq!(scale, 0.0);
+        assert!(q.iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn pv_i8q_range_bounded() {
+        let row: Vec<f32> = (0..384).map(|i| (i as f32 * 0.1 - 19.2)).collect();
+        let (q, _scale) = quant_f32_row_to_i8(&row);
+        for &v in &q {
+            assert!((-127..=127).contains(&v), "i8 value {v} out of range");
+        }
+    }
+
+    #[test]
+    fn pv_i8q_dot_scalar_equivalence() {
+        use std::f32::consts::PI;
+        for len in [1, 8, 16, 64, 384, 1536] {
+            let weights: Vec<f32> = (0..len)
+                .map(|i| (i as f32 * 0.01 * PI).sin() * 0.3)
+                .collect();
+            let input: Vec<f32> = (0..len).map(|i| (i as f32 * 0.017 + 0.3).cos()).collect();
+
+            // Reference: f32 dot product
+            let ref_dot: f32 = weights.iter().zip(input.iter()).map(|(w, x)| w * x).sum();
+
+            // INT8 dot product
+            let (q, scale) = quant_f32_row_to_i8(&weights);
+            let i8_dot = dot_i8(&q, &input, scale);
+
+            let diff = (ref_dot - i8_dot).abs();
+            // Tolerance scales with vector length (accumulation error) and quantization error
+            let tol = len as f32 * scale * 0.5 + 1e-4;
+            assert!(
+                diff < tol,
+                "len={len}: ref={ref_dot}, i8={i8_dot}, diff={diff}, tol={tol}"
+            );
+        }
+    }
+
+    #[test]
+    fn pv_i8q_dot_empty() {
+        assert_eq!(dot_i8(&[], &[], 1.0), 0.0);
+    }
+
+    #[test]
+    fn pv_i8q_scale_positive() {
+        let row: Vec<f32> = (0..64).map(|i| (i as f32 - 32.0) * 0.1).collect();
+        let (_q, scale) = quant_f32_row_to_i8(&row);
+        assert!(scale > 0.0, "scale should be positive for non-zero row");
     }
 }

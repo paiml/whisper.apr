@@ -73,6 +73,11 @@ pub struct LinearWeights {
     /// fp16 weight storage: when set, forward_simd uses fp16 path for single-token inference.
     /// Halves DRAM reads (2 bytes/weight vs 4) — the dominant bottleneck in decoder inference.
     weight_f16: Option<Vec<u16>>,
+    /// INT8 weight storage (pv:int8-symmetric-quant-v1): per-row symmetric quantization.
+    /// Quarters DRAM reads vs f32 (1 byte/weight vs 4). Uses per-row f32 scales.
+    weight_i8: Option<Vec<i8>>,
+    /// Per-row scales for INT8 dequantization: w_f32 ≈ w_i8 * scale.
+    weight_i8_scales: Option<Vec<f32>>,
 }
 
 impl Clone for LinearWeights {
@@ -86,6 +91,8 @@ impl Clone for LinearWeights {
             // Don't clone the Matrix cache - it will be rebuilt on finalize_weights()
             weight_matrix: None,
             weight_f16: self.weight_f16.clone(),
+            weight_i8: self.weight_i8.clone(),
+            weight_i8_scales: self.weight_i8_scales.clone(),
         }
     }
 }
@@ -100,6 +107,7 @@ impl std::fmt::Debug for LinearWeights {
             .field("is_finalized", &self.weight_transposed.is_some())
             .field("has_matrix_cache", &self.weight_matrix.is_some())
             .field("has_f16", &self.weight_f16.is_some())
+            .field("has_i8", &self.weight_i8.is_some())
             .finish()
     }
 }
@@ -116,6 +124,8 @@ impl LinearWeights {
             weight_transposed: None,
             weight_matrix: None,
             weight_f16: None,
+            weight_i8: None,
+            weight_i8_scales: None,
         }
     }
 
@@ -201,10 +211,58 @@ impl LinearWeights {
         self.invalidate_cache();
     }
 
+    /// Convert fp16 weights to INT8 symmetric per-row quantization (pv:int8-symmetric-quant-v1).
+    ///
+    /// Halves memory vs fp16 (1 byte/weight vs 2). Per-row scale factors preserve accuracy.
+    /// Falls back to quantizing from f32 if fp16 weights are not available.
+    pub fn convert_to_i8(&mut self) {
+        if self.weight_i8.is_some() {
+            return;
+        }
+
+        // Source: prefer fp16 (most common in decoder), fallback to f32
+        let rows = self.out_features;
+        let cols = self.in_features;
+
+        if let Some(ref w_f16) = self.weight_f16 {
+            let mut all_i8 = Vec::with_capacity(rows * cols);
+            let mut scales = Vec::with_capacity(rows);
+            let mut row_buf = vec![0.0_f32; cols];
+            for r in 0..rows {
+                let offset = r * cols;
+                for (j, v) in row_buf.iter_mut().enumerate() {
+                    *v = half::f16::from_bits(w_f16[offset + j]).to_f32();
+                }
+                let (q_row, scale) = simd::quant_f32_row_to_i8(&row_buf);
+                all_i8.extend_from_slice(&q_row);
+                scales.push(scale);
+            }
+            self.weight_i8 = Some(all_i8);
+            self.weight_i8_scales = Some(scales);
+        } else if !self.weight.is_empty() {
+            let mut all_i8 = Vec::with_capacity(rows * cols);
+            let mut scales = Vec::with_capacity(rows);
+            for r in 0..rows {
+                let offset = r * cols;
+                let (q_row, scale) = simd::quant_f32_row_to_i8(&self.weight[offset..offset + cols]);
+                all_i8.extend_from_slice(&q_row);
+                scales.push(scale);
+            }
+            self.weight_i8 = Some(all_i8);
+            self.weight_i8_scales = Some(scales);
+        }
+    }
+
     /// Check if weights are stored as fp16
     #[must_use]
     pub fn is_f16(&self) -> bool {
         self.weight_f16.is_some()
+    }
+
+    /// Check if weights are stored as INT8
+    #[must_use]
+    pub fn is_i8(&self) -> bool {
+        self.weight_i8.is_some()
     }
 
     /// Get weight storage type
@@ -373,6 +431,24 @@ impl LinearWeights {
 
         let batch_size = input.len() / (seq_len * self.in_features);
         let total_tokens = batch_size * seq_len;
+
+        // INT8 weight path (pv:int8-symmetric-quant-v1) — highest priority, lowest bandwidth
+        if let (Some(ref w_i8), Some(ref scales)) = (&self.weight_i8, &self.weight_i8_scales) {
+            for t in 0..total_tokens {
+                let tok_in = &input[t * self.in_features..(t + 1) * self.in_features];
+                let tok_out = &mut output[t * self.out_features..(t + 1) * self.out_features];
+                simd::tiled_matvec_i8_into(
+                    w_i8,
+                    scales,
+                    tok_in,
+                    tok_out,
+                    self.out_features,
+                    self.in_features,
+                );
+            }
+            simd::broadcast_add_inplace(output, &self.bias, total_tokens, self.out_features);
+            return Ok(());
+        }
 
         // fp16 weight path
         if let Some(ref w_f16) = self.weight_f16 {
@@ -1660,6 +1736,14 @@ impl MultiHeadAttention {
         self.w_o.convert_to_f16();
     }
 
+    /// Convert all linear layer weights to INT8 symmetric quantization (pv:int8-symmetric-quant-v1).
+    pub fn convert_to_i8(&mut self) {
+        self.w_q.convert_to_i8();
+        self.w_k.convert_to_i8();
+        self.w_v.convert_to_i8();
+        self.w_o.convert_to_i8();
+    }
+
     /// Pre-compute and cache transposed weights for all linear layers
     ///
     /// Call this after loading all weights to optimize SIMD matmul performance.
@@ -1704,22 +1788,18 @@ impl MultiHeadAttention {
     /// After calling this, `forward_qkv_into` will use a single matvec instead of three.
     /// Must be called after weights are loaded (e.g., after `set_*_weight_f16`).
     pub fn fuse_qkv_weights(&mut self) {
-        let Some(wq) = self.w_q.weight_f16() else {
-            return;
-        };
-        let Some(wk) = self.w_k.weight_f16() else {
-            return;
-        };
-        let Some(wv) = self.w_v.weight_f16() else {
-            return;
-        };
-
-        // Concatenate: [W_q; W_k; W_v] row-major
-        let mut fused = Vec::with_capacity(wq.len() + wk.len() + wv.len());
-        fused.extend_from_slice(wq);
-        fused.extend_from_slice(wk);
-        fused.extend_from_slice(wv);
-        self.w_qkv_f16 = Some(fused);
+        // Fuse fp16 QKV weights
+        if let (Some(wq), Some(wk), Some(wv)) = (
+            self.w_q.weight_f16().map(|s| s.to_vec()),
+            self.w_k.weight_f16().map(|s| s.to_vec()),
+            self.w_v.weight_f16().map(|s| s.to_vec()),
+        ) {
+            let mut fused = Vec::with_capacity(wq.len() + wk.len() + wv.len());
+            fused.extend_from_slice(&wq);
+            fused.extend_from_slice(&wk);
+            fused.extend_from_slice(&wv);
+            self.w_qkv_f16 = Some(fused);
+        }
 
         // Concatenate biases: [b_q; b_k; b_v]
         let mut b = Vec::with_capacity(self.d_model * 3);
@@ -1732,26 +1812,24 @@ impl MultiHeadAttention {
     /// Check whether fused QKV weights are available.
     #[must_use]
     pub fn has_fused_qkv(&self) -> bool {
-        self.w_qkv_f16.is_some()
+        self.w_qkv_f16.is_some() || self.w_q.is_i8()
     }
 
     /// Fused Q+K+V projection into pre-allocated buffer (pv:fused-qkv-projection-v1).
     ///
-    /// Single `tiled_matvec_f16_into` call for `[W_q; W_k; W_v] @ input`,
-    /// then adds fused bias. Output layout: `[q[0..d]; k[d..2d]; v[2d..3d]]`.
-    ///
-    /// Falls back to three separate projections if fused weights are not available.
+    /// Tries INT8 path first (lowest bandwidth), then fp16, then separate fallback.
+    /// Output layout: `[q[0..d]; k[d..2d]; v[2d..3d]]`.
     pub fn forward_qkv_into(&self, input: &[f32], qkv_out: &mut [f32]) -> WhisperResult<()> {
         let d = self.d_model;
         debug_assert_eq!(qkv_out.len(), 3 * d);
 
+        // Fused fp16 path
         if let (Some(w_qkv), Some(b_qkv)) = (&self.w_qkv_f16, &self.b_qkv) {
-            // Fused path: single matvec
             simd::tiled_matvec_f16_into(w_qkv, input, qkv_out, 3 * d, d);
             simd::broadcast_add_inplace(qkv_out, b_qkv, 1, 3 * d);
             Ok(())
         } else {
-            // Fallback: three separate projections
+            // Fallback: three separate projections (uses INT8 path if available via forward_simd_into)
             self.w_q.forward_simd_into(input, 1, &mut qkv_out[..d])?;
             self.w_k
                 .forward_simd_into(input, 1, &mut qkv_out[d..2 * d])?;

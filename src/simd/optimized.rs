@@ -280,6 +280,48 @@ pub fn tiled_matvec_f16_into(
     }
 }
 
+/// Tiled INT8 matrix-vector multiplication writing to pre-allocated output (pv:int8-symmetric-quant-v1).
+///
+/// Weights are stored as `Vec<i8>` with per-row `f32` scales.
+/// Halves memory bandwidth vs fp16 (1 byte/weight vs 2 bytes/weight).
+pub fn tiled_matvec_i8_into(
+    weights_i8: &[i8],
+    scales: &[f32],
+    x: &[f32],
+    out: &mut [f32],
+    rows: usize,
+    cols: usize,
+) {
+    debug_assert_eq!(
+        weights_i8.len(),
+        rows * cols,
+        "i8 weight dimensions mismatch"
+    );
+    debug_assert_eq!(scales.len(), rows, "scales dimension mismatch");
+    debug_assert_eq!(x.len(), cols, "input dimension mismatch");
+    debug_assert_eq!(out.len(), rows, "output dimension mismatch");
+
+    #[cfg(feature = "parallel")]
+    if rows * cols >= PARALLEL_THRESHOLD {
+        use rayon::prelude::*;
+        out.par_iter_mut().enumerate().for_each(|(i, o)| {
+            let row_offset = i * cols;
+            let row_i8 = &weights_i8[row_offset..row_offset + cols];
+            *o = super::vector::dot_i8(row_i8, x, scales[i]);
+        });
+        return;
+    }
+
+    for tile_start in (0..rows).step_by(TILE_SIZE) {
+        let tile_end = (tile_start + TILE_SIZE).min(rows);
+        for i in tile_start..tile_end {
+            let row_offset = i * cols;
+            let row_i8 = &weights_i8[row_offset..row_offset + cols];
+            out[i] = super::vector::dot_i8(row_i8, x, scales[i]);
+        }
+    }
+}
+
 /// Backend category for automatic dispatch.
 ///
 /// Pattern from: `aprender/src/compute/mod.rs`

@@ -35,12 +35,13 @@ pub use layer::{batch_layer_norm, layer_norm};
 pub use matrix::{matmul, matmul_owned, matmul_raw, matmul_with_matrix, matvec, transpose};
 pub use optimized::{
     rms_norm, rms_norm_into, select_backend, tiled_matvec, tiled_matvec_f16, tiled_matvec_f16_into,
-    tiled_matvec_into, BackendCategory, GPU_THRESHOLD, PARALLEL_THRESHOLD, TILE_SIZE,
+    tiled_matvec_i8_into, tiled_matvec_into, BackendCategory, GPU_THRESHOLD, PARALLEL_THRESHOLD,
+    TILE_SIZE,
 };
 pub use vector::{
-    add, add_inplace, argmax, axpy, broadcast_add_inplace, dequant_f16_row, dot, dot_f16,
-    dot_nalloc, dot_scalar, max, max_element, mean, min, mul, quant_f32_to_f16, scale,
-    scale_inplace, softmax_online_inplace, std_dev, sub, sum, variance,
+    add, add_inplace, argmax, axpy, broadcast_add_inplace, dequant_f16_row, dot, dot_f16, dot_i8,
+    dot_nalloc, dot_scalar, max, max_element, mean, min, mul, quant_f32_row_to_i8,
+    quant_f32_to_f16, scale, scale_inplace, softmax_online_inplace, std_dev, sub, sum, variance,
 };
 
 use trueno::Backend;
