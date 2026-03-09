@@ -1583,12 +1583,36 @@ pub struct DecoderScratch {
     ffn_out: Vec<f32>,
     /// Final layer norm output
     ln_post_out: Vec<f32>,
+
+    /// Attention scratch buffers (split struct for borrow splitting)
+    attn: AttentionScratch,
+}
+
+/// Pre-allocated scratch buffers for attention computation (PMAT-014 O3).
+///
+/// Split into its own struct so the borrow checker allows simultaneous
+/// immutable access to Q/K/V projections and mutable access to these buffers.
+pub struct AttentionScratch {
+    /// Per-head query extraction (d_head)
+    q_head: Vec<f32>,
+    /// Per-head key extraction (max_len × d_head)
+    k_head: Vec<f32>,
+    /// Per-head value extraction (max_len × d_head)
+    v_head: Vec<f32>,
+    /// Attention output accumulator (d_model)
+    output: Vec<f32>,
+    /// Attention scores buffer (max_len)
+    scores: Vec<f32>,
+    /// Softmax weights buffer (max_len)
+    weights: Vec<f32>,
+    /// Per-head attention output (d_head)
+    head_out: Vec<f32>,
 }
 
 impl DecoderScratch {
     /// Create scratch buffers for a decoder with given dimensions.
     #[must_use]
-    pub fn new(d_model: usize, d_ff: usize) -> Self {
+    pub fn new_with_attn(d_model: usize, d_ff: usize, d_head: usize, max_len: usize) -> Self {
         Self {
             normed: vec![0.0; d_model],
             q: vec![0.0; d_model],
@@ -1602,6 +1626,15 @@ impl DecoderScratch {
             ffn_hidden: vec![0.0; d_ff],
             ffn_out: vec![0.0; d_model],
             ln_post_out: vec![0.0; d_model],
+            attn: AttentionScratch {
+                q_head: vec![0.0; d_head],
+                k_head: vec![0.0; max_len * d_head],
+                v_head: vec![0.0; max_len * d_head],
+                output: vec![0.0; d_model],
+                scores: vec![0.0; max_len],
+                weights: vec![0.0; max_len],
+                head_out: vec![0.0; d_head],
+            },
         }
     }
 }
@@ -2555,7 +2588,8 @@ impl Decoder {
     #[must_use]
     pub fn create_decoder_scratch(&self) -> DecoderScratch {
         let d_ff = self.d_model * 4;
-        DecoderScratch::new(self.d_model, d_ff)
+        let d_head = self.d_model / self.n_heads;
+        DecoderScratch::new_with_attn(self.d_model, d_ff, d_head, self.max_len)
     }
 
     /// Create a new paged KV cache for this decoder
@@ -2996,15 +3030,20 @@ impl Decoder {
         let k_full = cache.self_attn_cache[layer_idx].get_key();
         let v_full = cache.self_attn_cache[layer_idx].get_value();
 
-        // Attention (still allocates internally — addressed in O3)
-        let attn_out =
-            self.compute_attention_cached(&block.self_attn, &scratch.q, k_full, v_full)?;
+        // Attention with scratch (zero-alloc, O3)
+        self.compute_attention_cached_with_scratch(
+            &block.self_attn,
+            &scratch.q,
+            k_full,
+            v_full,
+            &mut scratch.attn,
+        )?;
 
-        // Output projection into scratch
+        // Output projection: attn.output → sa_proj
         block
             .self_attn
             .w_o()
-            .forward_simd_into(&attn_out, 1, &mut scratch.sa_proj)?;
+            .forward_simd_into(&scratch.attn.output, 1, &mut scratch.sa_proj)?;
 
         // Residual connection in-place
         for (xi, &pi) in x.iter_mut().zip(scratch.sa_proj.iter()) {
@@ -3031,12 +3070,18 @@ impl Decoder {
                 .cross_attn
                 .w_q()
                 .forward_simd_into(&scratch.normed2, 1, &mut scratch.cross_q)?;
-            let attn_out =
-                self.compute_attention_cached(&block.cross_attn, &scratch.cross_q, &k_enc, &v_enc)?;
-            block
-                .cross_attn
-                .w_o()
-                .forward_simd_into(&attn_out, 1, &mut scratch.cross_proj)?;
+            self.compute_attention_cached_with_scratch(
+                &block.cross_attn,
+                &scratch.cross_q,
+                &k_enc,
+                &v_enc,
+                &mut scratch.attn,
+            )?;
+            block.cross_attn.w_o().forward_simd_into(
+                &scratch.attn.output,
+                1,
+                &mut scratch.cross_proj,
+            )?;
         } else {
             // Reuse cached encoder K/V
             let k_cached = cache.cross_attn_cache[layer_idx].get_key();
@@ -3046,16 +3091,18 @@ impl Decoder {
                 .cross_attn
                 .w_q()
                 .forward_simd_into(&scratch.normed2, 1, &mut scratch.cross_q)?;
-            let attn_out = self.compute_attention_cached(
+            self.compute_attention_cached_with_scratch(
                 &block.cross_attn,
                 &scratch.cross_q,
                 k_cached,
                 v_cached,
+                &mut scratch.attn,
             )?;
-            block
-                .cross_attn
-                .w_o()
-                .forward_simd_into(&attn_out, 1, &mut scratch.cross_proj)?;
+            block.cross_attn.w_o().forward_simd_into(
+                &scratch.attn.output,
+                1,
+                &mut scratch.cross_proj,
+            )?;
         }
 
         // Cross-attention residual
@@ -3464,6 +3511,94 @@ impl Decoder {
         }
 
         Ok(output)
+    }
+
+    /// Compute attention with pre-allocated scratch buffers (PMAT-014 O3).
+    ///
+    /// Zero-allocation variant of `compute_attention_cached`. Uses scratch
+    /// buffers for head extraction, scores, softmax weights, and per-head output.
+    /// Eliminates all per-head and per-call allocations.
+    /// Compute attention with pre-allocated scratch buffers (PMAT-014 O3).
+    ///
+    /// Zero-allocation variant of `compute_attention_cached`. Uses scratch
+    /// buffers for head extraction, scores, softmax weights, and per-head output.
+    /// Result is written to `attn_scratch.output`.
+    fn compute_attention_cached_with_scratch(
+        &self,
+        mha: &MultiHeadAttention,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        attn_scratch: &mut AttentionScratch,
+    ) -> WhisperResult<()> {
+        let n_heads = mha.n_heads();
+        let d_head = mha.d_head();
+        let kv_len = k.len() / self.d_model;
+        let scale = 1.0 / (d_head as f32).sqrt();
+
+        for head in 0..n_heads {
+            // Extract Q for this head
+            for d in 0..d_head {
+                attn_scratch.q_head[d] = q[head * d_head + d];
+            }
+
+            // Extract K, V for this head (all cached positions)
+            for pos in 0..kv_len {
+                for d in 0..d_head {
+                    attn_scratch.k_head[pos * d_head + d] =
+                        k[pos * self.d_model + head * d_head + d];
+                    attn_scratch.v_head[pos * d_head + d] =
+                        v[pos * self.d_model + head * d_head + d];
+                }
+            }
+
+            // Compute scores: Q · K^T (dot products for seq_len=1)
+            for pos in 0..kv_len {
+                let k_start = pos * d_head;
+                let mut dot = 0.0_f32;
+                for d in 0..d_head {
+                    dot += attn_scratch.q_head[d] * attn_scratch.k_head[k_start + d];
+                }
+                attn_scratch.scores[pos] = dot * scale;
+            }
+
+            // In-place softmax: scores → weights
+            {
+                let scores = &attn_scratch.scores[..kv_len];
+                let weights = &mut attn_scratch.weights[..kv_len];
+
+                let max_score = scores.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+                let mut sum = 0.0_f32;
+                for (w, &s) in weights.iter_mut().zip(scores.iter()) {
+                    let e = (s - max_score).exp();
+                    *w = e;
+                    sum += e;
+                }
+                let inv_sum = 1.0 / sum;
+                for w in weights.iter_mut() {
+                    *w *= inv_sum;
+                }
+            }
+
+            // Weighted sum of V → head_out
+            for d in 0..d_head {
+                attn_scratch.head_out[d] = 0.0;
+            }
+            for pos in 0..kv_len {
+                let weight = attn_scratch.weights[pos];
+                let v_start = pos * d_head;
+                for d in 0..d_head {
+                    attn_scratch.head_out[d] += weight * attn_scratch.v_head[v_start + d];
+                }
+            }
+
+            // Copy head output to multi-head output buffer
+            for d in 0..d_head {
+                attn_scratch.output[head * d_head + d] = attn_scratch.head_out[d];
+            }
+        }
+
+        Ok(())
     }
 
     /// Generate tokens autoregressively with KV cache
