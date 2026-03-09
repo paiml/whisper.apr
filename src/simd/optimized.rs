@@ -8,8 +8,15 @@ use trueno::Vector;
 /// Pattern from: realizar/src/inference/simd.rs
 pub const TILE_SIZE: usize = 64;
 
-/// Threshold for multi-threaded SIMD (pattern from aprender/src/compute/mod.rs)
-pub const PARALLEL_THRESHOLD: usize = 1_000;
+/// Threshold for multi-threaded SIMD dispatch in matrix-vector operations.
+///
+/// For single-token decode, matrices are small (384×384 = 147K, 1536×384 = 590K).
+/// Rayon's work-stealing overhead (task descriptors, deque ops) dominates at these sizes,
+/// adding ~33K heap allocs/token with zero wall-clock benefit.
+///
+/// Set to 2M so only large operations (e.g., vocab projection 51865×384 = 19.9M) go parallel.
+/// Encoder matmuls use the full matmul path (not tiled_matvec), so this doesn't affect them.
+pub const PARALLEL_THRESHOLD: usize = 2_000_000;
 
 /// Threshold for considering GPU dispatch
 pub const GPU_THRESHOLD: usize = 100_000;
@@ -368,12 +375,13 @@ mod tests {
     #[test]
     fn test_select_backend_medium() {
         let category = select_backend(10_000, false);
-        assert_eq!(category, BackendCategory::SimdParallel);
+        // Below PARALLEL_THRESHOLD (2M), stays serial
+        assert_eq!(category, BackendCategory::SimdOnly);
     }
 
     #[test]
     fn test_select_backend_large() {
-        let category = select_backend(1_000_000, true);
+        let category = select_backend(3_000_000, true);
         // Falls back to parallel SIMD since GPU not actually implemented
         assert_eq!(category, BackendCategory::SimdParallel);
     }
