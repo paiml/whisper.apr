@@ -1,6 +1,6 @@
 //! Optimized SIMD operations (aprender/realizar patterns - WAPR-PERF-004)
 
-use super::vector::dot;
+use super::vector::dot_nalloc;
 use trueno::Vector;
 
 /// Cache-efficient tile size for matrix operations.
@@ -58,7 +58,7 @@ pub fn tiled_matvec(weights: &[f32], x: &[f32], rows: usize, cols: usize) -> Vec
             .into_par_iter()
             .map(|i| {
                 let row_offset = i * cols;
-                dot(&weights[row_offset..row_offset + cols], x)
+                dot_nalloc(&weights[row_offset..row_offset + cols], x)
             })
             .collect();
     }
@@ -68,7 +68,7 @@ pub fn tiled_matvec(weights: &[f32], x: &[f32], rows: usize, cols: usize) -> Vec
         let tile_end = (tile_start + TILE_SIZE).min(rows);
         for i in tile_start..tile_end {
             let row_offset = i * cols;
-            out[i] = dot(&weights[row_offset..row_offset + cols], x);
+            out[i] = dot_nalloc(&weights[row_offset..row_offset + cols], x);
         }
     }
     out
@@ -89,7 +89,7 @@ pub fn tiled_matvec_into(weights: &[f32], x: &[f32], out: &mut [f32], rows: usiz
         use rayon::prelude::*;
         out.par_iter_mut().enumerate().for_each(|(i, o)| {
             let row_offset = i * cols;
-            *o = dot(&weights[row_offset..row_offset + cols], x);
+            *o = dot_nalloc(&weights[row_offset..row_offset + cols], x);
         });
         return;
     }
@@ -98,7 +98,7 @@ pub fn tiled_matvec_into(weights: &[f32], x: &[f32], out: &mut [f32], rows: usiz
         let tile_end = (tile_start + TILE_SIZE).min(rows);
         for i in tile_start..tile_end {
             let row_offset = i * cols;
-            out[i] = dot(&weights[row_offset..row_offset + cols], x);
+            out[i] = dot_nalloc(&weights[row_offset..row_offset + cols], x);
         }
     }
 }

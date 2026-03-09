@@ -12,6 +12,18 @@ pub fn dot(a: &[f32], b: &[f32]) -> f32 {
     va.dot(&vb).unwrap_or(0.0)
 }
 
+/// Zero-allocation dot product (PMAT-014 O5).
+///
+/// Avoids trueno `Vector::from_slice` overhead (2 heap allocs per call).
+/// Auto-vectorizes with `-O2` and appropriate target features (AVX2/SSE2).
+/// Use in tight loops (e.g., `tiled_matvec_into`) where per-call alloc overhead dominates.
+#[inline]
+#[must_use]
+pub fn dot_nalloc(a: &[f32], b: &[f32]) -> f32 {
+    debug_assert_eq!(a.len(), b.len(), "dot product requires equal lengths");
+    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+}
+
 /// SIMD-accelerated vector addition
 #[must_use]
 pub fn add(a: &[f32], b: &[f32]) -> Vec<f32> {
