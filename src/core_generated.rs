@@ -452,6 +452,9 @@ impl WhisperApr {
         #[cfg(feature = "std")]
         let mut mel_ms: Option<f64> = None;
 
+        #[cfg(feature = "std")]
+        let mut conv_ms: Option<f64> = None;
+
         let audio_features = match self.config.audio_frontend {
             model::AudioFrontend::MelFilterbank => {
                 #[cfg(feature = "std")]
@@ -462,6 +465,16 @@ impl WhisperApr {
                 #[cfg(feature = "std")]
                 {
                     mel_ms = Some(mel_start.elapsed().as_secs_f64() * 1000.0);
+                }
+
+                // Profile conv_frontend vs encoder_blocks separately
+                #[cfg(feature = "std")]
+                if options.profile {
+                    let conv_start = std::time::Instant::now();
+                    if let Some(frontend) = self.encoder.conv_frontend() {
+                        let _ = frontend.forward(&mel);
+                        conv_ms = Some(conv_start.elapsed().as_secs_f64() * 1000.0);
+                    }
                 }
 
                 self.encode(&mel)?
@@ -520,6 +533,7 @@ impl WhisperApr {
                 ("mel_ms", mel_ms),
                 ("audio_ms", enc_ms),
                 ("decoder_ms", dec_ms),
+                ("conv_frontend_ms", conv_ms),
             ];
             for &(key, val) in pairs {
                 if let Some(ms) = val {
@@ -528,7 +542,12 @@ impl WhisperApr {
             }
             // encoder_ms = audio_ms minus mel_ms (pure encoder time)
             if let Some(audio) = enc_ms {
-                breakdown.insert("encoder_ms".to_string(), audio - mel_ms.unwrap_or(0.0));
+                let enc_total = audio - mel_ms.unwrap_or(0.0);
+                breakdown.insert("encoder_ms".to_string(), enc_total);
+                // encoder_blocks_ms = encoder_ms minus conv_frontend_ms
+                if let Some(c) = conv_ms {
+                    breakdown.insert("encoder_blocks_ms".to_string(), enc_total - c);
+                }
             }
             ProfilingStats {
                 total_ms: st.elapsed().as_secs_f64() * 1000.0,
@@ -1244,7 +1263,12 @@ impl WhisperApr {
             Self::load_decoder_weights_f16(&reader, &mut decoder, &mut tracker, callback);
         } else {
             Self::load_decoder_weights(&reader, &mut decoder, &mut tracker, callback);
+            // Convert decoder f32 weights to fp16 — halves memory bandwidth for
+            // memory-bound single-token inference and enables fused QKV projection
+            decoder.convert_to_f16();
         }
+        // Finalize decoder — cache transposed weights + fuse QKV for fast inference
+        decoder.finalize_weights();
         tracker.next_phase();
 
         // Phase 4: Loading vocabulary

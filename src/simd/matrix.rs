@@ -12,22 +12,19 @@ fn result_to_vec(
 
 /// SIMD-accelerated matrix multiplication
 ///
-/// Computes C = A @ B where A is (rows x inner) and B is (inner x cols)
+/// Computes C = A @ B where A is (rows x inner) and B is (inner x cols).
+/// Calls BLIS GEMM directly on raw slices to avoid allocation overhead.
 #[must_use]
 #[allow(clippy::many_single_char_names)]
 pub fn matmul(a: &[f32], b: &[f32], rows: usize, inner: usize, cols: usize) -> Vec<f32> {
     debug_assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
     debug_assert_eq!(b.len(), inner * cols, "B dimensions mismatch");
 
-    // Note: from_vec copies the data. For hot paths like vocab projection,
-    // consider using trueno::Matrix directly to avoid this wrapper's overhead.
-    let Ok(ma) = Matrix::from_vec(rows, inner, a.to_vec()) else {
+    let mut c = vec![0.0_f32; rows * cols];
+    if trueno::blis::parallel::gemm_blis_parallel(rows, cols, inner, a, b, &mut c).is_err() {
         return vec![0.0; rows * cols];
-    };
-    let Ok(mb) = Matrix::from_vec(inner, cols, b.to_vec()) else {
-        return vec![0.0; rows * cols];
-    };
-    result_to_vec(ma.matmul(&mb), rows * cols)
+    }
+    c
 }
 
 /// SIMD-accelerated matrix multiplication (zero-copy variant)
@@ -53,18 +50,23 @@ pub fn matmul_owned(a: Vec<f32>, b: Vec<f32>, rows: usize, inner: usize, cols: u
 
 /// SIMD-accelerated matrix multiplication with pre-constructed Matrix
 ///
-/// Use this when B is constant (like weight matrices) to avoid repeated
-/// conversions. A is still converted from slice.
+/// Uses BLIS GEMM directly on raw slices to avoid copying input A.
+/// B's data is accessed via `as_slice()` for zero-copy on the weight side.
 #[must_use]
 #[allow(clippy::many_single_char_names)]
 pub fn matmul_with_matrix(a: &[f32], b: &Matrix<f32>, rows: usize, inner: usize) -> Vec<f32> {
     debug_assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
     debug_assert_eq!(b.rows(), inner, "B rows mismatch inner dimension");
 
-    let Ok(ma) = Matrix::from_vec(rows, inner, a.to_vec()) else {
-        return vec![0.0; rows * b.cols()];
-    };
-    result_to_vec(ma.matmul(b), rows * b.cols())
+    let cols = b.cols();
+    let mut c = vec![0.0_f32; rows * cols];
+    // Call BLIS GEMM directly — avoids a.to_vec() allocation for the input matrix
+    if trueno::blis::parallel::gemm_blis_parallel(rows, cols, inner, a, b.as_slice(), &mut c)
+        .is_err()
+    {
+        return vec![0.0; rows * cols];
+    }
+    c
 }
 
 /// SIMD-accelerated matrix-vector multiplication

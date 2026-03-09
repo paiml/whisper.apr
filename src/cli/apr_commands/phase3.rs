@@ -642,15 +642,17 @@ pub(super) fn run_profile(
         let wall_ms = run_start.elapsed().as_secs_f64() * 1000.0;
 
         // Extract directly-instrumented timings from ProfilingStats breakdown
-        let (mel_ms, enc_ms, dec_ms, total_ms) = if let Some(ref prof) = result.profiling {
-            let mel = prof.breakdown.get("mel_ms").copied().unwrap_or(0.0);
-            let enc = prof.breakdown.get("encoder_ms").copied().unwrap_or(0.0);
-            let dec = prof.breakdown.get("decoder_ms").copied().unwrap_or(0.0);
-            (mel, enc, dec, prof.total_ms)
-        } else {
-            // Fallback: use wall-clock time if profiling somehow absent
-            (0.0, 0.0, 0.0, wall_ms)
-        };
+        let (mel_ms, enc_ms, dec_ms, total_ms, conv_ms, blocks_ms) =
+            if let Some(ref prof) = result.profiling {
+                let mel = prof.breakdown.get("mel_ms").copied().unwrap_or(0.0);
+                let enc = prof.breakdown.get("encoder_ms").copied().unwrap_or(0.0);
+                let dec = prof.breakdown.get("decoder_ms").copied().unwrap_or(0.0);
+                let conv = prof.breakdown.get("conv_frontend_ms").copied();
+                let blocks = prof.breakdown.get("encoder_blocks_ms").copied();
+                (mel, enc, dec, prof.total_ms, conv, blocks)
+            } else {
+                (0.0, 0.0, 0.0, wall_ms, None, None)
+            };
 
         let token_count: usize = result.segments.iter().map(|s| s.tokens.len()).sum();
 
@@ -663,6 +665,8 @@ pub(super) fn run_profile(
                 rtf: total_ms / 1000.0 / audio_duration_s,
                 token_count,
                 text: result.text.clone(),
+                conv_frontend_ms: conv_ms,
+                encoder_blocks_ms: blocks_ms,
             });
         }
     }
@@ -680,6 +684,28 @@ pub(super) fn run_profile(
             / run_results.len().max(1),
         text: run_results.last().map_or("", |r| r.text.as_str()),
         audio_duration_s,
+        avg_conv_frontend: if run_results.iter().all(|r| r.conv_frontend_ms.is_some()) {
+            Some(
+                run_results
+                    .iter()
+                    .map(|r| r.conv_frontend_ms.unwrap_or(0.0))
+                    .sum::<f64>()
+                    / n,
+            )
+        } else {
+            None
+        },
+        avg_encoder_blocks: if run_results.iter().all(|r| r.encoder_blocks_ms.is_some()) {
+            Some(
+                run_results
+                    .iter()
+                    .map(|r| r.encoder_blocks_ms.unwrap_or(0.0))
+                    .sum::<f64>()
+                    / n,
+            )
+        } else {
+            None
+        },
     };
 
     let output_str = match args.format.as_str() {
@@ -711,6 +737,10 @@ struct ProfileRun {
     rtf: f64,
     token_count: usize,
     text: String,
+    /// Conv frontend time (subset of encode_ms), if available
+    conv_frontend_ms: Option<f64>,
+    /// Encoder blocks time (encode_ms minus conv_frontend), if available
+    encoder_blocks_ms: Option<f64>,
 }
 
 /// Aggregated profile summary for output formatting
@@ -724,16 +754,27 @@ struct ProfileSummary<'text> {
     avg_tokens: usize,
     text: &'text str,
     audio_duration_s: f64,
+    /// Avg conv frontend time (subset of encoder)
+    avg_conv_frontend: Option<f64>,
+    /// Avg encoder blocks time (encoder minus conv frontend)
+    avg_encoder_blocks: Option<f64>,
 }
 
 impl ProfileSummary<'_> {
     fn format_json(&self, args: &AprProfileArgs) -> String {
+        let mut encoder_detail = String::new();
+        if let (Some(conv), Some(blocks)) = (self.avg_conv_frontend, self.avg_encoder_blocks) {
+            encoder_detail = format!(
+                ",\"encoder_detail\":{{\"conv_frontend\":{:.1},\"blocks\":{:.1}}}",
+                conv, blocks
+            );
+        }
         format!(
             concat!(
                 "{{\"model\":\"{}\",\"audio\":\"{}\",\"audio_duration_s\":{:.3},",
                 "\"warmup\":{},\"runs\":{},",
                 "\"avg_ms\":{{\"load\":{:.1},\"mel\":{:.1},\"encode\":{:.1},",
-                "\"decode\":{:.1},\"total\":{:.1}}},",
+                "\"decode\":{:.1},\"total\":{:.1}}}{},",
                 "\"rtf\":{:.3},\"tokens\":{},\"text\":\"{}\"}}"
             ),
             args.model.display(),
@@ -746,6 +787,7 @@ impl ProfileSummary<'_> {
             self.avg_enc,
             self.avg_dec,
             self.avg_total,
+            encoder_detail,
             self.avg_rtf,
             self.avg_tokens,
             self.text.replace('"', "\\\"")
@@ -786,7 +828,7 @@ impl ProfileSummary<'_> {
         ));
         ts_us += mel_dur;
 
-        // Encoder
+        // Encoder (parent span)
         let enc_dur = self.avg_enc * 1000.0;
         events.push(format!(
             concat!(
@@ -795,6 +837,26 @@ impl ProfileSummary<'_> {
             ),
             ts_us, enc_dur
         ));
+        // Encoder sub-steps (nested on tid 2)
+        if let (Some(conv), Some(blocks)) = (self.avg_conv_frontend, self.avg_encoder_blocks) {
+            let conv_dur = conv * 1000.0;
+            events.push(format!(
+                concat!(
+                    "{{\"name\":\"conv_frontend\",\"cat\":\"apr_profile\",\"ph\":\"X\",",
+                    "\"ts\":{:.0},\"dur\":{:.0},\"pid\":1,\"tid\":2}}"
+                ),
+                ts_us, conv_dur
+            ));
+            let blocks_dur = blocks * 1000.0;
+            events.push(format!(
+                concat!(
+                    "{{\"name\":\"encoder_blocks\",\"cat\":\"apr_profile\",\"ph\":\"X\",",
+                    "\"ts\":{:.0},\"dur\":{:.0},\"pid\":1,\"tid\":2}}"
+                ),
+                ts_us + conv_dur,
+                blocks_dur
+            ));
+        }
         ts_us += enc_dur;
 
         // Decoder
@@ -860,6 +922,18 @@ impl ProfileSummary<'_> {
             self.avg_enc,
             self.avg_enc / self.avg_total * 100.0
         );
+        if let (Some(conv), Some(blocks)) = (self.avg_conv_frontend, self.avg_encoder_blocks) {
+            println!(
+                "    Conv frontend {:>6.1}    {:>5.1}%",
+                conv,
+                conv / self.avg_total * 100.0
+            );
+            println!(
+                "    Blocks       {:>7.1}    {:>5.1}%",
+                blocks,
+                blocks / self.avg_total * 100.0
+            );
+        }
         println!(
             "  Decoder       {:>8.1}    {:>5.1}%",
             self.avg_dec,
