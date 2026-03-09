@@ -313,8 +313,18 @@ pub struct TranscribeArgs {
     // Prompt/grammar arguments
     // -------------------------------------------------------------------------
     /// Initial prompt for decoder (whisper.cpp: --prompt)
+    ///
+    /// WARNING: With tiny/base models, --prompt causes hallucination during
+    /// silence segments. Prefer --hotwords for domain vocabulary biasing.
     #[arg(long, default_value = "")]
     pub prompt: String,
+
+    /// Comma-separated hotwords for logit biasing during decoding (WAPR-170)
+    ///
+    /// Boosts domain-specific vocabulary without the hallucination risk of
+    /// --prompt. Safe with all model sizes including tiny/base.
+    #[arg(long, default_value = "", value_delimiter = ',')]
+    pub hotwords: Vec<String>,
 
     /// Regex pattern to suppress tokens (whisper.cpp: --suppress-regex)
     #[arg(long = "suppress-regex", default_value = "")]

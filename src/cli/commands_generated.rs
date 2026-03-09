@@ -241,6 +241,12 @@ fn build_transcribe_options(args: &TranscribeArgs, verbose: bool) -> TranscribeO
         } else {
             Some(args.prompt.clone())
         },
+        hotwords: args
+            .hotwords
+            .iter()
+            .filter(|h| !h.is_empty())
+            .cloned()
+            .collect(),
         ..Default::default()
     }
 }
@@ -1277,6 +1283,7 @@ fn build_batch_transcribe_args(input_path: &Path, args: &BatchArgs) -> Transcrib
         logprob_thold: -1.0,
         no_speech_thold: 0.6,
         prompt: String::new(),
+        hotwords: Vec::new(),
         suppress_regex: String::new(),
         grammar: String::new(),
         grammar_rule: String::new(),
@@ -4410,6 +4417,7 @@ mod tests {
             logprob_thold: -1.0,
             no_speech_thold: 0.6,
             prompt: String::new(),
+            hotwords: Vec::new(),
             suppress_regex: String::new(),
             grammar: String::new(),
             grammar_rule: String::new(),

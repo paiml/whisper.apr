@@ -119,6 +119,9 @@ whisper-apr transcribe -f audio.wav
 # Use specific model
 whisper-apr transcribe -f audio.wav --model base
 
+# Boost domain vocabulary (safe with all model sizes)
+whisper-apr transcribe -f audio.wav --hotwords "Terraform,Ansible,Kubernetes"
+
 # Use Moonshine model
 whisper-apr transcribe -f audio.wav --model moonshine-tiny
 
@@ -449,6 +452,9 @@ cargo install whisper-apr --features cli
 
 # Transcribe audio
 whisper-apr transcribe -f audio.wav --model tiny
+
+# Boost domain-specific vocabulary during decoding
+whisper-apr transcribe -f lecture.wav --hotwords "Kubernetes,etcd,gRPC"
 
 # Probe model internals (forward-pass debugging)
 whisper-apr probe --model-path model.apr

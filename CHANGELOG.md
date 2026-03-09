@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `--hotwords` CLI flag for comma-separated logit biasing during decoding (WAPR-170). Boosts
+  domain-specific vocabulary (e.g. `--hotwords "Databricks,PySpark,SparkSQL"`) without the
+  hallucination risk of `--prompt`. Safe with all model sizes including tiny/base. The existing
+  `HotwordBooster` engine applies logit biasing during decoding — this flag exposes it to CLI users.
+
+### Changed
+- `--prompt` flag now includes warning about hallucination risk with tiny/base models (<100M params).
+  With these models, `--prompt` feeds forced decoder tokens via `<|startofprev|>`, causing a degenerate
+  loop during silence segments where the model regurgitates the prompt as literal subtitle text. Prefer
+  `--hotwords` for domain vocabulary biasing.
+- `make install` prevents duplicate binary installs: removes stale copies outside `~/.cargo/bin/` before
+  install, verifies single binary post-install (exits non-zero if duplicates detected).
+
 ## [0.2.2] - 2025-01-26
 
 ### Changed

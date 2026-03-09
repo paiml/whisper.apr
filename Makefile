@@ -453,7 +453,23 @@ AUDIO_PATH := demos/test-audio/test-speech-1.5s.wav
 EXPECT_TEXT := birds
 
 install: ## Install whisper-apr binary via cargo install
-	cargo install --path . --features cli
+	@# Prevent duplicate installs: remove any whisper-apr outside ~/.cargo/bin
+	@for bin in $$(which -a whisper-apr 2>/dev/null | grep -v '\.cargo/bin/' | sort -u); do \
+		echo "Removing stale whisper-apr at $$bin"; \
+		rm -f "$$bin"; \
+	done
+	@if command -v nvidia-smi >/dev/null 2>&1; then \
+		echo "CUDA detected — building with GPU support"; \
+		cargo install --path . --features "cli,realizar-gpu"; \
+	else \
+		cargo install --path . --features cli; \
+	fi
+	@# Verify single install
+	@if [ "$$(which -a whisper-apr 2>/dev/null | sort -u | wc -l)" -gt 1 ]; then \
+		echo "ERROR: multiple whisper-apr installs detected:"; \
+		which -a whisper-apr | sort -u; \
+		exit 1; \
+	fi
 
 smoke-test: ## Quick smoke test via cargo run (no install required)
 	@echo "🔥 Smoke test (cargo run)..."
