@@ -155,6 +155,9 @@ clap = { version = "4", features = ["derive"], optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 hf-hub = { version = "0.4", optional = true }
 
+# Vendored OpenSSL for aarch64 cross-compilation (hf-hub → reqwest → native-tls)
+openssl = { version = "0.10", features = ["vendored"] }
+
 # Optional: Phase 3 crypto dependencies (feature-gated through format-*)
 ed25519-dalek = { version = "2", optional = true }
 hex = { version = "0.4", optional = true }
