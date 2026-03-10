@@ -38,7 +38,14 @@ pub fn configure_thread_pool(num_threads: Option<u32>) -> WhisperResult<usize> {
     let builder = if let Some(n) = num_threads {
         builder.num_threads(n as usize)
     } else {
-        builder // Use rayon's default (logical CPU count)
+        // Smart default: physical cores (logical/2), capped at 16.
+        // SMT siblings don't help compute-bound GEMM and hurt cache-sensitive
+        // decoder matvecs through work-stealing contention.
+        let logical = std::thread::available_parallelism()
+            .map(|n| n.get() as u32)
+            .unwrap_or(4);
+        let physical = (logical / 2).clamp(1, 16);
+        builder.num_threads(physical as usize)
     };
 
     match builder.build_global() {
