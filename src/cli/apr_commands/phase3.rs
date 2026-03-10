@@ -611,6 +611,20 @@ pub(super) fn run_profile(
 ) -> CliResult<CommandResult> {
     use crate::{TranscribeOptions, WhisperApr};
 
+    // Configure thread pool: user override, or smart default (physical cores, max 16)
+    let threads = args.threads.or_else(|| {
+        let logical = std::thread::available_parallelism()
+            .map(|n| n.get() as u32)
+            .unwrap_or(4);
+        // SMT siblings don't help compute-bound GEMM; halving ≈ physical cores
+        Some((logical / 2).min(16).max(1))
+    });
+    let thread_count = crate::parallel::configure_thread_pool(threads)
+        .map_err(|e| CliError::InvalidArgument(format!("Thread pool: {e}")))?;
+    if global.verbose {
+        eprintln!("[INFO] Using {thread_count} thread(s) for inference");
+    }
+
     // Load model
     let load_start = Instant::now();
     let model_bytes =

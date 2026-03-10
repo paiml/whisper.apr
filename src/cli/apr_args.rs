@@ -612,6 +612,10 @@ pub struct AprProfileArgs {
     /// Show per-token decoder timing
     #[arg(long)]
     pub per_token: bool,
+
+    /// Number of threads for parallel inference (default: physical cores, max 16)
+    #[arg(short, long)]
+    pub threads: Option<u32>,
 }
 
 // ============================================================================
