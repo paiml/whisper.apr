@@ -51,6 +51,9 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            cross: true
           - target: x86_64-apple-darwin
             runner: macos-latest
           - target: aarch64-apple-darwin
@@ -67,8 +70,17 @@ jobs:
       - name: Ensure target is installed
         run: rustup target add ${{ matrix.target }}
 
+      - name: Install cross (Linux ARM)
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} --features cli
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} --features cli
+          else
+            cargo build --release --target ${{ matrix.target }} --features cli
+          fi
 
       - name: Package (unix)
         if: matrix.target != 'x86_64-pc-windows-msvc'
