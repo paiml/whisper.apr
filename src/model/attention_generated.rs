@@ -1256,27 +1256,12 @@ impl MultiHeadAttention {
             return Err(WhisperError::Model("context size mismatch".into()));
         }
 
-        // Project Q, K, V — independent matmuls run in parallel when feature enabled
-        #[cfg(feature = "parallel")]
-        let (q, k, v) = {
-            let (q, (k, v)) = rayon::join(
-                || self.w_q.forward_simd(x, seq_len),
-                || {
-                    rayon::join(
-                        || self.w_k.forward_simd(context, kv_len),
-                        || self.w_v.forward_simd(context, kv_len),
-                    )
-                },
-            );
-            (q?, k?, v?)
-        };
-        #[cfg(not(feature = "parallel"))]
-        let (q, k, v) = {
-            let q = self.w_q.forward_simd(x, seq_len)?;
-            let k = self.w_k.forward_simd(context, kv_len)?;
-            let v = self.w_v.forward_simd(context, kv_len)?;
-            (q, k, v)
-        };
+        // Project Q, K, V sequentially — each GEMM uses the full thread pool
+        // via gemm_blis_parallel internally. Nested rayon::join caused 3 competing
+        // BLIS GEMMs, degrading parallel scaling (4.3x vs 10.4x on 16 threads).
+        let q = self.w_q.forward_simd(x, seq_len)?;
+        let k = self.w_k.forward_simd(context, kv_len)?;
+        let v = self.w_v.forward_simd(context, kv_len)?;
 
         // Compute attention for each head using Flash Attention (parallel when feature enabled)
         // Per §11.3.2: Each head is independent [31], enabling parallel computation
@@ -1355,27 +1340,11 @@ impl MultiHeadAttention {
             return Err(WhisperError::Model("context size mismatch".into()));
         }
 
-        // Project Q, K, V — independent matmuls run in parallel when feature enabled
-        #[cfg(feature = "parallel")]
-        let (q, k, v) = {
-            let (q, (k, v)) = rayon::join(
-                || self.w_q.forward_simd(x, seq_len),
-                || {
-                    rayon::join(
-                        || self.w_k.forward_simd(context, kv_len),
-                        || self.w_v.forward_simd(context, kv_len),
-                    )
-                },
-            );
-            (q?, k?, v?)
-        };
-        #[cfg(not(feature = "parallel"))]
-        let (q, k, v) = {
-            let q = self.w_q.forward_simd(x, seq_len)?;
-            let k = self.w_k.forward_simd(context, kv_len)?;
-            let v = self.w_v.forward_simd(context, kv_len)?;
-            (q, k, v)
-        };
+        // Project Q, K, V sequentially — each GEMM uses the full thread pool
+        // via gemm_blis_parallel internally. Sequential avoids nested rayon contention.
+        let q = self.w_q.forward_simd(x, seq_len)?;
+        let k = self.w_k.forward_simd(context, kv_len)?;
+        let v = self.w_v.forward_simd(context, kv_len)?;
 
         // Compute attention for each head using realizar's FlashAttention-2
         let head_outputs = parallel_map(0..self.n_heads, |head| {
