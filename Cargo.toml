@@ -67,7 +67,7 @@ parallel = ["rayon", "trueno/parallel"]
 wasm-threads = ["wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
 converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs", "zip"]
-cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "symphonia", "dirs", "parallel"]
+cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "symphonia", "dirs", "parallel", "memmap2"]
 cli-full = ["cli", "dep:apr-cli"]
 # Multi-format audio decoding (MP3, FLAC, OGG, AAC, etc.)
 symphonia = ["dep:symphonia"]
@@ -168,6 +168,9 @@ crossterm = { version = "0.28", optional = true }
 
 # Optional: Heap profiling
 dhat = { version = "0.3", optional = true }
+
+# Memory-mapped file I/O for fast model loading (WAPR-KAIZEN Cycle 13)
+memmap2 = { version = "0.9", optional = true }
 
 # Optional: Multi-format audio decoding (MP3, FLAC, OGG, AAC, M4A, etc.)
 # Pure Rust - no system dependencies required

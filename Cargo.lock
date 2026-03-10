@@ -6836,6 +6836,7 @@ dependencies = [
  "indicatif",
  "js-sys",
  "jugar-probar",
+ "memmap2",
  "pollster",
  "proptest",
  "rand 0.8.5",

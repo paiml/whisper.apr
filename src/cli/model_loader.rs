@@ -734,8 +734,17 @@ fn load_mel_filters_from_preprocessor(
 const GGUF_MAGIC: u32 = 0x4655_4747;
 
 /// Load a model from a file path, auto-detecting APR vs GGUF format.
+///
+/// Uses memory-mapped I/O for APR files to avoid copying the entire model
+/// into userspace memory. The OS pages in data on demand from the page cache,
+/// matching whisper.cpp's mmap-based loading strategy.
 fn load_model_from_path(path: &std::path::Path) -> ModelLoaderResult<WhisperApr> {
-    let bytes = fs::read(path)?;
+    let file = fs::File::open(path)?;
+
+    // SAFETY: The file is opened read-only and not modified during the lifetime
+    // of the mmap. The mmap is used only within this function scope.
+    let mmap = unsafe { memmap2::Mmap::map(&file)? };
+    let bytes: &[u8] = &mmap;
 
     // Check for GGUF magic in first 4 bytes
     #[cfg(feature = "converter")]
@@ -748,7 +757,7 @@ fn load_model_from_path(path: &std::path::Path) -> ModelLoaderResult<WhisperApr>
         }
     }
 
-    WhisperApr::load_from_apr(&bytes).map_err(ModelLoaderError::from)
+    WhisperApr::load_from_apr(bytes).map_err(ModelLoaderError::from)
 }
 
 /// Load a model, downloading from HuggingFace if not cached

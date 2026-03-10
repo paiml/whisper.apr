@@ -132,7 +132,7 @@ whisper-cpp/build/bin/whisper-cli -m models/ggml-tiny.bin \
 | AVX-512 microkernel (trueno) | 20-50 ms | 17-42% | Hard |
 | Fused encoder QKV | 4-8 ms | 3-7% | Medium |
 | Encoder scratch buffers | 5-12 ms | 4-10% | Medium |
-| Model mmap loading | 600+ ms | N/A (load time) | Medium |
+| ~~Model mmap loading~~ | ~~600+ ms~~ **70 ms saved** | N/A (load time) | ~~Medium~~ **DONE** |
 | Batched decode | 20-30 ms | 17-25% | Hard |
 
 **Failed experiments in this cycle:**
@@ -528,15 +528,33 @@ scaling, not by packing overhead. AVX-512 microkernel would be the highest-impac
 
 ---
 
-### Cycle 13: Model Loading (mmap) (BACKLOG)
+### Cycle 13: Model Loading (mmap) (DONE)
 
 **Target:** Reduce load from 700 ms → ~60 ms (match whisper.cpp)
 
 **Actions:**
-- [ ] Implement memory-mapped `.apr` loading (read tensor offsets, mmap pages on demand)
-- [ ] Profile load time before/after
+- [x] Implement memory-mapped `.apr` loading via `memmap2` crate
+- [x] Profile load time before/after
 
-**Result:** _pending_
+**Result:**
+
+| Scenario | fs::read | mmap | Improvement |
+|----------|----------|------|-------------|
+| Warm cache (tiny.apr, 145 MB) | 675 ms | 605 ms | 70 ms (10.4%) |
+| Cold cache (tiny.apr, 145 MB) | 788 ms | 728 ms | 60 ms (7.6%) |
+
+**Analysis:** The mmap eliminates the initial `fs::read()` userspace copy (145 MB allocation +
+memcpy), saving ~70 ms warm / ~60 ms cold. However, the 60 ms target is unreachable with the
+current architecture because `load_from_apr_with_progress()` still copies every tensor into
+owned `Vec<f32>` weight matrices via `get_tensor_as_f32()`. True whisper.cpp-level load times
+(~60 ms) require zero-copy tensor access: reading f32 weights directly from the mmap without
+allocation. This would require `AprV2ReaderRef` to return `&[f32]` slices into the mmap, and
+`LinearWeights` to borrow instead of own — a significant architectural change tracked as a
+future cycle.
+
+**Lesson:** mmap alone saves the I/O copy but not the tensor deserialization copy. The bulk of
+model load time (~540 ms) is tensor parsing + f32 conversion + weight finalization (transpose,
+prepack). Only zero-copy + lazy finalization can reach whisper.cpp parity.
 
 ---
 
@@ -569,15 +587,16 @@ whisper.cpp encoder scales 2.67x (403→151ms) while ours scales 1.51x (452→29
 **At 4 threads: 1.20x — BELOW 1.3x PARITY TARGET.**
 **At 16 threads: 2.19x — thread scaling is the primary remaining gap.**
 
-### Pareto analysis (updated after Cycle 12)
+### Pareto analysis (updated after Cycle 13)
 
 | Optimization | Est. savings@16t | % of remaining 240ms gap | Difficulty |
 |---|---|---|---|
 | ~~Pre-packed FFN weights (trueno)~~ | ~~20-40 ms~~ **actual: 10 ms** | 4% | ~~Medium~~ **DONE** |
+| ~~Model mmap loading~~ | ~~600+ ms~~ **actual: 70 ms warm** | N/A (load time) | ~~Medium~~ **DONE** |
 | AVX-512 GEMM microkernel (trueno) | 40-80 ms | 17-33% | Hard |
 | Better thread scaling (work-sharing) | 50-100 ms | 21-42% | Very Hard |
 | Batched decode (beam search) | 50-80 ms | 21-33% | Hard |
-| Model mmap loading | 600+ ms | N/A (load time) | Medium |
+| Zero-copy tensor loading | ~540 ms (load time) | N/A (load time) | Hard |
 
 **Key insight:** At 4 threads, we are within 1.20x parity — the core algorithm is competitive.
 The gap at 16 threads is a **thread scaling problem**, not an algorithm problem. whisper.cpp's
