@@ -156,11 +156,18 @@ impl LinearWeights {
         // weight_t is (in_features × out_features), which is the B matrix for
         // input [batch × in_features] @ weight_t [in_features × out_features].
         // Pre-packing eliminates redundant B packing in parallel GEMM.
-        self.weight_prepacked_b = Some(trueno::blis::PrepackedB::pack(
-            &weight_t,
-            self.in_features,
-            self.out_features,
-        ));
+        //
+        // Only prepack large weight matrices (>256K elements). Small attention
+        // weights (384×384 = 147K) pack quickly and prepacking adds cache pressure
+        // without measurable benefit. FFN weights (384×1536 = 589K) benefit.
+        const PREPACK_THRESHOLD: usize = 256_000;
+        if self.in_features * self.out_features >= PREPACK_THRESHOLD {
+            self.weight_prepacked_b = Some(trueno::blis::PrepackedB::pack(
+                &weight_t,
+                self.in_features,
+                self.out_features,
+            ));
+        }
 
         // Create trueno Matrix from transposed weights (WAPR-BENCH-001 optimization)
         // This avoids repeated Matrix::from_vec() calls in forward_simd()
