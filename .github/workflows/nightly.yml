@@ -63,6 +63,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Patch path dependencies for standalone build
+        if: runner.os != 'Windows'
+        run: |
+          # Remove the entire [patch.crates-io] section (local path overrides)
+          sed -i '/^\[patch\.crates-io\]/,$ d' Cargo.toml
+          # Remove path = "../aprender" from aprender dependency lines
+          sed -i 's|, path = "\.\./aprender"||g' Cargo.toml
+          echo "=== Patched Cargo.toml dependency sections ==="
+          grep -n 'aprender\|apr-cli\|\[patch' Cargo.toml || true
+
+      - name: Patch path dependencies for standalone build
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $content = Get-Content Cargo.toml -Raw
+          # Remove the entire [patch.crates-io] section
+          $content = $content -replace '(?ms)\[patch\.crates-io\].*\z', ''
+          # Remove path = "../aprender" from aprender dependency lines
+          $content = $content -replace ', path = "\.\./aprender"', ''
+          Set-Content Cargo.toml -Value $content.TrimEnd() -NoNewline
+          Write-Host "=== Patched Cargo.toml dependency sections ==="
+          Select-String -Path Cargo.toml -Pattern 'aprender|apr-cli|\[patch'
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
