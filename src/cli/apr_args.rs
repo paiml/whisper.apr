@@ -616,6 +616,13 @@ pub struct AprProfileArgs {
     /// Number of threads for parallel inference (default: physical cores, max 16)
     #[arg(short, long)]
     pub threads: Option<u32>,
+
+    /// Thread scaling sweep: comma-separated thread counts (e.g. "1,4,8,16")
+    ///
+    /// WAPR-PROFILE-001 Gap 3: Runs full profile at each thread count and reports
+    /// speedup, efficiency, and Amdahl serial fraction.
+    #[arg(long)]
+    pub sweep_threads: Option<String>,
 }
 
 // ============================================================================

@@ -1,6 +1,32 @@
 //! SIMD-accelerated matrix operations
 
+use std::cell::RefCell;
+
 use trueno::{Matrix, Vector};
+
+// WAPR-PROFILE-001 Gap 4: Thread-local BlisProfiler for GEMM-level detail
+// When enabled, matmul() routes through single-threaded gemm_blis with profiling.
+thread_local! {
+    static BLIS_PROFILER: RefCell<Option<trueno::blis::BlisProfiler>> = const { RefCell::new(None) };
+}
+
+/// Enable BLIS profiling for subsequent matmul calls on this thread.
+///
+/// WAPR-PROFILE-001 Gap 4: Routes GEMM through single-threaded gemm_blis
+/// with BlisProfiler to capture pack/micro/macro hierarchy stats.
+pub fn enable_blis_profiling() {
+    BLIS_PROFILER.with(|cell| {
+        *cell.borrow_mut() = Some(trueno::blis::BlisProfiler::enabled());
+    });
+}
+
+/// Take the accumulated BlisProfiler stats and disable BLIS profiling.
+///
+/// Returns the profiler with BLIS hierarchy stats accumulated across all
+/// matmul calls since `enable_blis_profiling()`.
+pub fn take_blis_profiler() -> Option<trueno::blis::BlisProfiler> {
+    BLIS_PROFILER.with(|cell| cell.borrow_mut().take())
+}
 
 /// Extract result matrix to Vec, falling back to zeros on error
 fn result_to_vec(
@@ -14,6 +40,10 @@ fn result_to_vec(
 ///
 /// Computes C = A @ B where A is (rows x inner) and B is (inner x cols).
 /// Calls BLIS GEMM directly on raw slices to avoid allocation overhead.
+///
+/// WAPR-PROFILE-001 Gap 4: When BLIS profiling is enabled via `enable_blis_profiling()`,
+/// routes through single-threaded `gemm_blis` with `BlisProfiler` to capture
+/// pack/micro/macro hierarchy stats.
 #[must_use]
 #[allow(clippy::many_single_char_names)]
 pub fn matmul(a: &[f32], b: &[f32], rows: usize, inner: usize, cols: usize) -> Vec<f32> {
@@ -21,7 +51,21 @@ pub fn matmul(a: &[f32], b: &[f32], rows: usize, inner: usize, cols: usize) -> V
     debug_assert_eq!(b.len(), inner * cols, "B dimensions mismatch");
 
     let mut c = vec![0.0_f32; rows * cols];
-    if trueno::blis::parallel::gemm_blis_parallel(rows, cols, inner, a, b, &mut c).is_err() {
+
+    // Gap 4: Check for active BLIS profiler (single-threaded for accurate profiling)
+    let used_profiler = BLIS_PROFILER.with(|cell| {
+        let mut opt = cell.borrow_mut();
+        if let Some(ref mut profiler) = *opt {
+            let _ = trueno::blis::gemm_blis(rows, cols, inner, a, b, &mut c, Some(profiler));
+            true
+        } else {
+            false
+        }
+    });
+
+    if !used_profiler
+        && trueno::blis::parallel::gemm_blis_parallel(rows, cols, inner, a, b, &mut c).is_err()
+    {
         return vec![0.0; rows * cols];
     }
     c

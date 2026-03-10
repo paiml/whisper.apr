@@ -119,6 +119,9 @@ pub struct ProfilingStats {
     pub total_ms: f64,
     /// Timing breakdown by component (Audio, Encoder, Decoder)
     pub breakdown: std::collections::HashMap<String, f64>,
+    /// WAPR-PROFILE-001 Gap 5: Structured Chrome Trace JSON from InferenceTracer
+    #[cfg_attr(feature = "cli", serde(skip_serializing_if = "Option::is_none"))]
+    pub trace_json: Option<String>,
 }
 
 /// Result of transcription
@@ -445,15 +448,46 @@ impl WhisperApr {
             None
         };
 
-        // 1-2. Compute audio features (BrickTracing: mel_ms split from encoder_ms)
+        // 1-2. Compute audio features (BrickProfiler: sovereign profiling)
         #[cfg(feature = "std")]
         let start_audio = start_total.map(|_| std::time::Instant::now());
 
         #[cfg(feature = "std")]
         let mut mel_ms: Option<f64> = None;
 
+        // WAPR-PROFILE-001 Gap 1: trueno BrickProfiler for encoder instrumentation
         #[cfg(feature = "std")]
-        let mut conv_ms: Option<f64> = None;
+        let mut brick_profiler: Option<trueno::BrickProfiler> = if options.profile {
+            Some(trueno::BrickProfiler::enabled())
+        } else {
+            None
+        };
+
+        // WAPR-PROFILE-001 Gap 1: Page fault tracking for encoder pass
+        #[cfg(feature = "std")]
+        let mut page_faults: Option<(u64, u64)> = None;
+
+        // WAPR-PROFILE-001 Gap 4: BlisProfiler stats from encoder GEMM calls
+        #[cfg(feature = "std")]
+        let mut blis_profiler_stats: Option<trueno::blis::BlisProfiler> = None;
+
+        // WAPR-PROFILE-001 Gap 5: InferenceTracer for structured Chrome Trace JSON
+        #[cfg(feature = "std")]
+        let mut inference_tracer: Option<realizar::InferenceTracer> = if options.profile {
+            let config = realizar::TraceConfig::enabled();
+            let mut tracer = realizar::InferenceTracer::new(config);
+            tracer.set_model_info(realizar::ModelInfo {
+                name: format!("{:?}", self.config.model_type),
+                num_layers: self.config.n_audio_layer as usize,
+                hidden_dim: self.config.n_audio_state as usize,
+                vocab_size: self.config.n_vocab as usize,
+                num_heads: self.config.n_audio_head as usize,
+                quant_type: Some("f32".into()),
+            });
+            Some(tracer)
+        } else {
+            None
+        };
 
         let audio_features = match self.config.audio_frontend {
             model::AudioFrontend::MelFilterbank => {
@@ -467,16 +501,27 @@ impl WhisperApr {
                     mel_ms = Some(mel_start.elapsed().as_secs_f64() * 1000.0);
                 }
 
-                // Profile conv_frontend vs encoder_blocks separately
+                // WAPR-PROFILE-001 Gap 1+4+5: BrickProfiler + BlisProfiler + InferenceTracer
                 #[cfg(feature = "std")]
-                if options.profile {
-                    let conv_start = std::time::Instant::now();
-                    if let Some(frontend) = self.encoder.conv_frontend() {
-                        let _ = frontend.forward(&mel);
-                        conv_ms = Some(conv_start.elapsed().as_secs_f64() * 1000.0);
-                    }
+                if let Some(ref mut profiler) = brick_profiler {
+                    // Gap 4: Enable BLIS profiling for GEMM hierarchy stats
+                    crate::simd::enable_blis_profiling();
+                    let (pf_minor_before, pf_major_before) = trueno::brick::get_page_faults();
+                    let features =
+                        self.encode_profiled(&mel, profiler, inference_tracer.as_mut())?;
+                    // Gap 4: Harvest BLIS profiler stats after encoder pass
+                    blis_profiler_stats = crate::simd::take_blis_profiler();
+                    let (pf_minor_after, pf_major_after) = trueno::brick::get_page_faults();
+                    page_faults = Some((
+                        pf_minor_after.saturating_sub(pf_minor_before),
+                        pf_major_after.saturating_sub(pf_major_before),
+                    ));
+                    features
+                } else {
+                    self.encode(&mel)?
                 }
 
+                #[cfg(not(feature = "std"))]
                 self.encode(&mel)?
             }
             model::AudioFrontend::LearnedConv => {
@@ -525,7 +570,7 @@ impl WhisperApr {
             Vec::new()
         };
 
-        // 8. Build result with optional profiling (BrickTracing: mel_ms split from encoder_ms)
+        // 8. Build result with profiling from BrickProfiler (sovereign tooling)
         #[cfg(feature = "std")]
         let profiling = start_total.map(|st| {
             let mut breakdown = std::collections::HashMap::new();
@@ -533,7 +578,6 @@ impl WhisperApr {
                 ("mel_ms", mel_ms),
                 ("audio_ms", enc_ms),
                 ("decoder_ms", dec_ms),
-                ("conv_frontend_ms", conv_ms),
             ];
             for &(key, val) in pairs {
                 if let Some(ms) = val {
@@ -544,14 +588,93 @@ impl WhisperApr {
             if let Some(audio) = enc_ms {
                 let enc_total = audio - mel_ms.unwrap_or(0.0);
                 breakdown.insert("encoder_ms".to_string(), enc_total);
-                // encoder_blocks_ms = encoder_ms minus conv_frontend_ms
-                if let Some(c) = conv_ms {
-                    breakdown.insert("encoder_blocks_ms".to_string(), enc_total - c);
+            }
+            // WAPR-PROFILE-001 Gap 1: BrickProfiler category breakdown
+            if let Some(ref profiler) = brick_profiler {
+                let cats = profiler.category_stats();
+                let total_prof_ns = profiler.total_ns();
+                // Category percentages
+                let norm_ns = cats[trueno::BrickCategory::Norm as usize].total_ns;
+                let attn_ns = cats[trueno::BrickCategory::Attention as usize].total_ns;
+                let ffn_ns = cats[trueno::BrickCategory::Ffn as usize].total_ns;
+                let other_ns = cats[trueno::BrickCategory::Other as usize].total_ns;
+                breakdown.insert("brick_norm_ms".to_string(), norm_ns as f64 / 1_000_000.0);
+                breakdown.insert("brick_attn_ms".to_string(), attn_ns as f64 / 1_000_000.0);
+                breakdown.insert("brick_ffn_ms".to_string(), ffn_ns as f64 / 1_000_000.0);
+                breakdown.insert("brick_other_ms".to_string(), other_ns as f64 / 1_000_000.0);
+                breakdown.insert("brick_total_ns".to_string(), total_prof_ns as f64);
+                // Per-BrickId stats with cycles
+                for &brick_id in &[
+                    trueno::BrickId::LayerNorm,
+                    trueno::BrickId::AttentionScore,
+                    trueno::BrickId::GateProjection,
+                    trueno::BrickId::Embedding,
+                ] {
+                    let stats = profiler.brick_stats(brick_id);
+                    if stats.count > 0 {
+                        let name = brick_id.name();
+                        breakdown.insert(
+                            format!("brick_{name}_ms"),
+                            stats.total_ns as f64 / 1_000_000.0,
+                        );
+                        breakdown.insert(format!("brick_{name}_count"), stats.count as f64);
+                        breakdown.insert(
+                            format!("brick_{name}_cycles_per_elem"),
+                            stats.cycles_per_element(),
+                        );
+                        let diagnosis = stats.diagnose_from_cycles();
+                        // Encode diagnosis as numeric: 0=insufficient, 1=memory, 2=compute, 3=throttled, 4=balanced
+                        let diag_code = match diagnosis {
+                            "memory-bound (low IPC, likely cache misses)" => 1.0,
+                            "compute-bound (efficient)" => 2.0,
+                            "throttled or context-switched" => 3.0,
+                            "balanced" => 4.0,
+                            _ => 0.0,
+                        };
+                        breakdown.insert(format!("brick_{name}_bottleneck"), diag_code);
+                    }
+                }
+                // Page fault data
+                if let Some((minor, major)) = page_faults {
+                    breakdown.insert("page_faults_minor".to_string(), minor as f64);
+                    breakdown.insert("page_faults_major".to_string(), major as f64);
                 }
             }
+            // WAPR-PROFILE-001 Gap 4: BlisProfiler GEMM hierarchy stats
+            if let Some(ref blis) = blis_profiler_stats {
+                breakdown.insert("blis_macro_gflops".to_string(), blis.macro_stats.gflops());
+                breakdown.insert(
+                    "blis_macro_calls".to_string(),
+                    blis.macro_stats.count as f64,
+                );
+                breakdown.insert(
+                    "blis_macro_ns".to_string(),
+                    blis.macro_stats.total_ns as f64,
+                );
+                breakdown.insert("blis_midi_gflops".to_string(), blis.midi_stats.gflops());
+                breakdown.insert("blis_midi_calls".to_string(), blis.midi_stats.count as f64);
+                breakdown.insert("blis_micro_gflops".to_string(), blis.micro_stats.gflops());
+                breakdown.insert(
+                    "blis_micro_calls".to_string(),
+                    blis.micro_stats.count as f64,
+                );
+                breakdown.insert("blis_pack_ns".to_string(), blis.pack_stats.total_ns as f64);
+                breakdown.insert("blis_pack_calls".to_string(), blis.pack_stats.count as f64);
+                breakdown.insert("blis_total_gflops".to_string(), blis.total_gflops());
+                // Pack overhead as percentage of macro time
+                if blis.macro_stats.total_ns > 0 {
+                    let pack_pct =
+                        blis.pack_stats.total_ns as f64 / blis.macro_stats.total_ns as f64 * 100.0;
+                    breakdown.insert("blis_pack_pct".to_string(), pack_pct);
+                }
+            }
+            // WAPR-PROFILE-001 Gap 5: Generate Chrome Trace JSON from InferenceTracer
+            let trace_json = inference_tracer.as_ref().map(|t| t.to_json());
+
             ProfilingStats {
                 total_ms: st.elapsed().as_secs_f64() * 1000.0,
                 breakdown,
+                trace_json,
             }
         });
 
@@ -826,6 +949,19 @@ impl WhisperApr {
     pub fn encode(&self, mel: &[f32]) -> WhisperResult<Vec<f32>> {
         // Use forward_mel to process mel spectrogram through conv frontend
         self.encoder.forward_mel(mel)
+    }
+
+    /// Encode with BrickProfiler instrumentation (WAPR-PROFILE-001 Gap 1)
+    ///
+    /// Records conv_frontend and per-block operator timing via trueno::BrickProfiler.
+    /// Category breakdown available via `profiler.category_stats()` after this call.
+    pub fn encode_profiled(
+        &self,
+        mel: &[f32],
+        profiler: &mut trueno::BrickProfiler,
+        tracer: Option<&mut realizar::InferenceTracer>,
+    ) -> WhisperResult<Vec<f32>> {
+        self.encoder.forward_mel_profiled(mel, profiler, tracer)
     }
 
     /// Get initial tokens for decoding

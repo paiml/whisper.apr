@@ -65,6 +65,80 @@ impl EncoderBlock {
         Ok(residual)
     }
 
+    /// Forward pass with BrickProfiler instrumentation (WAPR-PROFILE-001 Gap 1)
+    ///
+    /// Identical to `forward()` but records per-operator timing and CPU cycles
+    /// into the trueno `BrickProfiler` via O(1) `BrickId`-indexed arrays.
+    ///
+    /// BrickId mapping:
+    /// - LN1, LN2 → `BrickId::LayerNorm` (category: Norm)
+    /// - Self-attention → `BrickId::AttentionScore` (category: Attention)
+    /// - FFN → `BrickId::GateProjection` (category: Ffn)
+    pub fn forward_profiled(
+        &self,
+        x: &[f32],
+        profiler: &mut trueno::BrickProfiler,
+    ) -> WhisperResult<Vec<f32>> {
+        let d_model = self.ln1.normalized_shape;
+        let seq_len = (x.len() / d_model) as u64;
+
+        // LN1: LayerNorm before attention
+        let c0 = trueno::brick::cpu_cycles();
+        let timer = profiler.start_brick(trueno::BrickId::LayerNorm);
+        let normed = self.ln1.forward(x)?;
+        let c1 = trueno::brick::cpu_cycles();
+        profiler.stop_brick(timer, seq_len);
+        let stats = profiler.brick_stats_mut(trueno::BrickId::LayerNorm);
+        let cycles = c1.wrapping_sub(c0);
+        stats.total_cycles += cycles;
+        stats.min_cycles = stats.min_cycles.min(cycles);
+        stats.max_cycles = stats.max_cycles.max(cycles);
+
+        // Self-attention + residual
+        let c0 = trueno::brick::cpu_cycles();
+        let timer = profiler.start_brick(trueno::BrickId::AttentionScore);
+        let mut residual = self.self_attn.forward(&normed, None)?;
+        for (r, &xi) in residual.iter_mut().zip(x.iter()) {
+            *r += xi;
+        }
+        let c1 = trueno::brick::cpu_cycles();
+        profiler.stop_brick(timer, seq_len);
+        let stats = profiler.brick_stats_mut(trueno::BrickId::AttentionScore);
+        let cycles = c1.wrapping_sub(c0);
+        stats.total_cycles += cycles;
+        stats.min_cycles = stats.min_cycles.min(cycles);
+        stats.max_cycles = stats.max_cycles.max(cycles);
+
+        // LN2: LayerNorm before FFN
+        let c0 = trueno::brick::cpu_cycles();
+        let timer = profiler.start_brick(trueno::BrickId::LayerNorm);
+        let normed = self.ln2.forward(&residual)?;
+        let c1 = trueno::brick::cpu_cycles();
+        profiler.stop_brick(timer, seq_len);
+        let stats = profiler.brick_stats_mut(trueno::BrickId::LayerNorm);
+        let cycles = c1.wrapping_sub(c0);
+        stats.total_cycles += cycles;
+        stats.min_cycles = stats.min_cycles.min(cycles);
+        stats.max_cycles = stats.max_cycles.max(cycles);
+
+        // FFN + residual
+        let c0 = trueno::brick::cpu_cycles();
+        let timer = profiler.start_brick(trueno::BrickId::GateProjection);
+        let ffn_out = self.ffn.forward(&normed)?;
+        for (r, f) in residual.iter_mut().zip(ffn_out.iter()) {
+            *r += f;
+        }
+        let c1 = trueno::brick::cpu_cycles();
+        profiler.stop_brick(timer, seq_len);
+        let stats = profiler.brick_stats_mut(trueno::BrickId::GateProjection);
+        let cycles = c1.wrapping_sub(c0);
+        stats.total_cycles += cycles;
+        stats.min_cycles = stats.min_cycles.min(cycles);
+        stats.max_cycles = stats.max_cycles.max(cycles);
+
+        Ok(residual)
+    }
+
     /// Finalize weights by caching transposed/pre-computed data
     ///
     /// Encoder is compute-bound (1500-token batch matmul), not memory-bound.
@@ -183,5 +257,34 @@ mod tests {
         let input = vec![0.1_f32; 17];
         let result = block.forward_fused(&input);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_encoder_block_forward_profiled() {
+        let block = EncoderBlock::new(8, 2, 32);
+        let input = vec![0.1_f32; 16];
+        let mut profiler = trueno::BrickProfiler::enabled();
+        let output = block
+            .forward_profiled(&input, &mut profiler)
+            .expect("forward_profiled");
+        assert_eq!(output.len(), 16);
+        // BrickProfiler should have recorded samples for each category
+        let ln_stats = profiler.brick_stats(trueno::BrickId::LayerNorm);
+        assert_eq!(ln_stats.count, 2, "LN1 + LN2 = 2 samples");
+        assert!(ln_stats.total_ns > 0);
+        let attn_stats = profiler.brick_stats(trueno::BrickId::AttentionScore);
+        assert_eq!(attn_stats.count, 1);
+        assert!(attn_stats.total_ns > 0);
+        let ffn_stats = profiler.brick_stats(trueno::BrickId::GateProjection);
+        assert_eq!(ffn_stats.count, 1);
+        assert!(ffn_stats.total_ns > 0);
+        // Category breakdown should work
+        let cats = profiler.category_stats();
+        assert!(cats[trueno::BrickCategory::Norm as usize].total_ns > 0);
+        assert!(cats[trueno::BrickCategory::Attention as usize].total_ns > 0);
+        assert!(cats[trueno::BrickCategory::Ffn as usize].total_ns > 0);
+        // Profiled output should match non-profiled output
+        let regular_output = block.forward(&input).expect("forward");
+        assert_eq!(output, regular_output);
     }
 }

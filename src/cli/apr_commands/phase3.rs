@@ -596,8 +596,215 @@ pub(super) fn run_he_inspect(
 }
 
 // ============================================================================
-// Tier C — Profiling (renacer integration)
+// Tier C — Profiling (renacer integration + BrickProfiler)
 // ============================================================================
+
+/// Human-readable label for bottleneck diagnosis code
+fn bottleneck_label(code: u8) -> &'static str {
+    match code {
+        1 => "memory-bound",
+        2 => "compute-bound",
+        3 => "throttled",
+        4 => "balanced",
+        _ => "insufficient data",
+    }
+}
+
+/// WAPR-PROFILE-001 Gap 3: Thread scaling sweep
+///
+/// Runs transcription at each thread count and reports speedup, efficiency,
+/// and Amdahl serial fraction. Computes `s` from `T(N) = T(1) * (s + (1-s)/N)`.
+#[allow(clippy::too_many_arguments)]
+fn run_sweep_threads(
+    sweep_str: &str,
+    whisper: &crate::WhisperApr,
+    samples: &[f32],
+    audio_duration_s: f64,
+    args: &AprProfileArgs,
+    global: &super::super::args::Args,
+    hw: &trueno::HardwareCapability,
+) -> CliResult<CommandResult> {
+    use crate::TranscribeOptions;
+
+    let thread_counts: Vec<u32> = sweep_str
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .filter(|&n| n > 0)
+        .collect();
+
+    if thread_counts.is_empty() {
+        return Err(CliError::InvalidArgument(
+            "No valid thread counts in --sweep-threads".into(),
+        ));
+    }
+
+    struct SweepResult {
+        threads: u32,
+        enc_ms: f64,
+        dec_ms: f64,
+        total_ms: f64,
+    }
+
+    let mut results: Vec<SweepResult> = Vec::new();
+    let mut options = TranscribeOptions::default();
+    options.profile = true;
+
+    for &tc in &thread_counts {
+        // Reconfigure rayon thread pool for this sweep point
+        let actual = crate::parallel::configure_thread_pool(Some(tc))
+            .map_err(|e| CliError::InvalidArgument(format!("Thread pool: {e}")))?;
+        if global.verbose {
+            eprintln!("[SWEEP] Threads: {actual}");
+        }
+
+        // Warmup
+        for _ in 0..args.warmup {
+            let _ = whisper.transcribe(samples, options.clone());
+        }
+
+        // Measure
+        let mut enc_total = 0.0;
+        let mut dec_total = 0.0;
+        let mut total_total = 0.0;
+        for _ in 0..args.runs {
+            let result = whisper
+                .transcribe(samples, options.clone())
+                .map_err(|e| CliError::InvalidArgument(format!("Transcribe: {e}")))?;
+            if let Some(ref prof) = result.profiling {
+                enc_total += prof.breakdown.get("encoder_ms").copied().unwrap_or(0.0);
+                dec_total += prof.breakdown.get("decoder_ms").copied().unwrap_or(0.0)
+                    - prof.breakdown.get("mel_ms").copied().unwrap_or(0.0);
+                total_total += prof.total_ms;
+            }
+        }
+        let n = args.runs.max(1) as f64;
+        results.push(SweepResult {
+            threads: tc,
+            enc_ms: enc_total / n,
+            dec_ms: dec_total / n,
+            total_ms: total_total / n,
+        });
+    }
+
+    // Compute speedups relative to minimum thread count result
+    let baseline = results
+        .iter()
+        .min_by(|a, b| a.threads.cmp(&b.threads))
+        .unwrap();
+    let base_total = baseline.total_ms;
+    let base_enc = baseline.enc_ms;
+    let base_dec = baseline.dec_ms;
+
+    if args.format == "json" {
+        // JSON output
+        let entries: Vec<String> = results
+            .iter()
+            .map(|r| {
+                let speedup = base_total / r.total_ms;
+                let eff = speedup / r.threads as f64 * 100.0;
+                // Amdahl: s = (1/speedup - 1/N) / (1 - 1/N)
+                let n = r.threads as f64;
+                let serial = if n > 1.0 {
+                    (1.0 / speedup - 1.0 / n) / (1.0 - 1.0 / n)
+                } else {
+                    0.0
+                };
+                format!(
+                    concat!(
+                        "{{\"threads\":{},\"enc_ms\":{:.1},\"dec_ms\":{:.1},",
+                        "\"total_ms\":{:.1},\"speedup\":{:.2},",
+                        "\"efficiency_pct\":{:.1},\"amdahl_serial_pct\":{:.1}}}"
+                    ),
+                    r.threads,
+                    r.enc_ms,
+                    r.dec_ms,
+                    r.total_ms,
+                    speedup,
+                    eff,
+                    serial * 100.0,
+                )
+            })
+            .collect();
+        let json = format!(
+            "{{\"sweep\":{{\"audio_duration_s\":{:.3},\"hw_cores\":{},\"hw_simd\":\"{}\",\"results\":[{}]}}}}",
+            audio_duration_s,
+            hw.cpu.cores,
+            format!("{:?}", hw.cpu.simd),
+            entries.join(","),
+        );
+        if let Some(ref out) = args.output {
+            fs::write(out, &json).map_err(|e| CliError::InvalidArgument(format!("Write: {e}")))?;
+        } else {
+            println!("{json}");
+        }
+    } else {
+        // Text table
+        emit_output(
+            global,
+            || {},
+            || {
+                println!("Thread Scaling Sweep ({} runs each):", args.runs);
+                println!(
+                    "  Hardware: {} cores, {:?}, {:.0} GFLOP/s peak",
+                    hw.cpu.cores, hw.cpu.simd, hw.cpu.peak_gflops,
+                );
+                println!();
+                println!(
+                    "  {:>7}  {:>9}  {:>9}  {:>9}  {:>7}  {:>6}  {:>8}",
+                    "Threads", "Encoder", "Decoder", "Total", "Speedup", "Eff%", "Serial%"
+                );
+                println!(
+                    "  {:>7}  {:>9}  {:>9}  {:>9}  {:>7}  {:>6}  {:>8}",
+                    "───────",
+                    "─────────",
+                    "─────────",
+                    "─────────",
+                    "───────",
+                    "──────",
+                    "────────"
+                );
+                for r in &results {
+                    let speedup = base_total / r.total_ms;
+                    let eff = speedup / r.threads as f64 * 100.0;
+                    let n = r.threads as f64;
+                    let serial = if n > 1.0 {
+                        (1.0 / speedup - 1.0 / n) / (1.0 - 1.0 / n)
+                    } else {
+                        0.0
+                    };
+                    if r.threads == baseline.threads {
+                        println!(
+                            "  {:>7}  {:>7.1}ms  {:>7.1}ms  {:>7.1}ms  {:>6.2}x  {:>5.0}%  {:>7}",
+                            r.threads, r.enc_ms, r.dec_ms, r.total_ms, speedup, eff, "—"
+                        );
+                    } else {
+                        println!(
+                            "  {:>7}  {:>7.1}ms  {:>7.1}ms  {:>7.1}ms  {:>6.2}x  {:>5.0}%  {:>6.1}%",
+                            r.threads, r.enc_ms, r.dec_ms, r.total_ms, speedup, eff, serial * 100.0,
+                        );
+                    }
+                }
+                // Per-component scaling
+                println!();
+                let last = results.last().unwrap();
+                println!(
+                    "  Encoder: {:.2}x ({}→{} threads)",
+                    base_enc / last.enc_ms,
+                    baseline.threads,
+                    last.threads,
+                );
+                println!(
+                    "  Decoder: {:.2}x ({}→{} threads)",
+                    base_dec / last.dec_ms.max(0.001),
+                    baseline.threads,
+                    last.threads,
+                );
+            },
+        );
+    }
+
+    Ok(CommandResult::success("Thread sweep complete"))
+}
 
 /// Run instrumented transcription with per-step timing breakdown.
 ///
@@ -626,11 +833,37 @@ pub(super) fn run_profile(
         .map_err(|e| CliError::InvalidArgument(format!("Model load: {e}")))?;
     let load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
 
+    // WAPR-PROFILE-001 Gap 2: Hardware roofline detection
+    let hw = trueno::HardwareCapability::detect();
+    if global.verbose {
+        eprintln!(
+            "[INFO] Hardware: {} cores, {:?} SIMD, {:.0} GFLOP/s peak, {:.1} GB/s BW, AI balance: {:.1} F/B",
+            hw.cpu.cores,
+            hw.cpu.simd,
+            hw.cpu.peak_gflops,
+            hw.cpu.memory_bw_gbps,
+            hw.roofline.cpu_arithmetic_intensity,
+        );
+    }
+
     // Load audio
     let audio_bytes =
         fs::read(&args.audio).map_err(|e| CliError::InvalidArgument(format!("Audio: {e}")))?;
     let samples = super::super::commands::load_audio_samples(args.audio.as_path(), &audio_bytes)?;
     let audio_duration_s = samples.len() as f64 / 16000.0;
+
+    // WAPR-PROFILE-001 Gap 3: Thread scaling sweep
+    if let Some(ref sweep_str) = args.sweep_threads {
+        return run_sweep_threads(
+            sweep_str,
+            &whisper,
+            &samples,
+            audio_duration_s,
+            args,
+            global,
+            &hw,
+        );
+    }
 
     let total_runs = args.warmup + args.runs;
     let mut run_results: Vec<ProfileRun> = Vec::with_capacity(args.runs);
@@ -649,17 +882,130 @@ pub(super) fn run_profile(
         let wall_ms = run_start.elapsed().as_secs_f64() * 1000.0;
 
         // Extract directly-instrumented timings from ProfilingStats breakdown
-        let (mel_ms, enc_ms, dec_ms, total_ms, conv_ms, blocks_ms) =
-            if let Some(ref prof) = result.profiling {
-                let mel = prof.breakdown.get("mel_ms").copied().unwrap_or(0.0);
-                let enc = prof.breakdown.get("encoder_ms").copied().unwrap_or(0.0);
-                let dec = prof.breakdown.get("decoder_ms").copied().unwrap_or(0.0);
-                let conv = prof.breakdown.get("conv_frontend_ms").copied();
-                let blocks = prof.breakdown.get("encoder_blocks_ms").copied();
-                (mel, enc, dec, prof.total_ms, conv, blocks)
+        let (mel_ms, enc_ms, dec_ms, total_ms) = if let Some(ref prof) = result.profiling {
+            let mel = prof.breakdown.get("mel_ms").copied().unwrap_or(0.0);
+            let enc = prof.breakdown.get("encoder_ms").copied().unwrap_or(0.0);
+            let dec = prof.breakdown.get("decoder_ms").copied().unwrap_or(0.0);
+            (mel, enc, dec, prof.total_ms)
+        } else {
+            (0.0, 0.0, 0.0, wall_ms)
+        };
+
+        // WAPR-PROFILE-001 Gap 1: Extract BrickProfiler category breakdown
+        let brick_detail = if let Some(ref prof) = result.profiling {
+            let norm = prof.breakdown.get("brick_norm_ms").copied().unwrap_or(0.0);
+            let attn = prof.breakdown.get("brick_attn_ms").copied().unwrap_or(0.0);
+            let ffn = prof.breakdown.get("brick_ffn_ms").copied().unwrap_or(0.0);
+            let other = prof.breakdown.get("brick_other_ms").copied().unwrap_or(0.0);
+            let pf_minor = prof
+                .breakdown
+                .get("page_faults_minor")
+                .copied()
+                .unwrap_or(0.0) as u64;
+            let pf_major = prof
+                .breakdown
+                .get("page_faults_major")
+                .copied()
+                .unwrap_or(0.0) as u64;
+            // Per-brick bottleneck diagnosis
+            let ln_bottleneck = prof
+                .breakdown
+                .get("brick_LayerNorm_bottleneck")
+                .copied()
+                .unwrap_or(0.0) as u8;
+            let attn_bottleneck = prof
+                .breakdown
+                .get("brick_AttentionScore_bottleneck")
+                .copied()
+                .unwrap_or(0.0) as u8;
+            let ffn_bottleneck = prof
+                .breakdown
+                .get("brick_GateProjection_bottleneck")
+                .copied()
+                .unwrap_or(0.0) as u8;
+            let ln_cpe = prof
+                .breakdown
+                .get("brick_LayerNorm_cycles_per_elem")
+                .copied()
+                .unwrap_or(0.0);
+            let attn_cpe = prof
+                .breakdown
+                .get("brick_AttentionScore_cycles_per_elem")
+                .copied()
+                .unwrap_or(0.0);
+            let ffn_cpe = prof
+                .breakdown
+                .get("brick_GateProjection_cycles_per_elem")
+                .copied()
+                .unwrap_or(0.0);
+            // WAPR-PROFILE-001 Gap 4: Extract BLIS GEMM hierarchy stats
+            let blis_total_gflops = prof
+                .breakdown
+                .get("blis_total_gflops")
+                .copied()
+                .unwrap_or(0.0);
+            let blis_macro_gflops = prof
+                .breakdown
+                .get("blis_macro_gflops")
+                .copied()
+                .unwrap_or(0.0);
+            let blis_micro_gflops = prof
+                .breakdown
+                .get("blis_micro_gflops")
+                .copied()
+                .unwrap_or(0.0);
+            let blis_pack_pct = prof.breakdown.get("blis_pack_pct").copied().unwrap_or(0.0);
+            let blis_macro_calls = prof
+                .breakdown
+                .get("blis_macro_calls")
+                .copied()
+                .unwrap_or(0.0) as u64;
+            // Gap 2: Roofline classification from BLIS achieved GFLOP/s vs hardware peak
+            let roofline_util_pct = if hw.cpu.peak_gflops > 0.0 && blis_total_gflops > 0.0 {
+                blis_total_gflops / hw.cpu.peak_gflops * 100.0
             } else {
-                (0.0, 0.0, 0.0, wall_ms, None, None)
+                0.0
             };
+            let roofline_bound = if blis_total_gflops > 0.0 {
+                // Encoder GEMM AI is typically >>8 F/B (compute-bound region)
+                if roofline_util_pct > 50.0 {
+                    "compute (efficient)"
+                } else if roofline_util_pct > 10.0 {
+                    "compute (low util)"
+                } else {
+                    "memory"
+                }
+            } else {
+                "unknown"
+            };
+            if norm > 0.0 || attn > 0.0 || ffn > 0.0 {
+                Some(BrickDetail {
+                    norm_ms: norm,
+                    attn_ms: attn,
+                    ffn_ms: ffn,
+                    other_ms: other,
+                    page_faults_minor: pf_minor,
+                    page_faults_major: pf_major,
+                    ln_bottleneck,
+                    attn_bottleneck,
+                    ffn_bottleneck,
+                    ln_cycles_per_elem: ln_cpe,
+                    attn_cycles_per_elem: attn_cpe,
+                    ffn_cycles_per_elem: ffn_cpe,
+                    blis_total_gflops,
+                    blis_macro_gflops,
+                    blis_micro_gflops,
+                    blis_pack_pct,
+                    blis_macro_calls,
+                    roofline_bound,
+                    roofline_util_pct,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         let token_count: usize = result.segments.iter().map(|s| s.tokens.len()).sum();
 
@@ -672,8 +1018,8 @@ pub(super) fn run_profile(
                 rtf: total_ms / 1000.0 / audio_duration_s,
                 token_count,
                 text: result.text.clone(),
-                conv_frontend_ms: conv_ms,
-                encoder_blocks_ms: blocks_ms,
+                brick_detail,
+                trace_json: result.profiling.as_ref().and_then(|p| p.trace_json.clone()),
             });
         }
     }
@@ -691,28 +1037,132 @@ pub(super) fn run_profile(
             / run_results.len().max(1),
         text: run_results.last().map_or("", |r| r.text.as_str()),
         audio_duration_s,
-        avg_conv_frontend: if run_results.iter().all(|r| r.conv_frontend_ms.is_some()) {
-            Some(
-                run_results
-                    .iter()
-                    .map(|r| r.conv_frontend_ms.unwrap_or(0.0))
-                    .sum::<f64>()
-                    / n,
-            )
-        } else {
-            None
+        avg_brick_detail: {
+            let all_have = run_results.iter().all(|r| r.brick_detail.is_some());
+            if all_have && !run_results.is_empty() {
+                Some(AvgBrickDetail {
+                    norm_ms: run_results
+                        .iter()
+                        .map(|r| r.brick_detail.as_ref().unwrap().norm_ms)
+                        .sum::<f64>()
+                        / n,
+                    attn_ms: run_results
+                        .iter()
+                        .map(|r| r.brick_detail.as_ref().unwrap().attn_ms)
+                        .sum::<f64>()
+                        / n,
+                    ffn_ms: run_results
+                        .iter()
+                        .map(|r| r.brick_detail.as_ref().unwrap().ffn_ms)
+                        .sum::<f64>()
+                        / n,
+                    other_ms: run_results
+                        .iter()
+                        .map(|r| r.brick_detail.as_ref().unwrap().other_ms)
+                        .sum::<f64>()
+                        / n,
+                    page_faults_minor: run_results
+                        .last()
+                        .unwrap()
+                        .brick_detail
+                        .as_ref()
+                        .unwrap()
+                        .page_faults_minor,
+                    page_faults_major: run_results
+                        .last()
+                        .unwrap()
+                        .brick_detail
+                        .as_ref()
+                        .unwrap()
+                        .page_faults_major,
+                    ln_bottleneck: run_results
+                        .last()
+                        .unwrap()
+                        .brick_detail
+                        .as_ref()
+                        .unwrap()
+                        .ln_bottleneck,
+                    attn_bottleneck: run_results
+                        .last()
+                        .unwrap()
+                        .brick_detail
+                        .as_ref()
+                        .unwrap()
+                        .attn_bottleneck,
+                    ffn_bottleneck: run_results
+                        .last()
+                        .unwrap()
+                        .brick_detail
+                        .as_ref()
+                        .unwrap()
+                        .ffn_bottleneck,
+                    ln_cycles_per_elem: run_results
+                        .iter()
+                        .map(|r| r.brick_detail.as_ref().unwrap().ln_cycles_per_elem)
+                        .sum::<f64>()
+                        / n,
+                    attn_cycles_per_elem: run_results
+                        .iter()
+                        .map(|r| r.brick_detail.as_ref().unwrap().attn_cycles_per_elem)
+                        .sum::<f64>()
+                        / n,
+                    ffn_cycles_per_elem: run_results
+                        .iter()
+                        .map(|r| r.brick_detail.as_ref().unwrap().ffn_cycles_per_elem)
+                        .sum::<f64>()
+                        / n,
+                    blis_total_gflops: run_results
+                        .iter()
+                        .map(|r| r.brick_detail.as_ref().unwrap().blis_total_gflops)
+                        .sum::<f64>()
+                        / n,
+                    blis_macro_gflops: run_results
+                        .iter()
+                        .map(|r| r.brick_detail.as_ref().unwrap().blis_macro_gflops)
+                        .sum::<f64>()
+                        / n,
+                    blis_micro_gflops: run_results
+                        .iter()
+                        .map(|r| r.brick_detail.as_ref().unwrap().blis_micro_gflops)
+                        .sum::<f64>()
+                        / n,
+                    blis_pack_pct: run_results
+                        .iter()
+                        .map(|r| r.brick_detail.as_ref().unwrap().blis_pack_pct)
+                        .sum::<f64>()
+                        / n,
+                    blis_macro_calls: run_results
+                        .last()
+                        .unwrap()
+                        .brick_detail
+                        .as_ref()
+                        .unwrap()
+                        .blis_macro_calls,
+                    roofline_bound: run_results
+                        .last()
+                        .unwrap()
+                        .brick_detail
+                        .as_ref()
+                        .unwrap()
+                        .roofline_bound,
+                    roofline_util_pct: run_results
+                        .iter()
+                        .map(|r| r.brick_detail.as_ref().unwrap().roofline_util_pct)
+                        .sum::<f64>()
+                        / n,
+                })
+            } else {
+                None
+            }
         },
-        avg_encoder_blocks: if run_results.iter().all(|r| r.encoder_blocks_ms.is_some()) {
-            Some(
-                run_results
-                    .iter()
-                    .map(|r| r.encoder_blocks_ms.unwrap_or(0.0))
-                    .sum::<f64>()
-                    / n,
-            )
-        } else {
-            None
-        },
+        // Gap 5: Use last run's InferenceTracer JSON
+        trace_json: run_results.last().and_then(|r| r.trace_json.clone()),
+        // Gap 2: Hardware info
+        hw_cores: hw.cpu.cores,
+        hw_simd: format!("{:?}", hw.cpu.simd),
+        hw_peak_gflops: hw.cpu.peak_gflops,
+        hw_bw_gbps: hw.cpu.memory_bw_gbps,
+        hw_balance_point: hw.roofline.cpu_arithmetic_intensity,
     };
 
     let output_str = match args.format.as_str() {
@@ -735,6 +1185,34 @@ pub(super) fn run_profile(
     Ok(CommandResult::success("Profile complete"))
 }
 
+/// BrickProfiler category breakdown per run (WAPR-PROFILE-001 Gap 1)
+#[derive(Debug, Clone)]
+struct BrickDetail {
+    norm_ms: f64,
+    attn_ms: f64,
+    ffn_ms: f64,
+    other_ms: f64,
+    page_faults_minor: u64,
+    page_faults_major: u64,
+    /// Bottleneck diagnosis (0=insufficient, 1=memory, 2=compute, 3=throttled, 4=balanced)
+    ln_bottleneck: u8,
+    attn_bottleneck: u8,
+    ffn_bottleneck: u8,
+    /// Cycles per element (frequency-invariant)
+    ln_cycles_per_elem: f64,
+    attn_cycles_per_elem: f64,
+    ffn_cycles_per_elem: f64,
+    /// WAPR-PROFILE-001 Gap 4: BLIS GEMM hierarchy stats
+    blis_total_gflops: f64,
+    blis_macro_gflops: f64,
+    blis_micro_gflops: f64,
+    blis_pack_pct: f64,
+    blis_macro_calls: u64,
+    /// WAPR-PROFILE-001 Gap 2: Roofline classification
+    roofline_bound: &'static str,
+    roofline_util_pct: f64,
+}
+
 /// Timing data for a single profiling run
 struct ProfileRun {
     mel_ms: f64,
@@ -744,10 +1222,36 @@ struct ProfileRun {
     rtf: f64,
     token_count: usize,
     text: String,
-    /// Conv frontend time (subset of encode_ms), if available
-    conv_frontend_ms: Option<f64>,
-    /// Encoder blocks time (encode_ms minus conv_frontend), if available
-    encoder_blocks_ms: Option<f64>,
+    /// BrickProfiler category breakdown (WAPR-PROFILE-001 Gap 1)
+    brick_detail: Option<BrickDetail>,
+    /// WAPR-PROFILE-001 Gap 5: Structured Chrome Trace JSON from InferenceTracer
+    trace_json: Option<String>,
+}
+
+/// Averaged BrickProfiler category breakdown
+#[derive(Debug, Clone)]
+struct AvgBrickDetail {
+    norm_ms: f64,
+    attn_ms: f64,
+    ffn_ms: f64,
+    other_ms: f64,
+    page_faults_minor: u64,
+    page_faults_major: u64,
+    ln_bottleneck: u8,
+    attn_bottleneck: u8,
+    ffn_bottleneck: u8,
+    ln_cycles_per_elem: f64,
+    attn_cycles_per_elem: f64,
+    ffn_cycles_per_elem: f64,
+    /// WAPR-PROFILE-001 Gap 4: BLIS GEMM hierarchy stats
+    blis_total_gflops: f64,
+    blis_macro_gflops: f64,
+    blis_micro_gflops: f64,
+    blis_pack_pct: f64,
+    blis_macro_calls: u64,
+    /// WAPR-PROFILE-001 Gap 2: Roofline classification
+    roofline_bound: &'static str,
+    roofline_util_pct: f64,
 }
 
 /// Aggregated profile summary for output formatting
@@ -761,27 +1265,86 @@ struct ProfileSummary<'text> {
     avg_tokens: usize,
     text: &'text str,
     audio_duration_s: f64,
-    /// Avg conv frontend time (subset of encoder)
-    avg_conv_frontend: Option<f64>,
-    /// Avg encoder blocks time (encoder minus conv frontend)
-    avg_encoder_blocks: Option<f64>,
+    /// BrickProfiler category breakdown averaged across runs (WAPR-PROFILE-001 Gap 1)
+    avg_brick_detail: Option<AvgBrickDetail>,
+    /// WAPR-PROFILE-001 Gap 5: Structured Chrome Trace JSON from last run's InferenceTracer
+    trace_json: Option<String>,
+    /// WAPR-PROFILE-001 Gap 2: Hardware roofline info
+    hw_cores: usize,
+    hw_simd: String,
+    hw_peak_gflops: f64,
+    hw_bw_gbps: f64,
+    hw_balance_point: f64,
 }
 
 impl ProfileSummary<'_> {
     fn format_json(&self, args: &AprProfileArgs) -> String {
-        let mut encoder_detail = String::new();
-        if let (Some(conv), Some(blocks)) = (self.avg_conv_frontend, self.avg_encoder_blocks) {
-            encoder_detail = format!(
-                ",\"encoder_detail\":{{\"conv_frontend\":{:.1},\"blocks\":{:.1}}}",
-                conv, blocks
+        // WAPR-PROFILE-001 Gap 1: BrickProfiler category breakdown in JSON
+        let mut brick_json = String::new();
+        if let Some(ref bd) = self.avg_brick_detail {
+            let total_brick = bd.norm_ms + bd.attn_ms + bd.ffn_ms + bd.other_ms;
+            let pct = |ms: f64| {
+                if total_brick > 0.0 {
+                    ms / total_brick * 100.0
+                } else {
+                    0.0
+                }
+            };
+            brick_json = format!(
+                concat!(
+                    ",\"brick_profile\":{{",
+                    "\"norm_ms\":{:.2},\"attn_ms\":{:.2},\"ffn_ms\":{:.2},\"other_ms\":{:.2},",
+                    "\"norm_pct\":{:.1},\"attn_pct\":{:.1},\"ffn_pct\":{:.1},",
+                    "\"page_faults\":{{\"minor\":{},\"major\":{}}},",
+                    "\"cycles_per_elem\":{{\"ln\":{:.1},\"attn\":{:.1},\"ffn\":{:.1}}},",
+                    "\"bottleneck\":{{\"ln\":{},\"attn\":{},\"ffn\":{}}},",
+                    "\"blis\":{{\"total_gflops\":{:.2},\"macro_gflops\":{:.2},",
+                    "\"micro_gflops\":{:.2},\"pack_pct\":{:.1},\"macro_calls\":{}}},",
+                    "\"roofline\":{{\"bound\":\"{}\",\"util_pct\":{:.1}}}}}"
+                ),
+                bd.norm_ms,
+                bd.attn_ms,
+                bd.ffn_ms,
+                bd.other_ms,
+                pct(bd.norm_ms),
+                pct(bd.attn_ms),
+                pct(bd.ffn_ms),
+                bd.page_faults_minor,
+                bd.page_faults_major,
+                bd.ln_cycles_per_elem,
+                bd.attn_cycles_per_elem,
+                bd.ffn_cycles_per_elem,
+                bd.ln_bottleneck,
+                bd.attn_bottleneck,
+                bd.ffn_bottleneck,
+                bd.blis_total_gflops,
+                bd.blis_macro_gflops,
+                bd.blis_micro_gflops,
+                bd.blis_pack_pct,
+                bd.blis_macro_calls,
+                bd.roofline_bound,
+                bd.roofline_util_pct,
             );
         }
+        // Gap 2: Hardware info in JSON
+        let hw_json = format!(
+            concat!(
+                ",\"hardware\":{{",
+                "\"cores\":{},\"simd\":\"{}\",\"peak_gflops\":{:.1},",
+                "\"bw_gbps\":{:.1},\"balance_point\":{:.1}}}"
+            ),
+            self.hw_cores,
+            self.hw_simd,
+            self.hw_peak_gflops,
+            self.hw_bw_gbps,
+            self.hw_balance_point,
+        );
         format!(
             concat!(
                 "{{\"model\":\"{}\",\"audio\":\"{}\",\"audio_duration_s\":{:.3},",
                 "\"warmup\":{},\"runs\":{},",
                 "\"avg_ms\":{{\"load\":{:.1},\"mel\":{:.1},\"encode\":{:.1},",
-                "\"decode\":{:.1},\"total\":{:.1}}}{},",
+                "\"decode\":{:.1},\"total\":{:.1}}}{}{},",
                 "\"rtf\":{:.3},\"tokens\":{},\"text\":\"{}\"}}"
             ),
             args.model.display(),
@@ -794,7 +1357,8 @@ impl ProfileSummary<'_> {
             self.avg_enc,
             self.avg_dec,
             self.avg_total,
-            encoder_detail,
+            brick_json,
+            hw_json,
             self.avg_rtf,
             self.avg_tokens,
             self.text.replace('"', "\\\"")
@@ -807,6 +1371,11 @@ impl ProfileSummary<'_> {
     /// pipeline stage. Timestamps are in microseconds. Compatible with
     /// `chrome://tracing`, Perfetto UI, and `renacer --format json`.
     fn format_renacer(&self, args: &AprProfileArgs) -> String {
+        // WAPR-PROFILE-001 Gap 5: Prefer InferenceTracer's structured trace when available
+        if let Some(ref trace) = self.trace_json {
+            return trace.clone();
+        }
+
         let mut events = Vec::new();
         let mut ts_us: f64 = 0.0;
 
@@ -844,25 +1413,73 @@ impl ProfileSummary<'_> {
             ),
             ts_us, enc_dur
         ));
-        // Encoder sub-steps (nested on tid 2)
-        if let (Some(conv), Some(blocks)) = (self.avg_conv_frontend, self.avg_encoder_blocks) {
-            let conv_dur = conv * 1000.0;
+        // Encoder BrickProfiler sub-spans (nested on tid 2)
+        if let Some(ref bd) = self.avg_brick_detail {
+            let mut sub_ts = ts_us;
+            // Other (conv_frontend) first
+            let other_dur = bd.other_ms * 1000.0;
+            if other_dur > 0.0 {
+                events.push(format!(
+                    concat!(
+                        "{{\"name\":\"conv_frontend\",\"cat\":\"brick_profile\",\"ph\":\"X\",",
+                        "\"ts\":{:.0},\"dur\":{:.0},\"pid\":1,\"tid\":2}}"
+                    ),
+                    sub_ts, other_dur
+                ));
+                sub_ts += other_dur;
+            }
+            // Norm
+            let norm_dur = bd.norm_ms * 1000.0;
             events.push(format!(
                 concat!(
-                    "{{\"name\":\"conv_frontend\",\"cat\":\"apr_profile\",\"ph\":\"X\",",
-                    "\"ts\":{:.0},\"dur\":{:.0},\"pid\":1,\"tid\":2}}"
+                    "{{\"name\":\"norm\",\"cat\":\"brick_profile\",\"ph\":\"X\",",
+                    "\"ts\":{:.0},\"dur\":{:.0},\"pid\":1,\"tid\":2,",
+                    "\"args\":{{\"cycles_per_elem\":{:.1},\"bottleneck\":{}}}}}"
                 ),
-                ts_us, conv_dur
+                sub_ts, norm_dur, bd.ln_cycles_per_elem, bd.ln_bottleneck
             ));
-            let blocks_dur = blocks * 1000.0;
+            sub_ts += norm_dur;
+            // Attention
+            let attn_dur = bd.attn_ms * 1000.0;
             events.push(format!(
                 concat!(
-                    "{{\"name\":\"encoder_blocks\",\"cat\":\"apr_profile\",\"ph\":\"X\",",
-                    "\"ts\":{:.0},\"dur\":{:.0},\"pid\":1,\"tid\":2}}"
+                    "{{\"name\":\"attention\",\"cat\":\"brick_profile\",\"ph\":\"X\",",
+                    "\"ts\":{:.0},\"dur\":{:.0},\"pid\":1,\"tid\":2,",
+                    "\"args\":{{\"cycles_per_elem\":{:.1},\"bottleneck\":{}}}}}"
                 ),
-                ts_us + conv_dur,
-                blocks_dur
+                sub_ts, attn_dur, bd.attn_cycles_per_elem, bd.attn_bottleneck
             ));
+            sub_ts += attn_dur;
+            // FFN
+            let ffn_dur = bd.ffn_ms * 1000.0;
+            events.push(format!(
+                concat!(
+                    "{{\"name\":\"ffn\",\"cat\":\"brick_profile\",\"ph\":\"X\",",
+                    "\"ts\":{:.0},\"dur\":{:.0},\"pid\":1,\"tid\":2,",
+                    "\"args\":{{\"cycles_per_elem\":{:.1},\"bottleneck\":{}}}}}"
+                ),
+                sub_ts, ffn_dur, bd.ffn_cycles_per_elem, bd.ffn_bottleneck
+            ));
+            // WAPR-PROFILE-001 Gap 4: BLIS GEMM hierarchy on tid 3
+            if bd.blis_macro_calls > 0 {
+                // BLIS spans the full encoder duration on tid 3
+                let enc_start_us = ts_us;
+                events.push(format!(
+                    concat!(
+                        "{{\"name\":\"blis_gemm\",\"cat\":\"blis_profile\",\"ph\":\"X\",",
+                        "\"ts\":{:.0},\"dur\":{:.0},\"pid\":1,\"tid\":3,",
+                        "\"args\":{{\"total_gflops\":{:.2},\"macro_gflops\":{:.2},",
+                        "\"micro_gflops\":{:.2},\"pack_pct\":{:.1},\"calls\":{}}}}}"
+                    ),
+                    enc_start_us,
+                    enc_dur,
+                    bd.blis_total_gflops,
+                    bd.blis_macro_gflops,
+                    bd.blis_micro_gflops,
+                    bd.blis_pack_pct,
+                    bd.blis_macro_calls,
+                ));
+            }
         }
         ts_us += enc_dur;
 
@@ -915,6 +1532,11 @@ impl ProfileSummary<'_> {
             args.audio.display(),
             self.audio_duration_s
         );
+        // WAPR-PROFILE-001 Gap 2: Hardware roofline info
+        println!(
+            "  Hardware: {} cores, {}, {:.0} GFLOP/s peak, {:.1} GB/s BW",
+            self.hw_cores, self.hw_simd, self.hw_peak_gflops, self.hw_bw_gbps,
+        );
         println!();
         println!("  Step          Avg (ms)    % of total");
         println!("  ────────────  ──────────  ──────────");
@@ -929,17 +1551,78 @@ impl ProfileSummary<'_> {
             self.avg_enc,
             self.avg_enc / self.avg_total * 100.0
         );
-        if let (Some(conv), Some(blocks)) = (self.avg_conv_frontend, self.avg_encoder_blocks) {
+        if let Some(ref bd) = self.avg_brick_detail {
+            let total_brick = bd.norm_ms + bd.attn_ms + bd.ffn_ms + bd.other_ms;
+            let pct = |ms: f64| {
+                if total_brick > 0.0 {
+                    ms / total_brick * 100.0
+                } else {
+                    0.0
+                }
+            };
+            if bd.other_ms > 0.0 {
+                println!(
+                    "    Conv frontend {:>6.1}    {:>5.1}%",
+                    bd.other_ms,
+                    bd.other_ms / self.avg_total * 100.0
+                );
+            }
             println!(
-                "    Conv frontend {:>6.1}    {:>5.1}%",
-                conv,
-                conv / self.avg_total * 100.0
+                "    Norm         {:>7.1}    {:>5.1}%  ({:.0}% of encoder)",
+                bd.norm_ms,
+                bd.norm_ms / self.avg_total * 100.0,
+                pct(bd.norm_ms)
             );
             println!(
-                "    Blocks       {:>7.1}    {:>5.1}%",
-                blocks,
-                blocks / self.avg_total * 100.0
+                "    Attention    {:>7.1}    {:>5.1}%  ({:.0}% of encoder)",
+                bd.attn_ms,
+                bd.attn_ms / self.avg_total * 100.0,
+                pct(bd.attn_ms)
             );
+            println!(
+                "    FFN          {:>7.1}    {:>5.1}%  ({:.0}% of encoder)",
+                bd.ffn_ms,
+                bd.ffn_ms / self.avg_total * 100.0,
+                pct(bd.ffn_ms)
+            );
+            // Cycles-per-element and bottleneck diagnosis
+            println!("  ────────────  ──────────  ──────────");
+            println!("  BrickProfiler Diagnosis:");
+            println!(
+                "    Norm:      {:.1} cyc/elem  {}",
+                bd.ln_cycles_per_elem,
+                bottleneck_label(bd.ln_bottleneck)
+            );
+            println!(
+                "    Attention: {:.1} cyc/elem  {}",
+                bd.attn_cycles_per_elem,
+                bottleneck_label(bd.attn_bottleneck)
+            );
+            println!(
+                "    FFN:       {:.1} cyc/elem  {}",
+                bd.ffn_cycles_per_elem,
+                bottleneck_label(bd.ffn_bottleneck)
+            );
+            if bd.page_faults_minor > 0 || bd.page_faults_major > 0 {
+                println!(
+                    "  Page faults:  {} minor, {} major",
+                    bd.page_faults_minor, bd.page_faults_major
+                );
+            }
+            // WAPR-PROFILE-001 Gap 4: BLIS GEMM hierarchy
+            if bd.blis_macro_calls > 0 {
+                println!("  ────────────  ──────────  ──────────");
+                println!("  BLIS GEMM Hierarchy ({} calls):", bd.blis_macro_calls);
+                println!("    Macro:   {:.1} GFLOP/s", bd.blis_macro_gflops);
+                println!("    Micro:   {:.1} GFLOP/s", bd.blis_micro_gflops);
+                println!("    Pack:    {:.1}% of GEMM time", bd.blis_pack_pct);
+                println!("    Total:   {:.1} GFLOP/s", bd.blis_total_gflops);
+                // Gap 2: Roofline classification
+                println!(
+                    "    Roofline: {} ({:.1}% of {:.0} GFLOP/s peak)",
+                    bd.roofline_bound, bd.roofline_util_pct, self.hw_peak_gflops,
+                );
+            }
         }
         println!(
             "  Decoder       {:>8.1}    {:>5.1}%",

@@ -262,6 +262,113 @@ impl Encoder {
         }
     }
 
+    /// Forward pass with BrickProfiler instrumentation (WAPR-PROFILE-001 Gap 1)
+    ///
+    /// Records per-operator timing and CPU cycles into the trueno `BrickProfiler`
+    /// via O(1) `BrickId`-indexed arrays. Category breakdown (Norm/Attention/FFN)
+    /// available via `profiler.category_stats()` after this call.
+    pub fn forward_profiled(
+        &self,
+        features: &[f32],
+        profiler: &mut trueno::BrickProfiler,
+        tracer: Option<&mut realizar::InferenceTracer>,
+    ) -> WhisperResult<Vec<f32>> {
+        let seq_len = features.len() / self.d_model;
+
+        if features.len() % self.d_model != 0 {
+            return Err(WhisperError::Model("input size mismatch".into()));
+        }
+        if self.max_len > 0 && seq_len > self.max_len {
+            return Err(WhisperError::Model(format!(
+                "sequence length {} exceeds max {}",
+                seq_len, self.max_len
+            )));
+        }
+
+        let mut x = features.to_vec();
+
+        // Whisper path only (Moonshine uses moonshine_blocks, not instrumented here)
+        if self.positional_encoding == PositionalEncoding::Sinusoidal {
+            for pos in 0..seq_len {
+                for d in 0..self.d_model {
+                    x[pos * self.d_model + d] += self.positional_embedding[pos * self.d_model + d];
+                }
+            }
+        }
+
+        // WAPR-PROFILE-001 Gap 5: Per-block InferenceTracer events
+        if let Some(tracer) = tracer {
+            for (layer_idx, block) in self.blocks.iter().enumerate() {
+                tracer.start_step(realizar::TraceStep::TransformerBlock);
+                x = block.forward_profiled(&x, profiler)?;
+                tracer.trace_layer(layer_idx, 0, Some(&x), seq_len, self.d_model);
+            }
+        } else {
+            for block in &self.blocks {
+                x = block.forward_profiled(&x, profiler)?;
+            }
+        }
+
+        debug_assert!(
+            x.iter().all(|v| v.is_finite()),
+            "encoder output must be finite before final layer norm"
+        );
+
+        self.ln_post.forward(&x)
+    }
+
+    /// Forward from mel spectrogram with BrickProfiler (WAPR-PROFILE-001 Gap 1)
+    ///
+    /// Records conv frontend timing via `BrickId::Embedding` (Other category),
+    /// then delegates to `forward_profiled()` for encoder blocks.
+    pub fn forward_mel_profiled(
+        &self,
+        mel: &[f32],
+        profiler: &mut trueno::BrickProfiler,
+        mut tracer: Option<&mut realizar::InferenceTracer>,
+    ) -> WhisperResult<Vec<f32>> {
+        if mel.len() % self.n_mels != 0 {
+            return Err(WhisperError::Model(format!(
+                "mel size {} not divisible by n_mels {}",
+                mel.len(),
+                self.n_mels
+            )));
+        }
+
+        let frontend = self.conv_frontend.as_ref().ok_or_else(|| {
+            WhisperError::Model(
+                "forward_mel requires conv frontend (not available for Moonshine)".into(),
+            )
+        })?;
+
+        // WAPR-PROFILE-001 Gap 5: Trace embed step (conv frontend)
+        if let Some(ref mut t) = tracer {
+            t.start_step(realizar::TraceStep::Embed);
+        }
+
+        // Profile conv_frontend via BrickId::Embedding (Other category)
+        let c0 = trueno::brick::cpu_cycles();
+        let timer = profiler.start_brick(trueno::BrickId::Embedding);
+        let conv_output = frontend.forward(mel)?;
+        let c1 = trueno::brick::cpu_cycles();
+        let mel_frames = (mel.len() / self.n_mels) as u64;
+        profiler.stop_brick(timer, mel_frames);
+        let stats = profiler.brick_stats_mut(trueno::BrickId::Embedding);
+        let cycles = c1.wrapping_sub(c0);
+        stats.total_cycles += cycles;
+        stats.min_cycles = stats.min_cycles.min(cycles);
+        stats.max_cycles = stats.max_cycles.max(cycles);
+
+        // Trace embed output
+        if let Some(ref mut t) = tracer {
+            let hidden_dim = self.d_model;
+            let token_count = conv_output.len() / hidden_dim;
+            t.trace_embed(token_count, hidden_dim, Some(&conv_output));
+        }
+
+        self.forward_profiled(&conv_output, profiler, tracer)
+    }
+
     /// Get number of layers
     #[must_use]
     pub const fn n_layers(&self) -> usize {

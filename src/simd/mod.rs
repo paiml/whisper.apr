@@ -32,7 +32,10 @@ pub use activation::{gelu, log_softmax, relu, sigmoid, softmax, tanh_activation}
 pub use attention::{scaled_dot_product_attention, scaled_dot_product_attention_single};
 pub use fft::{hann_window, multiply_accumulate};
 pub use layer::{batch_layer_norm, layer_norm};
-pub use matrix::{matmul, matmul_owned, matmul_raw, matmul_with_matrix, matvec, transpose};
+pub use matrix::{
+    enable_blis_profiling, matmul, matmul_owned, matmul_raw, matmul_with_matrix, matvec,
+    take_blis_profiler, transpose,
+};
 pub use optimized::{
     rms_norm, rms_norm_into, select_backend, tiled_matvec, tiled_matvec_f16, tiled_matvec_f16_into,
     tiled_matvec_i8_into, tiled_matvec_into, BackendCategory, GPU_THRESHOLD, PARALLEL_THRESHOLD,
