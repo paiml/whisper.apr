@@ -112,7 +112,7 @@ apr-cli = { version = "0.3", optional = true }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
-realizar = { version = "0.7", optional = true, default-features = false }
+realizar = { version = "0.8", optional = true, default-features = false }
 
 # fp16 weight storage (2 bytes/weight vs 4 bytes/weight for f32)
 half = "2"
@@ -252,7 +252,7 @@ harness = false
 
 # NOTE (WAPR-PERF-004): GPU-Resident Tensor integration requires:
 # 1. trueno-gpu 0.4.10+ (with GpuResidentTensor, batched_multihead_attention)
-# 2. realizar 0.6.8+ (CudaExecutor with stable API)
+# 2. realizar 0.8+ (CudaExecutor with stable API, aarch64 cfg fix)
 
 # Workspace-level lints for consistent code quality
 [lints.rust]
