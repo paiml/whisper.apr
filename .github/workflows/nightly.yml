@@ -67,9 +67,10 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           # Remove the entire [patch.crates-io] section (local path overrides)
-          sed -i '/^\[patch\.crates-io\]/,$ d' Cargo.toml
+          sed -i.bak '/^\[patch\.crates-io\]/,$ d' Cargo.toml
           # Remove path = "../aprender" from aprender dependency lines
-          sed -i 's|, path = "\.\./aprender"||g' Cargo.toml
+          sed -i.bak 's|, path = "\.\./aprender"||g' Cargo.toml
+          rm -f Cargo.toml.bak
           echo "=== Patched Cargo.toml dependency sections ==="
           grep -n 'aprender\|apr-cli\|\[patch' Cargo.toml || true
 
