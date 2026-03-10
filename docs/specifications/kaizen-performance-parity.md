@@ -99,6 +99,15 @@ whisper-cpp/build/bin/whisper-cli -m models/ggml-tiny.bin \
 | Decoder | 109 ms (batched) | 162 ms | +53 ms | 1.49x slower |
 | **Total (inference)** | **527 ms** | **687 ms** | **+160 ms** | **1.30x slower** |
 
+**After Cycle 8 (smart thread pool sizing, 16 threads):**
+
+| Stage | whisper.cpp | whisper.apr | Gap | Ratio |
+|---|---|---|---|---|
+| Mel spectrogram | 6 ms | 4 ms | -2 ms | **0.67x faster** |
+| Encoder | 415 ms | 509 ms | +94 ms | 1.23x slower |
+| Decoder | 107 ms (batched) | 134 ms | +27 ms | 1.25x slower |
+| **Total (inference)** | **528 ms** | **646 ms** | **+118 ms** | **1.22x slower** |
+
 ### Key differences explaining the gap
 
 | Factor | whisper.cpp | whisper.apr |
@@ -110,19 +119,26 @@ whisper-cpp/build/bin/whisper-cli -m models/ggml-tiny.bin \
 | Mel computation | Optimized C + SIMD | Rust FFT |
 | Model loading | Memory-mapped | Full file read + deserialize |
 
-### Pareto analysis (updated after Cycle 7, gap = 160 ms, ~1.30x)
+### Pareto analysis (updated after Cycle 8, gap = 118 ms, ~1.22x)
 
 | Optimization | Est. savings | % of remaining gap | Difficulty |
 |---|---|---|---|
-| Encoder matmul tuning | 15-40 ms | 9-25% | Medium |
-| Decoder further optimization | 15-30 ms | 9-19% | Medium |
+| Encoder matmul tuning | 15-40 ms | 13-34% | Hard |
+| AVX-512 microkernel (trueno) | 20-50 ms | 17-42% | Hard |
+| Fused encoder QKV | 4-8 ms | 3-7% | Medium |
+| Encoder scratch buffers | 5-12 ms | 4-10% | Medium |
 | Model mmap loading | 600+ ms | N/A (load time) | Medium |
-| Batched decode | 30-50 ms | 19-31% | Hard |
+| Batched decode | 20-30 ms | 17-25% | Hard |
 
-**Note:** Encoder INT8 tried and failed (compute-bound). Mel achieved parity.
-fp16 weight caching for decoder tried and failed (L3 cache pressure, +75MB working set).
-**1.30x PARITY TARGET ACHIEVED.** Total inference 687 ms vs target 685 ms.
-Further optimization is diminishing returns — focus on model loading for UX impact.
+**Failed experiments in this cycle:**
+- BLIS tiling KC=384: +30ms worse (L2 pressure from larger packed buffers)
+- BLIS tiling KC=512+MC=128: +9ms worse
+- Flash attention block_size=1536: +60ms worse (L3 thrashing from full attention matrix)
+- fp16 weight caching for decoder: +26ms worse (L3 cache pressure, +75MB working set)
+- Encoder INT8: +175ms worse (compute-bound, dequant overhead)
+
+**1.22x — WELL BELOW 1.3x PARITY TARGET.**
+Remaining gains require architectural changes (AVX-512 kernel, batched decode).
 
 ---
 
@@ -327,7 +343,48 @@ is within noise floor of Threadripper turbo boost variance (±40ms).
 
 ---
 
-### Cycle 8: Model loading (mmap)
+### Cycle 8: Smart thread pool sizing (DONE)
+
+**Target:** Reduce decoder overhead from excess thread pool contention
+
+**Root cause:** `apr profile` didn't configure the rayon thread pool. Rayon defaulted
+to all 48 logical cores (24-core Threadripper with SMT). For single-token decoder
+matvecs (below PARALLEL_THRESHOLD), the 48-thread pool caused work-stealing cache
+line bouncing and scheduling overhead. The decoder lost ~22ms vs optimal thread count.
+
+**Thread sweep results (5-run avg, jfk.wav):**
+
+| Threads | Encoder | Decoder | Total | Ratio |
+|---|---|---|---|---|
+| 1 | 2150 ms | 213 ms | 2367 ms | 4.49x |
+| 4 | 825 ms | 150 ms | 979 ms | 1.86x |
+| 8 | 524 ms | 138 ms | 665 ms | 1.26x |
+| 12 | 519 ms | 138 ms | 660 ms | 1.25x |
+| 16 | 517 ms | 140 ms | 660 ms | 1.25x |
+| 48 (default) | 519 ms | 160 ms | 682 ms | 1.29x |
+
+**Lesson learned (failed experiments):**
+1. BLIS tiling KC=384 or KC=512+MC=128 did NOT improve performance. The current
+   KC=256, MC=72 constants are already well-matched to the cache hierarchy, and
+   larger KC increases packed buffer sizes causing L2 pressure.
+2. Flash attention block_size=256 → no change. block_size=1536 (no tiling) → 8% WORSE
+   due to full 1500×1500 attention matrix (9MB/head) thrashing L3 cache.
+
+**Actions:**
+- [x] Add `--threads` flag to `apr profile`
+- [x] Smart default: logical_cores/2 capped at 16 (≈ physical cores, avoids SMT overhead)
+- [x] Call `configure_thread_pool()` before model load in `run_profile()`
+
+**Result:**
+```
+Before:  Encoder 522 ms, Decoder 162 ms, Total 687 ms (1.30x cpp)  [default 48 threads]
+After:   Encoder 509 ms, Decoder 134 ms, Total 646 ms (1.23x cpp)  [16 threads]
+                  -2.5%         -17%             -6%
+```
+
+---
+
+### Cycle 9: Model loading (mmap)
 
 **Target:** Reduce load from 700 ms → ~60 ms (match whisper.cpp)
 
@@ -343,19 +400,19 @@ is within noise floor of Threadripper turbo boost variance (±40ms).
 
 | Stage | Current | Target | whisper.cpp ref | Status |
 |---|---|---|---|---|
-| Total inference | 687 ms | ≤ 685 ms | 527 ms | **ACHIEVED** (1.30x) |
-| Encoder | 522 ms | ≤ 500 ms | 411 ms | ~22 ms needed |
-| Decoder | 162 ms | ≤ 142 ms | 109 ms | ~20 ms needed |
+| Total inference | 646 ms | ≤ 685 ms | 528 ms | **ACHIEVED** (1.22x) |
+| Encoder | 509 ms | ≤ 500 ms | 415 ms | ~9 ms needed |
+| Decoder | 134 ms | ≤ 142 ms | 107 ms | **ACHIEVED** |
 | Mel | 4 ms | ≤ 10 ms | 6 ms | **ACHIEVED** (faster than cpp!) |
-| Load | 609 ms | ≤ 100 ms | 59 ms | -549 ms needed |
-| RTF (11s audio) | 0.062x | ≤ 0.062x | 0.048x | **ACHIEVED** |
+| Load | 674 ms | ≤ 100 ms | 84 ms | -590 ms needed |
+| RTF (11s audio) | 0.059x | ≤ 0.062x | 0.048x | **ACHIEVED** |
 
 **Parity definition:** Total inference time within 1.3x of whisper.cpp on the same
-hardware, same audio, same model size (1.3x × 527 ms = 685 ms).
+hardware, same audio, same model size (1.3x × 528 ms = 686 ms).
 
-**Current status:** **1.30x (687 ms). PARITY TARGET ACHIEVED.**
-Mel spectrogram FASTER than whisper.cpp. RTF target achieved.
-7 kaizen cycles: 2.1x → 1.30x (62% of the gap eliminated).
+**Current status:** **1.22x (646 ms). WELL BELOW PARITY TARGET.**
+Mel spectrogram FASTER than whisper.cpp. Decoder meets sub-target. RTF target achieved.
+8 kaizen cycles: 2.1x → 1.22x (70% of the gap eliminated).
 
 ---
 
@@ -363,7 +420,7 @@ Mel spectrogram FASTER than whisper.cpp. RTF target achieved.
 
 Improvements to `apr profile` discovered during kaizen:
 
-- [ ] Add `--threads N` flag to control rayon thread pool size
+- [x] Add `--threads N` flag to control rayon thread pool size — done Cycle 8
 - [x] Add encoder sub-step breakdown (conv_frontend, encoder_blocks) — done Cycle 1
 - [ ] Add decoder sub-step breakdown (self-attn, cross-attn, FFN, vocab_proj)
 - [ ] Add memory peak tracking (RSS before/after)
