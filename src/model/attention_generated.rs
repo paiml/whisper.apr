@@ -827,9 +827,8 @@ pub fn flash_attention_simd(
 /// For encoder (1500 Q-rows, 16 threads), this gives 94 rows/thread —
 /// much better utilization than parallel_map over 6 heads.
 ///
-/// Uses par_chunks_mut on a pre-allocated flat output buffer to avoid
-/// Vec<Vec<f32>> allocation overhead. Block scores scratch buffer is
-/// reused across KV blocks within each Q-row.
+/// Uses zero-allocation SIMD operations (dot_nalloc, inline max/scale/axpy)
+/// to avoid ~28M heap allocations per encoder pass through Vector::from_slice.
 #[cfg(feature = "parallel")]
 #[must_use]
 pub fn flash_attention_simd_parallel(
@@ -866,7 +865,8 @@ pub fn flash_attention_simd_parallel(
                 block_scores.clear();
                 for k_idx in kv_block_start..kv_block_end {
                     let k_offset = k_idx * d_head;
-                    let dot = simd::dot(
+                    // Zero-allocation AVX2+FMA dot product (avoids Vector::from_slice alloc)
+                    let dot = simd::dot_nalloc(
                         &query[q_offset..q_offset + d_head],
                         &key[k_offset..k_offset + d_head],
                     );
@@ -878,11 +878,16 @@ pub fn flash_attention_simd_parallel(
                 }
 
                 // Online softmax update (numerically stable)
-                let block_max = simd::max_element(&block_scores);
+                // Inline max to avoid Vector::from_slice allocation in simd::max_element
+                let block_max = block_scores
+                    .iter()
+                    .copied()
+                    .fold(f32::NEG_INFINITY, f32::max);
                 let new_max = row_max.max(block_max);
                 let scale_prev = (row_max - new_max).exp();
 
                 row_sum *= scale_prev;
+                // scale_inplace and axpy are already zero-allocation (simple loops)
                 simd::scale_inplace(out_row, scale_prev);
 
                 for (local_k_idx, &score) in block_scores.iter().enumerate() {
