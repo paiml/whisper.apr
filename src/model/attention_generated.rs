@@ -821,6 +821,88 @@ pub fn flash_attention_simd(
     output
 }
 
+/// Parallel Flash Attention: parallelizes over Q-rows instead of heads.
+///
+/// Each Q-row is independent (own row_max, row_sum, output slice).
+/// For encoder (1500 Q-rows, 16 threads), this gives 94 rows/thread —
+/// much better utilization than parallel_map over 6 heads.
+///
+/// Uses par_chunks_mut on a pre-allocated flat output buffer to avoid
+/// Vec<Vec<f32>> allocation overhead. Block scores scratch buffer is
+/// reused across KV blocks within each Q-row.
+#[cfg(feature = "parallel")]
+#[must_use]
+pub fn flash_attention_simd_parallel(
+    query: &[f32],
+    key: &[f32],
+    value: &[f32],
+    config: FlashAttentionConfig,
+    mask: Option<&[f32]>,
+) -> Vec<f32> {
+    use rayon::prelude::*;
+
+    let scale = 1.0 / (config.d_head as f32).sqrt();
+    let d_head = config.d_head;
+    let kv_len = config.kv_len;
+    let block_size = config.block_size;
+
+    let mut output = vec![0.0_f32; config.seq_len * d_head];
+
+    // par_chunks_mut gives each thread a mutable slice of d_head floats
+    output
+        .par_chunks_mut(d_head)
+        .enumerate()
+        .for_each(|(q_idx, out_row)| {
+            let mut row_max = f32::NEG_INFINITY;
+            let mut row_sum = 0.0_f32;
+            // Reuse scratch across KV blocks (avoids 12 allocations per Q-row)
+            let mut block_scores = Vec::with_capacity(block_size);
+
+            let q_offset = q_idx * d_head;
+
+            for kv_block_start in (0..kv_len).step_by(block_size) {
+                let kv_block_end = (kv_block_start + block_size).min(kv_len);
+
+                block_scores.clear();
+                for k_idx in kv_block_start..kv_block_end {
+                    let k_offset = k_idx * d_head;
+                    let dot = simd::dot(
+                        &query[q_offset..q_offset + d_head],
+                        &key[k_offset..k_offset + d_head],
+                    );
+                    let mut score = dot * scale;
+                    if let Some(m) = mask {
+                        score += m[q_idx * kv_len + k_idx];
+                    }
+                    block_scores.push(score);
+                }
+
+                // Online softmax update (numerically stable)
+                let block_max = simd::max_element(&block_scores);
+                let new_max = row_max.max(block_max);
+                let scale_prev = (row_max - new_max).exp();
+
+                row_sum *= scale_prev;
+                simd::scale_inplace(out_row, scale_prev);
+
+                for (local_k_idx, &score) in block_scores.iter().enumerate() {
+                    let k_idx = kv_block_start + local_k_idx;
+                    let exp_score = (score - new_max).exp();
+                    row_sum += exp_score;
+                    let v_offset = k_idx * d_head;
+                    simd::axpy(exp_score, &value[v_offset..v_offset + d_head], out_row);
+                }
+                row_max = new_max;
+            }
+
+            // Normalize
+            let inv_sum = if row_sum > 1e-10 { 1.0 / row_sum } else { 0.0 };
+            simd::scale_inplace(out_row, inv_sum);
+        });
+
+    output
+}
+
 /// Multi-head attention module
 ///
 /// Implements the multi-head attention mechanism from the Transformer architecture.
@@ -1257,27 +1339,40 @@ impl MultiHeadAttention {
         }
 
         // Project Q, K, V sequentially — each GEMM uses the full thread pool
-        // via gemm_blis_parallel internally. Nested rayon::join caused 3 competing
-        // BLIS GEMMs, degrading parallel scaling (4.3x vs 10.4x on 16 threads).
+        // via gemm_blis_parallel internally. Sequential avoids nested rayon contention.
         let q = self.w_q.forward_simd(x, seq_len)?;
         let k = self.w_k.forward_simd(context, kv_len)?;
         let v = self.w_v.forward_simd(context, kv_len)?;
 
-        // Compute attention for each head using Flash Attention (parallel when feature enabled)
-        // Per §11.3.2: Each head is independent [31], enabling parallel computation
-        let head_outputs = parallel_map(0..self.n_heads, |head| {
-            let q_head = self.extract_head(&q, seq_len, head);
-            let k_head = self.extract_head(&k, kv_len, head);
-            let v_head = self.extract_head(&v, kv_len, head);
+        // Per-head Q-row parallelism: extract_head gives contiguous per-head data
+        // (critical for cache performance), then flash_attention_simd_parallel
+        // parallelizes over 1500 Q-rows within each head (all 16 threads active).
+        // Heads processed sequentially to avoid thread contention.
+        #[cfg(feature = "parallel")]
+        let head_outputs: Vec<Vec<f32>> = (0..self.n_heads)
+            .map(|head| {
+                let q_head = self.extract_head(&q, seq_len, head);
+                let k_head = self.extract_head(&k, kv_len, head);
+                let v_head = self.extract_head(&v, kv_len, head);
+                let config = FlashAttentionConfig::new(seq_len, kv_len, self.d_head, block_size);
+                flash_attention_simd_parallel(&q_head, &k_head, &v_head, config, mask)
+            })
+            .collect();
 
-            // Use Flash Attention for O(n) memory
-            let config = FlashAttentionConfig::new(seq_len, kv_len, self.d_head, block_size);
-            if cfg!(feature = "simd") {
-                flash_attention_simd(&q_head, &k_head, &v_head, config, mask)
-            } else {
-                flash_attention(&q_head, &k_head, &v_head, config, mask)
-            }
-        });
+        #[cfg(not(feature = "parallel"))]
+        let head_outputs: Vec<Vec<f32>> = (0..self.n_heads)
+            .map(|head| {
+                let q_head = self.extract_head(&q, seq_len, head);
+                let k_head = self.extract_head(&k, kv_len, head);
+                let v_head = self.extract_head(&v, kv_len, head);
+                let config = FlashAttentionConfig::new(seq_len, kv_len, self.d_head, block_size);
+                if cfg!(feature = "simd") {
+                    flash_attention_simd(&q_head, &k_head, &v_head, config, mask)
+                } else {
+                    flash_attention(&q_head, &k_head, &v_head, config, mask)
+                }
+            })
+            .collect();
 
         // Concatenate heads and project output using SIMD
         let concat = self.concat_heads(&head_outputs, seq_len);
