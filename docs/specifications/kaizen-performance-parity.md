@@ -1,9 +1,9 @@
 # Kaizen Performance Parity: whisper.apr vs whisper.cpp
 
 **Document:** WAPR-KAIZEN-001
-**Status:** Active
-**Version:** 1.0.0
-**Date:** 2026-03-09
+**Status:** Complete (low-hanging fruit exhausted)
+**Version:** 1.1.0
+**Date:** 2026-03-10
 **Toyota Way Phase:** Kaizen (continuous improvement, measured cycle-by-cycle)
 
 ---
@@ -606,7 +606,12 @@ GGML graph-level parallelism distributes work more efficiently than our per-GEMM
 misleading. The microkernel throughput (65 GFLOP/s vs 2304 peak = 2.8% utilization in
 single-threaded profiling, ~68% per-core) is the dominant bottleneck.
 
-**12 kaizen cycles: 2.1x → 1.20x@4t (85% of gap eliminated).**
+**13 kaizen cycles: 2.1x → 1.20x@4t (85% of gap eliminated). Model load: 788→728 ms (mmap).**
+
+**Status: All tractable optimizations complete.** Remaining gaps require architectural changes
+(zero-copy tensor loading, GGML-style graph scheduling, batched decode). The 4-thread parity
+target (1.3x) has been exceeded at 1.20x. The 16-thread gap (2.19x) is a thread scaling
+problem requiring fundamentally different parallelism strategy.
 
 ---
 
