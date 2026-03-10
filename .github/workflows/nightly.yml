@@ -71,6 +71,8 @@ jobs:
           # Remove path = "../aprender" from aprender dependency lines
           sed -i.bak 's|, path = "\.\./aprender"||g' Cargo.toml
           rm -f Cargo.toml.bak
+          # Regenerate lockfile (old one has path-sourced entries from [patch])
+          rm -f Cargo.lock
           echo "=== Patched Cargo.toml dependency sections ==="
           grep -n 'aprender\|apr-cli\|\[patch' Cargo.toml || true
 
@@ -84,6 +86,8 @@ jobs:
           # Remove path = "../aprender" from aprender dependency lines
           $content = $content -replace ', path = "\.\./aprender"', ''
           Set-Content Cargo.toml -Value $content.TrimEnd() -NoNewline
+          # Regenerate lockfile (old one has path-sourced entries from [patch])
+          Remove-Item Cargo.lock -ErrorAction SilentlyContinue
           Write-Host "=== Patched Cargo.toml dependency sections ==="
           Select-String -Path Cargo.toml -Pattern 'aprender|apr-cli|\[patch'
 
