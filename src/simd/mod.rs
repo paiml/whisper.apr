@@ -33,8 +33,8 @@ pub use attention::{scaled_dot_product_attention, scaled_dot_product_attention_s
 pub use fft::{hann_window, multiply_accumulate};
 pub use layer::{batch_layer_norm, layer_norm};
 pub use matrix::{
-    enable_blis_profiling, matmul, matmul_owned, matmul_raw, matmul_with_matrix, matvec,
-    take_blis_profiler, transpose,
+    enable_blis_profiling, matmul, matmul_owned, matmul_raw, matmul_with_matrix,
+    matmul_with_prepacked, matvec, take_blis_profiler, transpose,
 };
 pub use optimized::{
     rms_norm, rms_norm_into, select_backend, tiled_matvec, tiled_matvec_f16, tiled_matvec_f16_into,

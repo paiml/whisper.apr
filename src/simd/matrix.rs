@@ -113,6 +113,43 @@ pub fn matmul_with_matrix(a: &[f32], b: &Matrix<f32>, rows: usize, inner: usize)
     c
 }
 
+/// SIMD-accelerated matrix multiplication with pre-packed B matrix.
+///
+/// Uses pre-packed B tiles shared across threads, eliminating redundant
+/// B packing in parallel GEMM. The PrepackedB must match (inner × cols).
+///
+/// # WAPR-KAIZEN Cycle 12
+///
+/// For encoder FFN: 16 threads × 2 GEMMs × 4 layers = 128 B packings eliminated.
+#[must_use]
+#[allow(clippy::many_single_char_names)]
+pub fn matmul_with_prepacked(
+    a: &[f32],
+    prepacked_b: &trueno::blis::PrepackedB,
+    rows: usize,
+    inner: usize,
+    cols: usize,
+) -> Vec<f32> {
+    debug_assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
+    debug_assert_eq!(prepacked_b.k, inner, "PrepackedB K mismatch");
+    debug_assert_eq!(prepacked_b.n, cols, "PrepackedB N mismatch");
+
+    let mut c = vec![0.0_f32; rows * cols];
+    if trueno::blis::parallel::gemm_blis_parallel_with_prepacked_b(
+        rows,
+        cols,
+        inner,
+        a,
+        prepacked_b,
+        &mut c,
+    )
+    .is_err()
+    {
+        return vec![0.0; rows * cols];
+    }
+    c
+}
+
 /// SIMD-accelerated matrix-vector multiplication
 ///
 /// Computes y = A @ x where A is (rows x cols) and x is (cols,)

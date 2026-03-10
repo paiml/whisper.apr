@@ -78,6 +78,10 @@ pub struct LinearWeights {
     weight_i8: Option<Vec<i8>>,
     /// Per-row scales for INT8 dequantization: w_f32 ≈ w_i8 * scale.
     weight_i8_scales: Option<Vec<f32>>,
+    /// Pre-packed B matrix for BLIS GEMM (WAPR-KAIZEN Cycle 12).
+    /// Eliminates redundant B packing in parallel GEMM by pre-packing weight
+    /// tiles once at finalize_weights() time.
+    weight_prepacked_b: Option<trueno::blis::PrepackedB>,
 }
 
 impl Clone for LinearWeights {
@@ -88,11 +92,12 @@ impl Clone for LinearWeights {
             in_features: self.in_features,
             out_features: self.out_features,
             weight_transposed: self.weight_transposed.clone(),
-            // Don't clone the Matrix cache - it will be rebuilt on finalize_weights()
+            // Don't clone the Matrix/PrepackedB caches - rebuilt on finalize_weights()
             weight_matrix: None,
             weight_f16: self.weight_f16.clone(),
             weight_i8: self.weight_i8.clone(),
             weight_i8_scales: self.weight_i8_scales.clone(),
+            weight_prepacked_b: None,
         }
     }
 }
@@ -126,6 +131,7 @@ impl LinearWeights {
             weight_f16: None,
             weight_i8: None,
             weight_i8_scales: None,
+            weight_prepacked_b: None,
         }
     }
 
@@ -145,6 +151,16 @@ impl LinearWeights {
         }
 
         let weight_t = simd::transpose(&self.weight, self.out_features, self.in_features);
+
+        // WAPR-KAIZEN Cycle 12: Pre-pack B matrix for BLIS GEMM.
+        // weight_t is (in_features × out_features), which is the B matrix for
+        // input [batch × in_features] @ weight_t [in_features × out_features].
+        // Pre-packing eliminates redundant B packing in parallel GEMM.
+        self.weight_prepacked_b = Some(trueno::blis::PrepackedB::pack(
+            &weight_t,
+            self.in_features,
+            self.out_features,
+        ));
 
         // Create trueno Matrix from transposed weights (WAPR-BENCH-001 optimization)
         // This avoids repeated Matrix::from_vec() calls in forward_simd()
@@ -170,6 +186,7 @@ impl LinearWeights {
     pub fn invalidate_cache(&mut self) {
         self.weight_transposed = None;
         self.weight_matrix = None;
+        self.weight_prepacked_b = None;
     }
 
     /// Set weight values from a slice
@@ -388,6 +405,15 @@ impl LinearWeights {
             // weight is (out_features x in_features), input is (in_features,)
             // output = weight @ input = (out_features,)
             simd::tiled_matvec(&self.weight, input, self.out_features, self.in_features)
+        } else if let Some(ref prepacked) = self.weight_prepacked_b {
+            // WAPR-KAIZEN Cycle 12: Pre-packed B eliminates redundant packing in parallel GEMM
+            simd::matmul_with_prepacked(
+                input,
+                prepacked,
+                total_tokens,
+                self.in_features,
+                self.out_features,
+            )
         } else if let Some(weight_matrix) = &self.weight_matrix {
             // Batch inference: use cached trueno Matrix (WAPR-BENCH-001 optimization)
             simd::matmul_with_matrix(input, weight_matrix, total_tokens, self.in_features)
@@ -493,6 +519,16 @@ impl LinearWeights {
                 self.out_features,
                 self.in_features,
             );
+        } else if let Some(ref prepacked) = self.weight_prepacked_b {
+            // WAPR-KAIZEN Cycle 12: Pre-packed B path
+            let tmp = simd::matmul_with_prepacked(
+                input,
+                prepacked,
+                total_tokens,
+                self.in_features,
+                self.out_features,
+            );
+            output[..tmp.len()].copy_from_slice(&tmp);
         } else if let Some(weight_matrix) = &self.weight_matrix {
             let tmp =
                 simd::matmul_with_matrix(input, weight_matrix, total_tokens, self.in_features);
