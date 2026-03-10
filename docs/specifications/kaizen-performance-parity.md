@@ -488,7 +488,7 @@ Commit: `315a253` — `perf: Use zero-allocation dot product in parallel flash a
 
 ---
 
-### Cycle 12: FFN Optimization (NEXT)
+### Cycle 12: FFN Optimization — Pre-packed B (DONE)
 
 **Target:** Reduce FFN from 35 ms/block → ~15 ms/block (encoder 299 → ~220 ms)
 
@@ -498,13 +498,33 @@ Commit: `315a253` — `perf: Use zero-allocation dot product in parallel flash a
 These use `gemm_blis_parallel` which packs B (weight matrix) independently per thread.
 With 16 threads × 2 GEMMs × 4 layers = 128 redundant B packings per encoder pass.
 
-**Potential actions:**
-- [ ] Pre-pack FFN weight matrices at load time (eliminate runtime B packing)
-- [ ] Add `gemm_blis_prepacked` API to trueno (accept pre-packed B)
-- [ ] Profile BLIS packing vs compute ratio to quantify savings
-- [ ] Investigate AVX-512 microkernel for 2x throughput on supported CPUs
+**Actions:**
+- [x] Pre-pack FFN weight matrices at load time (eliminate runtime B packing)
+- [x] Add `gemm_blis_with_prepacked_b` / `gemm_blis_parallel_with_prepacked_b` API to trueno
+- [x] Profile BLIS packing vs compute ratio: `pack_pct = 6.8%` (lower than expected)
+- [ ] Investigate AVX-512 microkernel for 2x throughput on supported CPUs (moved to Cycle 14)
 
-**Result:** _pending_
+**Key findings:**
+- BLIS pack_pct = 6.8% of GEMM time (single-threaded profiling). Actual savings from
+  eliminating redundant B packing: ~3-5% of parallel GEMM time.
+- Size threshold critical: prepacking ALL LinearWeights (attention + FFN) adds ~36 MB
+  of cache pressure. Only prepacking large FFN weights (>256K elements) avoids this.
+- Initial implementation (no threshold): encoder unchanged (294-299 ms) — cache pressure
+  from attention weight prepacking offset the packing savings.
+- With threshold (FFN only): encoder 299 → 289 ms (~10 ms, 3.3% improvement at 16t).
+- At 4 threads: minimal change (452 → 450 ms) — fewer threads = fewer redundant packings.
+
+**Result:**
+```
+Before:  Encoder 299 ms (FFN 138 ms), Decoder 139 ms, Total 441 ms (16t)
+After:   Encoder 289 ms (FFN 135 ms), Decoder 148 ms, Total 442 ms (16t)
+                 -3.3%        -2.2%
+```
+
+**Lesson:** B packing is only 6.8% of GEMM time. The 128-redundancy headline number is
+misleading — pack_b_block is fast relative to microkernel compute. The remaining encoder
+gap (289 vs 151 ms for whisper.cpp) is dominated by microkernel throughput and thread
+scaling, not by packing overhead. AVX-512 microkernel would be the highest-impact next step.
 
 ---
 
@@ -537,33 +557,37 @@ whisper.cpp's GGML graph scheduler achieves 2.55x scaling from 4→16 threads.
 whisper.apr's rayon+BLIS approach achieves only 1.37x. The encoder is the bottleneck:
 whisper.cpp encoder scales 2.67x (403→151ms) while ours scales 1.51x (452→299ms).
 
-### Current status (same thread count comparison)
+### Current status (same thread count comparison, after Cycle 12)
 
 | Stage | whisper.apr@4t | whisper.cpp@4t | Ratio@4t | whisper.apr@16t | whisper.cpp@16t | Ratio@16t |
 |---|---|---|---|---|---|---|
-| Mel | 3 ms | 7 ms | **0.43x** | 4 ms | 5 ms | **0.80x** |
-| Encoder | 452 ms | 403 ms | 1.12x | 299 ms | 151 ms | 1.98x |
-| Decoder | 150 ms | 103 ms | 1.46x | 139 ms | 45 ms | 3.09x |
-| **Total** | **605 ms** | **513 ms** | **1.18x** | **441 ms** | **201 ms** | **2.19x** |
+| Mel | 4 ms | 7 ms | **0.57x** | 4 ms | 5 ms | **0.80x** |
+| Encoder | 450 ms | 403 ms | 1.12x | 289 ms | 151 ms | 1.91x |
+| Decoder | 164 ms | 103 ms | 1.59x | 148 ms | 45 ms | 3.29x |
+| **Total** | **618 ms** | **513 ms** | **1.20x** | **441 ms** | **201 ms** | **2.19x** |
 
-**At 4 threads: 1.18x — BELOW 1.3x PARITY TARGET.**
+**At 4 threads: 1.20x — BELOW 1.3x PARITY TARGET.**
 **At 16 threads: 2.19x — thread scaling is the primary remaining gap.**
 
-### Pareto analysis (updated after Cycle 11)
+### Pareto analysis (updated after Cycle 12)
 
 | Optimization | Est. savings@16t | % of remaining 240ms gap | Difficulty |
 |---|---|---|---|
-| Pre-packed FFN weights (trueno) | 20-40 ms | 8-17% | Medium |
+| ~~Pre-packed FFN weights (trueno)~~ | ~~20-40 ms~~ **actual: 10 ms** | 4% | ~~Medium~~ **DONE** |
 | AVX-512 GEMM microkernel (trueno) | 40-80 ms | 17-33% | Hard |
 | Better thread scaling (work-sharing) | 50-100 ms | 21-42% | Very Hard |
 | Batched decode (beam search) | 50-80 ms | 21-33% | Hard |
 | Model mmap loading | 600+ ms | N/A (load time) | Medium |
 
-**Key insight:** At 4 threads, we are within 1.18x parity — the core algorithm is competitive.
+**Key insight:** At 4 threads, we are within 1.20x parity — the core algorithm is competitive.
 The gap at 16 threads is a **thread scaling problem**, not an algorithm problem. whisper.cpp's
 GGML graph-level parallelism distributes work more efficiently than our per-GEMM rayon approach.
 
-**11 kaizen cycles: 2.1x → 1.18x@4t (86% of gap eliminated).**
+**Cycle 12 lesson:** B packing is only 6.8% of GEMM time — the 128-redundancy number was
+misleading. The microkernel throughput (65 GFLOP/s vs 2304 peak = 2.8% utilization in
+single-threaded profiling, ~68% per-core) is the dominant bottleneck.
+
+**12 kaizen cycles: 2.1x → 1.20x@4t (85% of gap eliminated).**
 
 ---
 
