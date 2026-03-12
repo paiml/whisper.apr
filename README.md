@@ -598,9 +598,9 @@ whisper.apr follows **Extreme TDD** methodology with comprehensive quality gates
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
-| trueno | 0.14.6 | SIMD-accelerated tensor operations |
-| aprender | 0.25.9 | .apr model format and GGUF parsing |
-| realizar | 0.6.13 | Inference primitives (attention, quantization) |
+| trueno | 0.16 | SIMD-accelerated tensor operations |
+| aprender | 0.27 | .apr model format and GGUF parsing |
+| realizar | 0.8 | Inference primitives (attention, quantization) |
 
 ### Quality Gate Configuration
 
