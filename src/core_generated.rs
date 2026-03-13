@@ -472,7 +472,7 @@ impl WhisperApr {
         let mut blis_profiler_stats: Option<trueno::blis::BlisProfiler> = None;
 
         // WAPR-PROFILE-001 Gap 5: InferenceTracer for structured Chrome Trace JSON
-        #[cfg(feature = "std")]
+        #[cfg(all(feature = "std", feature = "realizar-inference"))]
         let mut inference_tracer: Option<realizar::InferenceTracer> = if options.profile {
             let config = realizar::TraceConfig::enabled();
             let mut tracer = realizar::InferenceTracer::new(config);
@@ -507,8 +507,11 @@ impl WhisperApr {
                     // Gap 4: Enable BLIS profiling for GEMM hierarchy stats
                     crate::simd::enable_blis_profiling();
                     let (pf_minor_before, pf_major_before) = trueno::brick::get_page_faults();
+                    #[cfg(feature = "realizar-inference")]
                     let features =
                         self.encode_profiled(&mel, profiler, inference_tracer.as_mut())?;
+                    #[cfg(not(feature = "realizar-inference"))]
+                    let features = self.encode_profiled(&mel, profiler)?;
                     // Gap 4: Harvest BLIS profiler stats after encoder pass
                     blis_profiler_stats = crate::simd::take_blis_profiler();
                     let (pf_minor_after, pf_major_after) = trueno::brick::get_page_faults();
@@ -669,7 +672,10 @@ impl WhisperApr {
                 }
             }
             // WAPR-PROFILE-001 Gap 5: Generate Chrome Trace JSON from InferenceTracer
+            #[cfg(feature = "realizar-inference")]
             let trace_json = inference_tracer.as_ref().map(|t| t.to_json());
+            #[cfg(not(feature = "realizar-inference"))]
+            let trace_json: Option<String> = None;
 
             ProfilingStats {
                 total_ms: st.elapsed().as_secs_f64() * 1000.0,
@@ -955,6 +961,7 @@ impl WhisperApr {
     ///
     /// Records conv_frontend and per-block operator timing via trueno::BrickProfiler.
     /// Category breakdown available via `profiler.category_stats()` after this call.
+    #[cfg(feature = "realizar-inference")]
     pub fn encode_profiled(
         &self,
         mel: &[f32],
@@ -962,6 +969,18 @@ impl WhisperApr {
         tracer: Option<&mut realizar::InferenceTracer>,
     ) -> WhisperResult<Vec<f32>> {
         self.encoder.forward_mel_profiled(mel, profiler, tracer)
+    }
+
+    /// Encode with BrickProfiler instrumentation (WAPR-PROFILE-001 Gap 1)
+    ///
+    /// Version without InferenceTracer when realizar-inference feature is disabled.
+    #[cfg(not(feature = "realizar-inference"))]
+    pub fn encode_profiled(
+        &self,
+        mel: &[f32],
+        profiler: &mut trueno::BrickProfiler,
+    ) -> WhisperResult<Vec<f32>> {
+        self.encoder.forward_mel_profiled(mel, profiler)
     }
 
     /// Get initial tokens for decoding

@@ -267,6 +267,7 @@ impl Encoder {
     /// Records per-operator timing and CPU cycles into the trueno `BrickProfiler`
     /// via O(1) `BrickId`-indexed arrays. Category breakdown (Norm/Attention/FFN)
     /// available via `profiler.category_stats()` after this call.
+    #[cfg(feature = "realizar-inference")]
     pub fn forward_profiled(
         &self,
         features: &[f32],
@@ -317,10 +318,54 @@ impl Encoder {
         self.ln_post.forward(&x)
     }
 
+    /// Forward pass with BrickProfiler instrumentation (WAPR-PROFILE-001 Gap 1)
+    ///
+    /// Version without InferenceTracer when realizar-inference feature is disabled.
+    #[cfg(not(feature = "realizar-inference"))]
+    pub fn forward_profiled(
+        &self,
+        features: &[f32],
+        profiler: &mut trueno::BrickProfiler,
+    ) -> WhisperResult<Vec<f32>> {
+        let seq_len = features.len() / self.d_model;
+
+        if features.len() % self.d_model != 0 {
+            return Err(WhisperError::Model("input size mismatch".into()));
+        }
+        if self.max_len > 0 && seq_len > self.max_len {
+            return Err(WhisperError::Model(format!(
+                "sequence length {} exceeds max {}",
+                seq_len, self.max_len
+            )));
+        }
+
+        let mut x = features.to_vec();
+
+        if self.positional_encoding == PositionalEncoding::Sinusoidal {
+            for pos in 0..seq_len {
+                for d in 0..self.d_model {
+                    x[pos * self.d_model + d] += self.positional_embedding[pos * self.d_model + d];
+                }
+            }
+        }
+
+        for block in &self.blocks {
+            x = block.forward_profiled(&x, profiler)?;
+        }
+
+        debug_assert!(
+            x.iter().all(|v| v.is_finite()),
+            "encoder output must be finite before final layer norm"
+        );
+
+        self.ln_post.forward(&x)
+    }
+
     /// Forward from mel spectrogram with BrickProfiler (WAPR-PROFILE-001 Gap 1)
     ///
     /// Records conv frontend timing via `BrickId::Embedding` (Other category),
     /// then delegates to `forward_profiled()` for encoder blocks.
+    #[cfg(feature = "realizar-inference")]
     pub fn forward_mel_profiled(
         &self,
         mel: &[f32],
@@ -367,6 +412,45 @@ impl Encoder {
         }
 
         self.forward_profiled(&conv_output, profiler, tracer)
+    }
+
+    /// Forward from mel spectrogram with BrickProfiler (WAPR-PROFILE-001 Gap 1)
+    ///
+    /// Version without InferenceTracer when realizar-inference feature is disabled.
+    #[cfg(not(feature = "realizar-inference"))]
+    pub fn forward_mel_profiled(
+        &self,
+        mel: &[f32],
+        profiler: &mut trueno::BrickProfiler,
+    ) -> WhisperResult<Vec<f32>> {
+        if mel.len() % self.n_mels != 0 {
+            return Err(WhisperError::Model(format!(
+                "mel size {} not divisible by n_mels {}",
+                mel.len(),
+                self.n_mels
+            )));
+        }
+
+        let frontend = self.conv_frontend.as_ref().ok_or_else(|| {
+            WhisperError::Model(
+                "forward_mel requires conv frontend (not available for Moonshine)".into(),
+            )
+        })?;
+
+        // Profile conv_frontend via BrickId::Embedding (Other category)
+        let c0 = trueno::brick::cpu_cycles();
+        let timer = profiler.start_brick(trueno::BrickId::Embedding);
+        let conv_output = frontend.forward(mel)?;
+        let c1 = trueno::brick::cpu_cycles();
+        let mel_frames = (mel.len() / self.n_mels) as u64;
+        profiler.stop_brick(timer, mel_frames);
+        let stats = profiler.brick_stats_mut(trueno::BrickId::Embedding);
+        let cycles = c1.wrapping_sub(c0);
+        stats.total_cycles += cycles;
+        stats.min_cycles = stats.min_cycles.min(cycles);
+        stats.max_cycles = stats.max_cycles.max(cycles);
+
+        self.forward_profiled(&conv_output, profiler)
     }
 
     /// Get number of layers
