@@ -64,6 +64,9 @@ impl GroupNorm {
         }
 
         let channels_per_group = self.num_channels / self.num_groups;
+        if seq_len == 0 {
+            return Ok(Vec::new());
+        }
         let mut output = vec![0.0_f32; input.len()];
 
         // GroupNorm normalizes across (seq_len × channels_per_group) for each group

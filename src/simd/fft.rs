@@ -6,6 +6,9 @@ use super::vector::dot;
 #[must_use]
 pub fn hann_window(size: usize) -> Vec<f32> {
     use std::f32::consts::PI;
+    if size <= 1 {
+        return vec![1.0; size];
+    }
     let window: Vec<f32> = (0..size)
         .map(|i| {
             let x = (PI * i as f32) / (size - 1) as f32;
