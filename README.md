@@ -7,6 +7,9 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/paiml/whisper.apr/actions/workflows/ci.yml">
+    <img src="https://github.com/paiml/whisper.apr/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
   <a href="https://crates.io/crates/whisper-apr">
     <img src="https://img.shields.io/crates/v/whisper-apr.svg" alt="crates.io">
   </a>
