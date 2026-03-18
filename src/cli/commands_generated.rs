@@ -172,10 +172,9 @@ pub fn run(args: Args) -> CliResult<CommandResult> {
 }
 
 /// Resolve GPU backend availability based on feature flags and user request
-fn resolve_gpu_backend(requested: bool, _global: &Args) -> CliResult<bool> {
+fn resolve_gpu_backend(requested: bool, global: &Args) -> CliResult<bool> {
     #[cfg(feature = "realizar-gpu")]
     {
-        let global = _global;
         if requested {
             use realizar::cuda::CudaExecutor;
             if CudaExecutor::is_available() {
@@ -198,6 +197,7 @@ fn resolve_gpu_backend(requested: bool, _global: &Args) -> CliResult<bool> {
 
     #[cfg(not(feature = "realizar-gpu"))]
     {
+        let _ = global; // GH-42: global unused without realizar-gpu feature
         if requested {
             return Err(CliError::InvalidArgument(
                 "GPU requested but whisper-apr was not compiled with 'realizar-gpu' feature. \
@@ -721,18 +721,19 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
     }
 
     // Generate summary
+    // GH-42: Status messages go to stderr to avoid contaminating --format json output
     if !global.quiet {
         if args.stream {
-            println!("Generating summary (streaming)...\n");
+            eprintln!("Generating summary (streaming)...\n");
         } else {
-            println!("Generating summary...");
+            eprintln!("Generating summary...");
         }
     }
 
     let (output_ids, gen_stats) = generate_summary(&model, &tokenizer, &input_ids, &args, global)?;
 
     if args.stream && !global.quiet {
-        println!("\n");
+        eprintln!("\n");
     }
 
     // Decode and format output
@@ -813,8 +814,9 @@ fn load_summarize_model(
         return Err(CliError::FileNotFound(model_path.display().to_string()));
     }
 
+    // GH-42: Status to stderr to avoid contaminating JSON output
     if !global.quiet {
-        println!("Loading LFM2 model from {}...", model_path.display());
+        eprintln!("Loading LFM2 model from {}...", model_path.display());
     }
 
     let model_data = fs::read(model_path)?;
@@ -957,16 +959,18 @@ fn write_summary_result(
 ) -> CliResult<()> {
     if let Some(output_path) = &args.output {
         fs::write(output_path, output)?;
+        // GH-42: File path confirmation to stderr
         if !global.quiet {
-            println!("Summary written to: {}", output_path.display());
+            eprintln!("Summary written to: {}", output_path.display());
         }
     } else if !global.quiet {
         println!("\n{output}");
     }
 
+    // GH-42: Timing stats to stderr to avoid contaminating JSON output
     if !global.quiet {
         let stream_indicator = if args.stream { " (streamed)" } else { "" };
-        println!(
+        eprintln!(
             "\nCompleted in {:.2}s ({} tokens at {:.1} tokens/s{stream_indicator})",
             total_time.as_secs_f64(),
             gen_stats.tokens_generated,

@@ -18,8 +18,10 @@ use crate::WhisperApr;
 /// snapshots at every checkpoint, then serializes them to JSON.
 pub(super) fn run_probe(
     args: &AprProbeArgs,
-    _global: &super::super::args::Args,
+    global: &super::super::args::Args,
 ) -> CliResult<CommandResult> {
+    // GH-42: global flags (--verbose, --quiet, --json) not yet used in probe
+    let _ = global;
     // Load model
     let model_bytes =
         fs::read(&args.model).map_err(|e| CliError::InvalidArgument(format!("Model: {e}")))?;
@@ -93,8 +95,10 @@ pub(super) fn run_probe(
 /// L2 relative differences and flagging the first divergence point.
 pub(super) fn run_parity(
     args: &AprParityArgs,
-    _global: &super::super::args::Args,
+    global: &super::super::args::Args,
 ) -> CliResult<CommandResult> {
+    // GH-42: global flags (--verbose, --quiet, --json) not yet used in parity
+    let _ = global;
     let ours = load_probe_output(&args.ours, "Ours")?;
     let reference = load_probe_output(&args.reference, "Reference")?;
 
@@ -297,8 +301,10 @@ fn get_reference_config(name: &str) -> Option<RefConfig> {
 /// flagging mismatches in hidden_size, num_heads, activations, etc.
 pub(super) fn run_config_check(
     args: &AprConfigCheckArgs,
-    _global: &super::super::args::Args,
+    global: &super::super::args::Args,
 ) -> CliResult<CommandResult> {
+    // GH-42: global flags (--verbose, --quiet, --json) not yet used in config-check
+    let _ = global;
     // Load model
     let model_bytes =
         fs::read(&args.model).map_err(|e| CliError::InvalidArgument(format!("Model: {e}")))?;
