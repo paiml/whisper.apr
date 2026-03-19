@@ -1,0 +1,59 @@
+metadata:
+  version: "1.0.0"
+  created: "2026-03-19"
+  author: "PAIML Engineering"
+  description: "Beam search decoding for whisper speech recognition"
+  references:
+    - "Freitag & Al-Onaizan (2017) Beam Search Strategies for Neural Machine Translation"
+
+equations:
+  beam_score:
+    formula: "score(beam) = Σ log P(y_t | y_{<t}, x) / |y|^α"
+    domain: "beam ∈ Beam[], α ∈ [0,1]"
+    codomain: "score ∈ ℝ"
+    invariants:
+      - "Length normalization prevents bias toward short sequences"
+  top_k:
+    formula: "top_k(values, k) returns k largest (index, value) pairs sorted descending"
+    domain: "values ∈ ℝ^n, k ≤ n"
+    codomain: "Vec<(u32, f32)> of length k"
+    invariants:
+      - "Output sorted: values[i] ≥ values[i+1]"
+      - "All returned values ≥ min(top_k)"
+
+proof_obligations:
+  - type: ordering
+    property: "Top-k sorted descending"
+    formal: "top_k(v, k)[i].1 ≥ top_k(v, k)[i+1].1 for all i"
+    applies_to: all
+  - type: bound
+    property: "Beam count bounded"
+    formal: "len(beams) ≤ beam_width at every step"
+    applies_to: all
+  - type: invariant
+    property: "Early stopping correctness"
+    formal: "should_stop_early only when all remaining beams worse than best complete"
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-BEAM-001
+    rule: "Top-k sorting"
+    prediction: "Output is sorted descending"
+    test: "Random logit vectors, verify ordering"
+    if_fails: "Sorting bug in top_k_indices"
+  - id: FALSIFY-BEAM-002
+    rule: "Beam width"
+    prediction: "Never exceeds beam_width"
+    test: "Run decode with beam_width=3, check at each step"
+    if_fails: "Pruning not applied"
+  - id: FALSIFY-BEAM-003
+    rule: "Early stopping"
+    prediction: "Does not stop when unexplored beams could beat best"
+    test: "Construct scenario where stopping is premature"
+    if_fails: "should_stop_early threshold wrong"
+
+kani_harnesses:
+  - id: beam-kani-001
+    obligation: "Top-k sorted descending"
+    bound: 8
+    strategy: bounded_int

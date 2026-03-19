@@ -1,0 +1,71 @@
+metadata:
+  version: "1.0.0"
+  created: "2026-03-19"
+  author: "PAIML Engineering"
+  description: "Softmax and log-softmax for whisper beam search and attention"
+  references:
+    - "Bridle (1990) Training Stochastic Model Recognition Algorithms as Networks"
+
+equations:
+  softmax:
+    formula: "σ(x)_i = exp(x_i - max(x)) / Σ_j exp(x_j - max(x))"
+    domain: "x ∈ ℝ^n, n ≥ 1"
+    codomain: "σ(x) ∈ (0,1)^n"
+    invariants:
+      - "Σ σ(x)_i = 1.0 (normalization)"
+      - "σ(x)_i > 0 for all i (strict positivity)"
+  log_softmax:
+    formula: "log_σ(x)_i = x_i - max(x) - log(Σ_j exp(x_j - max(x)))"
+    domain: "x ∈ ℝ^n"
+    codomain: "log_σ(x) ∈ (-∞, 0)^n"
+    invariants:
+      - "exp(log_σ(x)) sums to 1.0"
+      - "log_σ(x)_i ≤ 0 for all i"
+
+proof_obligations:
+  - type: invariant
+    property: "Softmax normalization"
+    formal: "|Σ softmax(x)_i - 1.0| < 1e-6"
+    tolerance: 1.0e-6
+    applies_to: all
+  - type: bound
+    property: "Softmax strict positivity"
+    formal: "softmax(x)_i > 0 for all i"
+    applies_to: all
+  - type: bound
+    property: "Log-softmax non-positive"
+    formal: "log_softmax(x)_i ≤ 0 for all i"
+    applies_to: all
+  - type: equivalence
+    property: "SIMD matches scalar"
+    formal: "|softmax_simd(x) - softmax_scalar(x)| < 8 ULP"
+    tolerance: 8.0
+    applies_to: simd
+
+falsification_tests:
+  - id: FALSIFY-SM-001
+    rule: "Normalization"
+    prediction: "softmax output sums to 1.0 within epsilon"
+    test: "Random f32 vectors of length 1..1024"
+    if_fails: "Numeric instability in exp subtraction"
+  - id: FALSIFY-SM-002
+    rule: "Positivity"
+    prediction: "All outputs > 0 even with extreme negative inputs"
+    test: "Vectors with values < -100.0"
+    if_fails: "Underflow to zero"
+  - id: FALSIFY-SM-003
+    rule: "Log-softmax non-positive"
+    prediction: "All log_softmax outputs ≤ 0"
+    test: "Random vectors"
+    if_fails: "Log computation overflow"
+  - id: FALSIFY-SM-004
+    rule: "SIMD parity"
+    prediction: "softmax_online_inplace matches softmax within 8 ULP"
+    test: "Compare on same input"
+    if_fails: "FMA ordering divergence"
+
+kani_harnesses:
+  - id: softmax-kani-001
+    obligation: "Softmax normalization"
+    bound: 4
+    strategy: stub_float

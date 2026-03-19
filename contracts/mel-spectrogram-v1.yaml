@@ -1,0 +1,70 @@
+metadata:
+  version: "1.0.0"
+  created: "2026-03-19"
+  author: "PAIML Engineering"
+  description: "Mel spectrogram computation for whisper audio preprocessing"
+  references:
+    - "Stevens, Volkmann, Newman (1937) A Scale for the Measurement of Psychological Magnitude Pitch"
+    - "Radford et al. (2023) Robust Speech Recognition via Large-Scale Weak Supervision"
+
+equations:
+  hann_window:
+    formula: "w(n) = 0.5 * (1 - cos(2π n / (N-1)))"
+    domain: "n ∈ [0, N-1], N ≥ 1"
+    codomain: "w ∈ [0, 1]^N"
+    invariants:
+      - "w(0) = 0, w(N/2) = 1 (for even N)"
+      - "w(n) = w(N-1-n) (symmetry)"
+  mel_filterbank:
+    formula: "mel(f) = 2595 * log10(1 + f/700)"
+    domain: "f ∈ [0, sample_rate/2]"
+    codomain: "mel ∈ [0, ∞)"
+    invariants:
+      - "Monotonically increasing"
+      - "mel(0) = 0"
+
+proof_obligations:
+  - type: bound
+    property: "Hann window in [0,1]"
+    formal: "0 ≤ hann_window(n) ≤ 1 for all n"
+    applies_to: all
+  - type: symmetry
+    property: "Hann window symmetric"
+    formal: "hann_window(n) = hann_window(N-1-n)"
+    applies_to: all
+  - type: monotonicity
+    property: "Mel scale monotonic"
+    formal: "f1 < f2 implies mel(f1) < mel(f2)"
+    applies_to: all
+  - type: invariant
+    property: "Mel filterbank triangular"
+    formal: "Each filter has exactly one peak and tapers linearly"
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-MEL-001
+    rule: "Hann bounds"
+    prediction: "All values in [0,1]"
+    test: "Generate for sizes 1..8192"
+    if_fails: "Cosine computation error"
+  - id: FALSIFY-MEL-002
+    rule: "Hann symmetry"
+    prediction: "w[i] == w[N-1-i] within epsilon"
+    test: "Check all indices for sizes 64, 400, 1024"
+    if_fails: "Off-by-one in index"
+  - id: FALSIFY-MEL-003
+    rule: "Mel monotonic"
+    prediction: "Sorted frequencies stay sorted after mel transform"
+    test: "Linearly spaced frequencies"
+    if_fails: "Log computation error"
+  - id: FALSIFY-MEL-004
+    rule: "Filterbank triangular"
+    prediction: "Each filter row has single peak"
+    test: "Check n_mels=80 filterbank"
+    if_fails: "Filter overlap computation wrong"
+
+kani_harnesses:
+  - id: mel-kani-001
+    obligation: "Hann window in [0,1]"
+    bound: 16
+    strategy: bounded_int

@@ -1,0 +1,43 @@
+metadata:
+  version: "1.0.0"
+  created: "2026-03-19"
+  author: "PAIML Engineering"
+  description: "Weight quantization and dequantization for whisper models"
+  references:
+    - "Dettmers et al. (2022) LLM.int8(): 8-bit Matrix Multiplication"
+
+equations:
+  dequantize:
+    formula: "x_f32 = (x_quant - zero_point) * scale"
+    domain: "x_quant ∈ Z, scale ∈ ℝ+, zero_point ∈ Z"
+    codomain: "x_f32 ∈ ℝ"
+    invariants:
+      - "Monotonically increasing with x_quant for fixed scale/zp"
+
+proof_obligations:
+  - type: monotonicity
+    property: "Dequantize monotonic"
+    formal: "q1 < q2 implies dequantize(q1) < dequantize(q2) for fixed scale/zp"
+    applies_to: all
+  - type: bound
+    property: "Dequantized values bounded"
+    formal: "|dequantize(q)| ≤ max_quant_val * scale"
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-QUANT-001
+    rule: "Monotonicity"
+    prediction: "Sorted quantized values stay sorted after dequantize"
+    test: "Sequential quant values"
+    if_fails: "Scale/zero_point interaction error"
+  - id: FALSIFY-QUANT-002
+    rule: "Bounded output"
+    prediction: "No NaN or Inf in dequantized output"
+    test: "All valid quant values for Q2K, Q4K, Q6K"
+    if_fails: "Scale overflow"
+
+kani_harnesses:
+  - id: quant-kani-001
+    obligation: "Dequantize monotonic"
+    bound: 8
+    strategy: bounded_int
