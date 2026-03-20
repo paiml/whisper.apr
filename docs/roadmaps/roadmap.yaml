@@ -1777,3 +1777,20 @@ roadmap:
   - threading
   - rayon
   notes: null
+- id: PMAT-033
+  github_issue: null
+  item_type: task
+  title: Fix nightly CI path dependency failure
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-03-10T12:56:04Z
+  updated: 2026-03-10T12:56:07.610965174+00:00
+  spec: null
+  acceptance_criteria:
+  - Patch path deps in nightly workflow for standalone CI build
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
