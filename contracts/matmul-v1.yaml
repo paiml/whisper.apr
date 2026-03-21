@@ -1,0 +1,95 @@
+metadata:
+  version: "1.0.0"
+  author: "Sovereign AI Stack"
+  description: "Matrix multiplication contract for whisper attention and linear projections"
+  crate: "whisper-apr"
+  references:
+    - "Goto & Van De Geijn (2008) Anatomy of High-Performance Matrix Multiplication"
+    - "Vaswani et al. (2017) Attention Is All You Need"
+
+equations:
+  matmul_definition:
+    formula: "C[i,j] = Sum_{k=0}^{K-1} A[i,k] * B[k,j]"
+    domain: "A in R^{M x K}, B in R^{K x N}, C in R^{M x N}"
+    invariants:
+      - "Inner dimensions must match: A.cols == B.rows"
+      - "Output shape is (A.rows, B.cols)"
+  attention_qkv:
+    formula: "Attn(Q, K, V) = softmax(Q * K^T / sqrt(d_k)) * V"
+    domain: "Q in R^{seq x d_k}, K in R^{seq x d_k}, V in R^{seq x d_v}"
+    invariants:
+      - "Q*K^T produces (seq x seq) attention matrix"
+      - "Attention weights in (0, 1) and sum to 1 per row"
+      - "Output shape is (seq x d_v)"
+  linear_projection:
+    formula: "y = x * W^T + b"
+    domain: "x in R^{batch x d_in}, W in R^{d_out x d_in}, b in R^{d_out}"
+    invariants:
+      - "Output shape is (batch x d_out)"
+      - "Bias broadcast over batch dimension"
+
+proof_obligations:
+  - type: invariant
+    property: "Dimension compatibility"
+    formal: "A.cols != B.rows implies matmul(A, B) returns Err"
+    applies_to: all
+  - type: invariant
+    property: "Output shape correctness"
+    formal: "matmul(A, B).shape == (A.rows, B.cols)"
+    applies_to: all
+  - type: equivalence
+    property: "SIMD matches scalar"
+    formal: "|matmul_simd(A, B) - matmul_scalar(A, B)| < epsilon * K"
+    tolerance: 1.0e-5
+    applies_to: simd
+  - type: bound
+    property: "No NaN in matmul output"
+    formal: "forall x in matmul(A, B): !x.is_nan()"
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-WMM-001
+    rule: "Dimension mismatch rejected"
+    test: "test_matmul_dimension_mismatch"
+    prediction: "verified"
+    if_fails: "Matmul accepts incompatible dimensions"
+  - id: FALSIFY-WMM-002
+    rule: "Output shape correct"
+    test: "test_matmul_output_shape"
+    prediction: "verified"
+    if_fails: "Output has wrong dimensions"
+  - id: FALSIFY-WMM-003
+    rule: "SIMD parity"
+    test: "test_matmul_simd_scalar_parity"
+    prediction: "verified"
+    if_fails: "SIMD diverges from scalar reference"
+  - id: FALSIFY-WMM-004
+    rule: "No NaN"
+    test: "test_matmul_no_nan"
+    prediction: "verified"
+    if_fails: "NaN produced in matrix multiplication"
+
+kani_harnesses:
+  - id: KANI-WMM-001
+    obligation: PO-WMM-001
+    property: "Dimension check"
+    bound: 8
+    strategy: bounded_int
+    harness: verify_matmul_dimension_check
+  - id: KANI-WMM-002
+    obligation: PO-WMM-002
+    property: "Output shape"
+    bound: 8
+    strategy: bounded_int
+    harness: verify_matmul_output_shape
+
+qa_gate:
+  id: QA-WMATMUL
+  name: "matmul contract"
+  min_coverage: 0.90
+  max_complexity: 20
+  required_tests:
+    - test_matmul_dimension_mismatch
+    - test_matmul_output_shape
+    - test_matmul_simd_scalar_parity
+    - test_matmul_no_nan

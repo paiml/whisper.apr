@@ -1,0 +1,95 @@
+metadata:
+  version: "1.0.0"
+  author: "Sovereign AI Stack"
+  description: "Batch inference contract for whisper parallel audio transcription"
+  crate: "whisper-apr"
+  references:
+    - "Radford et al. (2023) Robust Speech Recognition via Large-Scale Weak Supervision"
+    - "Yu et al. (2023) Efficient Batched Inference for Transformer-Based Speech Models"
+
+equations:
+  batch_transcribe:
+    formula: "batch_transcribe(audios) = [transcribe(a_i) for a_i in audios]"
+    domain: "audios in Vec<Audio>, |audios| >= 1"
+    invariants:
+      - "Output count equals input count"
+      - "Each transcription corresponds to its input audio"
+      - "Order preserved: output[i] corresponds to input[i]"
+  batch_mel:
+    formula: "batch_mel(audios) = [mel_spectrogram(a_i) for a_i in audios]"
+    domain: "audios in Vec<Audio>"
+    invariants:
+      - "All mel spectrograms have same n_mels dimension"
+      - "Time dimension proportional to audio duration"
+  batch_padding:
+    formula: "pad(batch, max_len) = [pad_right(x_i, max_len) for x_i in batch]"
+    domain: "batch in Vec<Tensor>, max_len = max(x_i.len())"
+    invariants:
+      - "All padded sequences have equal length"
+      - "Original data preserved in non-padded positions"
+      - "Padding positions contain zeros"
+
+proof_obligations:
+  - type: invariant
+    property: "Batch output count"
+    formal: "|batch_transcribe(audios)| == |audios|"
+    applies_to: all
+  - type: invariant
+    property: "Order preservation"
+    formal: "batch_transcribe(audios)[i] == transcribe(audios[i])"
+    applies_to: all
+  - type: invariant
+    property: "Uniform padding"
+    formal: "forall x in padded_batch: x.len() == max_len"
+    applies_to: all
+  - type: invariant
+    property: "Padding preserves data"
+    formal: "padded[i][0..original_len] == original[i]"
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-BINF-001
+    rule: "Output count matches input"
+    test: "test_batch_transcribe_count"
+    prediction: "verified"
+    if_fails: "Batch drops or duplicates transcriptions"
+  - id: FALSIFY-BINF-002
+    rule: "Order preserved"
+    test: "test_batch_order_preservation"
+    prediction: "verified"
+    if_fails: "Batch reorders results"
+  - id: FALSIFY-BINF-003
+    rule: "Uniform padding"
+    test: "test_batch_padding_uniform"
+    prediction: "verified"
+    if_fails: "Padded sequences have different lengths"
+  - id: FALSIFY-BINF-004
+    rule: "Padding preserves data"
+    test: "test_batch_padding_preserves_data"
+    prediction: "verified"
+    if_fails: "Padding corrupts original data"
+
+kani_harnesses:
+  - id: KANI-BINF-001
+    obligation: PO-BINF-001
+    property: "Batch count"
+    bound: 8
+    strategy: bounded_int
+    harness: verify_batch_count
+  - id: KANI-BINF-002
+    obligation: PO-BINF-003
+    property: "Uniform padding"
+    bound: 8
+    strategy: bounded_int
+    harness: verify_uniform_padding
+
+qa_gate:
+  id: QA-BATCHINF
+  name: "batch inference contract"
+  min_coverage: 0.90
+  max_complexity: 20
+  required_tests:
+    - test_batch_transcribe_count
+    - test_batch_order_preservation
+    - test_batch_padding_uniform
+    - test_batch_padding_preserves_data
