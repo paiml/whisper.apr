@@ -683,6 +683,10 @@ pmat quality-gate  # Must pass
 
 ---
 
+## See Also
+
+- [Cookbook](https://github.com/paiml/sovereign-ai-cookbook)
+
 ## License
 
 Licensed under the MIT License. See [LICENSE](LICENSE) for details.
