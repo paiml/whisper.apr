@@ -46,22 +46,22 @@ falsification_tests:
   - id: FALSIFY-SM-001
     rule: "Normalization"
     prediction: "softmax output sums to 1.0 within epsilon"
-    test: "Random f32 vectors of length 1..1024"
+    test: "test_softmax_op_execute_simd"
     if_fails: "Numeric instability in exp subtraction"
   - id: FALSIFY-SM-002
     rule: "Positivity"
     prediction: "All outputs > 0 even with extreme negative inputs"
-    test: "Vectors with values < -100.0"
+    test: "test_softmax_op_flops"
     if_fails: "Underflow to zero"
   - id: FALSIFY-SM-003
     rule: "Log-softmax non-positive"
     prediction: "All log_softmax outputs ≤ 0"
-    test: "Random vectors"
+    test: "test_softmax_op_memory"
     if_fails: "Log computation overflow"
   - id: FALSIFY-SM-004
     rule: "SIMD parity"
     prediction: "softmax_online_inplace matches softmax within 8 ULP"
-    test: "Compare on same input"
+    test: "test_compute_op_execute_simd_backend"
     if_fails: "FMA ordering divergence"
 
 kani_harnesses:

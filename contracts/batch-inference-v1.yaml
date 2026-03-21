@@ -50,22 +50,22 @@ proof_obligations:
 falsification_tests:
   - id: FALSIFY-BINF-001
     rule: "Output count matches input"
-    test: "test_batch_transcribe_count"
+    test: "test_backend_selector_select_batch"
     prediction: "verified"
     if_fails: "Batch drops or duplicates transcriptions"
   - id: FALSIFY-BINF-002
     rule: "Order preserved"
-    test: "test_batch_order_preservation"
+    test: "test_selector_batch_with_varying_sizes"
     prediction: "verified"
     if_fails: "Batch reorders results"
   - id: FALSIFY-BINF-003
     rule: "Uniform padding"
-    test: "test_batch_padding_uniform"
+    test: "test_backend_selector_select_batch_empty"
     prediction: "verified"
     if_fails: "Padded sequences have different lengths"
   - id: FALSIFY-BINF-004
     rule: "Padding preserves data"
-    test: "test_batch_padding_preserves_data"
+    test: "test_backend_selector_select_batch_large"
     prediction: "verified"
     if_fails: "Padding corrupts original data"
 
@@ -89,7 +89,7 @@ qa_gate:
   min_coverage: 0.90
   max_complexity: 20
   required_tests:
-    - test_batch_transcribe_count
-    - test_batch_order_preservation
-    - test_batch_padding_uniform
-    - test_batch_padding_preserves_data
+    - test_backend_selector_select_batch
+    - test_selector_batch_with_varying_sizes
+    - test_backend_selector_select_batch_empty
+    - test_backend_selector_select_batch_large

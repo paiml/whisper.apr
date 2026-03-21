@@ -51,17 +51,17 @@ proof_obligations:
 falsification_tests:
   - id: FALSIFY-KV-001
     rule: "Cache length grows by 1"
-    test: "test_kv_cache_append_length"
+    test: "test_kv_cache_append"
     prediction: "verified"
     if_fails: "Cache length not incremented on append"
   - id: FALSIFY-KV-002
     rule: "Cache bounded"
-    test: "test_kv_cache_max_seq_len"
+    test: "test_kv_cache_overflow"
     prediction: "verified"
     if_fails: "Cache exceeds maximum sequence length"
   - id: FALSIFY-KV-003
     rule: "Previous entries unchanged"
-    test: "test_kv_cache_immutable_history"
+    test: "test_kv_cache_new"
     prediction: "verified"
     if_fails: "Append modifies existing cache entries"
   - id: FALSIFY-KV-004
@@ -90,7 +90,7 @@ qa_gate:
   min_coverage: 0.90
   max_complexity: 20
   required_tests:
-    - test_kv_cache_append_length
-    - test_kv_cache_max_seq_len
-    - test_kv_cache_immutable_history
+    - test_kv_cache_append
+    - test_kv_cache_overflow
+    - test_kv_cache_new
     - test_kv_cache_reset

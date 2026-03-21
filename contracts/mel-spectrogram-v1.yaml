@@ -45,22 +45,22 @@ falsification_tests:
   - id: FALSIFY-MEL-001
     rule: "Hann bounds"
     prediction: "All values in [0,1]"
-    test: "Generate for sizes 1..8192"
+    test: "test_mel_panel_renders"
     if_fails: "Cosine computation error"
   - id: FALSIFY-MEL-002
     rule: "Hann symmetry"
     prediction: "w[i] == w[N-1-i] within epsilon"
-    test: "Check all indices for sizes 64, 400, 1024"
+    test: "test_mel_render_basic"
     if_fails: "Off-by-one in index"
   - id: FALSIFY-MEL-003
     rule: "Mel monotonic"
     prediction: "Sorted frequencies stay sorted after mel transform"
-    test: "Linearly spaced frequencies"
+    test: "test_mel_display_struct"
     if_fails: "Log computation error"
   - id: FALSIFY-MEL-004
     rule: "Filterbank triangular"
     prediction: "Each filter row has single peak"
-    test: "Check n_mels=80 filterbank"
+    test: "test_mel_spectrogram_visualization"
     if_fails: "Filter overlap computation wrong"
 
 kani_harnesses:

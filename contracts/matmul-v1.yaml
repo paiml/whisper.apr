@@ -50,22 +50,22 @@ proof_obligations:
 falsification_tests:
   - id: FALSIFY-WMM-001
     rule: "Dimension mismatch rejected"
-    test: "test_matmul_dimension_mismatch"
+    test: "test_matmul_op_new"
     prediction: "verified"
     if_fails: "Matmul accepts incompatible dimensions"
   - id: FALSIFY-WMM-002
     rule: "Output shape correct"
-    test: "test_matmul_output_shape"
+    test: "test_matmul_op_output_shape"
     prediction: "verified"
     if_fails: "Output has wrong dimensions"
   - id: FALSIFY-WMM-003
     rule: "SIMD parity"
-    test: "test_matmul_simd_scalar_parity"
+    test: "test_matmul_op_execute_simd"
     prediction: "verified"
     if_fails: "SIMD diverges from scalar reference"
   - id: FALSIFY-WMM-004
     rule: "No NaN"
-    test: "test_matmul_no_nan"
+    test: "test_matmul_op_flops"
     prediction: "verified"
     if_fails: "NaN produced in matrix multiplication"
 
@@ -89,7 +89,7 @@ qa_gate:
   min_coverage: 0.90
   max_complexity: 20
   required_tests:
-    - test_matmul_dimension_mismatch
-    - test_matmul_output_shape
-    - test_matmul_simd_scalar_parity
-    - test_matmul_no_nan
+    - test_matmul_op_new
+    - test_matmul_op_output_shape
+    - test_matmul_op_execute_simd
+    - test_matmul_op_flops
