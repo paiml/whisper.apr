@@ -685,7 +685,7 @@ pmat quality-gate  # Must pass
 
 ## See Also
 
-- [Cookbook](https://github.com/paiml/sovereign-ai-cookbook)
+- [Cookbook](examples/) — 104 runnable examples
 
 ## License
 
