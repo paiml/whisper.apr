@@ -210,6 +210,7 @@ pub struct MatMulOp {
 impl MatMulOp {
     /// Create new matmul operation
     #[must_use]
+    #[provable_contracts_macros::contract("whisper-matmul-v1", equation = "new")]
     pub fn new(m: usize, k: usize, n: usize) -> Self {
         Self {
             m,

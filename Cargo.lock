@@ -269,7 +269,7 @@ dependencies = [
  "getrandom 0.2.17",
  "memmap2",
  "minijinja",
- "provable-contracts-macros",
+ "provable-contracts-macros 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.9.2",
  "rand_chacha 0.9.0",
  "rayon",
@@ -298,7 +298,7 @@ dependencies = [
  "lz4_flex",
  "memmap2",
  "minijinja",
- "provable-contracts-macros",
+ "provable-contracts-macros 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.9.2",
  "rand_chacha 0.9.0",
  "rayon",
@@ -4643,6 +4643,15 @@ dependencies = [
 [[package]]
 name = "provable-contracts-macros"
 version = "0.1.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "provable-contracts-macros"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c383d865124fe9fda96af4a04d0c2641bcb93e16eb5e13f7c665f98c15333447"
 dependencies = [
@@ -4972,6 +4981,7 @@ dependencies = [
  "num-traits",
  "once_cell",
  "presentar-terminal",
+ "provable-contracts-macros 0.1.1",
  "rand 0.8.5",
  "rayon",
  "renacer-core",
@@ -6648,6 +6658,7 @@ dependencies = [
  "hostname",
  "num_cpus",
  "pollster",
+ "provable-contracts-macros 0.1.1",
  "rayon",
  "serde",
  "serde_json",
@@ -7631,6 +7642,7 @@ dependencies = [
  "openssl",
  "pollster",
  "proptest",
+ "provable-contracts-macros 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.8.5",
  "ratatui 0.30.0",
  "rayon",

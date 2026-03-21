@@ -188,6 +188,7 @@ symphonia = { version = "0.5", optional = true, default-features = false, featur
     "wav",      # WAV container (fallback)
     "pcm",      # PCM codec
 ] }
+provable-contracts-macros = "0.1"
 
 [dev-dependencies]
 proptest = "1"
