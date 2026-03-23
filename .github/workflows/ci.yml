@@ -48,7 +48,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install cargo-llvm-cov --locked || true
       - run: cargo llvm-cov test --lib --lcov --output-path lcov.info
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@v5
         with:
           files: lcov.info
         continue-on-error: true
