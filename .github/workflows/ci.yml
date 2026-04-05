@@ -13,6 +13,7 @@ jobs:
   ci:
     uses: paiml/.github/.github/workflows/sovereign-ci.yml@main
     with:
-      repo: ${{ github.event.repository.name }}
+      repo: whisper-apr
+      extra_pkgs: make
     secrets: inherit
 
