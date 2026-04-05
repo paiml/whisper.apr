@@ -79,26 +79,6 @@ dependencies = [
 [[package]]
 name = "alimentar"
 version = "0.2.8"
-dependencies = [
- "arrow 57.3.0",
- "arrow-csv",
- "arrow-json",
- "bytes",
- "lz4_flex",
- "parquet 57.3.0",
- "rand 0.8.5",
- "rmp-serde",
- "serde",
- "serde_json",
- "serde_yaml",
- "thiserror 2.0.18",
- "unicode-width 0.2.0",
- "zstd",
-]
-
-[[package]]
-name = "alimentar"
-version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab619ace811f204d8147d11ef71907a44ef98ba8d4ada2d3b1ea5306d5fd7a30"
 dependencies = [
@@ -220,9 +200,11 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 [[package]]
 name = "apr-cli"
 version = "0.4.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23f44a0f612c4cde662b12c38e9b9aded4d55439afa74c43edbdc6ae453c4c7e"
 dependencies = [
- "alimentar 0.2.8",
- "aprender 0.27.5",
+ "alimentar",
+ "aprender 0.27.7",
  "axum",
  "batuta-common",
  "blake3",
@@ -250,7 +232,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "trueno 0.16.3",
+ "trueno 0.16.5",
  "trueno-explain",
  "trueno-viz 0.2.3",
  "trueno-zram-core",
@@ -269,7 +251,7 @@ dependencies = [
  "getrandom 0.2.17",
  "memmap2",
  "minijinja",
- "provable-contracts-macros 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "provable-contracts-macros 0.1.1",
  "rand 0.9.2",
  "rand_chacha 0.9.0",
  "rayon",
@@ -278,12 +260,14 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "trueno 0.15.0",
- "trueno-quant 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "trueno-quant",
 ]
 
 [[package]]
 name = "aprender"
-version = "0.27.5"
+version = "0.27.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b16383e29457025e017d95a815cc237fd9533fea616abfc3885cf63976b09422"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -298,7 +282,7 @@ dependencies = [
  "lz4_flex",
  "memmap2",
  "minijinja",
- "provable-contracts-macros 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "provable-contracts-macros 0.2.1",
  "rand 0.9.2",
  "rand_chacha 0.9.0",
  "rayon",
@@ -311,8 +295,8 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
- "trueno 0.16.3",
- "trueno-quant 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "trueno 0.17.1",
+ "trueno-quant",
  "ureq",
  "x25519-dalek",
  "zstd",
@@ -2032,8 +2016,8 @@ version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "007bef368b1dbf126e35b4dfcd8d7cd2f1c76b7ca6ae5ae09cae74117ca6394c"
 dependencies = [
- "alimentar 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "aprender 0.27.5",
+ "alimentar",
+ "aprender 0.27.7",
  "arrow 57.3.0",
  "bytemuck",
  "chrono",
@@ -2063,7 +2047,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "toml",
- "trueno 0.16.3",
+ "trueno 0.16.5",
  "trueno-gpu",
  "trueno-viz 0.2.3",
  "validator",
@@ -3264,6 +3248,8 @@ dependencies = [
 [[package]]
 name = "jugar-probar"
 version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5a299150747f498a5970f057f1da1f56fbc99a80dca81ef797a9cb014eecce9"
 dependencies = [
  "base64",
  "bincode",
@@ -4643,6 +4629,8 @@ dependencies = [
 [[package]]
 name = "provable-contracts-macros"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c383d865124fe9fda96af4a04d0c2641bcb93e16eb5e13f7c665f98c15333447"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4651,9 +4639,9 @@ dependencies = [
 
 [[package]]
 name = "provable-contracts-macros"
-version = "0.1.1"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c383d865124fe9fda96af4a04d0c2641bcb93e16eb5e13f7c665f98c15333447"
+checksum = "8a79b3496cd98fb9767f6ee845a4fda80f3b4a18de4a1477d8a59d527f2e98ac"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4964,10 +4952,12 @@ dependencies = [
 
 [[package]]
 name = "realizar"
-version = "0.8.3"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e05fc171584cbf0114aafe2c28cf7d645d0d9ebe1abe06f94685d693ee368b17"
 dependencies = [
  "anyhow",
- "aprender 0.27.5",
+ "aprender 0.27.7",
  "arc-swap",
  "async-stream",
  "axum",
@@ -4981,7 +4971,7 @@ dependencies = [
  "num-traits",
  "once_cell",
  "presentar-terminal",
- "provable-contracts-macros 0.1.1",
+ "provable-contracts-macros 0.2.1",
  "rand 0.8.5",
  "rayon",
  "renacer-core",
@@ -4994,9 +4984,9 @@ dependencies = [
  "tokio-stream",
  "tower 0.4.13",
  "tracing",
- "trueno 0.16.3",
+ "trueno 0.17.1",
  "trueno-gpu",
- "trueno-quant 0.1.0",
+ "trueno-quant",
  "uuid",
 ]
 
@@ -5121,7 +5111,7 @@ checksum = "4c121ccfd1d4ffdc05aaf2622f0f56d0e4fbf3f6582866979be006e7fda7f6ee"
 dependencies = [
  "addr2line",
  "anyhow",
- "aprender 0.27.5",
+ "aprender 0.27.7",
  "backtrace",
  "clap",
  "crossbeam",
@@ -5146,7 +5136,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
- "trueno 0.16.3",
+ "trueno 0.16.5",
  "trueno-db",
  "trueno-graph",
  "trueno-viz 0.2.3",
@@ -5155,6 +5145,8 @@ dependencies = [
 [[package]]
 name = "renacer-core"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5bbbc0539555c0adf66124da2f1aeae7fb44d920ba753eb0d95b4aeb25ceabfd"
 dependencies = [
  "hex",
  "serde",
@@ -6644,12 +6636,14 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "toml",
- "trueno-quant 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "trueno-quant",
 ]
 
 [[package]]
 name = "trueno"
-version = "0.16.3"
+version = "0.16.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aef9a7f78a2c56f69a831812f4b82fae90ed5c1451301501a7f1b7af90a789f7"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -6658,14 +6652,39 @@ dependencies = [
  "hostname",
  "num_cpus",
  "pollster",
- "provable-contracts-macros 0.1.1",
+ "provable-contracts-macros 0.2.1",
  "rayon",
  "serde",
  "serde_json",
  "serde_yaml_ng",
  "thiserror 2.0.18",
  "toml",
- "trueno-quant 0.1.0",
+ "trueno-quant",
+ "wgpu 27.0.1",
+]
+
+[[package]]
+name = "trueno"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbd3052123c1e1a1a40c84d316abe3bdacdd55282addd77c3cd7267a5498a193"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "chrono",
+ "futures-intrusive",
+ "hostname",
+ "num_cpus",
+ "pollster",
+ "provable-contracts-macros 0.2.1",
+ "rayon",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "thiserror 2.0.18",
+ "toml",
+ "trueno-gemm-codegen",
+ "trueno-quant",
  "wgpu 27.0.1",
 ]
 
@@ -6705,6 +6724,8 @@ dependencies = [
 [[package]]
 name = "trueno-explain"
 version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d342a4c0eb322f9b339255de442e1b09f5391b2c5e1ba7f4e49e2353aee2702d"
 dependencies = [
  "clap",
  "colored",
@@ -6718,8 +6739,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "trueno-gemm-codegen"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fdd672ad51d0a82906f91f38a6d37e8c671cae2eb9ae419f93e720d3f1bccda"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "trueno-gpu"
-version = "0.4.35"
+version = "0.4.36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a7a4f3a053376a54fa47fc4c745c177407a9b04afecbd14aa4aa3e8e5b70469"
 dependencies = [
  "batuta-common",
  "libloading",
@@ -6740,13 +6774,6 @@ dependencies = [
  "tokio",
  "trueno 0.15.0",
  "trueno-db",
-]
-
-[[package]]
-name = "trueno-quant"
-version = "0.1.0"
-dependencies = [
- "half",
 ]
 
 [[package]]
@@ -6788,7 +6815,7 @@ dependencies = [
  "serde",
  "serde_yaml_ng",
  "thiserror 2.0.18",
- "trueno 0.16.3",
+ "trueno 0.16.5",
 ]
 
 [[package]]
@@ -7620,7 +7647,7 @@ version = "0.2.7"
 dependencies = [
  "aes-gcm",
  "apr-cli",
- "aprender 0.27.5",
+ "aprender 0.27.7",
  "argon2",
  "bytemuck",
  "clap",
@@ -7642,7 +7669,7 @@ dependencies = [
  "openssl",
  "pollster",
  "proptest",
- "provable-contracts-macros 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "provable-contracts-macros 0.1.1",
  "rand 0.8.5",
  "ratatui 0.30.0",
  "rayon",
@@ -7657,7 +7684,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "trueno 0.16.3",
+ "trueno 0.17.1",
  "trueno-gpu",
  "wasm-bindgen",
  "wasm-bindgen-rayon",

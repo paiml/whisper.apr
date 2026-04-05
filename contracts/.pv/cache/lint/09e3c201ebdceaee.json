@@ -1,0 +1,1 @@
+{"content_hash":"09e3c201ebdceaee","findings":[{"rule_id":"PV-VAL-001","severity":"warning","message":"SCHEMA-013: No qa_gate defined — contract should define a certeza quality gate","file":"contracts/mel-spectrogram-v1.yaml","line":null,"contract_stem":"mel-spectrogram-v1","suppressed":false}]}
