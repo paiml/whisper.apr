@@ -108,7 +108,7 @@ trueno-gpu = { version = "0.4.17", optional = true }
 aprender = { version = "0.27", default-features = false, features = ["audio"] }
 
 # APR CLI (proxied commands: pull, list)
-apr-cli = { version = "0.4.11", optional = true }
+apr-cli = { version = "0.30", optional = true }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
