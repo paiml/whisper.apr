@@ -513,7 +513,7 @@ fn test_decode_utf8_invalid() {
 
     let result = vocab.decode(&[0]);
     // Should fail gracefully (return None or replacement char)
-    assert!(result.is_none() || result.as_ref().map_or(false, |s| s.contains('\u{FFFD}')));
+    assert!(result.is_none() || result.as_ref().is_some_and(|s| s.contains('\u{FFFD}')));
 }
 
 // =========================================================================

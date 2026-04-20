@@ -156,7 +156,7 @@ fn test_extract_segments_basic() {
 
     let decode = |ts: &[u32]| -> Option<String> {
         // Simple mock decoder
-        if ts == &[104, 105] {
+        if ts == [104, 105] {
             Some("hi".to_string())
         } else {
             Some(ts.iter().map(|t| format!("{t}")).collect())
