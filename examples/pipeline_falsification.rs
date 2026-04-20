@@ -259,8 +259,7 @@ fn steps_decoder(encoded: &[f32]) -> Result<bool, Box<dyn std::error::Error>> {
             .iter()
             .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(i, &v)| (i as u32, v))
-            .unwrap_or((0, 0.0));
+            .map_or((0, 0.0), |(i, &v)| (i as u32, v));
 
         println!(
             "    Step {step:2}: token {tok:5} ({}) logit={logit:.4}",

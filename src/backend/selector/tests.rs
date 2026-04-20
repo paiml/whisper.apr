@@ -1220,7 +1220,7 @@ fn test_selector_config_chained_builders_all_fields() {
 fn test_selection_strategy_clone_and_copy() {
     let s = SelectionStrategy::PreferGpu;
     let s2 = s; // Copy
-    let s3 = s.clone(); // Clone
+    let s3 = s; // Clone
     assert_eq!(s, s2);
     assert_eq!(s, s3);
 }

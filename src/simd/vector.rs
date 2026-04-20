@@ -924,7 +924,7 @@ mod tests {
     fn pv_softmax_online_matches_standard() {
         for len in [1, 2, 6, 64, 384, 448, 1500] {
             let scores: Vec<f32> = (0..len)
-                .map(|i| (i as f32 * 0.1 - len as f32 * 0.05))
+                .map(|i| i as f32 * 0.1 - len as f32 * 0.05)
                 .collect();
             let reference = softmax_standard(&scores);
             let mut online = vec![0.0_f32; len];
@@ -1019,7 +1019,7 @@ mod tests {
 
     #[test]
     fn pv_i8q_range_bounded() {
-        let row: Vec<f32> = (0..384).map(|i| (i as f32 * 0.1 - 19.2)).collect();
+        let row: Vec<f32> = (0..384).map(|i| i as f32 * 0.1 - 19.2).collect();
         let (q, _scale) = quant_f32_row_to_i8(&row);
         for &v in &q {
             assert!((-127..=127).contains(&v), "i8 value {v} out of range");
