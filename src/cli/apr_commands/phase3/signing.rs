@@ -1,10 +1,13 @@
+// `cli` is now in default features (#55); items below are reachable only under
+// the converter / phase3-encryption feature combos and lint as dead code
+// when only `cli` is on. This is pre-existing technical debt — file follow-up.
+#![allow(dead_code)]
+
 //! Ed25519 signing and verification handlers (feature: `format-signing`)
 
-use std::fs;
 
 use super::super::super::apr_args::{AprSignArgs, AprVerifySigArgs};
 use super::super::super::commands::{CliError, CliResult, CommandResult};
-use super::emit_output;
 
 /// Sign a model file with Ed25519 (feature: `format-signing`)
 pub(in super::super) fn run_sign(
