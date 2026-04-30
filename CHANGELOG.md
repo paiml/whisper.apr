@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING (build-only): `cli` is now in default features.** `cargo install whisper-apr` (and
+  `cargo install --path .` from a checkout) lands the `whisper-apr` binary on PATH without
+  requiring `--features cli`. Library-only consumers (e.g. WASM targets) should opt out with
+  `default-features = false` and pick the subset they need (e.g. `["std", "simd", "parallel"]`).
+  Closes [#55](https://github.com/paiml/whisper.apr/issues/55).
+- **BREAKING (target name): the `whisper-apr-cli` bin alias was removed.** Both targets pointed
+  at the same source file (`src/bin/whisper-apr-cli.rs`), generating a `cargo` build-target
+  collision warning and confusing users about which name to invoke. The canonical name is
+  `whisper-apr`, matching the crate name and `default-run`. Users invoking the old alias should
+  switch to the canonical name.
+
+### Fixed
+- `load_audio_samples` now preserves `CliError::UnsupportedFormat` and `CliError::NotImplemented`
+  through the symphonia → ffmpeg fallback chain, instead of wrapping every failure as
+  `InvalidArgument`. The fallback was added later for HE-AAC codecs symphonia can't handle, but
+  it masked the structural error variants the test suite asserts on. Three latent
+  `test_load_audio_*` tests (no_extension / unsupported_format / unknown_extension) now pass
+  under the default lint config (#55).
+
 ### Added
 - `--hotwords` CLI flag for comma-separated logit biasing during decoding (WAPR-170). Boosts
   domain-specific vocabulary (e.g. `--hotwords "Databricks,PySpark,SparkSQL"`) without the
