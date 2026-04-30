@@ -3911,9 +3911,15 @@ pub(crate) fn load_audio_samples(path: &Path, data: &[u8]) -> CliResult<Vec<f32>
         _ => Err(CliError::UnsupportedFormat(ext)),
     };
 
-    // Fallback to ffmpeg for codecs symphonia can't handle (e.g. HE-AAC)
+    // Fallback to ffmpeg for codecs symphonia can't handle (e.g. HE-AAC).
+    // Preserve `UnsupportedFormat` and `NotImplemented` — those errors describe
+    // a structural reason ffmpeg can't help with (no recognized extension at
+    // all, or the symphonia feature is disabled), and tests assert that these
+    // surface unchanged. Only fall through on decode errors from a format we
+    // *did* recognize.
     match result {
         Ok(samples) => Ok(samples),
+        Err(e @ (CliError::UnsupportedFormat(_) | CliError::NotImplemented(_))) => Err(e),
         Err(_) => crate::audio::decode_with_ffmpeg(path)
             .map_err(|e| CliError::InvalidArgument(e.to_string())),
     }
