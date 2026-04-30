@@ -41,10 +41,10 @@ name = "whisper-apr"
 path = "src/bin/whisper-apr-cli.rs"
 required-features = ["cli"]
 
-[[bin]]
-name = "whisper-apr-cli"
-path = "src/bin/whisper-apr-cli.rs"
-required-features = ["cli"]
+# Note: the `whisper-apr-cli` alias was removed in commit feat/cli-default-install
+# (issue #55). The canonical binary name is `whisper-apr`, matching the crate name.
+# Two bin targets pointing at the same source file caused a cargo warning and
+# left users guessing which to invoke.
 
 [[bin]]
 name = "whisper-convert"
@@ -54,7 +54,11 @@ required-features = ["converter"]
 [features]
 # Enable parallel by default for ~2x encoder speedup on multi-core systems
 # WASM users should use "wasm" feature which doesn't include parallel
-default = ["std", "simd", "realizar-inference", "parallel"]
+# `cli` is in default so `cargo install --path .` lands the `whisper-apr`
+# binary on PATH without requiring users to remember a feature flag (#55).
+# Library-only consumers should use `default-features = false` and pick
+# the subset they want (e.g. `["std", "simd", "parallel"]`).
+default = ["std", "simd", "realizar-inference", "parallel", "cli"]
 std = []
 wasm = ["std", "wasm-bindgen", "js-sys", "web-sys", "console_error_panic_hook"]
 webgpu = ["wgpu", "bytemuck", "tokio", "pollster"]
