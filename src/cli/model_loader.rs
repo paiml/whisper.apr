@@ -1,3 +1,8 @@
+// `cli` is now in default features (#55); items below are reachable only under
+// the converter / phase3-encryption feature combos and lint as dead code
+// when only `cli` is on. This is pre-existing technical debt — file follow-up.
+#![allow(dead_code)]
+
 //! Model loading and caching for whisper-apr CLI
 //!
 //! This module handles automatic downloading of Whisper and Moonshine models

@@ -1,12 +1,15 @@
+// `cli` is now in default features (#55); items below are reachable only under
+// the converter / phase3-encryption feature combos and lint as dead code
+// when only `cli` is on. This is pre-existing technical debt — file follow-up.
+#![allow(dead_code)]
+
 //! AES-256-GCM encrypt / decrypt handlers (feature: `format-encryption`)
 
-use std::fs;
 
 use super::super::super::apr_args::{AprDecryptArgs, AprEncryptArgs};
 use super::super::super::commands::{CliError, CliResult, CommandResult};
 #[cfg(feature = "format-encryption")]
 use super::super::require_password;
-use super::emit_output;
 
 /// Encrypt a model with AES-256-GCM (feature: `format-encryption`)
 pub(in super::super) fn run_encrypt(
