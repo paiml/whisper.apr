@@ -3,12 +3,43 @@
 use super::*;
 use crate::format::{build_whisper_metadata, AprV2ReaderRef, AprV2Writer};
 use crate::model::ModelConfig;
+use std::sync::LazyLock;
 
 // Helper: create an AprV2Writer pre-configured for tiny model
 fn test_writer() -> AprV2Writer {
     let config = ModelConfig::tiny();
     let meta = build_whisper_metadata(&config, "test");
     AprV2Writer::new(meta)
+}
+
+// Lazily-built, process-wide singletons of the six shared fixtures. The first
+// test to touch one builds it; the rest borrow the cached bytes.
+static VALID_TEST_APR: LazyLock<Vec<u8>> = LazyLock::new(build_valid_test_apr);
+static BAD_LN_APR: LazyLock<Vec<u8>> = LazyLock::new(build_bad_ln_apr);
+static MINIMAL_APR: LazyLock<Vec<u8>> = LazyLock::new(build_minimal_apr);
+static ZERO_TENSOR_APR: LazyLock<Vec<u8>> = LazyLock::new(build_zero_tensor_apr);
+static BAD_EMBEDDING_STATS_APR: LazyLock<Vec<u8>> = LazyLock::new(build_bad_embedding_stats_apr);
+static BAD_WEIGHT_STD_APR: LazyLock<Vec<u8>> = LazyLock::new(build_bad_weight_std_apr);
+
+// Accessors returning the cached bytes. Names mirror the original builders so
+// each call site reads identically, just borrowing instead of rebuilding.
+fn create_valid_test_apr() -> &'static [u8] {
+    &VALID_TEST_APR
+}
+fn create_bad_ln_apr() -> &'static [u8] {
+    &BAD_LN_APR
+}
+fn create_minimal_apr() -> &'static [u8] {
+    &MINIMAL_APR
+}
+fn create_zero_tensor_apr() -> &'static [u8] {
+    &ZERO_TENSOR_APR
+}
+fn create_bad_embedding_stats_apr() -> &'static [u8] {
+    &BAD_EMBEDDING_STATS_APR
+}
+fn create_bad_weight_std_apr() -> &'static [u8] {
+    &BAD_WEIGHT_STD_APR
 }
 
 // =========================================================================
@@ -169,7 +200,18 @@ fn test_validation_report_by_category() {
 // AprValidator Tests with Test Data
 // =========================================================================
 
-fn create_valid_test_apr() -> Vec<u8> {
+// =========================================================================
+// Shared fixtures (PMAT perf): the six distinct APR fixtures below were
+// previously rebuilt from scratch by ~21 tests. Each build allocates and
+// serializes an ~80 MB [51865, 384] token-embedding tensor and CRCs the whole
+// buffer in `AprV2Writer::write`. Building each fixture ONCE behind a
+// `LazyLock` collapses ~22 rebuilds to 6, keeping every test on the PR gate
+// while removing the bulk of the redundant alloc + CRC work. Each test still
+// validates the same bytes, so coverage is unchanged. Tests borrow the cached
+// `&'static [u8]`.
+// =========================================================================
+
+fn build_valid_test_apr() -> Vec<u8> {
     let mut writer = test_writer();
 
     writer.add_f32_tensor(
@@ -261,7 +303,7 @@ fn create_valid_test_apr() -> Vec<u8> {
     writer.write().expect("should serialize")
 }
 
-fn create_bad_ln_apr() -> Vec<u8> {
+fn build_bad_ln_apr() -> Vec<u8> {
     let mut writer = test_writer();
 
     writer.add_f32_tensor("decoder.layer_norm.weight", vec![384], &vec![11.0; 384]);
@@ -418,7 +460,7 @@ fn test_check_vocab_size() {
 // Validator Fail-Path Tests (coverage for uncovered branches)
 // =========================================================================
 
-fn create_minimal_apr() -> Vec<u8> {
+fn build_minimal_apr() -> Vec<u8> {
     let mut writer = test_writer();
     writer.add_f32_tensor(
         "decoder.token_embedding",
@@ -428,7 +470,7 @@ fn create_minimal_apr() -> Vec<u8> {
     writer.write().expect("should serialize")
 }
 
-fn create_zero_tensor_apr() -> Vec<u8> {
+fn build_zero_tensor_apr() -> Vec<u8> {
     let mut writer = test_writer();
     writer.add_f32_tensor(
         "decoder.token_embedding",
@@ -442,7 +484,7 @@ fn create_zero_tensor_apr() -> Vec<u8> {
     writer.write().expect("should serialize")
 }
 
-fn create_bad_embedding_stats_apr() -> Vec<u8> {
+fn build_bad_embedding_stats_apr() -> Vec<u8> {
     let mut writer = test_writer();
     // Embedding with bad stats: high mean, low std
     writer.add_f32_tensor(
@@ -466,7 +508,7 @@ fn create_bad_embedding_stats_apr() -> Vec<u8> {
     writer.write().expect("should serialize")
 }
 
-fn create_bad_weight_std_apr() -> Vec<u8> {
+fn build_bad_weight_std_apr() -> Vec<u8> {
     let mut writer = test_writer();
     writer.add_f32_tensor(
         "decoder.token_embedding",
