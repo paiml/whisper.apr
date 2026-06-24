@@ -281,6 +281,9 @@ unwrap_used = "deny"
 expect_used = "warn"
 panic = "warn"
 
+# Safety: every `unsafe` block must carry a `// SAFETY:` justification (PMAT-128)
+undocumented_unsafe_blocks = "deny"
+
 # Code quality
 complexity = { level = "warn", priority = -1 }
 style = { level = "warn", priority = -1 }
