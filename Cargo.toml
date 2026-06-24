@@ -235,6 +235,11 @@ split-debuginfo = "unpacked"
 [profile.test]
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
+# opt-level = 1 keeps test compile time low while making hot test paths —
+# notably the ~80 MB APR fixture serialize+CRC in format::validation and the
+# Q4K decoder inference in benchmark_generated — run at a usable speed. At
+# opt-level = 0 these run unoptimized and dominated the --lib wall clock.
+opt-level = 1
 
 [profile.release]
 lto = true

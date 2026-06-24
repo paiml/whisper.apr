@@ -1,4 +1,4 @@
-# Nightly Benchmarks — criterion performance tracking
+# Nightly Benchmarks — criterion performance tracking + perf-tier unit tests
 name: Nightly Bench
 on:
   schedule:
@@ -7,6 +7,8 @@ on:
 concurrency:
   group: bench-${{ github.ref }}
   cancel-in-progress: true
+permissions:
+  contents: read
 jobs:
   bench:
     uses: paiml/.github/.github/workflows/sovereign-ci.yml@main
@@ -15,3 +17,47 @@ jobs:
       run_benchmarks: true
     secrets: inherit
 
+  # Perf-tier unit tests: the real-inference RTF breakdown tests in
+  # src/benchmark_generated.rs run an unoptimized Q4K decoder forward pass and
+  # are too slow for the PR gate, so they are marked `#[ignore]`. Their
+  # assertion logic (proportions/bottleneck/positivity) is also covered by the
+  # fast `test_synthetic_breakdown_*` tests on the PR gate, but we still run the
+  # real-inference versions here nightly so the end-to-end path keeps coverage.
+  perf-tests:
+    name: perf-tests (ignored)
+    runs-on: [self-hosted, clean-room]
+    container:
+      image: localhost:5000/sovereign-ci:stable
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Checkout sibling repos (path deps)
+        run: |
+          cd "$GITHUB_WORKSPACE/.."
+          for repo in provable-contracts probar trueno trueno-rag trueno-db trueno-viz alimentar presentar aprender renacer batuta realizar; do
+            if [ -e "$repo" ] && [ ! -d "$repo" ]; then rm -f "$repo"; fi
+            if [ -d "$repo" ]; then
+              git -C "$repo" fetch --depth 1 origin main 2>/dev/null && git -C "$repo" reset --hard FETCH_HEAD 2>/dev/null || true
+            else
+              for attempt in 1 2 3; do
+                git clone --depth 1 --quiet "https://github.com/paiml/$repo.git" "$repo" 2>&1 && break
+                rm -rf "$repo"
+                echo "::warning::Retry $attempt for $repo clone"
+                sleep 2
+              done
+            fi
+          done
+      - name: Run perf-tier (ignored) RTF breakdown tests
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Run ONLY the perf-tier RTF breakdown tests (real opt-level=0 Q4K
+          # inference) that the PR gate skips via #[ignore]. Scoped by name so
+          # this job is not entangled with other, environment-gated ignored
+          # tests (e.g. ones needing on-disk model files).
+          cargo nextest run --lib --run-ignored all \
+            -E 'test(component_proportions) or test(bottleneck_identification) or test(component_timing_all_positive)' 2>&1 || \
+          cargo test --lib -- --ignored \
+            test_component_proportions test_bottleneck_identification test_component_timing_all_positive 2>&1 || \
+          { echo "::error::perf-tier RTF breakdown tests failed"; exit 1; }
