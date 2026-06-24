@@ -3,6 +3,13 @@ name = "whisper-apr"
 version = "0.2.8"
 edition = "2021"
 rust-version = "1.75"
+# PMAT-158 / issue #54: disable auto-discovery of the 104 ad-hoc debug examples
+# and the 6 benches. They each re-link the lib (~+41s wall) and several benches
+# are broken against the current aprender API, which makes `cargo build
+# --all-targets` fail. Only the targets explicitly re-declared below are built;
+# the retired sources stay on disk (un-built) for manual `cargo run --example`.
+autoexamples = false
+autobenches = false
 description = "WASM-first automatic speech recognition engine implementing OpenAI Whisper"
 license = "MIT"
 repository = "https://github.com/paiml/whisper.apr"
@@ -215,6 +222,20 @@ getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] 
 # Note: inference-monitoring disabled due to cyclic dependency with entrenar
 aprender = { version = "0.27", default-features = false, features = ["audio", "safetensors-compare"] }
 
+# Dev/test debuginfo tuning (build-perf). Full `debug = 2` DWARF for this crate's
+# huge dep graph produced a ~391 MiB test binary and slow cold links.
+# `line-tables-only` keeps file:line in panic backtraces (the only debug info we
+# actually use locally) while dropping variable/type DWARF; `unpacked`
+# split-debuginfo keeps the per-object .o debug sections out of the final
+# executable, shrinking it further and speeding linking.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.test]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
 [profile.release]
 lto = true
 codegen-units = 1
@@ -229,14 +250,16 @@ opt-level = 3  # Full optimization for WASM (was "z" - kills SIMD!)
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
 
+# Explicitly re-declared targets (autoexamples/autobenches = false above).
+# Only feature-gated examples and benches that actually compile are kept so
+# `cargo build --all-targets` is clean.
+
+# The one example that genuinely needs a non-default feature (converter).
 [[example]]
 name = "filterbank_embedding"
 required-features = ["converter"]
 
-[[bench]]
-name = "inference"
-harness = false
-
+# Benches that compile cleanly against the current aprender API.
 [[bench]]
 name = "wasm_simd"
 harness = false
@@ -246,16 +269,15 @@ name = "streaming_latency"
 harness = false
 
 [[bench]]
-name = "pipeline"
-harness = false
-
-[[bench]]
-name = "format_comparison"
-harness = false
-
-[[bench]]
 name = "cli_benchmarks"
 harness = false
+
+# RETIRED benches (PMAT-158 / issue #54): the sources at benches/inference.rs,
+# benches/pipeline.rs and benches/format_comparison.rs no longer compile against
+# aprender 0.27 (MelFilterbank::new now takes &MelConfig, MelFilterbank::compute
+# takes 1 arg, compute_simd was removed, format::AprReader was renamed). They are
+# left on disk (un-built) until the API drift is repaired and they are
+# re-declared here. Until then they no longer break `cargo build --all-targets`.
 
 
 # NOTE (WAPR-PERF-004): GPU-Resident Tensor integration requires:
