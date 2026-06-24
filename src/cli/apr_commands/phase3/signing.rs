@@ -5,9 +5,12 @@
 
 //! Ed25519 signing and verification handlers (feature: `format-signing`)
 
-
 use super::super::super::apr_args::{AprSignArgs, AprVerifySigArgs};
 use super::super::super::commands::{CliError, CliResult, CommandResult};
+#[cfg(feature = "format-signing")]
+use super::emit_output;
+#[cfg(feature = "format-signing")]
+use std::fs;
 
 /// Sign a model file with Ed25519 (feature: `format-signing`)
 pub(in super::super) fn run_sign(

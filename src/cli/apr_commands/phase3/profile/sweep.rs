@@ -1,4 +1,5 @@
-#![allow(clippy::unwrap_used)] // pre-existing surfaced by #55
+#![allow(clippy::unwrap_used)]
+// pre-existing surfaced by #55
 // `cli` is now in default features (#55); items below are reachable only under
 // the converter / phase3-encryption feature combos and lint as dead code
 // when only `cli` is on. This is pre-existing technical debt — file follow-up.
