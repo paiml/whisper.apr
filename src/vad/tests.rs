@@ -1629,8 +1629,12 @@ fn test_process_frame_noise_floor_adapts_only_in_silence() {
         .map(|i| {
             // Low amplitude square wave -- gives ZCR < 0.05 (block size 50)
             // so it won't be classified as speech
-            
-            if (i / 50) % 2 == 0 { 0.01 } else { -0.01 }
+
+            if (i / 50) % 2 == 0 {
+                0.01
+            } else {
+                -0.01
+            }
         })
         .collect();
 
