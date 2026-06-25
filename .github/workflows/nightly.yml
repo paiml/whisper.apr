@@ -66,11 +66,10 @@ jobs:
       - name: Patch path dependencies for standalone build
         if: runner.os != 'Windows'
         run: |
-          # ROOT CAUSE: .cargo/config.toml has [patch.crates-io] with local path
+          # ROOT CAUSE: Cargo.toml has [patch.crates-io] with local path
           # overrides (apr-cli, aprender, trueno, etc.) that don't exist on CI runners.
           # This was the actual source of "Unable to update ../aprender/crates/apr-cli".
-          rm -f .cargo/config.toml
-          # Remove the entire [patch.crates-io] section from Cargo.toml too
+          # Remove the entire [patch.crates-io] section from Cargo.toml
           sed -i.bak '/^\[patch\.crates-io\]/,$ d' Cargo.toml
           # Remove path = "../aprender" from aprender dependency lines
           sed -i.bak 's|, path = "\.\./aprender"||g' Cargo.toml
@@ -81,16 +80,13 @@ jobs:
           rm -f Cargo.lock
           echo "=== Patched Cargo.toml dependency sections ==="
           grep -n 'aprender\|apr-cli\|\[patch' Cargo.toml || true
-          echo "=== .cargo/config.toml removed ==="
-          ls -la .cargo/ 2>/dev/null || echo "(no .cargo dir)"
 
       - name: Patch path dependencies for standalone build
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # ROOT CAUSE: .cargo/config.toml has [patch.crates-io] with local path
+          # ROOT CAUSE: Cargo.toml has [patch.crates-io] with local path
           # overrides that don't exist on CI runners.
-          Remove-Item .cargo/config.toml -ErrorAction SilentlyContinue
           $content = Get-Content Cargo.toml -Raw
           # Remove the entire [patch.crates-io] section
           $content = $content -replace '(?ms)\[patch\.crates-io\].*\z', ''
