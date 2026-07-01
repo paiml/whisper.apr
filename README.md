@@ -112,9 +112,14 @@
 
 ### CLI Transcription
 
+The CLI ships in the default feature set as of 0.2.9 ([#55](https://github.com/paiml/whisper.apr/issues/55)) — no `--features cli` flag required. The canonical binary name is `whisper-apr`; the older `whisper-apr-cli` alias was dropped.
+
 ```bash
-# Install
-cargo install whisper-apr --features cli
+# Install (no feature flag needed)
+cargo install whisper-apr
+
+# Or from a local checkout
+cargo install --path .
 
 # Transcribe audio (auto-downloads model)
 whisper-apr transcribe -f audio.wav
@@ -205,11 +210,14 @@ println!("Final: {}", final_result.text);
 ### From crates.io
 
 ```bash
-# Library dependency
+# Library dependency (opt out of cli with default-features = false)
 cargo add whisper-apr
 
-# CLI tool
-cargo install whisper-apr --features cli
+# CLI tool — `cli` is in default features (0.2.9+)
+cargo install whisper-apr
+
+# Library-only consumers (e.g. WASM):
+cargo add whisper-apr --no-default-features --features "std,simd,parallel"
 ```
 
 ### Building from Source
@@ -447,11 +455,11 @@ export interface TranscribeResult {
 
 ## CLI
 
-The `whisper-apr` CLI provides transcription and debugging commands:
+The `whisper-apr` CLI provides transcription and debugging commands. As of 0.2.9 it installs in the default feature set — no `--features cli` flag required.
 
 ```bash
-# Install CLI
-cargo install whisper-apr --features cli
+# Install CLI (default features include `cli`)
+cargo install whisper-apr
 
 # Transcribe audio
 whisper-apr transcribe -f audio.wav --model tiny

@@ -36,8 +36,11 @@ cargo check
 # Standard build
 cargo build --release
 
-# WASM build
-cargo build --target wasm32-unknown-unknown --features wasm --release
+# Install the CLI binary (cli is in default features as of 0.2.9, #55)
+cargo install --path .                # → ~/.cargo/bin/whisper-apr
+
+# WASM build (opt out of cli + parallel for browser targets)
+cargo build --target wasm32-unknown-unknown --no-default-features --features wasm --release
 
 # Run tests
 cargo test                          # All tests
