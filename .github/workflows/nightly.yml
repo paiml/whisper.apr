@@ -76,8 +76,9 @@ jobs:
           # Fix apr-cli version: 0.3 doesn't exist on crates.io, only 0.4.x
           sed -i.bak 's|apr-cli = { version = "0.3"|apr-cli = { version = "0.4"|g' Cargo.toml
           rm -f Cargo.toml.bak
-          # Regenerate lockfile (old one has path-sourced entries from [patch])
-          rm -f Cargo.lock
+          # Keep the committed Cargo.lock: the build below runs with --locked so the
+          # nightly fails loudly on any unexpected lockfile drift instead of silently
+          # resolving new dependency versions every run (hermetic, reproducible builds).
           echo "=== Patched Cargo.toml dependency sections ==="
           grep -n 'aprender\|apr-cli\|\[patch' Cargo.toml || true
 
@@ -95,8 +96,9 @@ jobs:
           # Fix apr-cli version: 0.3 doesn't exist on crates.io, only 0.4.x
           $content = $content -replace 'apr-cli = \{ version = "0\.3"', 'apr-cli = { version = "0.4"'
           Set-Content Cargo.toml -Value $content.TrimEnd() -NoNewline
-          # Regenerate lockfile (old one has path-sourced entries from [patch])
-          Remove-Item Cargo.lock -ErrorAction SilentlyContinue
+          # Keep the committed Cargo.lock: the build below runs with --locked so the
+          # nightly fails loudly on any unexpected lockfile drift instead of silently
+          # resolving new dependency versions every run (hermetic, reproducible builds).
           Write-Host "=== Patched Cargo.toml dependency sections ==="
           Select-String -Path Cargo.toml -Pattern 'aprender|apr-cli|\[patch'
 
@@ -115,11 +117,11 @@ jobs:
         if: matrix.cross
         env:
           CROSS_NO_WARNINGS: "0"
-        run: cross build --release --target ${{ matrix.target }} --features cli
+        run: cross build --locked --release --target ${{ matrix.target }} --features cli
 
       - name: Build
         if: ${{ !matrix.cross }}
-        run: cargo build --release --target ${{ matrix.target }} --features cli
+        run: cargo build --locked --release --target ${{ matrix.target }} --features cli
 
       - name: Package (unix)
         if: matrix.target != 'x86_64-pc-windows-msvc'
