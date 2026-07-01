@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut frame1400_if_mels_first = Vec::with_capacity(n_mels);
 
     for mel_idx in 0..n_mels {
-        frame0_if_mels_first.push(mel[mel_idx * n_frames + 0]);
+        frame0_if_mels_first.push(mel[(mel_idx * n_frames)]);
         frame100_if_mels_first.push(mel[mel_idx * n_frames + 100]);
         frame1400_if_mels_first.push(mel[mel_idx * n_frames + 1400]);
     }

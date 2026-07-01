@@ -95,7 +95,7 @@ fn test_hotword_len() {
 
 #[test]
 fn test_hotword_is_empty() {
-    let empty = Hotword::new("".to_string(), vec![], 1.0);
+    let empty = Hotword::new(String::new(), vec![], 1.0);
     let non_empty = Hotword::new("test".to_string(), vec![1], 1.0);
     assert!(empty.is_empty());
     assert!(!non_empty.is_empty());
@@ -138,7 +138,7 @@ fn test_hotword_prefix_match_len_empty_context() {
 
 #[test]
 fn test_hotword_prefix_match_len_empty_tokens() {
-    let hotword = Hotword::new("".to_string(), vec![], 1.0);
+    let hotword = Hotword::new(String::new(), vec![], 1.0);
     let context = vec![1, 2, 3];
     assert_eq!(hotword.prefix_match_len(&context), 0);
 }
@@ -328,13 +328,11 @@ fn test_hotword_booster_scaled_bias_by_progress() {
     let bias_1 = completions_1
         .iter()
         .find(|(t, _)| *t == 200)
-        .map(|(_, b)| *b)
-        .unwrap_or(0.0);
+        .map_or(0.0, |(_, b)| *b);
     let bias_2 = completions_2
         .iter()
         .find(|(t, _)| *t == 300)
-        .map(|(_, b)| *b)
-        .unwrap_or(0.0);
+        .map_or(0.0, |(_, b)| *b);
 
     // Bias should increase as we match more of the hotword
     assert!(bias_2 > bias_1);

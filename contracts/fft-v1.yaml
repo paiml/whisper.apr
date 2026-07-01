@@ -1,0 +1,104 @@
+metadata:
+  version: "1.0.0"
+  created: "2026-06-24"
+  author: "PAIML Engineering"
+  description: "Real-input FFT / DFT for whisper STFT front-end (windowed audio -> power spectrum)"
+  crate: "whisper-apr"
+  references:
+    - "Cooley & Tukey (1965) An Algorithm for the Machine Calculation of Complex Fourier Series"
+    - "Radford et al. (2023) Robust Speech Recognition via Large-Scale Weak Supervision"
+  implements:
+    - "src/gpu/ops/mel.rs (fft_real in generate_full_pipeline_shader)"
+
+equations:
+  dft:
+    formula: "X[k] = Σ_{n=0}^{N-1} x[n] · exp(-2πi k n / N)"
+    domain: "x ∈ ℝ^N, N = n_fft (= 400 for whisper), k ∈ [0, N/2]"
+    codomain: "X ∈ ℂ^{N/2+1}"
+    invariants:
+      - "Real input yields Hermitian-symmetric spectrum: only N/2+1 unique bins (= n_freqs = 201)"
+      - "DC bin X[0] is purely real (imaginary part == 0)"
+      - "Nyquist bin X[N/2] is purely real for even N"
+  power_spectrum:
+    formula: "P[k] = Re(X[k])² + Im(X[k])²"
+    domain: "X ∈ ℂ^{N/2+1}"
+    codomain: "P ∈ ℝ₊^{N/2+1}"
+    invariants:
+      - "P[k] ≥ 0 for all k (magnitude squared is non-negative)"
+  parseval:
+    formula: "Σ_n |x[n]|² = (1/N) Σ_k |X[k]|²"
+    domain: "x ∈ ℝ^N"
+    invariants:
+      - "Energy is conserved between time and frequency domains"
+
+proof_obligations:
+  - type: invariant
+    property: "Output bin count"
+    formal: "rfft(x).len() == n_fft/2 + 1"
+    applies_to: all
+  - type: bound
+    property: "Power spectrum non-negative"
+    formal: "forall k: power_spectrum(rfft(x))[k] ≥ 0"
+    applies_to: all
+  - type: invariant
+    property: "DC bin real"
+    formal: "Im(rfft(x)[0]) == 0 within epsilon"
+    tolerance: 1.0e-5
+    applies_to: all
+  - type: invariant
+    property: "Energy conservation (Parseval)"
+    formal: "|Σ|x[n]|² - (1/N)Σ|X[k]|²| < epsilon · N"
+    tolerance: 1.0e-4
+    applies_to: all
+  - type: equivalence
+    property: "FFT matches naive DFT"
+    formal: "|fft(x) - dft_naive(x)| < epsilon · N"
+    tolerance: 1.0e-4
+    applies_to: simd
+  - type: bound
+    property: "No NaN in spectrum"
+    formal: "forall k: !rfft(x)[k].re.is_nan() && !rfft(x)[k].im.is_nan()"
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-FFT-001
+    rule: "Output bin count"
+    prediction: "rfft of n_fft=400 produces 201 bins"
+    test: "test_mel_config_whisper"
+    if_fails: "Hermitian symmetry not exploited / wrong output length"
+  - id: FALSIFY-FFT-002
+    rule: "Power non-negative"
+    prediction: "All power-spectrum bins ≥ 0"
+    test: "test_generate_full_pipeline_shader"
+    if_fails: "Sign error in magnitude-squared accumulation"
+  - id: FALSIFY-FFT-003
+    rule: "DC bin real"
+    prediction: "Imaginary part of bin 0 is zero within epsilon"
+    test: "test_hann_window"
+    if_fails: "Phase/twiddle indexing error at k=0"
+  - id: FALSIFY-FFT-004
+    rule: "Parseval energy conservation"
+    prediction: "Time-domain energy equals scaled frequency-domain energy"
+    test: "test_mel_config_n_frames"
+    if_fails: "Missing normalization factor in transform"
+
+kani_harnesses:
+  - id: fft-kani-001
+    obligation: "Output bin count"
+    bound: 8
+    strategy: bounded_int
+  - id: fft-kani-002
+    obligation: "Power spectrum non-negative"
+    bound: 8
+    strategy: stub_float
+
+qa_gate:
+  id: QA-FFT
+  name: "fft contract"
+  min_coverage: 0.90
+  max_complexity: 20
+  required_tests:
+    - test_mel_config_whisper
+    - test_generate_full_pipeline_shader
+    - test_hann_window
+    - test_mel_config_n_frames

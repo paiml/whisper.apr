@@ -1067,18 +1067,15 @@ fn is_symlink_via_metadata(path: &Path) -> bool {
 
 /// Check if a path has a recognized audio file extension for folder discovery.
 ///
-/// This is the extension list used by `discover_folder_recursive`. It intentionally
-/// matches the inline list from the original implementation (without `mkv`).
+/// Delegates to the single source of truth in [`crate::audio::decode`] so folder
+/// discovery and single-file decode can never drift apart. Previously this kept a
+/// hand-maintained list that silently dropped `.mov/.mkv/.avi/.opus`, causing batch
+/// runs to skip files the decoder fully supports (issue #17). `is_supported_extension`
+/// already lowercases, so matching is case-insensitive.
 fn has_folder_audio_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase())
-        .map_or(false, |ext| {
-            matches!(
-                ext.as_str(),
-                "wav" | "mp3" | "flac" | "ogg" | "m4a" | "mp4" | "webm" | "aac"
-            )
-        })
+        .map_or(false, crate::audio::decode::is_supported_extension)
 }
 
 /// Classify a single directory entry as audio file, subdirectory, or ignored.
@@ -3911,9 +3908,15 @@ pub(crate) fn load_audio_samples(path: &Path, data: &[u8]) -> CliResult<Vec<f32>
         _ => Err(CliError::UnsupportedFormat(ext)),
     };
 
-    // Fallback to ffmpeg for codecs symphonia can't handle (e.g. HE-AAC)
+    // Fallback to ffmpeg for codecs symphonia can't handle (e.g. HE-AAC).
+    // Preserve `UnsupportedFormat` and `NotImplemented` — those errors describe
+    // a structural reason ffmpeg can't help with (no recognized extension at
+    // all, or the symphonia feature is disabled), and tests assert that these
+    // surface unchanged. Only fall through on decode errors from a format we
+    // *did* recognize.
     match result {
         Ok(samples) => Ok(samples),
+        Err(e @ (CliError::UnsupportedFormat(_) | CliError::NotImplemented(_))) => Err(e),
         Err(_) => crate::audio::decode_with_ffmpeg(path)
             .map_err(|e| CliError::InvalidArgument(e.to_string())),
     }
@@ -5947,6 +5950,82 @@ mod tests {
         // Recursive
         let files_rec = discover_audio_files(&inputs, true, None);
         assert_eq!(files_rec.len(), 3, "Recursive should find all files");
+    }
+
+    #[test]
+    fn test_has_folder_audio_extension_covers_all_decoder_formats() {
+        // FALSIFY-FDRIFT-001 (issue #17 batch residue): folder discovery must
+        // recognize every extension the single-file decoder supports. Previously
+        // .mov/.mkv/.avi/.opus were silently dropped from batch/folder runs even
+        // though src/audio/decode.rs decodes them fine.
+        for ext in crate::audio::decode::SUPPORTED_EXTENSIONS {
+            let path = PathBuf::from(format!("clip.{ext}"));
+            assert!(
+                has_folder_audio_extension(&path),
+                "folder discovery dropped .{ext} but the decoder supports it (silent data loss)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_has_folder_audio_extension_previously_dropped_formats() {
+        // The four formats that #17 reported as vanishing from folder runs.
+        for ext in ["mov", "mkv", "avi", "opus"] {
+            assert!(
+                has_folder_audio_extension(&PathBuf::from(format!("a.{ext}"))),
+                ".{ext} must be discovered in folder mode"
+            );
+            // Case-insensitive (is_supported_extension lowercases).
+            assert!(
+                has_folder_audio_extension(&PathBuf::from(format!("a.{}", ext.to_uppercase()))),
+                ".{} (uppercase) must be discovered in folder mode",
+                ext.to_uppercase()
+            );
+        }
+    }
+
+    #[test]
+    fn test_has_folder_audio_extension_original_eight_still_match() {
+        // Regression guard: the pre-fix list must remain recognized.
+        for ext in ["wav", "mp3", "flac", "ogg", "m4a", "mp4", "webm", "aac"] {
+            assert!(
+                has_folder_audio_extension(&PathBuf::from(format!("a.{ext}"))),
+                ".{ext} must still be discovered"
+            );
+        }
+        // Non-audio extensions are still rejected.
+        assert!(!has_folder_audio_extension(&PathBuf::from("notes.txt")));
+        assert!(!has_folder_audio_extension(&PathBuf::from("noext")));
+    }
+
+    #[test]
+    fn test_discover_folder_recursive_finds_mov_and_wav() {
+        // FALSIFY-FDRIFT-002: a folder containing a .mov + .wav must yield BOTH.
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().expect("create temp dir");
+        let dir = temp.path();
+        fs::write(dir.join("clip.mov"), b"").expect("write clip.mov");
+        fs::write(dir.join("voice.wav"), b"").expect("write voice.wav");
+
+        let files = discover_folder_audio_files(dir, false);
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            files.len(),
+            2,
+            "both .mov and .wav must be discovered: {names:?}"
+        );
+        assert!(
+            names.contains(&"clip.mov".to_string()),
+            "missing clip.mov: {names:?}"
+        );
+        assert!(
+            names.contains(&"voice.wav".to_string()),
+            "missing voice.wav: {names:?}"
+        );
     }
 
     #[test]

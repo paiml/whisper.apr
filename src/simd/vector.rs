@@ -65,6 +65,12 @@ unsafe fn dot_fma_avx2(a: &[f32], b: &[f32]) -> f32 {
     let mut acc2: __m256;
     let mut acc3: __m256;
 
+    // SAFETY: the enclosing fn is `#[target_feature(enable = "avx2", enable = "fma")]`
+    // and callers gate the call behind `is_x86_feature_detected!("avx2"/"fma")`, so every
+    // AVX2/FMA intrinsic invoked here is supported by the running CPU. All `_mm256_loadu_ps`
+    // reads are unaligned loads bounded by the `i + 32 <= n` / `i + 8 <= n` loop guards
+    // (n == a.len() == b.len()), so no out-of-bounds access occurs; the scalar tail uses
+    // safe indexing.
     unsafe {
         acc0 = _mm256_setzero_ps();
         acc1 = _mm256_setzero_ps();
@@ -359,6 +365,11 @@ unsafe fn dequant_f16_row_f16c(f16_data: &[u16], out: &mut [f32]) {
 
     for i in 0..chunks {
         let offset = i * 8;
+        // SAFETY: fn is `#[target_feature(enable = "f16c", enable = "avx")]`, so the F16C
+        // (`_mm256_cvtph_ps`) and AVX load/store intrinsics are valid on the running CPU.
+        // `offset < chunks * 8 <= n`, so the 128-bit unaligned read from `src + offset`
+        // (8 u16 = 16 bytes) and the 256-bit store to `dst + offset` (8 f32 = 32 bytes)
+        // stay within `f16_data` and `out` respectively (out.len() >= f16_data.len()).
         unsafe {
             let half8 = _mm_loadu_si128(src.add(offset).cast());
             let float8 = _mm256_cvtph_ps(half8);
@@ -368,6 +379,9 @@ unsafe fn dequant_f16_row_f16c(f16_data: &[u16], out: &mut [f32]) {
 
     let base = chunks * 8;
     for j in 0..remainder {
+        // SAFETY: `base + j < base + remainder == n`, so both the read from
+        // `src + base + j` and the write to `dst + base + j` are in bounds of
+        // `f16_data` and `out` (out.len() >= f16_data.len()).
         unsafe {
             *dst.add(base + j) = half::f16::from_bits(*src.add(base + j)).to_f32();
         }
@@ -427,6 +441,11 @@ unsafe fn dot_f16_fused_f16c(a_f16: &[u16], b: &[f32]) -> f32 {
 
     for i in 0..chunks {
         let offset = i * 8;
+        // SAFETY: fn is `#[target_feature(enable = "f16c", enable = "avx", enable = "fma")]`
+        // and the only caller (`dot_f16`) gates on runtime f16c/avx/fma detection, so the
+        // intrinsics are CPU-supported. `offset < chunks * 8 <= n` with n == a_f16.len()
+        // == b.len(), so the 16-byte f16 load from `a_ptr + offset` and the 32-byte f32
+        // load from `b_ptr + offset` are both in bounds.
         unsafe {
             let half8 = _mm_loadu_si128(a_ptr.add(offset).cast());
             let a_f32 = _mm256_cvtph_ps(half8);
@@ -436,11 +455,15 @@ unsafe fn dot_f16_fused_f16c(a_f16: &[u16], b: &[f32]) -> f32 {
     }
 
     let mut sum_buf = [0.0_f32; 8];
+    // SAFETY: AVX is enabled via `#[target_feature]`; `sum_buf` is a stack array of exactly
+    // 8 f32, so the 256-bit unaligned store writes exactly its 32 bytes with no overflow.
     unsafe { _mm256_storeu_ps(sum_buf.as_mut_ptr(), acc) };
     let mut result: f32 = sum_buf.iter().sum();
 
     let base = chunks * 8;
     for j in 0..remainder {
+        // SAFETY: `base + j < base + remainder == n`, so reading from `a_ptr + base + j`
+        // and `b_ptr + base + j` stays within `a_f16` and `b` (equal lengths).
         unsafe {
             let a_val = half::f16::from_bits(*a_ptr.add(base + j)).to_f32();
             let b_val = *b_ptr.add(base + j);
@@ -486,6 +509,9 @@ pub fn dot_i8(a_i8: &[i8], b: &[f32], scale: f32) -> f32 {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            // SAFETY: avx2 and fma are confirmed present at runtime immediately above, which
+            // satisfies the `#[target_feature]` precondition of `dot_i8_avx2`. The
+            // `debug_assert_eq!` guarantees a_i8.len() == b.len() for the in-bounds loads.
             return unsafe { dot_i8_avx2(a_i8, b, scale) };
         }
     }
@@ -517,6 +543,12 @@ unsafe fn dot_i8_avx2(a_i8: &[i8], b: &[f32], scale: f32) -> f32 {
     let n = a_i8.len();
     let mut i = 0;
 
+    // SAFETY: fn is `#[target_feature(enable = "avx2", enable = "fma")]` and `dot_i8` only
+    // calls it after runtime avx2/fma detection, so every intrinsic is CPU-supported. The
+    // `i + 16 <= n` / `i + 8 <= n` guards keep each `_mm_loadl_epi64` (8 i8 = 8 bytes) read
+    // from `a_i8 + i` and each `_mm256_loadu_ps` (8 f32 = 32 bytes) read from `b + i` within
+    // bounds (n == a_i8.len() == b.len() per the caller's debug_assert). `_mm256_storeu_ps`
+    // targets a local 8-f32 `buf`, and the scalar tail uses safe iterator indexing.
     unsafe {
         let mut acc0 = _mm256_setzero_ps();
         let mut acc1 = _mm256_setzero_ps();
@@ -924,7 +956,7 @@ mod tests {
     fn pv_softmax_online_matches_standard() {
         for len in [1, 2, 6, 64, 384, 448, 1500] {
             let scores: Vec<f32> = (0..len)
-                .map(|i| (i as f32 * 0.1 - len as f32 * 0.05))
+                .map(|i| i as f32 * 0.1 - len as f32 * 0.05)
                 .collect();
             let reference = softmax_standard(&scores);
             let mut online = vec![0.0_f32; len];
@@ -1019,7 +1051,7 @@ mod tests {
 
     #[test]
     fn pv_i8q_range_bounded() {
-        let row: Vec<f32> = (0..384).map(|i| (i as f32 * 0.1 - 19.2)).collect();
+        let row: Vec<f32> = (0..384).map(|i| i as f32 * 0.1 - 19.2).collect();
         let (q, _scale) = quant_f32_row_to_i8(&row);
         for &v in &q {
             assert!((-127..=127).contains(&v), "i8 value {v} out of range");

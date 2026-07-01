@@ -546,7 +546,7 @@ fn test_compression_algorithm_copy() {
 #[test]
 fn test_compression_algorithm_clone() {
     let algo = CompressionAlgorithm::None;
-    let cloned = algo.clone();
+    let cloned = algo;
     assert_eq!(algo, cloned);
 }
 
@@ -561,7 +561,7 @@ fn test_compression_algorithm_eq() {
 fn test_data_type_clone_copy() {
     let dt = DataType::MelSpectrogram;
     let copied = dt;
-    let cloned = dt.clone();
+    let cloned = dt;
     assert_eq!(dt, copied);
     assert_eq!(dt, cloned);
 }

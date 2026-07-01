@@ -641,7 +641,7 @@ fn test_compute_silhouette_euclidean_intra_cluster() {
     );
     // Well-separated clusters in Euclidean space should yield non-negative silhouette
     assert!(
-        score >= -1.0 && score <= 1.0,
+        (-1.0..=1.0).contains(&score),
         "silhouette must be in [-1, 1], got {}",
         score
     );
@@ -764,7 +764,7 @@ fn test_compute_silhouette_four_clusters() {
         score
     );
     assert!(
-        score >= -1.0 && score <= 1.0,
+        (-1.0..=1.0).contains(&score),
         "silhouette must be in [-1, 1], got {}",
         score
     );
@@ -1051,7 +1051,7 @@ fn test_compute_silhouette_negative_coefficient() {
         score
     );
     assert!(
-        score >= -1.0 && score <= 1.0,
+        (-1.0..=1.0).contains(&score),
         "silhouette must be in [-1, 1], got {}",
         score
     );
@@ -1168,7 +1168,7 @@ fn test_compute_silhouette_euclidean_nontrivial_coefficient() {
         score
     );
     assert!(
-        score >= -1.0 && score <= 1.0,
+        (-1.0..=1.0).contains(&score),
         "silhouette must be in [-1, 1], got {}",
         score
     );

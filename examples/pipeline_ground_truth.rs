@@ -231,28 +231,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if delta_c > 5.0 {
         println!(
-            "│ {}✗ STEP C: Mel spectrogram diverges from ground truth by {:.1}%{}              │",
-            "\x1b[31m", delta_c, RESET
+            "│ \x1b[31m✗ STEP C: Mel spectrogram diverges from ground truth by {:.1}%{}              │", delta_c, RESET
         );
         println!("│   → Check mel filterbank, log normalization, padding                        │");
     } else {
         println!(
-            "│ {}✓ STEP C: Mel spectrogram matches ground truth (delta={:.1}%){}               │",
-            "\x1b[32m", delta_c, RESET
+            "│ \x1b[32m✓ STEP C: Mel spectrogram matches ground truth (delta={:.1}%){}               │", delta_c, RESET
         );
     }
 
     if enc_diff < 0.1 {
         println!(
-            "│ {}✗ STEP H: Encoder produces SAME output for audio and padding{}             │",
-            "\x1b[31m", RESET
+            "│ \x1b[31m✗ STEP H: Encoder produces SAME output for audio and padding{}             │", RESET
         );
         println!("│   → Conv frontend may not be distinguishing content from silence            │");
         println!("│   → This explains why attention prefers padding positions                   │");
     } else {
         println!(
-            "│ {}✓ STEP H: Encoder differentiates audio from padding (diff={:.2}){}            │",
-            "\x1b[32m", enc_diff, RESET
+            "│ \x1b[32m✓ STEP H: Encoder differentiates audio from padding (diff={:.2}){}            │", enc_diff, RESET
         );
     }
 

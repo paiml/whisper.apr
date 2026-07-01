@@ -407,7 +407,7 @@ fn test_streaming_vad_speech_start_event() {
     for _ in 0..10 {
         let (_, in_speech) = vad.process(&speech_chunk);
         if in_speech {
-            assert!(vad.speech_buffer.len() > 0);
+            assert!(!vad.speech_buffer.is_empty());
             break;
         }
     }
@@ -628,7 +628,7 @@ fn test_streaming_vad_speech_end_clears_buffer() {
         let (completed, _) = vad.process(&silence);
         if !completed.is_empty() {
             // Speech ended, buffer should be cleared
-            assert!(vad.speech_buffer.is_empty() || completed.len() > 0);
+            assert!(vad.speech_buffer.is_empty() || !completed.is_empty());
             break;
         }
     }
@@ -855,7 +855,7 @@ fn test_streaming_vad_speech_start_accumulation() {
     }
 
     if entered_speech {
-        assert!(vad.speech_buffer.len() > 0);
+        assert!(!vad.speech_buffer.is_empty());
     }
 }
 
@@ -1629,8 +1629,12 @@ fn test_process_frame_noise_floor_adapts_only_in_silence() {
         .map(|i| {
             // Low amplitude square wave -- gives ZCR < 0.05 (block size 50)
             // so it won't be classified as speech
-            let val = if (i / 50) % 2 == 0 { 0.01 } else { -0.01 };
-            val
+
+            if (i / 50) % 2 == 0 {
+                0.01
+            } else {
+                -0.01
+            }
         })
         .collect();
 
