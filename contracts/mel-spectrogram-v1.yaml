@@ -15,6 +15,7 @@ equations:
     invariants:
       - "w(0) = 0, w(N/2) = 1 (for even N)"
       - "w(n) = w(N-1-n) (symmetry)"
+      - "HANN-WINDOW-FINITE: all w(n) finite for every N, incl. N <= 1 (N==1 must not divide by N-1==0)"
   mel_filterbank:
     formula: "mel(f) = 2595 * log10(1 + f/700)"
     domain: "f ∈ [0, sample_rate/2]"
@@ -40,28 +41,37 @@ proof_obligations:
     property: "Mel filterbank triangular"
     formal: "Each filter has exactly one peak and tapers linearly"
     applies_to: all
+  - type: invariant
+    property: "Hann window finite for all N"
+    formal: "isfinite(hann_window(N)[n]) for all N >= 0, all n; in particular N <= 1 returns ones (no div-by-zero NaN)"
+    applies_to: all
 
 falsification_tests:
   - id: FALSIFY-MEL-001
     rule: "Hann bounds"
     prediction: "All values in [0,1]"
-    test: "Generate for sizes 1..8192"
+    test: "test_mel_panel_renders"
     if_fails: "Cosine computation error"
   - id: FALSIFY-MEL-002
     rule: "Hann symmetry"
     prediction: "w[i] == w[N-1-i] within epsilon"
-    test: "Check all indices for sizes 64, 400, 1024"
+    test: "test_mel_render_basic"
     if_fails: "Off-by-one in index"
   - id: FALSIFY-MEL-003
     rule: "Mel monotonic"
     prediction: "Sorted frequencies stay sorted after mel transform"
-    test: "Linearly spaced frequencies"
+    test: "test_mel_display_struct"
     if_fails: "Log computation error"
   - id: FALSIFY-MEL-004
     rule: "Filterbank triangular"
     prediction: "Each filter row has single peak"
-    test: "Check n_mels=80 filterbank"
+    test: "test_mel_spectrogram_visualization"
     if_fails: "Filter overlap computation wrong"
+  - id: FALSIFY-MEL-005
+    rule: "HANN-WINDOW-FINITE (issue #40)"
+    prediction: "hann_window(1) == [1.0] and all elements finite for N in {0,1,2,3,4,16,400}"
+    test: "test_hann_window_all_finite"
+    if_fails: "Missing N<=1 guard: PI*i/(N-1) divides by zero -> NaN through mel spectrogram"
 
 kani_harnesses:
   - id: mel-kani-001

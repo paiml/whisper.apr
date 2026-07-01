@@ -1,0 +1,64 @@
+metadata:
+  version: "1.0.0"
+  author: "Sovereign AI Stack"
+  description: "Folder/batch discovery contract: discovery accepts exactly the formats the decoder supports (no silent skips)"
+  crate: "whisper-apr"
+  references:
+    - "whisper.apr issue #17 (folder-transcription extension drift: .mov/.mkv/.avi/.opus silently skipped)"
+    - "src/audio/decode.rs SUPPORTED_EXTENSIONS — single source of truth"
+
+equations:
+  folder_discovery_set:
+    formula: "discoverable(ext) <=> is_supported_extension(ext)"
+    domain: "ext in lowercase file extensions"
+    invariants:
+      - "Folder discovery recognizes an extension iff the single-file decoder supports it"
+      - "No supported decode format is silently dropped from batch/folder runs"
+      - "Matching is case-insensitive (extensions are lowercased before comparison)"
+
+proof_obligations:
+  - type: invariant
+    property: "Discovery matches decoder support set"
+    formal: "forall ext in SUPPORTED_EXTENSIONS: has_folder_audio_extension(\"clip.\"+ext) == true"
+    applies_to: all
+  - type: invariant
+    property: "No false positives on non-audio extensions"
+    formal: "has_folder_audio_extension(\"notes.txt\") == false"
+    applies_to: all
+  - type: invariant
+    property: "Case-insensitive parity"
+    formal: "has_folder_audio_extension(\"a.MOV\") == has_folder_audio_extension(\"a.mov\")"
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-FDRIFT-001
+    rule: "Discovery covers every decoder-supported extension"
+    test: "test_has_folder_audio_extension_covers_all_decoder_formats"
+    prediction: "verified"
+    if_fails: "A decode-supported format (e.g. .mov/.mkv/.avi/.opus) is silently skipped in batch mode (issue #17 regression)"
+  - id: FALSIFY-FDRIFT-002
+    rule: "A folder with mixed .mov + .wav yields both"
+    test: "test_discover_folder_recursive_finds_mov_and_wav"
+    prediction: "verified"
+    if_fails: "Folder discovery drops .mov files, losing ~20% of mixed corpora"
+  - id: FALSIFY-FDRIFT-003
+    rule: "Previously-dropped formats now discovered (incl. uppercase)"
+    test: "test_has_folder_audio_extension_previously_dropped_formats"
+    prediction: "verified"
+    if_fails: ".mov/.mkv/.avi/.opus or their uppercase forms still skipped"
+  - id: FALSIFY-FDRIFT-004
+    rule: "Original eight formats still match; non-audio rejected"
+    test: "test_has_folder_audio_extension_original_eight_still_match"
+    prediction: "verified"
+    if_fails: "Widening discovery regressed the original list or now accepts non-audio files"
+
+qa_gate:
+  id: QA-FOLDER-DISCOVERY
+  name: "folder discovery extension parity contract"
+  min_coverage: 0.90
+  max_complexity: 10
+  required_tests:
+    - test_has_folder_audio_extension_covers_all_decoder_formats
+    - test_discover_folder_recursive_finds_mov_and_wav
+    - test_has_folder_audio_extension_previously_dropped_formats
+    - test_has_folder_audio_extension_original_eight_still_match

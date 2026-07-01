@@ -188,7 +188,7 @@ fn test_turn_detector_compute_zcr() {
     let zcr = detector.compute_zcr(&audio);
     assert!(!zcr.is_empty());
     // ZCR should be between 0 and 1
-    assert!(zcr.iter().all(|&z| z >= 0.0 && z <= 1.0));
+    assert!(zcr.iter().all(|&z| (0.0..=1.0).contains(&z)));
 }
 
 #[test]

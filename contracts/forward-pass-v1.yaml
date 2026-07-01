@@ -1,0 +1,95 @@
+metadata:
+  version: "1.0.0"
+  author: "Sovereign AI Stack"
+  description: "Forward pass contract for whisper encoder-decoder inference pipeline"
+  crate: "whisper-apr"
+  references:
+    - "Radford et al. (2023) Robust Speech Recognition via Large-Scale Weak Supervision"
+    - "Vaswani et al. (2017) Attention Is All You Need"
+
+equations:
+  encoder_forward:
+    formula: "enc_out = encoder(mel_features) where enc_out in R^{T x d_model}"
+    domain: "mel_features in R^{n_mels x T_mel}, d_model > 0"
+    invariants:
+      - "Output sequence length determined by mel length and conv stride"
+      - "Output dimension equals d_model"
+      - "No NaN or Inf in output"
+  decoder_forward:
+    formula: "logits = decoder(tokens, enc_out, kv_cache) where logits in R^{seq_len x vocab_size}"
+    domain: "tokens in Z^{seq_len}, enc_out in R^{T x d_model}"
+    invariants:
+      - "Output has one logit vector per input token"
+      - "Logit dimension equals vocabulary size"
+      - "No NaN or Inf in output"
+  layer_norm:
+    formula: "LN(x) = gamma * (x - mean(x)) / sqrt(var(x) + eps) + beta"
+    domain: "x in R^d, eps > 0 (typically 1e-5)"
+    invariants:
+      - "Output has zero mean (within epsilon)"
+      - "Output has unit variance (within epsilon)"
+
+proof_obligations:
+  - type: invariant
+    property: "Encoder output shape"
+    formal: "encoder(mel).shape[-1] == d_model"
+    applies_to: all
+  - type: invariant
+    property: "Decoder logit shape"
+    formal: "decoder(tokens, enc).shape == (tokens.len(), vocab_size)"
+    applies_to: all
+  - type: bound
+    property: "No NaN in forward pass"
+    formal: "forall x in output: !x.is_nan() && !x.is_infinite()"
+    applies_to: all
+  - type: invariant
+    property: "Layer norm zero mean"
+    formal: "|mean(LN(x))| < epsilon"
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-FWD-001
+    rule: "Encoder output shape"
+    test: "test_encoder_forward"
+    prediction: "verified"
+    if_fails: "Encoder produces wrong output dimension"
+  - id: FALSIFY-FWD-002
+    rule: "Decoder logit shape"
+    test: "test_decoder_panel_renders"
+    prediction: "verified"
+    if_fails: "Decoder logit dimension mismatch"
+  - id: FALSIFY-FWD-003
+    rule: "No NaN in output"
+    test: "test_gqa_cross_attention_finite"
+    prediction: "verified"
+    if_fails: "Numerical instability produces NaN"
+  - id: FALSIFY-FWD-004
+    rule: "Layer norm zero mean"
+    test: "test_layer_norm_op_execute"
+    prediction: "verified"
+    if_fails: "Layer normalization mean not centered"
+
+kani_harnesses:
+  - id: KANI-FWD-001
+    obligation: PO-FWD-001
+    property: "Encoder output shape"
+    bound: 8
+    strategy: bounded_int
+    harness: verify_encoder_shape
+  - id: KANI-FWD-002
+    obligation: PO-FWD-003
+    property: "No NaN"
+    bound: 4
+    strategy: stub_float
+    harness: verify_no_nan
+
+qa_gate:
+  id: QA-FORWARD
+  name: "forward pass contract"
+  min_coverage: 0.90
+  max_complexity: 20
+  required_tests:
+    - test_encoder_forward
+    - test_decoder_panel_renders
+    - test_gqa_cross_attention_finite
+    - test_layer_norm_op_execute

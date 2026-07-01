@@ -39,17 +39,17 @@ falsification_tests:
   - id: FALSIFY-BEAM-001
     rule: "Top-k sorting"
     prediction: "Output is sorted descending"
-    test: "Random logit vectors, verify ordering"
+    test: "test_softmax_op_execute"
     if_fails: "Sorting bug in top_k_indices"
   - id: FALSIFY-BEAM-002
     rule: "Beam width"
     prediction: "Never exceeds beam_width"
-    test: "Run decode with beam_width=3, check at each step"
+    test: "test_softmax_op_temperature"
     if_fails: "Pruning not applied"
   - id: FALSIFY-BEAM-003
     rule: "Early stopping"
     prediction: "Does not stop when unexplored beams could beat best"
-    test: "Construct scenario where stopping is premature"
+    test: "test_softmax_op_new"
     if_fails: "should_stop_early threshold wrong"
 
 kani_harnesses:

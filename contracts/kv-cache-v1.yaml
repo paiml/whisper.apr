@@ -1,0 +1,96 @@
+metadata:
+  version: "1.0.0"
+  author: "Sovereign AI Stack"
+  description: "KV-cache contract for whisper autoregressive decoder key-value caching"
+  crate: "whisper-apr"
+  references:
+    - "Vaswani et al. (2017) Attention Is All You Need"
+    - "Pope et al. (2022) Efficiently Scaling Transformer Inference"
+
+equations:
+  kv_cache_append:
+    formula: "cache' = concat(cache, [k_new, v_new]) along seq dimension"
+    domain: "cache in R^{layers x 2 x seq x d_head}, k_new in R^{d_head}, v_new in R^{d_head}"
+    invariants:
+      - "Cache sequence length increases by 1 per token"
+      - "Previous entries unchanged after append"
+      - "Cache size bounded by max_seq_len"
+  kv_cache_attention:
+    formula: "attn(q, K_cache, V_cache) = softmax(q * K_cache^T / sqrt(d_k)) * V_cache"
+    domain: "q in R^{d_k}, K_cache in R^{seq x d_k}, V_cache in R^{seq x d_v}"
+    invariants:
+      - "Attention weights sum to 1.0"
+      - "Output dimension equals d_v"
+      - "Equivalent to full recomputation (correctness)"
+  kv_cache_reset:
+    formula: "reset(cache) -> cache with seq_len = 0"
+    domain: "cache in KVCache"
+    invariants:
+      - "After reset, cache.seq_len() == 0"
+      - "Memory allocation retained for reuse"
+
+proof_obligations:
+  - type: invariant
+    property: "Cache growth monotonic"
+    formal: "cache'.seq_len() == cache.seq_len() + 1 after append"
+    applies_to: all
+  - type: bound
+    property: "Cache bounded by max_seq_len"
+    formal: "cache.seq_len() <= max_seq_len"
+    applies_to: all
+  - type: invariant
+    property: "Previous entries immutable"
+    formal: "cache'[0..n] == cache[0..n] after append"
+    applies_to: all
+  - type: equivalence
+    property: "Cached attention equals full recomputation"
+    formal: "|attn_cached(q, cache) - attn_full(q, all_kv)| < epsilon"
+    tolerance: 1.0e-6
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-KV-001
+    rule: "Cache length grows by 1"
+    test: "test_kv_cache_append"
+    prediction: "verified"
+    if_fails: "Cache length not incremented on append"
+  - id: FALSIFY-KV-002
+    rule: "Cache bounded"
+    test: "test_kv_cache_overflow"
+    prediction: "verified"
+    if_fails: "Cache exceeds maximum sequence length"
+  - id: FALSIFY-KV-003
+    rule: "Previous entries unchanged"
+    test: "test_kv_cache_new"
+    prediction: "verified"
+    if_fails: "Append modifies existing cache entries"
+  - id: FALSIFY-KV-004
+    rule: "Reset clears cache"
+    test: "test_kv_cache_reset"
+    prediction: "verified"
+    if_fails: "Reset does not clear sequence length"
+
+kani_harnesses:
+  - id: KANI-KV-001
+    obligation: PO-KV-001
+    property: "Cache growth monotonic"
+    bound: 8
+    strategy: bounded_int
+    harness: verify_cache_growth
+  - id: KANI-KV-002
+    obligation: PO-KV-002
+    property: "Cache bounded"
+    bound: 8
+    strategy: bounded_int
+    harness: verify_cache_bound
+
+qa_gate:
+  id: QA-KVCACHE
+  name: "kv_cache contract"
+  min_coverage: 0.90
+  max_complexity: 20
+  required_tests:
+    - test_kv_cache_append
+    - test_kv_cache_overflow
+    - test_kv_cache_new
+    - test_kv_cache_reset

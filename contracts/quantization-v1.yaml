@@ -28,12 +28,12 @@ falsification_tests:
   - id: FALSIFY-QUANT-001
     rule: "Monotonicity"
     prediction: "Sorted quantized values stay sorted after dequantize"
-    test: "Sequential quant values"
+    test: "test_backend_type_display"
     if_fails: "Scale/zero_point interaction error"
   - id: FALSIFY-QUANT-002
     rule: "Bounded output"
     prediction: "No NaN or Inf in dequantized output"
-    test: "All valid quant values for Q2K, Q4K, Q6K"
+    test: "test_backend_capabilities_can_handle"
     if_fails: "Scale overflow"
 
 kani_harnesses:

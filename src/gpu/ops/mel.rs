@@ -381,8 +381,12 @@ fn main(
     }
 }
 
-/// Precomputed Hann window for Whisper
+/// Precomputed Hann window. `<= 1` guard avoids div-by-zero NaN (issue #40); canonical impl `crate::simd::fft::hann_window`.
+#[must_use]
 pub fn hann_window(n_fft: u32) -> Vec<f32> {
+    if n_fft <= 1 {
+        return vec![1.0; n_fft as usize]; // issue #40 guard
+    }
     (0..n_fft)
         .map(|i| {
             let x = std::f32::consts::PI * (i as f32) / (n_fft as f32 - 1.0);
@@ -496,14 +500,15 @@ mod tests {
 
     #[test]
     fn test_hann_window() {
-        let window = hann_window(400);
-        assert_eq!(window.len(), 400);
-
-        // Window should start and end near zero
-        assert!(window[0] < 0.01);
-        assert!(window[399] < 0.01);
-
-        // Window should peak in the middle
-        assert!(window[200] > 0.99);
+        // Shape: starts/ends near zero, peaks in the middle.
+        let w = hann_window(400);
+        assert!(w.len() == 400 && w[0] < 0.01 && w[399] < 0.01 && w[200] > 0.99);
+        // HANN-WINDOW-FINITE + issue #40: hann_window(1) divided by (n-1)==0 -> NaN.
+        assert_eq!(hann_window(0), Vec::<f32>::new());
+        assert_eq!(hann_window(1), vec![1.0]); // issue #40: was [NaN]
+        for n in [0u32, 1, 2, 3, 4, 16, 400] {
+            let w = hann_window(n);
+            assert!(w.len() == n as usize && w.iter().all(|x| x.is_finite()));
+        }
     }
 }

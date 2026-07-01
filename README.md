@@ -683,6 +683,10 @@ pmat quality-gate  # Must pass
 
 ---
 
+## See Also
+
+- [Cookbook](examples/) — 104 runnable examples
+
 ## License
 
 Licensed under the MIT License. See [LICENSE](LICENSE) for details.
