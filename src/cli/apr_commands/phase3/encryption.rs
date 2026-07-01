@@ -5,11 +5,14 @@
 
 //! AES-256-GCM encrypt / decrypt handlers (feature: `format-encryption`)
 
-
 use super::super::super::apr_args::{AprDecryptArgs, AprEncryptArgs};
 use super::super::super::commands::{CliError, CliResult, CommandResult};
 #[cfg(feature = "format-encryption")]
 use super::super::require_password;
+#[cfg(feature = "format-encryption")]
+use super::emit_output;
+#[cfg(feature = "format-encryption")]
+use std::fs;
 
 /// Encrypt a model with AES-256-GCM (feature: `format-encryption`)
 pub(in super::super) fn run_encrypt(

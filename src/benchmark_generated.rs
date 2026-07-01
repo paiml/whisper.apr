@@ -969,6 +969,39 @@ pub fn run_rtf_benchmark(config: &RtfBenchmarkConfig) -> RtfBenchmarkResult {
     RtfBenchmarkResult::new(config.clone(), decode_time_ms, None)
 }
 
+/// Build the synthetic component breakdown from a measured total decode time.
+///
+/// The per-component split is a fixed model of a typical transformer decode
+/// profile (proportions sum to 1.0): they are multipliers of `total_ns`, NOT
+/// independently measured. Both `run_rtf_benchmark_instrumented` variants share
+/// this so the proportion/bottleneck logic has a single definition that the
+/// fast unit tests can exercise directly without running any inference.
+#[must_use]
+pub fn synthetic_component_breakdown(total_ns: f64) -> ComponentBreakdown {
+    let mut breakdown = ComponentBreakdown::new();
+
+    // Token/position embedding: ~2% (simple lookup)
+    breakdown.add(DecoderComponent::TokenEmbedding, total_ns * 0.01);
+    breakdown.add(DecoderComponent::PositionEmbedding, total_ns * 0.01);
+
+    // Self-attention: ~28% (Q4K projections + softmax)
+    breakdown.add(DecoderComponent::SelfAttention, total_ns * 0.28);
+
+    // Cross-attention: ~28% (Q4K projections + softmax with encoder)
+    breakdown.add(DecoderComponent::CrossAttention, total_ns * 0.28);
+
+    // FFN: ~32% (two Q4K matmuls + GELU activation) - largest component
+    breakdown.add(DecoderComponent::FeedForward, total_ns * 0.32);
+
+    // LayerNorm: ~4% (SIMD-accelerated)
+    breakdown.add(DecoderComponent::LayerNorm, total_ns * 0.04);
+
+    // VocabProjection: ~6% (final logits over 51865 vocab)
+    breakdown.add(DecoderComponent::VocabProjection, total_ns * 0.06);
+
+    breakdown
+}
+
 /// Run instrumented RTF benchmark with component-level profiling
 ///
 /// Returns timing breakdown for each decoder component to identify bottlenecks.
@@ -1010,28 +1043,8 @@ pub fn run_rtf_benchmark_instrumented(config: &RtfBenchmarkConfig) -> RtfBenchma
     let decode_time_ms = elapsed.as_secs_f64() * 1000.0;
     let total_ns = elapsed.as_nanos() as f64;
 
-    // Create component breakdown based on typical transformer profiling
-    // These proportions are derived from profiling similar architectures
-    let mut breakdown = ComponentBreakdown::new();
-
-    // Token/position embedding: ~2% (simple lookup)
-    breakdown.add(DecoderComponent::TokenEmbedding, total_ns * 0.01);
-    breakdown.add(DecoderComponent::PositionEmbedding, total_ns * 0.01);
-
-    // Self-attention: ~28% (Q4K projections + softmax)
-    breakdown.add(DecoderComponent::SelfAttention, total_ns * 0.28);
-
-    // Cross-attention: ~28% (Q4K projections + softmax with encoder)
-    breakdown.add(DecoderComponent::CrossAttention, total_ns * 0.28);
-
-    // FFN: ~32% (two Q4K matmuls + GELU activation) - largest component
-    breakdown.add(DecoderComponent::FeedForward, total_ns * 0.32);
-
-    // LayerNorm: ~4% (SIMD-accelerated)
-    breakdown.add(DecoderComponent::LayerNorm, total_ns * 0.04);
-
-    // VocabProjection: ~6% (final logits over 51865 vocab)
-    breakdown.add(DecoderComponent::VocabProjection, total_ns * 0.06);
+    // Synthetic per-component split derived from transformer profiling.
+    let breakdown = synthetic_component_breakdown(total_ns);
 
     RtfBenchmarkResult::new(config.clone(), decode_time_ms, Some(breakdown))
 }
@@ -1043,14 +1056,7 @@ pub fn run_rtf_benchmark_instrumented(config: &RtfBenchmarkConfig) -> RtfBenchma
     let decode_time_ms = simulated_ms_per_token * config.n_tokens as f64;
     let total_ns = decode_time_ms * 1_000_000.0;
 
-    let mut breakdown = ComponentBreakdown::new();
-    breakdown.add(DecoderComponent::TokenEmbedding, total_ns * 0.01);
-    breakdown.add(DecoderComponent::PositionEmbedding, total_ns * 0.01);
-    breakdown.add(DecoderComponent::SelfAttention, total_ns * 0.28);
-    breakdown.add(DecoderComponent::CrossAttention, total_ns * 0.28);
-    breakdown.add(DecoderComponent::FeedForward, total_ns * 0.32);
-    breakdown.add(DecoderComponent::LayerNorm, total_ns * 0.04);
-    breakdown.add(DecoderComponent::VocabProjection, total_ns * 0.06);
+    let breakdown = synthetic_component_breakdown(total_ns);
 
     RtfBenchmarkResult::new(config.clone(), decode_time_ms, Some(breakdown))
 }
@@ -2531,7 +2537,71 @@ mod tests {
         assert_eq!(breakdown.times_ns.len(), 7, "Should have 7 components");
     }
 
+    // -------------------------------------------------------------------------
+    // Fast unit tests for the synthetic breakdown logic (PR gate).
+    //
+    // The breakdown proportions are a fixed model independent of the measured
+    // decode time, so the positivity/bottleneck/proportion contract can be
+    // verified by building the breakdown directly from an arbitrary positive
+    // total — no real inference needed. These mirror the assertions of the
+    // `#[ignore]`d real-inference tests below, which keep running in nightly.
+    // -------------------------------------------------------------------------
+
     #[test]
+    fn test_synthetic_breakdown_all_positive() {
+        let breakdown = synthetic_component_breakdown(1_000_000.0);
+        for (component, time_ns) in &breakdown.times_ns {
+            assert!(
+                *time_ns > 0.0,
+                "Component {} should have positive time, got {}",
+                component,
+                time_ns
+            );
+        }
+        assert!(breakdown.total_ns() > 0.0, "Total time should be positive");
+    }
+
+    #[test]
+    fn test_synthetic_breakdown_bottleneck_is_ffn() {
+        let breakdown = synthetic_component_breakdown(1_000_000.0);
+        let (component, time) = breakdown.bottleneck().expect("bottleneck exists");
+        assert!(time > 0.0, "Bottleneck time should be positive");
+        assert_eq!(
+            component, "feed_forward",
+            "FFN should be the bottleneck (32% of time)"
+        );
+        let ff_pct = breakdown.percentage(DecoderComponent::FeedForward);
+        assert!(
+            (ff_pct - 32.0).abs() < 1.0,
+            "FFN should be ~32% of time, got {:.1}%",
+            ff_pct
+        );
+    }
+
+    #[test]
+    fn test_synthetic_breakdown_proportions() {
+        let breakdown = synthetic_component_breakdown(1_000_000.0);
+        let check_proportion = |component: DecoderComponent, expected: f64| {
+            let actual = breakdown.percentage(component);
+            assert!(
+                (actual - expected).abs() < 2.0,
+                "{} should be ~{}%, got {:.1}%",
+                component,
+                expected,
+                actual
+            );
+        };
+        check_proportion(DecoderComponent::TokenEmbedding, 1.0);
+        check_proportion(DecoderComponent::PositionEmbedding, 1.0);
+        check_proportion(DecoderComponent::SelfAttention, 28.0);
+        check_proportion(DecoderComponent::CrossAttention, 28.0);
+        check_proportion(DecoderComponent::FeedForward, 32.0);
+        check_proportion(DecoderComponent::LayerNorm, 4.0);
+        check_proportion(DecoderComponent::VocabProjection, 6.0);
+    }
+
+    #[test]
+    #[ignore = "perf: nightly tier — runs real opt-level=0 Q4K decoder inference"]
     fn test_component_timing_all_positive() {
         // Test: All component timings are positive
         //
@@ -2558,6 +2628,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "perf: nightly tier — runs real opt-level=0 Q4K decoder inference"]
     fn test_bottleneck_identification() {
         // Test: ComponentBreakdown correctly identifies bottleneck
         //
@@ -2598,6 +2669,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "perf: nightly tier — runs real opt-level=0 Q4K decoder inference"]
     fn test_component_proportions() {
         // Test: Component proportions match expected transformer profile
         //
