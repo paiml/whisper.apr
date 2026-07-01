@@ -253,7 +253,7 @@ mod tests {
         let conv = Conv1d::new(4, 8, 3, 2, 1);
         let input = vec![0.0_f32; 10 * 4];
         let output = conv.forward(&input).expect("forward should succeed");
-        let expected_len = (10 + 2 * 1 - 3) / 2 + 1;
+        let expected_len = (10 + 2 - 3) / 2 + 1;
         assert_eq!(output.len(), expected_len * 8);
     }
 

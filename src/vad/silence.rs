@@ -408,7 +408,7 @@ mod tests {
 
         let segments = detector.detect(&audio, 480);
         // Should detect silence after speech
-        assert!(segments.len() >= 1);
+        assert!(!segments.is_empty());
     }
 
     #[test]

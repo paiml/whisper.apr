@@ -1,8 +1,15 @@
 [package]
 name = "whisper-apr"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 rust-version = "1.75"
+# PMAT-158 / issue #54: disable auto-discovery of the 104 ad-hoc debug examples
+# and the 6 benches. They each re-link the lib (~+41s wall) and several benches
+# are broken against the current aprender API, which makes `cargo build
+# --all-targets` fail. Only the targets explicitly re-declared below are built;
+# the retired sources stay on disk (un-built) for manual `cargo run --example`.
+autoexamples = false
+autobenches = false
 description = "WASM-first automatic speech recognition engine implementing OpenAI Whisper"
 license = "MIT"
 repository = "https://github.com/paiml/whisper.apr"
@@ -41,10 +48,10 @@ name = "whisper-apr"
 path = "src/bin/whisper-apr-cli.rs"
 required-features = ["cli"]
 
-[[bin]]
-name = "whisper-apr-cli"
-path = "src/bin/whisper-apr-cli.rs"
-required-features = ["cli"]
+# Note: the `whisper-apr-cli` alias was removed in commit feat/cli-default-install
+# (issue #55). The canonical binary name is `whisper-apr`, matching the crate name.
+# Two bin targets pointing at the same source file caused a cargo warning and
+# left users guessing which to invoke.
 
 [[bin]]
 name = "whisper-convert"
@@ -54,7 +61,11 @@ required-features = ["converter"]
 [features]
 # Enable parallel by default for ~2x encoder speedup on multi-core systems
 # WASM users should use "wasm" feature which doesn't include parallel
-default = ["std", "simd", "realizar-inference", "parallel"]
+# `cli` is in default so `cargo install --path .` lands the `whisper-apr`
+# binary on PATH without requiring users to remember a feature flag (#55).
+# Library-only consumers should use `default-features = false` and pick
+# the subset they want (e.g. `["std", "simd", "parallel"]`).
+default = ["std", "simd", "realizar-inference", "parallel", "cli"]
 std = []
 wasm = ["std", "wasm-bindgen", "js-sys", "web-sys", "console_error_panic_hook"]
 webgpu = ["wgpu", "bytemuck", "tokio", "pollster"]
@@ -97,7 +108,7 @@ thiserror = "2"
 
 # SIMD acceleration (trueno integration)
 # Using crates.io versions for reproducible builds
-trueno = { version = "0.16", features = ["parallel"] }
+trueno = { version = "0.17", features = ["parallel"] }
 # GPU-resident tensor architecture (WAPR-PERF-004)
 trueno-gpu = { version = "0.4.17", optional = true }
 
@@ -105,10 +116,10 @@ trueno-gpu = { version = "0.4.17", optional = true }
 # Note: safetensors-compare pulls hf-hub which doesn't support WASM
 # Use target-specific deps below to enable it only for native builds
 # Using local path for WASM-compatible trueno
-aprender = { version = "0.27", path = "../aprender", default-features = false, features = ["audio"] }
+aprender = { version = "0.27", default-features = false, features = ["audio"] }
 
 # APR CLI (proxied commands: pull, list)
-apr-cli = { version = "0.4.11", optional = true }
+apr-cli = { version = "0.30", optional = true }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
@@ -141,7 +152,10 @@ rayon = { version = "1.10", optional = true }
 wasm-bindgen-rayon = { version = "1.2", optional = true }
 
 # Optional: Converter dependencies
-reqwest = { version = "0.12", features = ["json", "stream"], optional = true }
+# Use rustls-tls (not default native-tls) so we don't pull openssl-sys → openssl-src,
+# which requires perl + system build tooling in clean-room containers and fails to
+# cross-compile to aarch64.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
@@ -154,9 +168,6 @@ zip = { version = "2", optional = true, default-features = false, features = ["d
 clap = { version = "4", features = ["derive"], optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 hf-hub = { version = "0.4", optional = true }
-
-# Vendored OpenSSL for aarch64 cross-compilation (hf-hub → reqwest → native-tls)
-openssl = { version = "0.10", features = ["vendored"] }
 
 # Optional: Phase 3 crypto dependencies (feature-gated through format-*)
 ed25519-dalek = { version = "2", optional = true }
@@ -209,7 +220,26 @@ getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] 
 # Enable safetensors-compare only for native builds
 # safetensors-compare: pulls hf-hub which doesn't support WASM
 # Note: inference-monitoring disabled due to cyclic dependency with entrenar
-aprender = { version = "0.27", path = "../aprender", default-features = false, features = ["audio", "safetensors-compare"] }
+aprender = { version = "0.27", default-features = false, features = ["audio", "safetensors-compare"] }
+
+# Dev/test debuginfo tuning (build-perf). Full `debug = 2` DWARF for this crate's
+# huge dep graph produced a ~391 MiB test binary and slow cold links.
+# `line-tables-only` keeps file:line in panic backtraces (the only debug info we
+# actually use locally) while dropping variable/type DWARF; `unpacked`
+# split-debuginfo keeps the per-object .o debug sections out of the final
+# executable, shrinking it further and speeding linking.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.test]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+# opt-level = 1 keeps test compile time low while making hot test paths —
+# notably the ~80 MB APR fixture serialize+CRC in format::validation and the
+# Q4K decoder inference in benchmark_generated — run at a usable speed. At
+# opt-level = 0 these run unoptimized and dominated the --lib wall clock.
+opt-level = 1
 
 [profile.release]
 lto = true
@@ -225,14 +255,16 @@ opt-level = 3  # Full optimization for WASM (was "z" - kills SIMD!)
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
 
+# Explicitly re-declared targets (autoexamples/autobenches = false above).
+# Only feature-gated examples and benches that actually compile are kept so
+# `cargo build --all-targets` is clean.
+
+# The one example that genuinely needs a non-default feature (converter).
 [[example]]
 name = "filterbank_embedding"
 required-features = ["converter"]
 
-[[bench]]
-name = "inference"
-harness = false
-
+# Benches that compile cleanly against the current aprender API.
 [[bench]]
 name = "wasm_simd"
 harness = false
@@ -242,16 +274,15 @@ name = "streaming_latency"
 harness = false
 
 [[bench]]
-name = "pipeline"
-harness = false
-
-[[bench]]
-name = "format_comparison"
-harness = false
-
-[[bench]]
 name = "cli_benchmarks"
 harness = false
+
+# RETIRED benches (PMAT-158 / issue #54): the sources at benches/inference.rs,
+# benches/pipeline.rs and benches/format_comparison.rs no longer compile against
+# aprender 0.27 (MelFilterbank::new now takes &MelConfig, MelFilterbank::compute
+# takes 1 arg, compute_simd was removed, format::AprReader was renamed). They are
+# left on disk (un-built) until the API drift is repaired and they are
+# re-declared here. Until then they no longer break `cargo build --all-targets`.
 
 
 # NOTE (WAPR-PERF-004): GPU-Resident Tensor integration requires:
@@ -276,6 +307,9 @@ perf = { level = "warn", priority = -1 }
 unwrap_used = "deny"
 expect_used = "warn"
 panic = "warn"
+
+# Safety: every `unsafe` block must carry a `// SAFETY:` justification (PMAT-128)
+undocumented_unsafe_blocks = "deny"
 
 # Code quality
 complexity = { level = "warn", priority = -1 }
@@ -306,11 +340,12 @@ unreadable_literal = "allow"
 used_underscore_binding = "allow"
 
 # Local development: patch crates.io deps to use local versions with WASM fixes
-[patch.crates-io]
-trueno = { path = "../trueno" }
-trueno-gpu = { path = "../trueno/trueno-gpu" }
-trueno-explain = { path = "../trueno/trueno-explain" }
-aprender = { path = "../aprender" }
-apr-cli = { path = "../aprender/crates/apr-cli" }
-realizar = { path = "../realizar" }
-jugar-probar = { path = "../probar/crates/probar" }
+# Commented out for crates.io publish — uncomment for local full-stack dev
+# [patch.crates-io]
+# trueno = { path = "../trueno" }
+# trueno-gpu = { path = "../trueno/trueno-gpu" }
+# trueno-explain = { path = "../trueno/trueno-explain" }
+# aprender = { path = "../aprender" }
+# apr-cli = { path = "../aprender/crates/apr-cli" }
+# realizar = { path = "../realizar" }
+# jugar-probar = { path = "../probar/crates/probar" }
