@@ -82,7 +82,7 @@ fn main() {
     let noise: Vec<f32> = (0..sample_rate)
         .map(|i| {
             // Simple pseudo-random using sine
-            ((i as f32 * 12345.6789).sin() * 43758.5453).fract() * 2.0 - 1.0
+            ((i as f32 * 12_345.679).sin() * 43_758.547).fract() * 2.0 - 1.0
         })
         .map(|x| x * 0.3) // Scale down
         .collect();
@@ -129,8 +129,7 @@ fn analyze_signal(mel: &MelFilterbank, name: &str, audio: &[f32]) {
                 .iter()
                 .enumerate()
                 .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(i, &e)| (i, e))
-                .unwrap_or((0, 0.0));
+                .map_or((0, 0.0), |(i, &e)| (i, e));
 
             // Total energy
             let total_energy: f32 = bin_energy.iter().sum();

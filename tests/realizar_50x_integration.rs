@@ -258,8 +258,14 @@ fn test_gpu_feature_available() {
 
     #[cfg(not(feature = "realizar-gpu"))]
     {
-        // Without GPU feature, we fall back to CPU SIMD
-        assert!(true, "CPU SIMD fallback");
+        // Without the GPU feature the CPU/SIMD backend must be usable — not just
+        // compiled. Construct a real op so this branch actually FAILS if the CPU
+        // fallback ever breaks (the previous `assert!(true)` could never fail).
+        use whisper_apr::realizar_inference::Attention;
+        assert!(
+            Attention::new(64).is_ok(),
+            "CPU SIMD fallback must construct an Attention op when realizar-gpu is disabled"
+        );
     }
 }
 
@@ -730,9 +736,16 @@ fn test_gpu_backend_detection() {
 
     #[cfg(not(feature = "realizar-gpu"))]
     {
-        // Without GPU feature, we should fall back to SIMD
-        // This path should always work
-        assert!(true, "Point 26: CPU SIMD fallback works");
+        // Point 26: without the GPU feature the CPU/SIMD fallback must be
+        // functional, not merely compiled. Exercise a real forward pass so this
+        // branch can actually FAIL if the fallback regresses.
+        use whisper_apr::realizar_inference::{Attention, Tensor};
+        let attn = Attention::new(64).expect("Attention on CPU fallback");
+        let t = || Tensor::from_vec(vec![8, 64], vec![0.1f32; 8 * 64]).expect("tensor");
+        assert!(
+            attn.flash_forward_v2(&t(), &t(), &t(), 8).is_ok(),
+            "Point 26: CPU SIMD fallback forward pass must succeed without a GPU"
+        );
     }
 }
 

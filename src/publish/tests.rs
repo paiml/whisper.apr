@@ -100,7 +100,7 @@ fn test_publish_format_variants() {
 #[test]
 fn test_publish_format_clone_copy() {
     let format = PublishFormat::Apr;
-    let cloned = format.clone();
+    let cloned = format;
     let copied = format;
     assert_eq!(format, cloned);
     assert_eq!(format, copied);

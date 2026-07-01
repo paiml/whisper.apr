@@ -378,7 +378,7 @@ mod proptests {
         ) {
             let resampled = resample(&samples, 48000, 16000);
             for &s in &resampled {
-                prop_assert!(s >= -1.5 && s <= 1.5);
+                prop_assert!((-1.5..=1.5).contains(&s));
             }
         }
 
@@ -387,7 +387,7 @@ mod proptests {
         fn prop_16bit_pcm_bounded(data in prop::collection::vec(any::<u8>(), 0..1000)) {
             let samples = convert_16bit_pcm(&data);
             for &s in &samples {
-                prop_assert!(s >= -1.0 && s <= 1.0);
+                prop_assert!((-1.0..=1.0).contains(&s));
             }
         }
 
@@ -396,7 +396,7 @@ mod proptests {
         fn prop_8bit_pcm_bounded(data in prop::collection::vec(any::<u8>(), 0..1000)) {
             let samples = convert_8bit_pcm(&data);
             for &s in &samples {
-                prop_assert!(s >= -1.0 && s <= 1.0);
+                prop_assert!((-1.0..=1.0).contains(&s));
             }
         }
     }
@@ -686,7 +686,7 @@ fn test_resample_out_of_bounds() {
     let resampled = resample(&samples, 8000, 48000);
     assert!(!resampled.is_empty());
     for &s in &resampled {
-        assert!(s >= -1.0 && s <= 1.0);
+        assert!((-1.0..=1.0).contains(&s));
     }
 }
 

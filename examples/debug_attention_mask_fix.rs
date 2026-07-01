@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Compute audio encoder length
     // HOP_LENGTH = 160, stride-2 conv means encoder_len = audio_samples / 320
-    let audio_encoder_len = (samples.len() + 319) / 320;
+    let audio_encoder_len = samples.len().div_ceil(320);
     println!(
         "  Audio encoder length: {} (of 1500 total positions)",
         audio_encoder_len
@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sot_embed = &token_embed[sot_embed_start..sot_embed_start + d_model];
 
     // Compute Query
-    let mut query = q_bias.to_vec();
+    let mut query = q_bias.clone();
     for o in 0..d_model {
         for i in 0..d_model {
             query[o] += sot_embed[i] * q_weight[o * d_model + i];
