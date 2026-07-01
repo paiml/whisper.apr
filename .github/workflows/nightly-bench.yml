@@ -7,14 +7,27 @@ on:
 concurrency:
   group: bench-${{ github.ref }}
   cancel-in-progress: true
+# PMAT-178: the called sovereign-ci.yml's provenance job requests
+# id-token/attestations — a caller pinned to `contents: read` alone cannot
+# grant that elevation, and GitHub refuses to START the run (startup_failure
+# nightly since 2026-06-25, introduced by c024283 adding this block).
+# ci.yml (no permissions block) never hit this because the default grant
+# covers it. Least-privilege is kept: only what provenance needs is added.
 permissions:
   contents: read
+  id-token: write
+  attestations: write
 jobs:
   bench:
     uses: paiml/.github/.github/workflows/sovereign-ci.yml@main
     with:
       repo: ${{ github.event.repository.name }}
       run_benchmarks: true
+      # Same shipped-artifacts lint scope as ci.yml — without it the nightly
+      # linted --all-targets and failed on the ~893 test/bench-scaffolding
+      # pedantic lints ci.yml deliberately carves out.
+      # Tracked: https://github.com/paiml/whisper.apr/issues/54 (PMAT-158)
+      clippy_args: "--lib --bins"
     secrets: inherit
 
   # Perf-tier unit tests: the real-inference RTF breakdown tests in
