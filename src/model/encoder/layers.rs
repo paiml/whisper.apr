@@ -50,21 +50,22 @@ impl LayerNorm {
 
         let seq_len = input.len() / self.normalized_shape;
 
-        for s in 0..seq_len {
-            let start = s * self.normalized_shape;
-            let end = start + self.normalized_shape;
-            let slice = &input[start..end];
-
-            let mean: f32 = slice.iter().sum::<f32>() / self.normalized_shape as f32;
-            let variance: f32 = slice.iter().map(|&x| (x - mean).powi(2)).sum::<f32>()
-                / self.normalized_shape as f32;
-
-            let inv_std = 1.0 / (variance + self.eps).sqrt();
-
-            for i in 0..self.normalized_shape {
-                let normalized = (slice[i] - mean) * inv_std;
-                output[start + i] = normalized * self.weight[i] + self.bias[i];
+        let chunks_in = input.chunks_exact(self.normalized_shape);
+        let chunks_out = output.chunks_exact_mut(self.normalized_shape);
+        
+        #[cfg(not(feature = "parallel"))]
+        {
+            for (slice, out_slice) in chunks_in.zip(chunks_out) {
+                crate::simd::optimized::layer_norm_into(slice, &self.weight, &self.bias, self.eps, out_slice);
             }
+        }
+        
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            chunks_in.zip(chunks_out).par_bridge().for_each(|(slice, out_slice)| {
+                crate::simd::optimized::layer_norm_into(slice, &self.weight, &self.bias, self.eps, out_slice);
+            });
         }
 
         Ok(())
@@ -136,6 +137,11 @@ impl FeedForward {
     pub fn finalize_weights(&mut self) {
         self.fc1.finalize_weights();
         self.fc2.finalize_weights();
+    }
+
+    pub fn finalize_weights_encoder(&mut self) {
+        self.fc1.finalize_weights_encoder();
+        self.fc2.finalize_weights_encoder();
     }
 
     /// Check if weights have been finalized

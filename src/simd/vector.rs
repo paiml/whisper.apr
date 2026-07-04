@@ -26,7 +26,7 @@ pub fn dot_nalloc(a: &[f32], b: &[f32]) -> f32 {
     {
         if is_x86_feature_detected!("fma") && is_x86_feature_detected!("avx2") {
             // SAFETY: CPU features verified at runtime. Lengths equal per debug_assert.
-            return unsafe { dot_fma_avx2(a, b) };
+            return unsafe { dot_fma_avx2_public(a, b) };
         }
     }
 
@@ -50,7 +50,7 @@ pub fn dot_scalar(a: &[f32], b: &[f32]) -> f32 {
 /// Requires AVX2 and FMA CPU features (checked by caller via `is_x86_feature_detected!`).
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2", enable = "fma")]
-unsafe fn dot_fma_avx2(a: &[f32], b: &[f32]) -> f32 {
+pub(crate) unsafe fn dot_fma_avx2_public(a: &[f32], b: &[f32]) -> f32 {
     use std::arch::x86_64::{
         __m256, _mm256_add_ps, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_setzero_ps,
         _mm256_storeu_ps,
@@ -596,6 +596,66 @@ unsafe fn dot_i8_avx2(a_i8: &[i8], b: &[f32], scale: f32) -> f32 {
 
         sum * scale
     }
+}
+
+/// Quantize a single row of f32 weights to symmetric INT4 with per-group scales.
+///
+/// Packs 2 weights per byte (lower nibble, upper nibble).
+/// Returns (quantized_row, scales) where each scale corresponds to a group.
+pub fn quant_f32_row_to_i4(row: &[f32], group_size: usize) -> (Vec<u8>, Vec<f32>) {
+    assert_eq!(row.len() % group_size, 0, "row len must be multiple of group_size");
+    let mut packed = Vec::with_capacity(row.len() / 2);
+    let mut scales = Vec::with_capacity(row.len() / group_size);
+
+    for chunk in row.chunks(group_size) {
+        let abs_max = chunk.iter().fold(0.0_f32, |m, &v| m.max(v.abs()));
+        let scale = if abs_max == 0.0 { 0.0 } else { abs_max / 7.0 };
+        let inv_scale = if scale == 0.0 { 0.0 } else { 1.0 / scale };
+
+        scales.push(scale);
+
+        for pair in chunk.chunks(2) {
+            let v0 = pair[0];
+            let v1 = if pair.len() > 1 { pair[1] } else { 0.0 };
+
+            let q0 = (v0 * inv_scale).round().clamp(-8.0, 7.0) as i8;
+            let q1 = (v1 * inv_scale).round().clamp(-8.0, 7.0) as i8;
+
+            let packed_byte = ((q0 as u8) & 0x0F) | (((q1 as u8) & 0x0F) << 4);
+            packed.push(packed_byte);
+        }
+    }
+    (packed, scales)
+}
+
+/// Compute dot product of an INT4 weight row with an f32 input vector.
+///
+/// Unpacks 2×i4 → i8 and uses the existing INT8 dot product path per group.
+#[must_use]
+pub fn dot_i4(a_i4: &[u8], scales: &[f32], b: &[f32], group_size: usize) -> f32 {
+    assert_eq!(a_i4.len() * 2, b.len(), "dot_i4 requires equal lengths");
+    assert_eq!(b.len() % group_size, 0, "b len must be multiple of group_size");
+
+    let mut sum = 0.0;
+    // Buffer for unpacked i8 values for one group
+    let mut i8_buf = vec![0i8; group_size];
+
+    for (group_idx, (b_chunk, &scale)) in b.chunks(group_size).zip(scales.iter()).enumerate() {
+        let a_chunk = &a_i4[group_idx * (group_size / 2)..(group_idx + 1) * (group_size / 2)];
+        
+        for (i, &byte) in a_chunk.iter().enumerate() {
+            // Sign extend lower nibble
+            let q0 = ((byte << 4) as i8) >> 4;
+            // Sign extend upper nibble
+            let q1 = (byte as i8) >> 4;
+            
+            i8_buf[i * 2] = q0;
+            i8_buf[i * 2 + 1] = q1;
+        }
+
+        sum += dot_i8(&i8_buf, b_chunk, scale);
+    }
+    sum
 }
 
 /// Quantize f32 values to fp16, returning u16 bit patterns.

@@ -1,0 +1,304 @@
+pv lint — contract quality gate
+================================
+
+  Gate 1: validate             ✓  (10 contracts, 0 errors, 4 warnings) [0ms]
+  Gate 2: audit                ✓  (10 contracts, 0 findings) [0ms]
+  Gate 3: score                ✓  (10 contracts, mean=0.52, threshold=0.00) [0ms]
+  Gate 4: verify               ✗  (40 refs, 38 found, 2 missing) [20ms]
+  Gate 5: enforce              ✓  (23 eqs, 0 pre, 0 post) [0ms]
+  Gate 6: enforcement-level    ✓  (skipped: 10 contracts, 0 below level) [0ms]
+  Gate 7: reverse-coverage     ⏭  (skipped: no --binding or --crate-dir provided) [0ms]
+  Gate 8: composition          ✓  (0 edges, 0 satisfied, 0 broken) [0ms]
+
+Findings:
+
+  contracts/batch-inference-v1.yaml (9 warnings)
+    [WARN] PV-ENF-001 — Equation `batch_mel` has no preconditions
+      fix: Add to equations.batch_mel:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `batch_mel` has no postconditions
+      fix: Add to equations.batch_mel:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `batch_mel` has no lean_theorem — proof recommended
+      fix: Add to equations.batch_mel:
+             lean_theorem: "Theorems.Batch_mel"
+    [WARN] PV-ENF-001 — Equation `batch_padding` has no preconditions
+      fix: Add to equations.batch_padding:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `batch_padding` has no postconditions
+      fix: Add to equations.batch_padding:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `batch_padding` has no lean_theorem — proof recommended
+      fix: Add to equations.batch_padding:
+             lean_theorem: "Theorems.Batch_padding"
+    [WARN] PV-ENF-001 — Equation `batch_transcribe` has no preconditions
+      fix: Add to equations.batch_transcribe:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `batch_transcribe` has no postconditions
+      fix: Add to equations.batch_transcribe:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `batch_transcribe` has no lean_theorem — proof recommended
+      fix: Add to equations.batch_transcribe:
+             lean_theorem: "Theorems.Batch_transcribe"
+
+  contracts/beam-search-v1.yaml (7 warnings)
+    [WARN] PV-ENF-001 — Equation `beam_score` has no preconditions
+      fix: Add to equations.beam_score:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `beam_score` has no postconditions
+      fix: Add to equations.beam_score:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `beam_score` has no lean_theorem — proof recommended
+      fix: Add to equations.beam_score:
+             lean_theorem: "Theorems.Beam_score"
+    [WARN] PV-ENF-001 — Equation `top_k` has no preconditions
+      fix: Add to equations.top_k:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `top_k` has no postconditions
+      fix: Add to equations.top_k:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `top_k` has no lean_theorem — proof recommended
+      fix: Add to equations.top_k:
+             lean_theorem: "Theorems.Top_k"
+    [WARN] PV-VAL-001 — SCHEMA-013: No qa_gate defined — contract should define a certeza quality gate
+
+  contracts/fft-v1.yaml (2 errors, 9 warnings)
+    [ERROR] PV-VER-001 — Unfalsifiable: test `test_fft_matches_naive` not found in src/
+    [ERROR] PV-VER-001 — Unfalsifiable: test `test_fft_no_nan` not found in src/
+    [WARN] PV-ENF-001 — Equation `dft` has no preconditions
+      fix: Add to equations.dft:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `dft` has no postconditions
+      fix: Add to equations.dft:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `dft` has no lean_theorem — proof recommended
+      fix: Add to equations.dft:
+             lean_theorem: "Theorems.Dft"
+    [WARN] PV-ENF-001 — Equation `parseval` has no preconditions
+      fix: Add to equations.parseval:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `parseval` has no postconditions
+      fix: Add to equations.parseval:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `parseval` has no lean_theorem — proof recommended
+      fix: Add to equations.parseval:
+             lean_theorem: "Theorems.Parseval"
+    [WARN] PV-ENF-001 — Equation `power_spectrum` has no preconditions
+      fix: Add to equations.power_spectrum:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `power_spectrum` has no postconditions
+      fix: Add to equations.power_spectrum:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `power_spectrum` has no lean_theorem — proof recommended
+      fix: Add to equations.power_spectrum:
+             lean_theorem: "Theorems.Power_spectrum"
+
+  contracts/folder-discovery-v1.yaml (3 warnings)
+    [WARN] PV-ENF-001 — Equation `folder_discovery_set` has no preconditions
+      fix: Add to equations.folder_discovery_set:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `folder_discovery_set` has no postconditions
+      fix: Add to equations.folder_discovery_set:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `folder_discovery_set` has no lean_theorem — proof recommended
+      fix: Add to equations.folder_discovery_set:
+             lean_theorem: "Theorems.Folder_discovery_set"
+
+  contracts/forward-pass-v1.yaml (9 warnings)
+    [WARN] PV-ENF-001 — Equation `decoder_forward` has no preconditions
+      fix: Add to equations.decoder_forward:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `decoder_forward` has no postconditions
+      fix: Add to equations.decoder_forward:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `decoder_forward` has no lean_theorem — proof recommended
+      fix: Add to equations.decoder_forward:
+             lean_theorem: "Theorems.Decoder_forward"
+    [WARN] PV-ENF-001 — Equation `encoder_forward` has no preconditions
+      fix: Add to equations.encoder_forward:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `encoder_forward` has no postconditions
+      fix: Add to equations.encoder_forward:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `encoder_forward` has no lean_theorem — proof recommended
+      fix: Add to equations.encoder_forward:
+             lean_theorem: "Theorems.Encoder_forward"
+    [WARN] PV-ENF-001 — Equation `layer_norm` has no preconditions
+      fix: Add to equations.layer_norm:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `layer_norm` has no postconditions
+      fix: Add to equations.layer_norm:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `layer_norm` has no lean_theorem — proof recommended
+      fix: Add to equations.layer_norm:
+             lean_theorem: "Theorems.Layer_norm"
+
+  contracts/kv-cache-v1.yaml (9 warnings)
+    [WARN] PV-ENF-001 — Equation `kv_cache_append` has no preconditions
+      fix: Add to equations.kv_cache_append:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `kv_cache_append` has no postconditions
+      fix: Add to equations.kv_cache_append:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `kv_cache_append` has no lean_theorem — proof recommended
+      fix: Add to equations.kv_cache_append:
+             lean_theorem: "Theorems.Kv_cache_append"
+    [WARN] PV-ENF-001 — Equation `kv_cache_attention` has no preconditions
+      fix: Add to equations.kv_cache_attention:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `kv_cache_attention` has no postconditions
+      fix: Add to equations.kv_cache_attention:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `kv_cache_attention` has no lean_theorem — proof recommended
+      fix: Add to equations.kv_cache_attention:
+             lean_theorem: "Theorems.Kv_cache_attention"
+    [WARN] PV-ENF-001 — Equation `kv_cache_reset` has no preconditions
+      fix: Add to equations.kv_cache_reset:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `kv_cache_reset` has no postconditions
+      fix: Add to equations.kv_cache_reset:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `kv_cache_reset` has no lean_theorem — proof recommended
+      fix: Add to equations.kv_cache_reset:
+             lean_theorem: "Theorems.Kv_cache_reset"
+
+  contracts/matmul-v1.yaml (9 warnings)
+    [WARN] PV-ENF-001 — Equation `attention_qkv` has no preconditions
+      fix: Add to equations.attention_qkv:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `attention_qkv` has no postconditions
+      fix: Add to equations.attention_qkv:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `attention_qkv` has no lean_theorem — proof recommended
+      fix: Add to equations.attention_qkv:
+             lean_theorem: "Theorems.Attention_qkv"
+    [WARN] PV-ENF-001 — Equation `linear_projection` has no preconditions
+      fix: Add to equations.linear_projection:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `linear_projection` has no postconditions
+      fix: Add to equations.linear_projection:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `linear_projection` has no lean_theorem — proof recommended
+      fix: Add to equations.linear_projection:
+             lean_theorem: "Theorems.Linear_projection"
+    [WARN] PV-ENF-001 — Equation `matmul_definition` has no preconditions
+      fix: Add to equations.matmul_definition:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `matmul_definition` has no postconditions
+      fix: Add to equations.matmul_definition:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `matmul_definition` has no lean_theorem — proof recommended
+      fix: Add to equations.matmul_definition:
+             lean_theorem: "Theorems.Matmul_definition"
+
+  contracts/mel-spectrogram-v1.yaml (7 warnings)
+    [WARN] PV-ENF-001 — Equation `hann_window` has no preconditions
+      fix: Add to equations.hann_window:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `hann_window` has no postconditions
+      fix: Add to equations.hann_window:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `hann_window` has no lean_theorem — proof recommended
+      fix: Add to equations.hann_window:
+             lean_theorem: "Theorems.Hann_window"
+    [WARN] PV-ENF-001 — Equation `mel_filterbank` has no preconditions
+      fix: Add to equations.mel_filterbank:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `mel_filterbank` has no postconditions
+      fix: Add to equations.mel_filterbank:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `mel_filterbank` has no lean_theorem — proof recommended
+      fix: Add to equations.mel_filterbank:
+             lean_theorem: "Theorems.Mel_filterbank"
+    [WARN] PV-VAL-001 — SCHEMA-013: No qa_gate defined — contract should define a certeza quality gate
+
+  contracts/quantization-v1.yaml (4 warnings)
+    [WARN] PV-ENF-001 — Equation `dequantize` has no preconditions
+      fix: Add to equations.dequantize:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `dequantize` has no postconditions
+      fix: Add to equations.dequantize:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `dequantize` has no lean_theorem — proof recommended
+      fix: Add to equations.dequantize:
+             lean_theorem: "Theorems.Dequantize"
+    [WARN] PV-VAL-001 — SCHEMA-013: No qa_gate defined — contract should define a certeza quality gate
+
+  contracts/softmax-kernel-v1.yaml (7 warnings)
+    [WARN] PV-ENF-001 — Equation `log_softmax` has no preconditions
+      fix: Add to equations.log_softmax:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `log_softmax` has no postconditions
+      fix: Add to equations.log_softmax:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `log_softmax` has no lean_theorem — proof recommended
+      fix: Add to equations.log_softmax:
+             lean_theorem: "Theorems.Log_softmax"
+    [WARN] PV-ENF-001 — Equation `softmax` has no preconditions
+      fix: Add to equations.softmax:
+             preconditions:
+               - "!input.is_empty()"
+    [WARN] PV-ENF-001 — Equation `softmax` has no postconditions
+      fix: Add to equations.softmax:
+             postconditions:
+               - "result.len() > 0"
+    [WARN] PV-ENF-002 — Equation `softmax` has no lean_theorem — proof recommended
+      fix: Add to equations.softmax:
+             lean_theorem: "Theorems.Softmax"
+    [WARN] PV-VAL-001 — SCHEMA-013: No qa_gate defined — contract should define a certeza quality gate
+
+Slowest contracts:
+  batch-inference-v1.yaml                  0ms
+  beam-search-v1.yaml                      0ms
+  fft-v1.yaml                              0ms
+  folder-discovery-v1.yaml                 0ms
+  forward-pass-v1.yaml                     0ms
+
+Summary: 2 errors, 73 warnings, 0 suppressed
+Estimated remediation: ~23h 40m
+Result: FAIL
+error: lint failed (6/8 gates passed)

@@ -74,10 +74,35 @@ pub fn matmul(a: &[f32], b: &[f32], rows: usize, inner: usize, cols: usize) -> V
         }
     });
 
-    if !used_profiler
-        && trueno::blis::parallel::gemm_blis_parallel(rows, cols, inner, a, b, &mut c).is_err()
-    {
-        return vec![0.0; rows * cols];
+    if !used_profiler {
+        use rayon::prelude::*;
+        let num_threads = rayon::current_num_threads();
+        let chunk_rows = (rows + num_threads - 1) / num_threads;
+        let chunk_rows = chunk_rows.max(1);
+
+        if rows <= 512 {
+            c.par_chunks_mut(chunk_rows * cols)
+                .enumerate()
+                .for_each(|(i, c_chunk)| {
+                    let r_start = i * chunk_rows;
+                    let r_count = c_chunk.len() / cols;
+                    let a_chunk = &a[r_start * inner..(r_start + r_count) * inner];
+                    let _ = trueno::blis::gemm_blis(
+                        r_count,
+                        cols,
+                        inner,
+                        a_chunk,
+                        b,
+                        c_chunk,
+                        None,
+                    );
+                });
+        } else {
+            if trueno::blis::parallel::gemm_blis_parallel(rows, cols, inner, a, b, &mut c).is_err()
+            {
+                return vec![0.0; rows * cols];
+            }
+        }
     }
     c
 }
@@ -115,7 +140,7 @@ pub fn matmul_with_matrix(a: &[f32], b: &Matrix<f32>, rows: usize, inner: usize)
 
     let cols = b.cols();
     let mut c = vec![0.0_f32; rows * cols];
-    // Call BLIS GEMM directly — avoids a.to_vec() allocation for the input matrix
+
     if trueno::blis::parallel::gemm_blis_parallel(rows, cols, inner, a, b.as_slice(), &mut c)
         .is_err()
     {
@@ -146,17 +171,42 @@ pub fn matmul_with_prepacked(
     assert_eq!(prepacked_b.n, cols, "PrepackedB N mismatch");
 
     let mut c = vec![0.0_f32; rows * cols];
-    if trueno::blis::parallel::gemm_blis_parallel_with_prepacked_b(
-        rows,
-        cols,
-        inner,
-        a,
-        prepacked_b,
-        &mut c,
-    )
-    .is_err()
-    {
-        return vec![0.0; rows * cols];
+
+    if rows <= 512 {
+        use rayon::prelude::*;
+        let num_threads = rayon::current_num_threads();
+        let chunk_rows = (rows + num_threads - 1) / num_threads;
+        let chunk_rows = chunk_rows.max(1);
+
+        c.par_chunks_mut(chunk_rows * cols)
+            .enumerate()
+            .for_each(|(i, c_chunk)| {
+                let r_start = i * chunk_rows;
+                let r_count = c_chunk.len() / cols;
+                let a_chunk = &a[r_start * inner..(r_start + r_count) * inner];
+                let _ = trueno::blis::gemm_blis_with_prepacked_b(
+                    r_count,
+                    cols,
+                    inner,
+                    a_chunk,
+                    prepacked_b,
+                    c_chunk,
+                    None,
+                );
+            });
+    } else {
+        if trueno::blis::parallel::gemm_blis_parallel_with_prepacked_b(
+            rows,
+            cols,
+            inner,
+            a,
+            prepacked_b,
+            &mut c,
+        )
+        .is_err()
+        {
+            return vec![0.0; rows * cols];
+        }
     }
     c
 }
@@ -218,11 +268,16 @@ pub fn matmul_raw(
         return output;
     }
 
-    // Batch path: transpose + matmul via trueno
-    // Weight is [out_features, in_features], transpose to [in_features, out_features]
-    let weight_t = transpose(weight, out_features, in_features);
-    // input [seq_len, in_features] @ weight_t [in_features, out_features] = [seq_len, out_features]
-    let mut output = matmul(input, &weight_t, seq_len, in_features, out_features);
+    // Batch path: use tiled_matmul for all sizes
+    let mut output = vec![0.0_f32; seq_len * out_features];
+    crate::simd::optimized::tiled_matmul_into(
+        weight,
+        input,
+        &mut output,
+        seq_len,
+        out_features,
+        in_features,
+    );
 
     if let Some(b) = bias {
         for s in 0..seq_len {

@@ -69,3 +69,6 @@ kani_harnesses:
     obligation: "Softmax normalization"
     bound: 4
     strategy: stub_float
+
+qa_gate:
+  certeza: "strict"

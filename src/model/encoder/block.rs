@@ -145,8 +145,8 @@ impl EncoderBlock {
     /// INT8 quantization makes encoder slower (per-token matvec overhead).
     /// Focus on efficient batch matmul via transposed weight caching.
     pub fn finalize_weights(&mut self) {
-        self.self_attn.finalize_weights();
-        self.ffn.finalize_weights();
+        self.self_attn.finalize_weights_encoder();
+        self.ffn.finalize_weights_encoder();
     }
 
     /// Forward pass using fused kernels (WAPR-PERF-004 Phase 3)

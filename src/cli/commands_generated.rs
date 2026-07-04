@@ -248,7 +248,7 @@ fn build_transcribe_options(args: &TranscribeArgs, verbose: bool) -> TranscribeO
         task,
         strategy,
         word_timestamps: args.word_timestamps,
-        profile: verbose,
+        profile: args.profile,
         prompt: if args.prompt.is_empty() {
             None
         } else {
@@ -300,6 +300,28 @@ fn print_component_profile(
         inference_ms,
         (inference_ms / timings.total_ms) * 100.0
     );
+
+    if let Some(prof) = &result.profiling {
+        if let Some(&mel) = prof.breakdown.get("mel_ms") {
+            eprintln!("  - Mel spectrogram: {:>7.1}ms", mel);
+        }
+        if let Some(&enc) = prof.breakdown.get("encoder_ms") {
+            eprintln!("  - Encoder:         {:>7.1}ms", enc);
+            if let Some(&norm) = prof.breakdown.get("brick_norm_ms") {
+                eprintln!("      > Norm: {:>7.1}ms", norm);
+            }
+            if let Some(&attn) = prof.breakdown.get("brick_attn_ms") {
+                eprintln!("      > Attn: {:>7.1}ms", attn);
+            }
+            if let Some(&ffn) = prof.breakdown.get("brick_ffn_ms") {
+                eprintln!("      > FFN:  {:>7.1}ms", ffn);
+            }
+        }
+        if let Some(&dec) = prof.breakdown.get("decoder_ms") {
+            eprintln!("  - Decoder:         {:>7.1}ms", dec);
+        }
+    }
+
     eprintln!("[PROFILE] --------------------------------");
     eprintln!("[PROFILE] Total:          {:>7.1}ms", timings.total_ms);
     eprintln!("[PROFILE] Audio duration: {:>7.2}s", audio_duration_secs);

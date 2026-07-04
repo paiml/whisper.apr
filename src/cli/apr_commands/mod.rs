@@ -1175,7 +1175,7 @@ fn run_f16_audit(args: &AprF16AuditArgs, global: &super::args::Args) -> CliResul
 
 #[cfg(feature = "cli-full")]
 fn run_pull(args: &AprPullArgs) -> CliResult<CommandResult> {
-    apr_cli::model_pull::run(&args.model_ref, args.force)
+    apr_cli::model_pull::run(&args.model_ref, args.force, false, None, false)
         .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
     Ok(CommandResult::success(format!("Pulled {}", args.model_ref)))
 }

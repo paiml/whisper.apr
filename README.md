@@ -106,6 +106,8 @@
 | **.gguf** | Direct load | Pre-quantized from HuggingFace |
 | **SafeTensors** | Convert to .apr | Via built-in converter |
 
+> **Note on HuggingFace Downloads**: If you manually download `.apr` files from HuggingFace via browser, ensure you click the **"download"** button (which uses the `/resolve/` URL). Using "Save Link As" on the file name will download an HTML page or a Git LFS pointer, resulting in `Checksum mismatch` errors.
+
 ---
 
 ## Usage
@@ -161,12 +163,15 @@ whisper-apr transcribe -f podcast.mp3
 ### Rust Library
 
 ```rust
-use whisper_apr::{WhisperModel, TranscribeOptions};
+use std::path::Path;
+use whisper_apr::{WhisperApr, TranscribeOptions};
+use whisper_apr::audio::decode::load_audio_file;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let model = WhisperModel::load("whisper-tiny.apr")?;
+    let model_bytes = std::fs::read("whisper-tiny.apr")?;
+    let model = WhisperApr::load_from_apr(&model_bytes)?;
 
-    let audio = whisper_apr::load_audio("sample.wav")?;
+    let audio = load_audio_file(Path::new("sample.wav"))?;
     let result = model.transcribe(&audio, TranscribeOptions::default())?;
 
     println!("{}", result.text);

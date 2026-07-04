@@ -41,3 +41,6 @@ kani_harnesses:
     obligation: "Dequantize monotonic"
     bound: 8
     strategy: bounded_int
+
+qa_gate:
+  certeza: "strict"

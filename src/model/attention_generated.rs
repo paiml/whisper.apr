@@ -78,6 +78,11 @@ pub struct LinearWeights {
     weight_i8: Option<Vec<i8>>,
     /// Per-row scales for INT8 dequantization: w_f32 ≈ w_i8 * scale.
     weight_i8_scales: Option<Vec<f32>>,
+    /// INT4 weight storage (GPTQ/AWQ).
+    /// Packs 2 weights per byte.
+    weight_i4: Option<Vec<u8>>,
+    /// Per-group scales for INT4 (group_size=128).
+    weight_i4_scales: Option<Vec<f32>>,
     /// Pre-packed B matrix for BLIS GEMM (WAPR-KAIZEN Cycle 12).
     /// Eliminates redundant B packing in parallel GEMM by pre-packing weight
     /// tiles once at finalize_weights() time.
@@ -97,6 +102,8 @@ impl Clone for LinearWeights {
             weight_f16: self.weight_f16.clone(),
             weight_i8: self.weight_i8.clone(),
             weight_i8_scales: self.weight_i8_scales.clone(),
+            weight_i4: self.weight_i4.clone(),
+            weight_i4_scales: self.weight_i4_scales.clone(),
             weight_prepacked_b: None,
         }
     }
@@ -131,6 +138,8 @@ impl LinearWeights {
             weight_f16: None,
             weight_i8: None,
             weight_i8_scales: None,
+            weight_i4: None,
+            weight_i4_scales: None,
             weight_prepacked_b: None,
         }
     }
@@ -160,7 +169,7 @@ impl LinearWeights {
         // Only prepack large weight matrices (>256K elements). Small attention
         // weights (384×384 = 147K) pack quickly and prepacking adds cache pressure
         // without measurable benefit. FFN weights (384×1536 = 589K) benefit.
-        const PREPACK_THRESHOLD: usize = 256_000;
+        const PREPACK_THRESHOLD: usize = 0;
         if self.in_features * self.out_features >= PREPACK_THRESHOLD {
             self.weight_prepacked_b = Some(trueno::blis::PrepackedB::pack(
                 &weight_t,
@@ -173,6 +182,27 @@ impl LinearWeights {
         // This avoids repeated Matrix::from_vec() calls in forward_simd()
         self.weight_matrix =
             Matrix::from_vec(self.in_features, self.out_features, weight_t.clone()).ok();
+
+        self.weight_transposed = Some(weight_t);
+    }
+
+    /// Same as finalize_weights but forces caching of f32 weights for encoder.
+    /// The encoder runs large batch matrix multiplications which are compute bound,
+    /// so caching the f32 transposed weights avoids repeated dequant+transpose overhead.
+    pub fn finalize_weights_encoder(&mut self) {
+        let weight_t = if let Some(ref w_f16) = self.weight_f16 {
+            let mut buf = vec![0.0_f32; w_f16.len()];
+            crate::simd::dequant_f16_row(w_f16, &mut buf);
+            crate::simd::transpose(&buf, self.out_features, self.in_features)
+        } else {
+            crate::simd::transpose(&self.weight, self.out_features, self.in_features)
+        };
+
+        // Disabled prepacking for now because it seems to be killing parallel scaling
+        self.weight_prepacked_b = None;
+
+        self.weight_matrix =
+            trueno::Matrix::from_vec(self.in_features, self.out_features, weight_t.clone()).ok();
 
         self.weight_transposed = Some(weight_t);
     }
@@ -276,6 +306,45 @@ impl LinearWeights {
             }
             self.weight_i8 = Some(all_i8);
             self.weight_i8_scales = Some(scales);
+        }
+    }
+
+    /// Convert weights to INT4 (GPTQ/AWQ) with group_size=128.
+    pub fn convert_to_i4(&mut self) {
+        if self.weight_i4.is_some() {
+            return;
+        }
+
+        let rows = self.out_features;
+        let cols = self.in_features;
+        let group_size = 128;
+
+        if let Some(ref w_f16) = self.weight_f16 {
+            let mut all_i4 = Vec::with_capacity(rows * cols / 2);
+            let mut all_scales = Vec::with_capacity(rows * (cols / group_size));
+            let mut row_buf = vec![0.0_f32; cols];
+            for r in 0..rows {
+                let offset = r * cols;
+                for (j, v) in row_buf.iter_mut().enumerate() {
+                    *v = half::f16::from_bits(w_f16[offset + j]).to_f32();
+                }
+                let (q_row, scales) = simd::quant_f32_row_to_i4(&row_buf, group_size);
+                all_i4.extend_from_slice(&q_row);
+                all_scales.extend_from_slice(&scales);
+            }
+            self.weight_i4 = Some(all_i4);
+            self.weight_i4_scales = Some(all_scales);
+        } else if !self.weight.is_empty() {
+            let mut all_i4 = Vec::with_capacity(rows * cols / 2);
+            let mut all_scales = Vec::with_capacity(rows * (cols / group_size));
+            for r in 0..rows {
+                let offset = r * cols;
+                let (q_row, scales) = simd::quant_f32_row_to_i4(&self.weight[offset..offset + cols], group_size);
+                all_i4.extend_from_slice(&q_row);
+                all_scales.extend_from_slice(&scales);
+            }
+            self.weight_i4 = Some(all_i4);
+            self.weight_i4_scales = Some(all_scales);
         }
     }
 
@@ -388,6 +457,24 @@ impl LinearWeights {
                     );
                 }
                 out
+            } else if let Some(ref prepacked) = self.weight_prepacked_b {
+                simd::matmul_with_prepacked(
+                    input,
+                    prepacked,
+                    total_tokens,
+                    self.in_features,
+                    self.out_features,
+                )
+            } else if let Some(weight_matrix) = &self.weight_matrix {
+                simd::matmul_with_matrix(input, weight_matrix, total_tokens, self.in_features)
+            } else if let Some(weight_t) = &self.weight_transposed {
+                simd::matmul(
+                    input,
+                    weight_t,
+                    total_tokens,
+                    self.in_features,
+                    self.out_features,
+                )
             } else {
                 // Large batch (encoder): dequant once + matmul (compute-bound)
                 let mut buf = vec![0.0_f32; w_f16.len()];
@@ -421,27 +508,28 @@ impl LinearWeights {
                 self.in_features,
                 self.out_features,
             )
-        } else if let Some(weight_matrix) = &self.weight_matrix {
-            // Batch inference: use cached trueno Matrix (WAPR-BENCH-001 optimization)
-            simd::matmul_with_matrix(input, weight_matrix, total_tokens, self.in_features)
-        } else {
-            // Fallback: use cached transpose Vec or compute on-the-fly
-            let weight_t_owned;
-            let weight_t: &[f32] = if let Some(cached) = &self.weight_transposed {
-                cached
-            } else {
-                weight_t_owned = simd::transpose(&self.weight, self.out_features, self.in_features);
-                &weight_t_owned
-            };
-
-            // SIMD matmul: input[total_tokens x in_features] @ weight^T[in_features x out_features]
-            simd::matmul(
+        } else if let Some(prepacked_b) = &self.weight_prepacked_b {
+            // Use pre-packed B for SIMD GEMM
+            simd::matmul_with_prepacked(
                 input,
-                weight_t,
+                prepacked_b,
                 total_tokens,
                 self.in_features,
                 self.out_features,
             )
+        } else {
+            // General batched case for F32
+            // Weight is [out_features, in_features] in self.weight
+            let mut output = vec![0.0_f32; total_tokens * self.out_features];
+            crate::simd::optimized::tiled_matmul_into(
+                &self.weight,
+                input,
+                &mut output,
+                total_tokens,
+                self.out_features,
+                self.in_features,
+            );
+            output
         };
 
         // Add bias to each token using SIMD broadcast add
@@ -466,6 +554,26 @@ impl LinearWeights {
 
         let batch_size = input.len() / (seq_len * self.in_features);
         let total_tokens = batch_size * seq_len;
+
+        // INT4 weight path (GPTQ/AWQ)
+        if let (Some(ref w_i4), Some(ref scales)) = (&self.weight_i4, &self.weight_i4_scales) {
+            let group_size = 128;
+            for t in 0..total_tokens {
+                let tok_in = &input[t * self.in_features..(t + 1) * self.in_features];
+                let tok_out = &mut output[t * self.out_features..(t + 1) * self.out_features];
+                simd::tiled_matvec_i4_into(
+                    w_i4,
+                    scales,
+                    tok_in,
+                    tok_out,
+                    self.out_features,
+                    self.in_features,
+                    group_size,
+                );
+            }
+            simd::broadcast_add_inplace(output, &self.bias, total_tokens, self.out_features);
+            return Ok(());
+        }
 
         // INT8 weight path (pv:int8-symmetric-quant-v1) — highest priority, lowest bandwidth
         if let (Some(ref w_i8), Some(ref scales)) = (&self.weight_i8, &self.weight_i8_scales) {
@@ -500,6 +608,27 @@ impl LinearWeights {
                         self.in_features,
                     );
                 }
+            } else if let Some(ref prepacked) = self.weight_prepacked_b {
+                let tmp = simd::matmul_with_prepacked(
+                    input,
+                    prepacked,
+                    total_tokens,
+                    self.in_features,
+                    self.out_features,
+                );
+                output[..tmp.len()].copy_from_slice(&tmp);
+            } else if let Some(weight_matrix) = &self.weight_matrix {
+                let tmp = simd::matmul_with_matrix(input, weight_matrix, total_tokens, self.in_features);
+                output[..tmp.len()].copy_from_slice(&tmp);
+            } else if let Some(weight_t) = &self.weight_transposed {
+                let tmp = simd::matmul(
+                    input,
+                    weight_t,
+                    total_tokens,
+                    self.in_features,
+                    self.out_features,
+                );
+                output[..tmp.len()].copy_from_slice(&tmp);
             } else {
                 let mut buf = vec![0.0_f32; w_f16.len()];
                 simd::dequant_f16_row(w_f16, &mut buf);
@@ -536,26 +665,25 @@ impl LinearWeights {
                 self.out_features,
             );
             output[..tmp.len()].copy_from_slice(&tmp);
-        } else if let Some(weight_matrix) = &self.weight_matrix {
-            let tmp =
-                simd::matmul_with_matrix(input, weight_matrix, total_tokens, self.in_features);
-            output[..tmp.len()].copy_from_slice(&tmp);
-        } else {
-            let weight_t_owned;
-            let weight_t: &[f32] = if let Some(cached) = &self.weight_transposed {
-                cached
-            } else {
-                weight_t_owned = simd::transpose(&self.weight, self.out_features, self.in_features);
-                &weight_t_owned
-            };
-            let tmp = simd::matmul(
+        } else if let Some(prepacked_b) = &self.weight_prepacked_b {
+            let tmp = simd::matmul_with_prepacked(
                 input,
-                weight_t,
+                prepacked_b,
                 total_tokens,
                 self.in_features,
                 self.out_features,
             );
             output[..tmp.len()].copy_from_slice(&tmp);
+        } else {
+            // General batched case for F32
+            crate::simd::optimized::tiled_matmul_into(
+                &self.weight,
+                input,
+                output,
+                total_tokens,
+                self.out_features,
+                self.in_features,
+            );
         }
 
         simd::broadcast_add_inplace(output, &self.bias, total_tokens, self.out_features);
@@ -1868,6 +1996,14 @@ impl MultiHeadAttention {
         self.w_o.finalize_weights();
     }
 
+    /// Same as finalize_weights but forces caching of f32 weights for encoder.
+    pub fn finalize_weights_encoder(&mut self) {
+        self.w_q.finalize_weights_encoder();
+        self.w_k.finalize_weights_encoder();
+        self.w_v.finalize_weights_encoder();
+        self.w_o.finalize_weights_encoder();
+    }
+
     /// Check if all weights have been finalized
     #[must_use]
     pub fn is_finalized(&self) -> bool {
@@ -1949,6 +2085,64 @@ impl MultiHeadAttention {
                 .forward_simd_into(input, 1, &mut qkv_out[d..2 * d])?;
             self.w_v
                 .forward_simd_into(input, 1, &mut qkv_out[2 * d..3 * d])?;
+            Ok(())
+        }
+    }
+
+    /// Batched Fused Q+K+V projection into pre-allocated buffer.
+    ///
+    /// Input: [batch_size, d_model]
+    /// Output: [batch_size, 3 * d_model] where each batch item has [q; k; v]
+    pub fn forward_qkv_batch_into(
+        &self,
+        input: &[f32],
+        batch_size: usize,
+        qkv_out: &mut [f32],
+    ) -> WhisperResult<()> {
+        let d = self.d_model;
+        debug_assert_eq!(input.len(), batch_size * d);
+        debug_assert_eq!(qkv_out.len(), batch_size * 3 * d);
+
+        // Fused fp16 path
+        if let (Some(w_qkv), Some(b_qkv)) = (&self.w_qkv_f16, &self.b_qkv) {
+            const FP16_MATVEC_BATCH_LIMIT: usize = 8;
+            if batch_size <= FP16_MATVEC_BATCH_LIMIT {
+                for i in 0..batch_size {
+                    let in_start = i * d;
+                    let out_start = i * 3 * d;
+                    simd::tiled_matvec_f16_into(
+                        w_qkv,
+                        &input[in_start..in_start + d],
+                        &mut qkv_out[out_start..out_start + 3 * d],
+                        3 * d,
+                        d,
+                    );
+                }
+            } else {
+                // True single matmul for QKV (pv:batched-beam-search-v1)
+                let mut buf = vec![0.0_f32; w_qkv.len()];
+                simd::dequant_f16_row(w_qkv, &mut buf);
+                let weight_t = simd::transpose(&buf, 3 * d, d);
+                let tmp = simd::matmul(input, &weight_t, batch_size, d, 3 * d);
+                qkv_out.copy_from_slice(&tmp);
+            }
+            simd::broadcast_add_inplace(qkv_out, b_qkv, batch_size, 3 * d);
+            Ok(())
+        } else {
+            // Fallback: separate batch projections
+            let mut q = vec![0.0; batch_size * d];
+            let mut k = vec![0.0; batch_size * d];
+            let mut v = vec![0.0; batch_size * d];
+            self.w_q.forward_simd_into(input, batch_size, &mut q)?;
+            self.w_k.forward_simd_into(input, batch_size, &mut k)?;
+            self.w_v.forward_simd_into(input, batch_size, &mut v)?;
+            for i in 0..batch_size {
+                let out_start = i * 3 * d;
+                let in_start = i * d;
+                qkv_out[out_start..out_start + d].copy_from_slice(&q[in_start..in_start + d]);
+                qkv_out[out_start + d..out_start + 2 * d].copy_from_slice(&k[in_start..in_start + d]);
+                qkv_out[out_start + 2 * d..out_start + 3 * d].copy_from_slice(&v[in_start..in_start + d]);
+            }
             Ok(())
         }
     }

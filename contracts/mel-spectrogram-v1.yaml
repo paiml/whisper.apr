@@ -78,3 +78,6 @@ kani_harnesses:
     obligation: "Hann window in [0,1]"
     bound: 16
     strategy: bounded_int
+
+qa_gate:
+  certeza: "strict"

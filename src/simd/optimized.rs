@@ -103,6 +103,62 @@ pub fn tiled_matvec_into(weights: &[f32], x: &[f32], out: &mut [f32], rows: usiz
     }
 }
 
+/// Batched matmul using tiled_matvec for small sequence lengths
+/// Computes out = input @ weights^T
+pub fn tiled_matmul_into(
+    weights: &[f32],
+    input: &[f32],
+    out: &mut [f32],
+    seq_len: usize,
+    rows: usize,
+    cols: usize,
+) {
+    debug_assert_eq!(weights.len(), rows * cols);
+    debug_assert_eq!(input.len(), seq_len * cols);
+    debug_assert_eq!(out.len(), seq_len * rows);
+
+    #[cfg(target_arch = "x86_64")]
+    let use_avx2 = is_x86_feature_detected!("fma") && is_x86_feature_detected!("avx2");
+    #[cfg(not(target_arch = "x86_64"))]
+    let use_avx2 = false;
+
+    // Parallelize over chunks of the output features (rows).
+    // This allows each thread to keep a small slice of the weights in L1/L2 cache
+    // and reuse it across all sequence tokens, maximizing memory bandwidth.
+    let out_ptr = out.as_mut_ptr() as usize;
+
+    use rayon::prelude::*;
+    let num_threads = rayon::current_num_threads();
+    let chunk_size = (rows + num_threads - 1) / num_threads;
+    let chunk_size = chunk_size.max(1);
+
+    (0..rows).into_par_iter().step_by(chunk_size).for_each(|r_start| {
+        let r_end = (r_start + chunk_size).min(rows);
+        for s in 0..seq_len {
+            let in_row = &input[s * cols..(s + 1) * cols];
+            for i in r_start..r_end {
+                let row_offset = i * cols;
+                let a_slice = &weights[row_offset..row_offset + cols];
+                
+                let dot = if use_avx2 {
+                    #[cfg(target_arch = "x86_64")]
+                    unsafe { crate::simd::vector::dot_fma_avx2_public(a_slice, in_row) }
+                    #[cfg(not(target_arch = "x86_64"))]
+                    crate::simd::vector::dot_scalar(a_slice, in_row)
+                } else {
+                    crate::simd::vector::dot_scalar(a_slice, in_row)
+                };
+
+                unsafe {
+                    // out is [seq_len, rows]
+                    let ptr = out_ptr as *mut f32;
+                    *ptr.add(s * rows + i) = dot;
+                }
+            }
+        }
+    });
+}
+
 /// RMS normalization (faster than LayerNorm).
 ///
 /// RMSNorm(x) = x / sqrt(mean(x²) + eps) * weight
@@ -158,6 +214,23 @@ pub fn rms_norm_into(x: &[f32], weight: &[f32], eps: f32, out: &mut [f32]) {
 
     for ((o, v), w) in out.iter_mut().zip(x.iter()).zip(weight.iter()) {
         *o = v * inv_rms * w;
+    }
+}
+
+/// Layer Normalization writing to pre-allocated output.
+///
+/// Standard normalization that subtracts the mean before scaling.
+pub fn layer_norm_into(x: &[f32], weight: &[f32], bias: &[f32], eps: f32, out: &mut [f32]) {
+    if x.is_empty() {
+        return;
+    }
+
+    let mean = x.iter().sum::<f32>() / x.len() as f32;
+    let var = x.iter().map(|&v| (v - mean) * (v - mean)).sum::<f32>() / x.len() as f32;
+    let inv_std = 1.0 / (var + eps).sqrt();
+
+    for i in 0..x.len() {
+        out[i] = (x[i] - mean) * inv_std * weight[i] + bias[i];
     }
 }
 
@@ -318,6 +391,53 @@ pub fn tiled_matvec_i8_into(
             let row_offset = i * cols;
             let row_i8 = &weights_i8[row_offset..row_offset + cols];
             out[i] = super::vector::dot_i8(row_i8, x, scales[i]);
+        }
+    }
+}
+
+/// Tiled INT4 matrix-vector multiplication writing to pre-allocated output (GPTQ/AWQ).
+///
+/// Weights are packed 2 per byte in `weights_i4`. Scales are provided per-group.
+pub fn tiled_matvec_i4_into(
+    weights_i4: &[u8],
+    scales: &[f32],
+    x: &[f32],
+    out: &mut [f32],
+    rows: usize,
+    cols: usize,
+    group_size: usize,
+) {
+    debug_assert_eq!(
+        weights_i4.len(),
+        rows * cols / 2,
+        "i4 weight dimensions mismatch"
+    );
+    let groups_per_row = cols / group_size;
+    debug_assert_eq!(scales.len(), rows * groups_per_row, "scales dimension mismatch");
+    debug_assert_eq!(x.len(), cols, "input dimension mismatch");
+    debug_assert_eq!(out.len(), rows, "output dimension mismatch");
+
+    #[cfg(feature = "parallel")]
+    if rows * cols >= PARALLEL_THRESHOLD {
+        use rayon::prelude::*;
+        out.par_iter_mut().enumerate().for_each(|(i, o)| {
+            let row_offset = i * cols / 2;
+            let scales_offset = i * groups_per_row;
+            let row_i4 = &weights_i4[row_offset..row_offset + cols / 2];
+            let row_scales = &scales[scales_offset..scales_offset + groups_per_row];
+            *o = super::vector::dot_i4(row_i4, row_scales, x, group_size);
+        });
+        return;
+    }
+
+    for tile_start in (0..rows).step_by(TILE_SIZE) {
+        let tile_end = (tile_start + TILE_SIZE).min(rows);
+        for i in tile_start..tile_end {
+            let row_offset = i * cols / 2;
+            let scales_offset = i * groups_per_row;
+            let row_i4 = &weights_i4[row_offset..row_offset + cols / 2];
+            let row_scales = &scales[scales_offset..scales_offset + groups_per_row];
+            out[i] = super::vector::dot_i4(row_i4, row_scales, x, group_size);
         }
     }
 }

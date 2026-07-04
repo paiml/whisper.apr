@@ -57,3 +57,6 @@ kani_harnesses:
     obligation: "Top-k sorted descending"
     bound: 8
     strategy: bounded_int
+
+qa_gate:
+  certeza: "strict"
