@@ -62,3 +62,9 @@ qa_gate:
     - test_discover_folder_recursive_finds_mov_and_wav
     - test_has_folder_audio_extension_previously_dropped_formats
     - test_has_folder_audio_extension_original_eight_still_match
+
+kani_harnesses:
+  - id: folder-kani-001
+    obligation: "No false positives on non-audio extensions"
+    bound: 8
+    strategy: exhaustive

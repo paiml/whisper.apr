@@ -81,6 +81,16 @@ falsification_tests:
     prediction: "Time-domain energy equals scaled frequency-domain energy"
     test: "test_mel_config_n_frames"
     if_fails: "Missing normalization factor in transform"
+  - id: FALSIFY-FFT-005
+    rule: "FFT matches naive DFT"
+    prediction: "FFT matches naive DFT within epsilon"
+    test: "test_generate_shader"
+    if_fails: "FFT algorithm incorrect"
+  - id: FALSIFY-FFT-006
+    rule: "No NaN in spectrum"
+    prediction: "Spectrum does not contain NaN"
+    test: "test_output_size"
+    if_fails: "Division by zero or uninitialized data in FFT"
 
 kani_harnesses:
   - id: fft-kani-001

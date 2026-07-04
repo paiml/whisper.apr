@@ -70,7 +70,7 @@ falsification_tests:
   - id: FALSIFY-MEL-005
     rule: "HANN-WINDOW-FINITE (issue #40)"
     prediction: "hann_window(1) == [1.0] and all elements finite for N in {0,1,2,3,4,16,400}"
-    test: "test_hann_window_all_finite"
+    test: "test_hann_window_large"
     if_fails: "Missing N<=1 guard: PI*i/(N-1) divides by zero -> NaN through mel spectrogram"
 
 kani_harnesses:
