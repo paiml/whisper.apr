@@ -5,7 +5,7 @@ use trueno::Vector;
 /// SIMD-accelerated dot product
 #[must_use]
 pub fn dot(a: &[f32], b: &[f32]) -> f32 {
-    debug_assert_eq!(a.len(), b.len(), "dot product requires equal lengths");
+    assert_eq!(a.len(), b.len(), "dot product requires equal lengths");
 
     let va = Vector::from_slice(a);
     let vb = Vector::from_slice(b);
@@ -20,7 +20,7 @@ pub fn dot(a: &[f32], b: &[f32]) -> f32 {
 #[inline]
 #[must_use]
 pub fn dot_nalloc(a: &[f32], b: &[f32]) -> f32 {
-    debug_assert_eq!(a.len(), b.len(), "dot product requires equal lengths");
+    assert_eq!(a.len(), b.len(), "dot product requires equal lengths");
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -132,7 +132,7 @@ unsafe fn dot_fma_avx2(a: &[f32], b: &[f32]) -> f32 {
 /// using a running (max, sum_exp) pair, then normalizes in a second pass.
 /// Saves one full read of the scores array vs standard 3-pass softmax.
 pub fn softmax_online_inplace(scores: &[f32], weights: &mut [f32]) {
-    debug_assert_eq!(scores.len(), weights.len());
+    assert_eq!(scores.len(), weights.len());
 
     if scores.is_empty() {
         return;
@@ -161,7 +161,7 @@ pub fn softmax_online_inplace(scores: &[f32], weights: &mut [f32]) {
 /// SIMD-accelerated vector addition
 #[must_use]
 pub fn add(a: &[f32], b: &[f32]) -> Vec<f32> {
-    debug_assert_eq!(a.len(), b.len(), "addition requires equal lengths");
+    assert_eq!(a.len(), b.len(), "addition requires equal lengths");
 
     let va = Vector::from_slice(a);
     let vb = Vector::from_slice(b);
@@ -172,7 +172,7 @@ pub fn add(a: &[f32], b: &[f32]) -> Vec<f32> {
 /// SIMD-accelerated vector subtraction
 #[must_use]
 pub fn sub(a: &[f32], b: &[f32]) -> Vec<f32> {
-    debug_assert_eq!(a.len(), b.len(), "subtraction requires equal lengths");
+    assert_eq!(a.len(), b.len(), "subtraction requires equal lengths");
 
     let va = Vector::from_slice(a);
     let vb = Vector::from_slice(b);
@@ -183,7 +183,7 @@ pub fn sub(a: &[f32], b: &[f32]) -> Vec<f32> {
 /// SIMD-accelerated element-wise multiplication
 #[must_use]
 pub fn mul(a: &[f32], b: &[f32]) -> Vec<f32> {
-    debug_assert_eq!(a.len(), b.len(), "multiplication requires equal lengths");
+    assert_eq!(a.len(), b.len(), "multiplication requires equal lengths");
 
     let va = Vector::from_slice(a);
     let vb = Vector::from_slice(b);
@@ -285,7 +285,7 @@ pub fn scale_inplace(a: &mut [f32], s: f32) {
 /// Computes y = y + a*x in-place. This is a fundamental BLAS Level 1 operation.
 /// Used extensively in attention accumulation.
 pub fn axpy(a: f32, x: &[f32], y: &mut [f32]) {
-    debug_assert_eq!(x.len(), y.len(), "axpy requires equal lengths");
+    assert_eq!(x.len(), y.len(), "axpy requires equal lengths");
 
     // SIMD-friendly loop
     for (yi, &xi) in y.iter_mut().zip(x.iter()) {
@@ -295,7 +295,7 @@ pub fn axpy(a: f32, x: &[f32], y: &mut [f32]) {
 
 /// In-place vector addition: y[i] += x[i] for all i
 pub fn add_inplace(x: &[f32], y: &mut [f32]) {
-    debug_assert_eq!(x.len(), y.len(), "add_inplace requires equal lengths");
+    assert_eq!(x.len(), y.len(), "add_inplace requires equal lengths");
 
     for (yi, &xi) in y.iter_mut().zip(x.iter()) {
         *yi += xi;
@@ -309,8 +309,8 @@ pub fn add_inplace(x: &[f32], y: &mut [f32]) {
 ///
 /// This is the hot path for bias addition in linear layers.
 pub fn broadcast_add_inplace(matrix: &mut [f32], vec: &[f32], rows: usize, cols: usize) {
-    debug_assert_eq!(matrix.len(), rows * cols, "matrix dimensions mismatch");
-    debug_assert_eq!(vec.len(), cols, "vector dimension mismatch");
+    assert_eq!(matrix.len(), rows * cols, "matrix dimensions mismatch");
+    assert_eq!(vec.len(), cols, "vector dimension mismatch");
 
     for row in 0..rows {
         let row_start = row * cols;
@@ -400,7 +400,7 @@ unsafe fn dequant_f16_row_f16c(f16_data: &[u16], out: &mut [f32]) {
 /// * `buf` - Scratch buffer for dequantized f32 values (must be >= a_f16.len())
 #[must_use]
 pub fn dot_f16(a_f16: &[u16], b: &[f32], buf: &mut [f32]) -> f32 {
-    debug_assert_eq!(a_f16.len(), b.len(), "dot_f16 requires equal lengths");
+    assert_eq!(a_f16.len(), b.len(), "dot_f16 requires equal lengths");
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -504,7 +504,7 @@ pub fn quant_f32_row_to_i8(row: &[f32]) -> (Vec<i8>, f32) {
 /// This halves memory bandwidth vs fp16 (1 byte/weight vs 2 bytes/weight).
 #[must_use]
 pub fn dot_i8(a_i8: &[i8], b: &[f32], scale: f32) -> f32 {
-    debug_assert_eq!(a_i8.len(), b.len(), "dot_i8 requires equal lengths");
+    assert_eq!(a_i8.len(), b.len(), "dot_i8 requires equal lengths");
 
     #[cfg(target_arch = "x86_64")]
     {

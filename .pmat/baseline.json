@@ -1,6 +1,6 @@
 {
   "version": "3.24.0",
-  "created_at": "2026-07-04T17:40:00.785682816Z",
+  "created_at": "2026-07-04T17:40:07.166703225Z",
   "git_context": null,
   "files": {
     "./benches/cli_benchmarks.rs": {
@@ -30816,13 +30816,92 @@
         "consistency_violations": []
       },
       "git_context": null
+    },
+    "./tools/prune_decoder.py": {
+      "content_hash": [
+        212,
+        66,
+        93,
+        222,
+        146,
+        242,
+        31,
+        12,
+        191,
+        29,
+        150,
+        221,
+        127,
+        87,
+        113,
+        27,
+        2,
+        160,
+        93,
+        123,
+        239,
+        185,
+        8,
+        217,
+        209,
+        122,
+        247,
+        137,
+        166,
+        94,
+        241,
+        149
+      ],
+      "score": {
+        "structural_complexity": 20.8,
+        "semantic_complexity": 20.0,
+        "duplication_ratio": 20.0,
+        "coupling_score": 15.0,
+        "doc_coverage": 0.0,
+        "consistency_score": 10.0,
+        "entropy_score": 9.0,
+        "total": 94.8,
+        "grade": "AMinus",
+        "confidence": 0.95,
+        "language": "Python",
+        "file_path": "./tools/prune_decoder.py",
+        "penalties_applied": [
+          {
+            "source_metric": "Duplication",
+            "amount": 1.0,
+            "applied_to": [
+              "Duplication"
+            ],
+            "issue": "Found 2 duplicate code patterns"
+          },
+          {
+            "source_metric": "StructuralComplexity",
+            "amount": 4.2000003,
+            "applied_to": [
+              "StructuralComplexity"
+            ],
+            "issue": "High cognitive complexity: 29"
+          }
+        ],
+        "critical_defects_count": 0,
+        "has_critical_defects": false,
+        "has_contract_coverage": false
+      },
+      "components": {
+        "complexity_breakdown": {},
+        "duplication_sources": [],
+        "coupling_dependencies": [],
+        "doc_missing_items": [],
+        "consistency_violations": []
+      },
+      "git_context": null
     }
   },
   "summary": {
-    "total_files": 395,
-    "avg_score": 94.60746,
+    "total_files": 396,
+    "avg_score": 94.60795,
     "grade_distribution": {
-      "AMinus": 370,
+      "AMinus": 371,
       "BPlus": 4,
       "B": 13,
       "BMinus": 7,
@@ -30830,7 +30909,7 @@
     },
     "languages": {
       "JavaScript": 16,
-      "Python": 8,
+      "Python": 9,
       "Rust": 365,
       "TypeScript": 6
     }

@@ -47,10 +47,21 @@ fn result_to_vec(
 #[must_use]
 #[allow(clippy::many_single_char_names)]
 pub fn matmul(a: &[f32], b: &[f32], rows: usize, inner: usize, cols: usize) -> Vec<f32> {
-    debug_assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
-    debug_assert_eq!(b.len(), inner * cols, "B dimensions mismatch");
+    assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
+    assert_eq!(b.len(), inner * cols, "B dimensions mismatch");
 
     let mut c = vec![0.0_f32; rows * cols];
+
+    #[cfg(feature = "webgpu")]
+    {
+        if std::env::var("WHISPER_USE_WEBGPU").is_ok() {
+            use crate::backend::{ComputeOp, MatMulOp};
+            let op = MatMulOp::new(rows, inner, cols).with_data(a.to_vec(), b.to_vec());
+            if let Ok(res) = op.execute_gpu() {
+                return res;
+            }
+        }
+    }
 
     // Gap 4: Check for active BLIS profiler (single-threaded for accurate profiling)
     let used_profiler = BLIS_PROFILER.with(|cell| {
@@ -80,8 +91,8 @@ pub fn matmul(a: &[f32], b: &[f32], rows: usize, inner: usize, cols: usize) -> V
 #[must_use]
 #[allow(clippy::many_single_char_names)]
 pub fn matmul_owned(a: Vec<f32>, b: Vec<f32>, rows: usize, inner: usize, cols: usize) -> Vec<f32> {
-    debug_assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
-    debug_assert_eq!(b.len(), inner * cols, "B dimensions mismatch");
+    assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
+    assert_eq!(b.len(), inner * cols, "B dimensions mismatch");
 
     let Ok(ma) = Matrix::from_vec(rows, inner, a) else {
         return vec![0.0; rows * cols];
@@ -99,8 +110,8 @@ pub fn matmul_owned(a: Vec<f32>, b: Vec<f32>, rows: usize, inner: usize, cols: u
 #[must_use]
 #[allow(clippy::many_single_char_names)]
 pub fn matmul_with_matrix(a: &[f32], b: &Matrix<f32>, rows: usize, inner: usize) -> Vec<f32> {
-    debug_assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
-    debug_assert_eq!(b.rows(), inner, "B rows mismatch inner dimension");
+    assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
+    assert_eq!(b.rows(), inner, "B rows mismatch inner dimension");
 
     let cols = b.cols();
     let mut c = vec![0.0_f32; rows * cols];
@@ -130,9 +141,9 @@ pub fn matmul_with_prepacked(
     inner: usize,
     cols: usize,
 ) -> Vec<f32> {
-    debug_assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
-    debug_assert_eq!(prepacked_b.k, inner, "PrepackedB K mismatch");
-    debug_assert_eq!(prepacked_b.n, cols, "PrepackedB N mismatch");
+    assert_eq!(a.len(), rows * inner, "A dimensions mismatch");
+    assert_eq!(prepacked_b.k, inner, "PrepackedB K mismatch");
+    assert_eq!(prepacked_b.n, cols, "PrepackedB N mismatch");
 
     let mut c = vec![0.0_f32; rows * cols];
     if trueno::blis::parallel::gemm_blis_parallel_with_prepacked_b(
@@ -155,8 +166,8 @@ pub fn matmul_with_prepacked(
 /// Computes y = A @ x where A is (rows x cols) and x is (cols,)
 #[must_use]
 pub fn matvec(a: &[f32], x: &[f32], rows: usize, cols: usize) -> Vec<f32> {
-    debug_assert_eq!(a.len(), rows * cols, "A dimensions mismatch");
-    debug_assert_eq!(x.len(), cols, "x dimension mismatch");
+    assert_eq!(a.len(), rows * cols, "A dimensions mismatch");
+    assert_eq!(x.len(), cols, "x dimension mismatch");
 
     let Ok(ma) = Matrix::from_vec(rows, cols, a.to_vec()) else {
         return vec![0.0; rows];
@@ -184,12 +195,12 @@ pub fn matmul_raw(
     in_features: usize,
     out_features: usize,
 ) -> Vec<f32> {
-    debug_assert_eq!(
+    assert_eq!(
         input.len(),
         seq_len * in_features,
         "input dimensions mismatch"
     );
-    debug_assert_eq!(
+    assert_eq!(
         weight.len(),
         out_features * in_features,
         "weight dimensions mismatch"
@@ -227,7 +238,7 @@ pub fn matmul_raw(
 /// SIMD-accelerated matrix transpose
 #[must_use]
 pub fn transpose(a: &[f32], rows: usize, cols: usize) -> Vec<f32> {
-    debug_assert_eq!(a.len(), rows * cols, "dimensions mismatch");
+    assert_eq!(a.len(), rows * cols, "dimensions mismatch");
 
     let Ok(ma) = Matrix::from_vec(rows, cols, a.to_vec()) else {
         return vec![0.0; rows * cols];

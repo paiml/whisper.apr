@@ -69,11 +69,11 @@ default = ["std", "simd", "realizar-inference", "parallel", "cli"]
 std = []
 wasm = ["std", "wasm-bindgen", "js-sys", "web-sys", "console_error_panic_hook"]
 webgpu = ["wgpu", "bytemuck", "tokio", "pollster"]
-cuda = ["trueno/gpu", "dep:trueno-gpu", "trueno-gpu/cuda"]
+cuda = ["dep:trueno-gpu"]
 simd = []
 # Parallel execution via rayon (native multi-threading)
 # Enables trueno/parallel for multi-threaded BLIS GEMM in encoder matmul
-parallel = ["rayon", "trueno/parallel"]
+parallel = ["rayon"]
 # WASM threaded mode: requires atomics + bulk-memory target features and COOP/COEP headers
 wasm-threads = ["wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
@@ -89,16 +89,16 @@ realizar-inference = ["dep:realizar"]
 # Enable realizar's CUDA backend (50x speedup via trueno-gpu)
 # WAPR-PERF-004: Include cuda feature to enable GPU-resident tensor architecture
 # Note: realizar needs both 'gpu' and 'cuda' features for full CUDA support
-realizar-gpu = ["dep:realizar", "realizar/gpu", "realizar/cuda", "cuda"]
+realizar-gpu = ["dep:realizar", "cuda"]
 # Experimental probar APIs (zero-js validation, worker harness)
 probar-experimental = []
 # Gate integration tests that load large models (run with: cargo test --features integration-tests)
 integration-tests = []
 # APR format feature-gated modules (Phase 3 — Tier B)
-format-signing = ["aprender/format-signing", "ed25519-dalek", "hex"]
-format-encryption = ["aprender/format-encryption", "aes-gcm", "argon2", "rand"]
-format-quantize = ["aprender/format-quantize"]
-format-homomorphic = ["aprender/format-homomorphic"]
+format-signing = ["ed25519-dalek", "hex"]
+format-encryption = ["aes-gcm", "argon2", "rand"]
+format-quantize = []
+format-homomorphic = []
 # Heap profiling via dhat-rs (DHAT-compatible JSON output)
 dhat-profiler = ["dep:dhat"]
 
@@ -108,22 +108,22 @@ thiserror = "2"
 
 # SIMD acceleration (trueno integration)
 # Using crates.io versions for reproducible builds
-trueno = { version = "0.17", features = ["parallel"] }
+trueno = { version = "0.19" }
 # GPU-resident tensor architecture (WAPR-PERF-004)
-trueno-gpu = { version = "0.4.17", optional = true }
+trueno-gpu = { version = "0.5", optional = true }
 
 # Model format (aprender is the canonical .apr format library)
 # Note: safetensors-compare pulls hf-hub which doesn't support WASM
 # Use target-specific deps below to enable it only for native builds
 # Using local path for WASM-compatible trueno
-aprender = { version = "0.27", default-features = false, features = ["audio"] }
+aprender = { package = "aprender-core", version = "0.51", default-features = false, features = ["audio"] }
 
 # APR CLI (proxied commands: pull, list)
-apr-cli = { version = "0.30", optional = true }
+apr-cli = { version = "0.51", optional = true }
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
-realizar = { version = "0.8", optional = true, default-features = false }
+realizar = { version = "0.9", optional = true, default-features = false }
 
 # fp16 weight storage (2 bytes/weight vs 4 bytes/weight for f32)
 half = "2"
@@ -220,7 +220,7 @@ getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] 
 # Enable safetensors-compare only for native builds
 # safetensors-compare: pulls hf-hub which doesn't support WASM
 # Note: inference-monitoring disabled due to cyclic dependency with entrenar
-aprender = { version = "0.27", default-features = false, features = ["audio", "safetensors-compare"] }
+aprender = { package = "aprender-core", version = "0.51", default-features = false }
 
 # Dev/test debuginfo tuning (build-perf). Full `debug = 2` DWARF for this crate's
 # huge dep graph produced a ~391 MiB test binary and slow cold links.
