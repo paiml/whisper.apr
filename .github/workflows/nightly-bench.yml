@@ -48,6 +48,7 @@ jobs:
           persist-credentials: false
       - name: Checkout sibling repos (path deps)
         run: |
+          sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev || true
           cd "$GITHUB_WORKSPACE/.."
           for repo in provable-contracts probar trueno trueno-rag trueno-db trueno-viz alimentar presentar aprender renacer batuta realizar; do
             if [ -e "$repo" ] && [ ! -d "$repo" ]; then rm -f "$repo"; fi
