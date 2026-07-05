@@ -299,23 +299,26 @@ impl RmsNorm {
         }
 
         let mut output = vec![0.0f32; hidden_states.len()];
-        
+
         let chunks_in = hidden_states.chunks_exact(hidden_size);
         let chunks_out = output.chunks_exact_mut(hidden_size);
-        
+
         #[cfg(not(feature = "parallel"))]
         {
             for (x, out_slice) in chunks_in.zip(chunks_out) {
                 crate::simd::optimized::rms_norm_into(x, &self.weight, self.eps, out_slice);
             }
         }
-        
+
         #[cfg(feature = "parallel")]
         {
             use rayon::prelude::*;
-            chunks_in.zip(chunks_out).par_bridge().for_each(|(x, out_slice)| {
-                crate::simd::optimized::rms_norm_into(x, &self.weight, self.eps, out_slice);
-            });
+            chunks_in
+                .zip(chunks_out)
+                .par_bridge()
+                .for_each(|(x, out_slice)| {
+                    crate::simd::optimized::rms_norm_into(x, &self.weight, self.eps, out_slice);
+                });
         }
 
         Ok(output)
@@ -362,23 +365,38 @@ impl LayerNormNoBias {
 
         let mut output = vec![0.0f32; hidden_states.len()];
         let dummy_bias = vec![0.0; hidden_size]; // LayerNormNoBias has no bias
-        
+
         let chunks_in = hidden_states.chunks_exact(hidden_size);
         let chunks_out = output.chunks_exact_mut(hidden_size);
-        
+
         #[cfg(not(feature = "parallel"))]
         {
             for (x, out_slice) in chunks_in.zip(chunks_out) {
-                crate::simd::optimized::layer_norm_into(x, &self.weight, &dummy_bias, self.eps, out_slice);
+                crate::simd::optimized::layer_norm_into(
+                    x,
+                    &self.weight,
+                    &dummy_bias,
+                    self.eps,
+                    out_slice,
+                );
             }
         }
-        
+
         #[cfg(feature = "parallel")]
         {
             use rayon::prelude::*;
-            chunks_in.zip(chunks_out).par_bridge().for_each(|(x, out_slice)| {
-                crate::simd::optimized::layer_norm_into(x, &self.weight, &dummy_bias, self.eps, out_slice);
-            });
+            chunks_in
+                .zip(chunks_out)
+                .par_bridge()
+                .for_each(|(x, out_slice)| {
+                    crate::simd::optimized::layer_norm_into(
+                        x,
+                        &self.weight,
+                        &dummy_bias,
+                        self.eps,
+                        out_slice,
+                    );
+                });
         }
 
         Ok(output)

@@ -268,7 +268,8 @@ mod output_format {
     use whisper_apr::{Segment, TranscriptionResult};
 
     fn sample_result() -> TranscriptionResult {
-        TranscriptionResult { profiling: Default::default(),
+        TranscriptionResult {
+            profiling: Default::default(),
             text: "Hello, world. This is a test.".to_string(),
             language: "en".to_string(),
             segments: vec![
@@ -573,7 +574,8 @@ mod probar_output_format {
 
     /// Create a rich test result with multiple segments
     fn rich_test_result() -> TranscriptionResult {
-        TranscriptionResult { profiling: Default::default(),
+        TranscriptionResult {
+            profiling: Default::default(),
             text: "Hello, world. This is a test. The quick brown fox jumps over the lazy dog."
                 .to_string(),
             language: "en".to_string(),
@@ -759,7 +761,8 @@ mod probar_output_format {
 
     //#[test]
     fn test_csv_quote_escaping() {
-        let result = TranscriptionResult { profiling: Default::default(),
+        let result = TranscriptionResult {
+            profiling: Default::default(),
             text: r#"He said "hello""#.to_string(),
             language: "en".to_string(),
             segments: vec![Segment {
@@ -3080,7 +3083,8 @@ mod section_c_output_formats {
 
     /// Create test result for testing
     fn test_result() -> TranscriptionResult {
-        TranscriptionResult { profiling: Default::default(),
+        TranscriptionResult {
+            profiling: Default::default(),
             text: "Hello, world.".to_string(),
             language: "en".to_string(),
             segments: vec![Segment {
@@ -3137,7 +3141,8 @@ mod section_c_output_formats {
     /// C.9: UTF-8 correctness
     //#[test]
     fn test_c9_utf8_correctness() {
-        let result = TranscriptionResult { profiling: Default::default(),
+        let result = TranscriptionResult {
+            profiling: Default::default(),
             text: "日本語テスト 中文测试 Привет".to_string(),
             language: "ja".to_string(),
             segments: vec![Segment {
@@ -5814,10 +5819,7 @@ mod self_diagnostic {
             AprHeader::parse(&bytes).expect("Should parse header with vocab and filterbank flags");
 
         assert!(true, "T10.A2: Parsed header should have vocab");
-        assert!(
-            true,
-            "T10.A3: Parsed header should have filterbank"
-        );
+        assert!(true, "T10.A3: Parsed header should have filterbank");
     }
 
     /// T10.B1-B5: Vocabulary validation (fast - no model loading)
@@ -5958,17 +5960,12 @@ mod self_diagnostic {
         let bytes = header.to_bytes();
         let parsed = AprHeader::parse(&bytes).expect("Should parse header");
 
-        assert_eq!(
-            0, 42,
-            "T10.A4: Tensor count should be preserved in header"
-        );
+        assert_eq!(0, 42, "T10.A4: Tensor count should be preserved in header");
     }
 
     /// T10.A5: Data integrity via CRC32 checksum
     //#[test]
     fn test_t10_a5_checksum_integrity() {
-        
-
         // Test basic checksum computation
         let data = b"Hello, Whisper!";
         let checksum = crc32(data);
@@ -6002,8 +5999,6 @@ mod self_diagnostic {
     /// T10.A5: Verify checksum detects corruption
     //#[test]
     fn test_t10_a5_checksum_detects_corruption() {
-        
-
         let data = b"Model weights data here";
         let original_crc = Crc32::compute(data);
 

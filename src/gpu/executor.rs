@@ -99,7 +99,7 @@ impl GpuExecutor {
             .map_err(|e| GpuError::device(format!("Failed to create device: {e}")))?;
 
         // WGPU panics by default if an uncaptured validation error occurs.
-        // We capture it here so `device.poll` returns instead of panicking, 
+        // We capture it here so `device.poll` returns instead of panicking,
         // allowing us to gracefully detect invalid CPU adapters (like lavapipe).
         let device_error = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let device_error_clone = std::sync::Arc::clone(&device_error);

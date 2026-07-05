@@ -277,9 +277,8 @@ impl ComputeOp for MatMulOp {
                     })?;
 
                 static EXECUTOR: OnceLock<Option<GpuExecutorSync>> = OnceLock::new();
-                let executor_opt = EXECUTOR.get_or_init(|| {
-                    GpuExecutorSync::new(&ExecutorConfig::for_inference()).ok()
-                });
+                let executor_opt = EXECUTOR
+                    .get_or_init(|| GpuExecutorSync::new(&ExecutorConfig::for_inference()).ok());
 
                 if let Some(executor) = executor_opt {
                     let result = executor.execute_matmul(&gpu_op, a, b).map_err(|e| {

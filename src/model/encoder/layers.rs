@@ -52,20 +52,35 @@ impl LayerNorm {
 
         let chunks_in = input.chunks_exact(self.normalized_shape);
         let chunks_out = output.chunks_exact_mut(self.normalized_shape);
-        
+
         #[cfg(not(feature = "parallel"))]
         {
             for (slice, out_slice) in chunks_in.zip(chunks_out) {
-                crate::simd::optimized::layer_norm_into(slice, &self.weight, &self.bias, self.eps, out_slice);
+                crate::simd::optimized::layer_norm_into(
+                    slice,
+                    &self.weight,
+                    &self.bias,
+                    self.eps,
+                    out_slice,
+                );
             }
         }
-        
+
         #[cfg(feature = "parallel")]
         {
             use rayon::prelude::*;
-            chunks_in.zip(chunks_out).par_bridge().for_each(|(slice, out_slice)| {
-                crate::simd::optimized::layer_norm_into(slice, &self.weight, &self.bias, self.eps, out_slice);
-            });
+            chunks_in
+                .zip(chunks_out)
+                .par_bridge()
+                .for_each(|(slice, out_slice)| {
+                    crate::simd::optimized::layer_norm_into(
+                        slice,
+                        &self.weight,
+                        &self.bias,
+                        self.eps,
+                        out_slice,
+                    );
+                });
         }
 
         Ok(())

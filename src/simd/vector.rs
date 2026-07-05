@@ -606,7 +606,11 @@ unsafe fn dot_i8_avx2(a_i8: &[i8], b: &[f32], scale: f32) -> f32 {
 /// Packs 2 weights per byte (lower nibble, upper nibble).
 /// Returns (quantized_row, scales) where each scale corresponds to a group.
 pub fn quant_f32_row_to_i4(row: &[f32], group_size: usize) -> (Vec<u8>, Vec<f32>) {
-    assert_eq!(row.len() % group_size, 0, "row len must be multiple of group_size");
+    assert_eq!(
+        row.len() % group_size,
+        0,
+        "row len must be multiple of group_size"
+    );
     let mut packed = Vec::with_capacity(row.len() / 2);
     let mut scales = Vec::with_capacity(row.len() / group_size);
 
@@ -637,7 +641,11 @@ pub fn quant_f32_row_to_i4(row: &[f32], group_size: usize) -> (Vec<u8>, Vec<f32>
 #[must_use]
 pub fn dot_i4(a_i4: &[u8], scales: &[f32], b: &[f32], group_size: usize) -> f32 {
     assert_eq!(a_i4.len() * 2, b.len(), "dot_i4 requires equal lengths");
-    assert_eq!(b.len() % group_size, 0, "b len must be multiple of group_size");
+    assert_eq!(
+        b.len() % group_size,
+        0,
+        "b len must be multiple of group_size"
+    );
 
     let mut sum = 0.0;
     // Buffer for unpacked i8 values for one group
@@ -645,13 +653,13 @@ pub fn dot_i4(a_i4: &[u8], scales: &[f32], b: &[f32], group_size: usize) -> f32 
 
     for (group_idx, (b_chunk, &scale)) in b.chunks(group_size).zip(scales.iter()).enumerate() {
         let a_chunk = &a_i4[group_idx * (group_size / 2)..(group_idx + 1) * (group_size / 2)];
-        
+
         for (i, &byte) in a_chunk.iter().enumerate() {
             // Sign extend lower nibble
             let q0 = ((byte << 4) as i8) >> 4;
             // Sign extend upper nibble
             let q1 = (byte as i8) >> 4;
-            
+
             i8_buf[i * 2] = q0;
             i8_buf[i * 2 + 1] = q1;
         }

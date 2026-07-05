@@ -343,7 +343,8 @@ impl LinearWeights {
             let mut all_scales = Vec::with_capacity(rows * (cols / group_size));
             for r in 0..rows {
                 let offset = r * cols;
-                let (q_row, scales) = simd::quant_f32_row_to_i4(&self.weight[offset..offset + cols], group_size);
+                let (q_row, scales) =
+                    simd::quant_f32_row_to_i4(&self.weight[offset..offset + cols], group_size);
                 all_i4.extend_from_slice(&q_row);
                 all_scales.extend_from_slice(&scales);
             }
@@ -622,7 +623,8 @@ impl LinearWeights {
                 );
                 output[..tmp.len()].copy_from_slice(&tmp);
             } else if let Some(weight_matrix) = &self.weight_matrix {
-                let tmp = simd::matmul_with_matrix(input, weight_matrix, total_tokens, self.in_features);
+                let tmp =
+                    simd::matmul_with_matrix(input, weight_matrix, total_tokens, self.in_features);
                 output[..tmp.len()].copy_from_slice(&tmp);
             } else if let Some(weight_t) = &self.weight_transposed {
                 let tmp = simd::matmul(
@@ -2144,8 +2146,10 @@ impl MultiHeadAttention {
                 let out_start = i * 3 * d;
                 let in_start = i * d;
                 qkv_out[out_start..out_start + d].copy_from_slice(&q[in_start..in_start + d]);
-                qkv_out[out_start + d..out_start + 2 * d].copy_from_slice(&k[in_start..in_start + d]);
-                qkv_out[out_start + 2 * d..out_start + 3 * d].copy_from_slice(&v[in_start..in_start + d]);
+                qkv_out[out_start + d..out_start + 2 * d]
+                    .copy_from_slice(&k[in_start..in_start + d]);
+                qkv_out[out_start + 2 * d..out_start + 3 * d]
+                    .copy_from_slice(&v[in_start..in_start + d]);
             }
             Ok(())
         }

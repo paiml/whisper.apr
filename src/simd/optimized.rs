@@ -132,31 +132,36 @@ pub fn tiled_matmul_into(
     let chunk_size = (rows + num_threads - 1) / num_threads;
     let chunk_size = chunk_size.max(1);
 
-    (0..rows).into_par_iter().step_by(chunk_size).for_each(|r_start| {
-        let r_end = (r_start + chunk_size).min(rows);
-        for s in 0..seq_len {
-            let in_row = &input[s * cols..(s + 1) * cols];
-            for i in r_start..r_end {
-                let row_offset = i * cols;
-                let a_slice = &weights[row_offset..row_offset + cols];
-                
-                let dot = if use_avx2 {
-                    #[cfg(target_arch = "x86_64")]
-                    unsafe { crate::simd::vector::dot_fma_avx2_public(a_slice, in_row) }
-                    #[cfg(not(target_arch = "x86_64"))]
-                    crate::simd::vector::dot_scalar(a_slice, in_row)
-                } else {
-                    crate::simd::vector::dot_scalar(a_slice, in_row)
-                };
+    (0..rows)
+        .into_par_iter()
+        .step_by(chunk_size)
+        .for_each(|r_start| {
+            let r_end = (r_start + chunk_size).min(rows);
+            for s in 0..seq_len {
+                let in_row = &input[s * cols..(s + 1) * cols];
+                for i in r_start..r_end {
+                    let row_offset = i * cols;
+                    let a_slice = &weights[row_offset..row_offset + cols];
 
-                unsafe {
-                    // out is [seq_len, rows]
-                    let ptr = out_ptr as *mut f32;
-                    *ptr.add(s * rows + i) = dot;
+                    let dot = if use_avx2 {
+                        #[cfg(target_arch = "x86_64")]
+                        unsafe {
+                            crate::simd::vector::dot_fma_avx2_public(a_slice, in_row)
+                        }
+                        #[cfg(not(target_arch = "x86_64"))]
+                        crate::simd::vector::dot_scalar(a_slice, in_row)
+                    } else {
+                        crate::simd::vector::dot_scalar(a_slice, in_row)
+                    };
+
+                    unsafe {
+                        // out is [seq_len, rows]
+                        let ptr = out_ptr as *mut f32;
+                        *ptr.add(s * rows + i) = dot;
+                    }
                 }
             }
-        }
-    });
+        });
 }
 
 /// RMS normalization (faster than LayerNorm).
@@ -413,7 +418,11 @@ pub fn tiled_matvec_i4_into(
         "i4 weight dimensions mismatch"
     );
     let groups_per_row = cols / group_size;
-    assert_eq!(scales.len(), rows * groups_per_row, "scales dimension mismatch");
+    assert_eq!(
+        scales.len(),
+        rows * groups_per_row,
+        "scales dimension mismatch"
+    );
     assert_eq!(x.len(), cols, "input dimension mismatch");
     assert_eq!(out.len(), rows, "output dimension mismatch");
 

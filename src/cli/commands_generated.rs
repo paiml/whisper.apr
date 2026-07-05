@@ -2345,9 +2345,10 @@ fn test_backend(backend: BackendArg, global: &Args) -> CliResult<()> {
             {
                 use realizar::cuda::CudaExecutor;
                 if CudaExecutor::is_available() {
-                    let mut whisper = WhisperApr::tiny().into_cuda(0)
+                    let mut whisper = WhisperApr::tiny()
+                        .into_cuda(0)
                         .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
-                    
+
                     let samples = vec![0.0f32; 16000];
                     let options = TranscribeOptions::default();
                     let _result = whisper.transcribe_gpu(&samples, options)?;
@@ -3959,7 +3960,6 @@ pub(crate) fn load_audio_samples(path: &Path, data: &[u8]) -> CliResult<Vec<f32>
             .map_err(|e| CliError::InvalidArgument(e.to_string())),
     }
 }
-
 
 /// Convert format argument to OutputFormat
 fn convert_format_arg(arg: OutputFormatArg) -> OutputFormat {
@@ -6002,6 +6002,9 @@ mod tests {
 
 pub(crate) fn warn_ignored_global(global: &Args, cmd: &str) {
     if global.verbose || global.quiet || global.json || global.trace.is_some() || global.no_color {
-        eprintln!("[WARN] Global flags are currently ignored by the '{}' command", cmd);
+        eprintln!(
+            "[WARN] Global flags are currently ignored by the '{}' command",
+            cmd
+        );
     }
 }

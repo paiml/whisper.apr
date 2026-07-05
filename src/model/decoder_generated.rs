@@ -3827,10 +3827,14 @@ impl Decoder {
         let batch_size = cache.batch_size();
 
         if tokens.len() != batch_size {
-            return Err(WhisperError::Model(format!("token count doesn't match batch size")));
+            return Err(WhisperError::Model(format!(
+                "token count doesn't match batch size"
+            )));
         }
         if encoder_outputs.len() != batch_size {
-            return Err(WhisperError::Model(format!("encoder count doesn't match batch size")));
+            return Err(WhisperError::Model(format!(
+                "encoder count doesn't match batch size"
+            )));
         }
 
         // 1. Embed tokens
@@ -3841,10 +3845,9 @@ impl Decoder {
             }
             let emb_start = (token as usize) * self.d_model;
             let out_start = i * self.d_model;
-            x[out_start..out_start + self.d_model].copy_from_slice(
-                &self.token_embedding[emb_start..emb_start + self.d_model],
-            );
-            
+            x[out_start..out_start + self.d_model]
+                .copy_from_slice(&self.token_embedding[emb_start..emb_start + self.d_model]);
+
             // Add positional embedding
             let item_cache = cache.get_cache(i).unwrap();
             let pos = item_cache.seq_len();
@@ -3867,11 +3870,16 @@ impl Decoder {
             let mut normed = vec![0.0_f32; batch_size * self.d_model];
             for i in 0..batch_size {
                 let start = i * self.d_model;
-                block.ln1.forward_into(&x[start..start + self.d_model], &mut normed[start..start + self.d_model])?;
+                block.ln1.forward_into(
+                    &x[start..start + self.d_model],
+                    &mut normed[start..start + self.d_model],
+                )?;
             }
 
             // Single Matmul QKV
-            block.self_attn.forward_qkv_batch_into(&normed, batch_size, &mut qkv_batch)?;
+            block
+                .self_attn
+                .forward_qkv_batch_into(&normed, batch_size, &mut qkv_batch)?;
 
             // Per-beam attention
             for i in 0..batch_size {
@@ -3885,30 +3893,50 @@ impl Decoder {
                 let k_full = item_cache.self_attn_cache[layer_idx].get_key();
                 let v_full = item_cache.self_attn_cache[layer_idx].get_value();
 
-                let attn_out_i = self.compute_attention_cached(&block.self_attn, q_i, k_full, v_full)?;
+                let attn_out_i =
+                    self.compute_attention_cached(&block.self_attn, q_i, k_full, v_full)?;
                 let out_start = i * self.d_model;
                 attn_out_batch[out_start..out_start + self.d_model].copy_from_slice(&attn_out_i);
             }
 
             let mut attn_proj = vec![0.0_f32; batch_size * self.d_model];
-            block.self_attn.w_o().forward_simd_into(&attn_out_batch, batch_size, &mut attn_proj)?;
-            for (a, b) in x.iter_mut().zip(attn_proj.iter()) { *a += b; }
+            block
+                .self_attn
+                .w_o()
+                .forward_simd_into(&attn_out_batch, batch_size, &mut attn_proj)?;
+            for (a, b) in x.iter_mut().zip(attn_proj.iter()) {
+                *a += b;
+            }
 
             // Cross Attention
             for i in 0..batch_size {
                 let start = i * self.d_model;
-                block.ln2.forward_into(&x[start..start + self.d_model], &mut normed[start..start + self.d_model])?;
+                block.ln2.forward_into(
+                    &x[start..start + self.d_model],
+                    &mut normed[start..start + self.d_model],
+                )?;
             }
-            
-            block.cross_attn.w_q().forward_simd_into(&normed, batch_size, &mut q_batch)?;
-            
+
+            block
+                .cross_attn
+                .w_q()
+                .forward_simd_into(&normed, batch_size, &mut q_batch)?;
+
             for i in 0..batch_size {
                 let item_cache = cache.get_cache_mut(i).unwrap();
                 let q_i = &q_batch[i * self.d_model..(i + 1) * self.d_model];
-                let attn_out_i = if !item_cache.cross_attn_cached || item_cache.cross_attn_cache[layer_idx].is_empty() {
+                let attn_out_i = if !item_cache.cross_attn_cached
+                    || item_cache.cross_attn_cache[layer_idx].is_empty()
+                {
                     let enc_len = encoder_outputs[i].len() / self.d_model;
-                    let k_enc = block.cross_attn.w_k().forward_simd(&encoder_outputs[i], enc_len)?;
-                    let v_enc = block.cross_attn.w_v().forward_simd(&encoder_outputs[i], enc_len)?;
+                    let k_enc = block
+                        .cross_attn
+                        .w_k()
+                        .forward_simd(&encoder_outputs[i], enc_len)?;
+                    let v_enc = block
+                        .cross_attn
+                        .w_v()
+                        .forward_simd(&encoder_outputs[i], enc_len)?;
                     item_cache.cross_attn_cache[layer_idx].append(&k_enc, &v_enc)?;
                     self.compute_attention_cached(&block.cross_attn, q_i, &k_enc, &v_enc)?
                 } else {
@@ -3919,20 +3947,33 @@ impl Decoder {
                 let out_start = i * self.d_model;
                 attn_out_batch[out_start..out_start + self.d_model].copy_from_slice(&attn_out_i);
             }
-            
-            block.cross_attn.w_o().forward_simd_into(&attn_out_batch, batch_size, &mut attn_proj)?;
-            for (a, b) in x.iter_mut().zip(attn_proj.iter()) { *a += b; }
+
+            block.cross_attn.w_o().forward_simd_into(
+                &attn_out_batch,
+                batch_size,
+                &mut attn_proj,
+            )?;
+            for (a, b) in x.iter_mut().zip(attn_proj.iter()) {
+                *a += b;
+            }
 
             // FFN
             for i in 0..batch_size {
                 let start = i * self.d_model;
-                block.ln3.forward_into(&x[start..start + self.d_model], &mut normed[start..start + self.d_model])?;
+                block.ln3.forward_into(
+                    &x[start..start + self.d_model],
+                    &mut normed[start..start + self.d_model],
+                )?;
             }
-            
+
             let mut ffn_hidden = vec![0.0_f32; batch_size * block.ffn.d_ff];
             let mut ffn_out = vec![0.0_f32; batch_size * self.d_model];
-            block.ffn.forward_into(&normed, &mut ffn_hidden, &mut ffn_out)?;
-            for (a, b) in x.iter_mut().zip(ffn_out.iter()) { *a += b; }
+            block
+                .ffn
+                .forward_into(&normed, &mut ffn_hidden, &mut ffn_out)?;
+            for (a, b) in x.iter_mut().zip(ffn_out.iter()) {
+                *a += b;
+            }
         }
 
         for i in 0..batch_size {
@@ -3945,12 +3986,15 @@ impl Decoder {
         let mut final_normed = vec![0.0_f32; batch_size * self.d_model];
         for i in 0..batch_size {
             let start = i * self.d_model;
-            self.ln_post.forward_into(&x[start..start + self.d_model], &mut final_normed[start..start + self.d_model])?;
+            self.ln_post.forward_into(
+                &x[start..start + self.d_model],
+                &mut final_normed[start..start + self.d_model],
+            )?;
         }
 
         // Single Matmul Vocab
         let logits_flat = self.project_to_vocab(&final_normed, batch_size);
-        
+
         let mut logits = Vec::with_capacity(batch_size);
         for i in 0..batch_size {
             let start = i * self.n_vocab;
@@ -3962,7 +4006,6 @@ impl Decoder {
             seq_lengths: vec![1; batch_size],
         })
     }
-
 
     /// Generate tokens autoregressively for a batch of sequences
     ///
@@ -6841,18 +6884,29 @@ mod tests {
             let config = ModelConfig::tiny();
             let decoder = create_decoder_with_test_weights(&config);
             let d_model = config.n_text_state as usize;
-            
+
             let batch_size = 2;
             let encoder_outputs = vec![
-                (0..5 * d_model).map(|i| (i as f32).sin()).collect::<Vec<f32>>(),
-                (0..5 * d_model).map(|i| (i as f32).cos()).collect::<Vec<f32>>(),
+                (0..5 * d_model)
+                    .map(|i| (i as f32).sin())
+                    .collect::<Vec<f32>>(),
+                (0..5 * d_model)
+                    .map(|i| (i as f32).cos())
+                    .collect::<Vec<f32>>(),
             ];
-            
-            let mut cache = BatchDecoderCache::new(batch_size, config.n_text_layer as usize, d_model, config.n_text_ctx as usize);
-            
+
+            let mut cache = BatchDecoderCache::new(
+                batch_size,
+                config.n_text_layer as usize,
+                d_model,
+                config.n_text_ctx as usize,
+            );
+
             let tokens = vec![50257, 50257];
-            let out1 = decoder.forward_one_batch_fused(&tokens, &encoder_outputs, &mut cache).unwrap();
-            
+            let out1 = decoder
+                .forward_one_batch_fused(&tokens, &encoder_outputs, &mut cache)
+                .unwrap();
+
             // Should be independent
             assert_eq!(out1.logits.len(), 2);
             assert_eq!(cache.get_cache(0).unwrap().seq_len(), 1);
@@ -6864,21 +6918,30 @@ mod tests {
             // FALSIFY-BAT-BEAM-002: Cache forking
             let config = ModelConfig::tiny();
             let d_model = config.n_text_state as usize;
-            let mut cache = BatchDecoderCache::new(2, config.n_text_layer as usize, d_model, config.n_text_ctx as usize);
-            
+            let mut cache = BatchDecoderCache::new(
+                2,
+                config.n_text_layer as usize,
+                d_model,
+                config.n_text_ctx as usize,
+            );
+
             // Fake some data in cache 0
-            cache.get_cache_mut(0).unwrap().self_attn_cache[0].append(&vec![1.0; d_model], &vec![2.0; d_model]).unwrap();
-            
+            cache.get_cache_mut(0).unwrap().self_attn_cache[0]
+                .append(&vec![1.0; d_model], &vec![2.0; d_model])
+                .unwrap();
+
             // Fork 0 to 1
             cache.fork(0, 1).unwrap();
-            
+
             // Both should have seq_len 1
             assert_eq!(cache.get_cache(0).unwrap().seq_len(), 1);
             assert_eq!(cache.get_cache(1).unwrap().seq_len(), 1);
-            
+
             // Append to 0
-            cache.get_cache_mut(0).unwrap().self_attn_cache[0].append(&vec![3.0; d_model], &vec![4.0; d_model]).unwrap();
-            
+            cache.get_cache_mut(0).unwrap().self_attn_cache[0]
+                .append(&vec![3.0; d_model], &vec![4.0; d_model])
+                .unwrap();
+
             // Should diverge
             assert_eq!(cache.get_cache(0).unwrap().seq_len(), 2);
             assert_eq!(cache.get_cache(1).unwrap().seq_len(), 1);

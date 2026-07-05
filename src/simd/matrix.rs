@@ -87,15 +87,8 @@ pub fn matmul(a: &[f32], b: &[f32], rows: usize, inner: usize, cols: usize) -> V
                     let r_start = i * chunk_rows;
                     let r_count = c_chunk.len() / cols;
                     let a_chunk = &a[r_start * inner..(r_start + r_count) * inner];
-                    let _ = trueno::blis::gemm_blis(
-                        r_count,
-                        cols,
-                        inner,
-                        a_chunk,
-                        b,
-                        c_chunk,
-                        None,
-                    );
+                    let _ =
+                        trueno::blis::gemm_blis(r_count, cols, inner, a_chunk, b, c_chunk, None);
                 });
         } else {
             if trueno::blis::parallel::gemm_blis_parallel(rows, cols, inner, a, b, &mut c).is_err()

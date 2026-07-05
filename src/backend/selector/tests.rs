@@ -1,4 +1,3 @@
-
 //! Tests for backend selection
 
 use super::super::traits::MatMulOp;

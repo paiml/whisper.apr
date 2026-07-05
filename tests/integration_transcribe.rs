@@ -1111,7 +1111,10 @@ fn test_encoder_output_stats() {
         .sum::<f32>()
         / encoder_output.len() as f32;
     let std = variance.sqrt();
-    let nonzero = encoder_output.iter().filter(|&&x: &&f32| x.abs() > 1e-8).count();
+    let nonzero = encoder_output
+        .iter()
+        .filter(|&&x: &&f32| x.abs() > 1e-8)
+        .count();
     let nan_count = encoder_output.iter().filter(|x| x.is_nan()).count();
     let inf_count = encoder_output.iter().filter(|x| x.is_infinite()).count();
 
@@ -1166,7 +1169,10 @@ fn test_cross_attention_weight_stats() {
     for prefix in prefixes {
         match reader.load_tensor(prefix) {
             Ok(w) => {
-                let min = w.iter().cloned().fold(f32::INFINITY, |a: f32, b: f32| a.min(b));
+                let min = w
+                    .iter()
+                    .cloned()
+                    .fold(f32::INFINITY, |a: f32, b: f32| a.min(b));
                 let max = w.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
                 let mean: f32 = w.iter().sum::<f32>() / w.len() as f32;
                 let variance: f32 =
