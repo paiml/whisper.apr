@@ -21,4 +21,6 @@ ignore = [
     "RUSTSEC-2026-0097",  # rand: unsound w/ custom logger, transitive via quinn-proto/proptest
     "RUSTSEC-2026-0173",  # proc-macro-error2: unmaintained, transitive fork of proc-macro-error
     "RUSTSEC-2026-0186",  # memmap2: unsound pointer offset, transitive, no safe upgrade
+    "RUSTSEC-2026-0195",  # quick-xml: unbounded namespace allocation, transitive via aprender-orchestrate
+    "RUSTSEC-2026-0194",  # quick-xml: quadratic run time on attributes, transitive via aprender-orchestrate
 ]
