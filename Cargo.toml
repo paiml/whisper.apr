@@ -249,7 +249,6 @@ opt-level = 1
 [profile.release]
 lto = true
 codegen-units = 1
-panic = "abort"
 strip = true
 opt-level = 3  # Use full optimization for native (was "z" for size - killed SIMD!)
 
@@ -298,7 +297,8 @@ harness = false
 [lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
 missing_docs = "warn"
-rust_2018_idioms = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(feature, values("cuda", "realizar-gpu", "realizar-inference", "probar-experimental", "benchmark-tui"))'] }
 
 [lints.clippy]
 # Correctness (critical)

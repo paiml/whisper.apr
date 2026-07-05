@@ -1292,6 +1292,7 @@ impl LowLatencyConfigWasm {
 
     /// Enable VAD (Voice Activity Detection)
     #[wasm_bindgen(js_name = withVad)]
+    #[must_use]
     pub fn with_vad(mut self, enable: bool) -> Self {
         self.inner = if enable {
             self.inner.with_vad()
@@ -1303,6 +1304,7 @@ impl LowLatencyConfigWasm {
 
     /// Set VAD threshold (0.0 - 1.0)
     #[wasm_bindgen(js_name = withVadThreshold)]
+    #[must_use]
     pub fn with_vad_threshold(mut self, threshold: f32) -> Self {
         self.inner = self.inner.vad_threshold(threshold);
         self
@@ -1310,6 +1312,7 @@ impl LowLatencyConfigWasm {
 
     /// Set input sample rate
     #[wasm_bindgen(js_name = withInputSampleRate)]
+    #[must_use]
     pub fn with_input_sample_rate(mut self, rate: u32) -> Self {
         self.inner.input_sample_rate = rate;
         self
@@ -1712,6 +1715,7 @@ pub struct StreamingSessionWasm {
 impl StreamingSessionWasm {
     /// Create a new streaming session
     #[wasm_bindgen(constructor)]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(whisper: &WhisperAprWasm, config: StreamingConfigWasm) -> Self {
         let streaming_config = StreamingConfig {
             input_sample_rate: config.input_sample_rate,
@@ -1756,7 +1760,7 @@ impl StreamingSessionWasm {
                 {
                     // Deduplicate
                     if result.text != self.last_partial_text {
-                        self.last_partial_text = result.text.clone();
+                        self.last_partial_text.clone_from(&result.text);
                         return Some(result.into());
                     }
                 }

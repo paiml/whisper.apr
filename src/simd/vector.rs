@@ -425,56 +425,85 @@ pub fn dot_f16(a_f16: &[u16], b: &[f32], buf: &mut [f32]) -> f32 {
 /// Single pass through memory — halves DRAM reads vs f32 dot.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "f16c", enable = "avx", enable = "fma")]
-unsafe fn dot_f16_fused_f16c(a_f16: &[u16], b: &[f32]) -> f32 {
+pub unsafe fn dot_f16_fused_f16c(a_f16: &[u16], b: &[f32]) -> f32 {
     use std::arch::x86_64::{
-        __m256, _mm256_cvtph_ps, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_setzero_ps,
-        _mm256_storeu_ps, _mm_loadu_si128,
+        __m256, _mm256_add_ps, _mm256_cvtph_ps, _mm256_fmadd_ps, _mm256_loadu_ps,
+        _mm256_setzero_ps, _mm256_storeu_ps, _mm_loadu_si128,
     };
 
     let n = a_f16.len();
-    let chunks = n / 8;
-    let remainder = n % 8;
-
     let a_ptr = a_f16.as_ptr();
     let b_ptr = b.as_ptr();
 
-    // SAFETY: all intrinsics guarded by #[target_feature] and runtime detection.
-    // Pointer arithmetic is bounded by chunks*8 <= n = a_f16.len() = b.len().
-    let mut acc: __m256 = _mm256_setzero_ps();
+    let mut acc0: __m256 = _mm256_setzero_ps();
+    let mut acc1: __m256 = _mm256_setzero_ps();
+    let mut acc2: __m256 = _mm256_setzero_ps();
+    let mut acc3: __m256 = _mm256_setzero_ps();
 
-    for i in 0..chunks {
-        let offset = i * 8;
-        // SAFETY: fn is `#[target_feature(enable = "f16c", enable = "avx", enable = "fma")]`
-        // and the only caller (`dot_f16`) gates on runtime f16c/avx/fma detection, so the
-        // intrinsics are CPU-supported. `offset < chunks * 8 <= n` with n == a_f16.len()
-        // == b.len(), so the 16-byte f16 load from `a_ptr + offset` and the 32-byte f32
-        // load from `b_ptr + offset` are both in bounds.
+    let mut i = 0;
+
+    // Main loop: 32 elements per iteration (4 × 8)
+    while i + 32 <= n {
         unsafe {
-            let half8 = _mm_loadu_si128(a_ptr.add(offset).cast());
-            let a_f32 = _mm256_cvtph_ps(half8);
-            let b_f32 = _mm256_loadu_ps(b_ptr.add(offset));
-            acc = _mm256_fmadd_ps(a_f32, b_f32, acc);
+            let h0 = _mm_loadu_si128(a_ptr.add(i).cast());
+            let a0 = _mm256_cvtph_ps(h0);
+            let b0 = _mm256_loadu_ps(b_ptr.add(i));
+            acc0 = _mm256_fmadd_ps(a0, b0, acc0);
+
+            let h1 = _mm_loadu_si128(a_ptr.add(i + 8).cast());
+            let a1 = _mm256_cvtph_ps(h1);
+            let b1 = _mm256_loadu_ps(b_ptr.add(i + 8));
+            acc1 = _mm256_fmadd_ps(a1, b1, acc1);
+
+            let h2 = _mm_loadu_si128(a_ptr.add(i + 16).cast());
+            let a2 = _mm256_cvtph_ps(h2);
+            let b2 = _mm256_loadu_ps(b_ptr.add(i + 16));
+            acc2 = _mm256_fmadd_ps(a2, b2, acc2);
+
+            let h3 = _mm_loadu_si128(a_ptr.add(i + 24).cast());
+            let a3 = _mm256_cvtph_ps(h3);
+            let b3 = _mm256_loadu_ps(b_ptr.add(i + 24));
+            acc3 = _mm256_fmadd_ps(a3, b3, acc3);
         }
+        i += 32;
     }
 
-    let mut sum_buf = [0.0_f32; 8];
-    // SAFETY: AVX is enabled via `#[target_feature]`; `sum_buf` is a stack array of exactly
-    // 8 f32, so the 256-bit unaligned store writes exactly its 32 bytes with no overflow.
-    unsafe { _mm256_storeu_ps(sum_buf.as_mut_ptr(), acc) };
-    let mut result: f32 = sum_buf.iter().sum();
-
-    let base = chunks * 8;
-    for j in 0..remainder {
-        // SAFETY: `base + j < base + remainder == n`, so reading from `a_ptr + base + j`
-        // and `b_ptr + base + j` stays within `a_f16` and `b` (equal lengths).
+    // Handle remaining 8-element chunks
+    while i + 8 <= n {
         unsafe {
-            let a_val = half::f16::from_bits(*a_ptr.add(base + j)).to_f32();
-            let b_val = *b_ptr.add(base + j);
+            let h0 = _mm_loadu_si128(a_ptr.add(i).cast());
+            let a0 = _mm256_cvtph_ps(h0);
+            let b0 = _mm256_loadu_ps(b_ptr.add(i));
+            acc0 = _mm256_fmadd_ps(a0, b0, acc0);
+        }
+        i += 8;
+    }
+
+    unsafe {
+        acc0 = _mm256_add_ps(acc0, acc1);
+        acc2 = _mm256_add_ps(acc2, acc3);
+        acc0 = _mm256_add_ps(acc0, acc2);
+
+        let mut sum_buf = [0.0_f32; 8];
+        _mm256_storeu_ps(sum_buf.as_mut_ptr(), acc0);
+        let mut result = sum_buf[0]
+            + sum_buf[1]
+            + sum_buf[2]
+            + sum_buf[3]
+            + sum_buf[4]
+            + sum_buf[5]
+            + sum_buf[6]
+            + sum_buf[7];
+
+        while i < n {
+            let a_val = half::f16::from_bits(*a_ptr.add(i)).to_f32();
+            let b_val = *b_ptr.add(i);
             result += a_val * b_val;
+            i += 1;
         }
-    }
 
-    result
+        result
+    }
 }
 
 // =========================================================================

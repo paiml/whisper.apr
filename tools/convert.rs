@@ -1,4 +1,10 @@
 //! Model converter: HuggingFace SafeTensors / ONNX → .apr format
+#![allow(
+    clippy::wrong_self_convention,
+    clippy::ptr_arg,
+    clippy::needless_pass_by_value,
+    clippy::disallowed_methods
+)]
 //!
 //! Downloads Whisper or Moonshine models from HuggingFace and converts them to the
 //! .apr format optimized for WASM deployment.
@@ -651,7 +657,7 @@ fn load_tensors(
             }
         };
 
-        let shape: Vec<usize> = tensor.shape().iter().map(|&d| d).collect();
+        let shape: Vec<usize> = tensor.shape().to_vec();
         result.push(ParsedTensor {
             name: apr_name,
             shape,
@@ -1021,7 +1027,7 @@ fn load_moonshine_tensors(
             }
         };
 
-        let shape: Vec<usize> = tensor.shape().iter().copied().collect();
+        let shape: Vec<usize> = tensor.shape().to_vec();
         result.push(ParsedTensor {
             name: apr_name,
             shape,

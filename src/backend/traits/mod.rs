@@ -269,6 +269,7 @@ impl ComputeOp for MatMulOp {
                 use crate::gpu::{ExecutorConfig, GpuExecutorSync};
                 use std::sync::OnceLock;
 
+                static EXECUTOR: OnceLock<Option<GpuExecutorSync>> = OnceLock::new();
                 let gpu_op = GpuMatMul::simple(self.m as u32, self.k as u32, self.n as u32)
                     .map_err(|e| {
                         crate::error::WhisperError::Inference(format!(
@@ -276,7 +277,6 @@ impl ComputeOp for MatMulOp {
                         ))
                     })?;
 
-                static EXECUTOR: OnceLock<Option<GpuExecutorSync>> = OnceLock::new();
                 let executor_opt = EXECUTOR
                     .get_or_init(|| GpuExecutorSync::new(&ExecutorConfig::for_inference()).ok());
 

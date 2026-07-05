@@ -186,7 +186,6 @@ impl GpuExecutor {
     /// Validate matmul input slice lengths against expected dimensions.
     #[cfg(feature = "webgpu")]
     fn validate_matmul_inputs(
-        &self,
         lhs: &[f32],
         rhs: &[f32],
         dims: &crate::gpu::ops::matmul::MatMulDimensions,
@@ -232,7 +231,7 @@ impl GpuExecutor {
         }
 
         let dims = op.dimensions();
-        self.validate_matmul_inputs(lhs, rhs, &dims)?;
+        Self::validate_matmul_inputs(lhs, rhs, dims)?;
 
         // Create GPU buffers
         let a_buffer = self.create_storage_buffer_init("A", bytemuck::cast_slice(lhs));

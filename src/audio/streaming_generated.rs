@@ -392,6 +392,7 @@ const DEFAULT_PARTIAL_THRESHOLD_SECS: f32 = 3.0;
 impl StreamingProcessor {
     /// Create a new streaming processor with the given configuration
     #[must_use]
+    #[allow(clippy::panic)]
     pub fn new(config: StreamingConfig) -> Self {
         let input_buffer =
             RingBuffer::for_duration(config.buffer_duration, config.input_sample_rate);

@@ -129,7 +129,7 @@ pub fn tiled_matmul_into(
 
     use rayon::prelude::*;
     let num_threads = rayon::current_num_threads();
-    let chunk_size = (rows + num_threads - 1) / num_threads;
+    let chunk_size = rows.div_ceil(num_threads);
     let chunk_size = chunk_size.max(1);
 
     (0..rows)
@@ -163,6 +163,8 @@ pub fn tiled_matmul_into(
             }
         });
 }
+
+
 
 /// RMS normalization (faster than LayerNorm).
 ///
