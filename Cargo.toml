@@ -36,6 +36,11 @@ exclude = [
     "*.profdata",
     "proptest-regressions/",
     "dhat-heap.json",
+    "test_*",
+    "*.log",
+    "*.data",
+    "contracts/",
+    "book/",
 ]
 
 default-run = "whisper-apr"
