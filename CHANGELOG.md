@@ -41,6 +41,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `make install` prevents duplicate binary installs: removes stale copies outside `~/.cargo/bin/` before
   install, verifies single binary post-install (exits non-zero if duplicates detected).
 
+## [0.3.1] - 2026-07-05
+
+### Changed
+- **Dependencies consolidated onto the aprender monorepo.** `trueno` → `aprender-compute`,
+  `trueno-gpu` → `aprender-gpu`, `realizar` → `aprender-serve`, and `provable-contracts-macros`
+  → `aprender-contracts-macros`, all unified at `0.51`. Library names are unchanged, so there is
+  no source or public-API change. Removes three duplicate `trueno` versions and the legacy `0.29`
+  line.
+- `hf-hub` now uses the `ureq`/rustls backend (`default-features = false, features = ["ureq"]`),
+  dropping `reqwest`, `native-tls`, and `openssl` from the dependency tree.
+
+### Removed
+- **`apr-cli` dependency dropped.** The default `cli` feature pulled it in only to proxy
+  `apr pull` / `apr ls`, but it transitively dragged in ~230 crates (batuta/orchestrate →
+  arrow+parquet, tonic, axum, rusqlite, opentelemetry, reqwest, a wgpu stack, and the `quick-xml`
+  advisories). `apr pull` / `apr ls` are reimplemented on the in-tree `ModelDownloader` (new
+  `cli::apr_commands::model_pull` module) under a provable-contracts contract with offline
+  falsification tests. Net effect: `Cargo.lock` **809 → 567** crates.
+
+### Fixed
+- Eliminated the `quick-xml` `RUSTSEC-2026-0194` / `RUSTSEC-2026-0195` advisories at the source
+  (they arrived transitively via `apr-cli`), rather than suppressing them in `audit.toml`.
+- Removed `panic = "abort"` from the release profile, restoring stack unwinding in release builds.
+
 ## [0.2.2] - 2025-01-26
 
 ### Changed
