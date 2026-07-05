@@ -113,6 +113,9 @@ pub fn tiled_matmul_into(
     rows: usize,
     cols: usize,
 ) {
+    #[cfg(feature = "parallel")]
+    use rayon::prelude::*;
+
     assert_eq!(weights.len(), rows * cols);
     assert_eq!(input.len(), seq_len * cols);
     assert_eq!(out.len(), seq_len * rows);
@@ -127,7 +130,6 @@ pub fn tiled_matmul_into(
     // and reuse it across all sequence tokens, maximizing memory bandwidth.
     let out_ptr = out.as_mut_ptr() as usize;
 
-    use rayon::prelude::*;
     let num_threads = rayon::current_num_threads();
     let chunk_size = rows.div_ceil(num_threads);
     let chunk_size = chunk_size.max(1);
@@ -145,6 +147,7 @@ pub fn tiled_matmul_into(
 
                     let dot = if use_avx2 {
                         #[cfg(target_arch = "x86_64")]
+                        // SAFETY: Target architecture ensures AVX2 is supported
                         unsafe {
                             crate::simd::vector::dot_fma_avx2_public(a_slice, in_row)
                         }
@@ -154,6 +157,7 @@ pub fn tiled_matmul_into(
                         crate::simd::vector::dot_scalar(a_slice, in_row)
                     };
 
+                    // SAFETY: Pointer is valid and within bounds
                     unsafe {
                         // out is [seq_len, rows]
                         let ptr = out_ptr as *mut f32;
@@ -443,12 +447,12 @@ pub fn tiled_matvec_i4_into(
 
     for tile_start in (0..rows).step_by(TILE_SIZE) {
         let tile_end = (tile_start + TILE_SIZE).min(rows);
-        for i in tile_start..tile_end {
+        for (i, out_val) in out.iter_mut().enumerate().take(tile_end).skip(tile_start) {
             let row_offset = i * cols / 2;
             let scales_offset = i * groups_per_row;
             let row_i4 = &weights_i4[row_offset..row_offset + cols / 2];
             let row_scales = &scales[scales_offset..scales_offset + groups_per_row];
-            out[i] = super::vector::dot_i4(row_i4, row_scales, x, group_size);
+            *out_val = super::vector::dot_i4(row_i4, row_scales, x, group_size);
         }
     }
 }

@@ -423,6 +423,9 @@ pub fn dot_f16(a_f16: &[u16], b: &[f32], buf: &mut [f32]) -> f32 {
 
 /// Fused fp16 dot product: load fp16, convert to f32 in register, FMA accumulate.
 /// Single pass through memory — halves DRAM reads vs f32 dot.
+///
+/// # Safety
+/// Caller must ensure CPU supports `f16c`, `avx`, and `fma`. Both slices must have `a_f16.len() <= b.len()`.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "f16c", enable = "avx", enable = "fma")]
 pub unsafe fn dot_f16_fused_f16c(a_f16: &[u16], b: &[f32]) -> f32 {
@@ -444,6 +447,7 @@ pub unsafe fn dot_f16_fused_f16c(a_f16: &[u16], b: &[f32]) -> f32 {
 
     // Main loop: 32 elements per iteration (4 × 8)
     while i + 32 <= n {
+        // SAFETY: Pointer offsets are within bounds based on loop condition
         unsafe {
             let h0 = _mm_loadu_si128(a_ptr.add(i).cast());
             let a0 = _mm256_cvtph_ps(h0);
@@ -470,6 +474,7 @@ pub unsafe fn dot_f16_fused_f16c(a_f16: &[u16], b: &[f32]) -> f32 {
 
     // Handle remaining 8-element chunks
     while i + 8 <= n {
+        // SAFETY: Pointer offsets are within bounds based on loop condition
         unsafe {
             let h0 = _mm_loadu_si128(a_ptr.add(i).cast());
             let a0 = _mm256_cvtph_ps(h0);
@@ -479,6 +484,7 @@ pub unsafe fn dot_f16_fused_f16c(a_f16: &[u16], b: &[f32]) -> f32 {
         i += 8;
     }
 
+    // SAFETY: AVX/FMA intrinsic usage is valid within this context
     unsafe {
         acc0 = _mm256_add_ps(acc0, acc1);
         acc2 = _mm256_add_ps(acc2, acc3);
