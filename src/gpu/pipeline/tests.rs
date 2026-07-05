@@ -1,4 +1,5 @@
 //! Tests for GPU compute shader pipeline management
+#![allow(clippy::expect_used)]
 
 use super::*;
 

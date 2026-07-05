@@ -802,7 +802,7 @@ pub fn load_or_download_model(
             eprintln!("[INFO] Model not cached, downloading...");
         }
         let downloaded_path = download_model(size, verbose)?;
-        return load_model_from_path(&downloaded_path);
+        load_model_from_path(&downloaded_path)
     }
 
     #[cfg(not(feature = "converter"))]

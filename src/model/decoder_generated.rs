@@ -3849,7 +3849,9 @@ impl Decoder {
                 .copy_from_slice(&self.token_embedding[emb_start..emb_start + self.d_model]);
 
             // Add positional embedding
-            let item_cache = cache.get_cache(i).unwrap();
+            let item_cache = cache
+                .get_cache(i)
+                .ok_or_else(|| WhisperError::Model("cache must exist for beam".to_string()))?;
             let pos = item_cache.seq_len();
             if pos >= self.max_len {
                 return Err(WhisperError::Model(format!("cache position exceeds max")));
@@ -3888,7 +3890,9 @@ impl Decoder {
                 let k_i = &qkv_batch[start + self.d_model..start + 2 * self.d_model];
                 let v_i = &qkv_batch[start + 2 * self.d_model..start + 3 * self.d_model];
 
-                let item_cache = cache.get_cache_mut(i).unwrap();
+                let item_cache = cache
+                    .get_cache_mut(i)
+                    .ok_or_else(|| WhisperError::Model("cache must exist for beam".to_string()))?;
                 item_cache.self_attn_cache[layer_idx].append(k_i, v_i)?;
                 let k_full = item_cache.self_attn_cache[layer_idx].get_key();
                 let v_full = item_cache.self_attn_cache[layer_idx].get_value();
@@ -3923,7 +3927,9 @@ impl Decoder {
                 .forward_simd_into(&normed, batch_size, &mut q_batch)?;
 
             for i in 0..batch_size {
-                let item_cache = cache.get_cache_mut(i).unwrap();
+                let item_cache = cache
+                    .get_cache_mut(i)
+                    .ok_or_else(|| WhisperError::Model("cache must exist for beam".to_string()))?;
                 let q_i = &q_batch[i * self.d_model..(i + 1) * self.d_model];
                 let attn_out_i = if !item_cache.cross_attn_cached
                     || item_cache.cross_attn_cache[layer_idx].is_empty()
@@ -3977,7 +3983,9 @@ impl Decoder {
         }
 
         for i in 0..batch_size {
-            let item_cache = cache.get_cache_mut(i).unwrap();
+            let item_cache = cache
+                .get_cache_mut(i)
+                .ok_or_else(|| WhisperError::Model("cache must exist for beam".to_string()))?;
             if !item_cache.cross_attn_cached {
                 item_cache.cross_attn_cached = true;
             }

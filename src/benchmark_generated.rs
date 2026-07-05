@@ -1,3 +1,8 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::items_after_statements
+)]
 //! Benchmark infrastructure for multi-backend performance comparison
 //!
 //! Provides types and utilities for benchmarking whisper.apr across different

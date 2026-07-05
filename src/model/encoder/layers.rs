@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used)]
 //! Layer components for encoder blocks
 //!
 //! Layer normalization and feed-forward networks.

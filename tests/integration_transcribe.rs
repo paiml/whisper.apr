@@ -1,6 +1,6 @@
-#![cfg(any())]
-#![cfg(any())]
 //! Integration test: Transcription produces meaningful text
+#![cfg(any())]
+#![allow(missing_docs)]
 #![cfg(feature = "integration-tests")]
 //!
 //! This test verifies the CRITICAL behavior: given audio with speech,

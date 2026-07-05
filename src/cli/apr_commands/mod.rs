@@ -31,8 +31,7 @@ use aprender::format::{apr_export, ExportFormat, ExportOptions};
 use super::apr_args::{
     AprAction, AprArgs, AprCanaryArgs, AprCompareArgs, AprContractArgs, AprDiffArgs, AprExportArgs,
     AprF16AuditArgs, AprFlowArgs, AprGoldenArgs, AprHexArgs, AprImportArgs, AprInspectArgs,
-    AprLintArgs, AprMergeArgs, AprPullArgs, AprPullListArgs, AprTensorsArgs, AprTreeArgs,
-    AprValidateArgs, FamilyAction,
+    AprLintArgs, AprMergeArgs, AprTensorsArgs, AprTreeArgs, AprValidateArgs, FamilyAction,
 };
 use super::commands::{CliError, CliResult, CommandResult};
 
@@ -1170,38 +1169,12 @@ fn run_f16_audit(args: &AprF16AuditArgs, global: &super::args::Args) -> CliResul
 }
 
 // ============================================================================
-// Proxy Commands (delegated to aprender's apr-cli)
+// Model pull / list — self-contained (no apr-cli dependency); see model_pull.rs
+// and contracts/model-pull-v1.yaml.
 // ============================================================================
 
-#[cfg(feature = "cli-full")]
-fn run_pull(args: &AprPullArgs) -> CliResult<CommandResult> {
-    apr_cli::model_pull::run(&args.model_ref, args.force, false, None, false)
-        .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
-    Ok(CommandResult::success(format!("Pulled {}", args.model_ref)))
-}
-
-#[cfg(not(feature = "cli-full"))]
-fn run_pull(args: &AprPullArgs) -> CliResult<CommandResult> {
-    let _ = args;
-    Err(CliError::InvalidArgument(
-        "apr pull requires the 'cli-full' feature (includes apr-cli dependency)".into(),
-    ))
-}
-
-#[cfg(feature = "cli-full")]
-fn run_pull_list(args: &AprPullListArgs) -> CliResult<CommandResult> {
-    apr_cli::model_pull::list(args.json, false)
-        .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
-    Ok(CommandResult::success("Listed cached models"))
-}
-
-#[cfg(not(feature = "cli-full"))]
-fn run_pull_list(args: &AprPullListArgs) -> CliResult<CommandResult> {
-    let _ = args;
-    Err(CliError::InvalidArgument(
-        "apr ls requires the 'cli-full' feature (includes apr-cli dependency)".into(),
-    ))
-}
+mod model_pull;
+use model_pull::{run_pull, run_pull_list};
 
 // ============================================================================
 // Helpers

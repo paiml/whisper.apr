@@ -1,4 +1,5 @@
 #![allow(missing_docs)]
+#![allow(clippy::float_cmp, clippy::excessive_precision, clippy::let_and_return)]
 //! Streaming Latency Benchmarks (WAPR-112)
 //!
 //! Measures latency characteristics of the streaming inference pipeline:

@@ -1,5 +1,6 @@
+//! CLI Parity Integration Tests (EXTREME TDD)
 #![cfg(any())]
-#![cfg(any())]
+#![allow(missing_docs)]
 //! CLI Parity Integration Tests (EXTREME TDD)
 #![cfg(feature = "integration-tests")]
 //!

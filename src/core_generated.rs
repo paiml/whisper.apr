@@ -906,44 +906,12 @@ impl WhisperApr {
     /// before computing mel spectrogram to match Whisper's expected input.
     /// The output is always exactly 3000 frames x 80 mel bins.
     pub fn compute_mel(&self, audio: &[f32]) -> WhisperResult<Vec<f32>> {
-        const N_SAMPLES_30S: usize = 480_000; // 30 seconds at 16kHz
-        const N_FRAMES: usize = 3000; // Whisper expects exactly 3000 frames
-        const N_MELS: usize = 80;
-
-        // Pad or truncate audio to exactly 30 seconds
-        let padded_audio = match audio.len().cmp(&N_SAMPLES_30S) {
-            std::cmp::Ordering::Equal => audio.to_vec(),
-            std::cmp::Ordering::Less => {
-                // Pad with zeros (silence) to 30 seconds
-                let mut padded = vec![0.0_f32; N_SAMPLES_30S];
-                padded[..audio.len()].copy_from_slice(audio);
-                padded
-            }
-            std::cmp::Ordering::Greater => {
-                // Truncate to 30 seconds
-                audio[..N_SAMPLES_30S].to_vec()
-            }
-        };
-
         let mel_fb = self.mel_filters.as_ref().ok_or_else(|| {
             WhisperError::Audio("mel filterbank not available (Moonshine model?)".into())
         })?;
-        let mut mel = mel_fb
-            .compute(&padded_audio)
+        let mel = mel_fb
+            .compute(&audio)
             .map_err(|e| WhisperError::Audio(e.to_string()))?;
-        let actual_frames = mel.len() / N_MELS;
-
-        // Ensure exactly 3000 frames (pad or truncate mel output)
-        if actual_frames < N_FRAMES {
-            // Pad with log-mel floor value (silence in log domain)
-            // HF uses -1.0 (which is roughly log(0.1)/log(10) after normalization)
-            let pad_value = -1.0_f32;
-            let mut padded_mel = vec![pad_value; N_FRAMES * N_MELS];
-            padded_mel[..mel.len()].copy_from_slice(&mel);
-            mel = padded_mel;
-        } else if actual_frames > N_FRAMES {
-            mel.truncate(N_FRAMES * N_MELS);
-        }
 
         // Mel spectrogram is computed as [frames, mels] = [3000, 80]
         // Our Conv1d expects (seq_len × in_channels) = (frames × mels)
@@ -1404,7 +1372,11 @@ impl WhisperApr {
         // Phase 2: Loading encoder
         callback(&tracker.to_progress());
         let mut encoder = model::Encoder::new(&config);
-        Self::load_encoder_weights(&reader, &mut encoder, &mut tracker, callback);
+        if is_f16 {
+            Self::load_encoder_weights_f16(&reader, &mut encoder, &mut tracker, callback);
+        } else {
+            Self::load_encoder_weights(&reader, &mut encoder, &mut tracker, callback);
+        }
         // Finalize encoder - cache transposed weights for fast forward
         // (For fp16 models, encoder weights are loaded as f32 via dequant — finalize still needed)
         encoder.finalize_weights();
@@ -1666,6 +1638,109 @@ impl WhisperApr {
             Self::load_layernorm_nobias_weights(reader, "encoder.layer_norm", ln);
         } else {
             // Whisper: affine LayerNorm (weight + bias)
+            Self::load_layer_norm_weights(reader, "encoder.layer_norm", encoder.ln_post_mut());
+        }
+    }
+
+    fn load_encoder_weights_f16(
+        reader: &crate::format::AprV2ReaderRef<'_>,
+        encoder: &mut crate::model::Encoder,
+        tracker: &mut crate::progress::ProgressTracker,
+        callback: &mut dyn FnMut(&crate::progress::Progress),
+    ) {
+        let n_layers = encoder.n_layers();
+
+        if let Some(conv_frontend) = encoder.conv_frontend_mut() {
+            if let Some(weight) = reader.get_tensor_as_f32("encoder.conv1.weight") {
+                let target = conv_frontend.conv1.weight_mut();
+                let len = weight.len().min(target.len());
+                target[..len].copy_from_slice(&weight[..len]);
+            }
+            if let Some(bias) = reader.get_tensor_as_f32("encoder.conv1.bias") {
+                let target = conv_frontend.conv1.bias_mut();
+                let len = bias.len().min(target.len());
+                target[..len].copy_from_slice(&bias[..len]);
+            }
+            if let Some(weight) = reader.get_tensor_as_f32("encoder.conv2.weight") {
+                let target = conv_frontend.conv2.weight_mut();
+                let len = weight.len().min(target.len());
+                target[..len].copy_from_slice(&weight[..len]);
+            }
+            if let Some(bias) = reader.get_tensor_as_f32("encoder.conv2.bias") {
+                let target = conv_frontend.conv2.bias_mut();
+                let len = bias.len().min(target.len());
+                target[..len].copy_from_slice(&bias[..len]);
+            }
+        }
+
+        let pe_result = reader
+            .get_tensor_as_f32("encoder.embed_positions.weight")
+            .or_else(|| reader.get_tensor_as_f32("encoder.positional_embedding"));
+        if let Some(pe) = pe_result {
+            let target = encoder.positional_embedding_mut();
+            let len = pe.len().min(target.len());
+            target[..len].copy_from_slice(&pe[..len]);
+        }
+
+        if encoder.moonshine_blocks_mut().len() > 0 {
+            for layer_idx in 0..n_layers {
+                let progress = layer_idx as f32 / n_layers as f32;
+                tracker.update_phase_progress(progress);
+                callback(&tracker.to_progress());
+                let block = &mut encoder.moonshine_blocks_mut()[layer_idx];
+                Self::load_layernorm_nobias_weights(
+                    reader,
+                    &format!("encoder.layers.{layer_idx}.pre_attn_layer_norm"),
+                    &mut block.ln1,
+                );
+                Self::load_gqa_weights(
+                    reader,
+                    &format!("encoder.layers.{layer_idx}.attn"),
+                    &mut block.self_attn,
+                );
+                Self::load_layernorm_nobias_weights(
+                    reader,
+                    &format!("encoder.layers.{layer_idx}.pre_mlp_layer_norm"),
+                    &mut block.ln2,
+                );
+                Self::load_mlp_weights(
+                    reader,
+                    &format!("encoder.blocks.{layer_idx}.ffn"),
+                    &mut block.ffn,
+                );
+            }
+        } else {
+            for layer_idx in 0..n_layers {
+                let progress = layer_idx as f32 / n_layers as f32;
+                tracker.update_phase_progress(progress);
+                callback(&tracker.to_progress());
+                let block = &mut encoder.blocks_mut()[layer_idx];
+                Self::load_layer_norm_weights(
+                    reader,
+                    &format!("encoder.layers.{layer_idx}.self_attn_layer_norm"),
+                    &mut block.ln1,
+                );
+                Self::load_attention_weights_f16(
+                    reader,
+                    &format!("encoder.layers.{layer_idx}.self_attn"),
+                    &mut block.self_attn,
+                );
+                Self::load_layer_norm_weights(
+                    reader,
+                    &format!("encoder.layers.{layer_idx}.final_layer_norm"),
+                    &mut block.ln2,
+                );
+                Self::load_ffn_weights_f16(
+                    reader,
+                    &format!("encoder.layers.{layer_idx}"),
+                    &mut block.ffn,
+                );
+            }
+        }
+
+        if let Some(ln) = encoder.ln_post_rms_mut() {
+            Self::load_layernorm_nobias_weights(reader, "encoder.layer_norm", ln);
+        } else {
             Self::load_layer_norm_weights(reader, "encoder.layer_norm", encoder.ln_post_mut());
         }
     }

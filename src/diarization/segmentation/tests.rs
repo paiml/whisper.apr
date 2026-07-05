@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used)]
 //! Tests for speaker turn detection and segmentation
 
 use super::*;

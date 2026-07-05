@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::float_cmp)]
 //! GPU layer normalization (WAPR-132)
 //!
 //! Provides layer normalization computation using compute shaders.

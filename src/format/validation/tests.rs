@@ -1,3 +1,4 @@
+#![allow(clippy::needless_borrow)]
 #![allow(clippy::unwrap_used)]
 
 use super::*;

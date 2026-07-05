@@ -1,4 +1,10 @@
 //! CUDA GPU acceleration for Whisper inference.
+#![allow(
+    clippy::map_unwrap_or,
+    clippy::items_after_statements,
+    clippy::unused_self,
+    clippy::needless_pass_by_value
+)]
 //!
 //! Provides GPU-resident model execution via trueno-gpu PTX kernels
 //! through realizar's `CudaExecutor`.
@@ -36,7 +42,7 @@
 //! }
 //! ```
 
-use crate::audio::{MelConfig, MelFilterbank, SAMPLE_RATE};
+use crate::audio::{MelConfig, MelFilterbank};
 use crate::error::{WhisperError, WhisperResult};
 use crate::model::{Decoder, DecoderKVCache, Encoder, ModelConfig};
 use crate::tokenizer::BpeTokenizer;
@@ -592,6 +598,7 @@ impl WhisperCuda {
     ///
     /// Uses `flash_attention_multi_head` for encoder self-attention.
     pub fn encode_gpu(&mut self, mel: &[f32]) -> WhisperResult<Vec<f32>> {
+        #[allow(clippy::no_effect_underscore_binding)]
         let _n_mels = self.config.n_mels as usize;
         let d_model = self.config.n_audio_state as usize;
         let n_heads = self.config.n_audio_head as usize;
@@ -1683,7 +1690,7 @@ impl WhisperCuda {
 
         // WAPR-PERF-011: Detailed timing breakdown
         let profile_detail = std::env::var("WHISPER_PROFILE_LAYERS").is_ok();
-        let total_start = std::time::Instant::now();
+        let _total_start = std::time::Instant::now();
 
         // WAPR-PERF-012: GPU Convolutional frontend
         let conv_start = std::time::Instant::now();
@@ -1790,7 +1797,7 @@ impl WhisperCuda {
         let output = x_gpu
             .to_host()
             .map_err(|e| WhisperError::Inference(format!("output download: {e}")))?;
-        let download_time = download_start.elapsed();
+        let _download_time = download_start.elapsed();
 
         // Step 6: Final layer norm (CPU - small overhead)
         let result = self.encoder.ln_post().forward(&output)?;
@@ -2501,6 +2508,7 @@ impl WhisperCuda {
     ///
     /// Attempts GPU-accelerated self-attention via flash_attention_cached,
     /// falls back to CPU attention if GPU fails.
+    #[allow(clippy::many_single_char_names)]
     fn forward_block_gpu_flash(
         &mut self,
         layer_idx: usize,
@@ -2593,7 +2601,7 @@ impl WhisperCuda {
 
     /// Compute cross-attention (query attends to encoder keys/values).
     fn compute_cross_attention(
-        &self,
+        #[allow(clippy::unused_self)] &self,
         q: &[f32],
         k: &[f32],
         v: &[f32],
@@ -2645,7 +2653,7 @@ impl WhisperCuda {
     /// This is a simplified self-attention that only attends to the current K/V.
     /// In a proper incremental decoder, this would accumulate K/V history.
     fn compute_self_attention(
-        &self,
+        #[allow(clippy::unused_self)] &self,
         _q: &[f32],
         _k: &[f32],
         v: &[f32],
@@ -2748,8 +2756,7 @@ impl WhisperCuda {
                 .iter()
                 .enumerate()
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(idx, _)| idx as u32)
-                .unwrap_or(50257); // EOT fallback
+                .map_or(50257, |(idx, _)| idx as u32); // EOT fallback
 
             if next_token == 50257 {
                 // EOT
@@ -2780,7 +2787,7 @@ impl WhisperCuda {
     pub fn transcribe(
         &mut self,
         audio: &[f32],
-        options: TranscribeOptions,
+        #[allow(clippy::needless_pass_by_value)] options: TranscribeOptions,
     ) -> WhisperResult<TranscriptionResult> {
         // Whisper constants
         const N_SAMPLES_30S: usize = 480_000; // 30 seconds at 16kHz
@@ -2819,6 +2826,7 @@ impl WhisperCuda {
         let encoder_output = self.encoder.forward_mel(&mel)?;
 
         // Build initial tokens based on task and language using SpecialTokens
+        #[allow(clippy::items_after_statements)]
         use crate::tokenizer::special_tokens::{self, SpecialTokens};
 
         let specials = SpecialTokens::for_vocab_size(self.config.n_vocab as usize);
@@ -2880,8 +2888,7 @@ impl WhisperCuda {
                     .iter()
                     .enumerate()
                     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                    .map(|(idx, _)| idx as u32)
-                    .unwrap_or(eot_token),
+                    .map_or(eot_token, |(idx, _)| idx as u32),
                 DecodingStrategy::BeamSearch { .. } | DecodingStrategy::Sampling { .. } => {
                     // For now, fall back to greedy for beam search and sampling
                     logits
@@ -2890,8 +2897,7 @@ impl WhisperCuda {
                         .max_by(|(_, a), (_, b)| {
                             a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
                         })
-                        .map(|(idx, _)| idx as u32)
-                        .unwrap_or(eot_token)
+                        .map_or(eot_token, |(idx, _)| idx as u32)
                 }
             };
 
@@ -3280,8 +3286,7 @@ impl WhisperCuda {
                 .iter()
                 .enumerate()
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(i, _)| i)
-                .unwrap_or(0);
+                .map_or(0, |(i, _)| i);
             eprintln!(
                 "[GPU] project_to_vocab_gpu: max={:.4} argmax={}",
                 max_val, argmax
@@ -3364,6 +3369,7 @@ impl WhisperCuda {
             .trace_layer(0, 0, Some(&encoder_output), enc_seq_len, d_model);
 
         // Build initial tokens
+        #[allow(clippy::items_after_statements)]
         use crate::tokenizer::special_tokens::SpecialTokens;
         let specials = SpecialTokens::for_vocab_size(self.config.n_vocab as usize);
         let mut tokens = Self::build_initial_tokens(&specials, options);
@@ -3465,7 +3471,7 @@ impl WhisperCuda {
     fn transcribe_gpu_chunked(
         &mut self,
         audio: &[f32],
-        options: TranscribeOptions,
+        #[allow(clippy::needless_pass_by_value)] options: TranscribeOptions,
     ) -> WhisperResult<TranscriptionResult> {
         const CHUNK_SAMPLES: usize = 480_000; // 30 seconds at 16kHz
 
@@ -3636,8 +3642,7 @@ impl WhisperCuda {
                 .iter()
                 .enumerate()
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(i, _)| i)
-                .unwrap_or(0);
+                .map_or(0, |(i, _)| i);
             eprintln!(
                 "[DEBUG-LOGITS] gen_idx={gen_idx} len={} mean={logits_mean:.4} max={logits_max:.4} argmax={argmax}",
                 logits.len(),

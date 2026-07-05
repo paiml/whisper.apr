@@ -33,11 +33,12 @@ if [ ! -d "models" ]; then
 fi
 # Ensure we have the converted APR model
 if [ ! -f "models/tiny.apr" ]; then
-    echo "Converting tiny to APR format..."
-    cargo run --release --features="converter" --bin whisper-convert -- tiny -o models/tiny.apr
+    echo "Converting tiny to APR format (f16)..."
+    cargo run --release --features="converter" --bin whisper-convert -- tiny -q f16 -o models/tiny.apr
 fi
 # Run inference
-time cargo run --release --bin whisper-apr -- transcribe --model-path models/tiny.apr -f test_jfk.wav > /dev/null 2>&1
+cargo build --release --bin whisper-apr
+time ./target/release/whisper-apr transcribe --model-path models/tiny.apr -f test_jfk.wav -t 8 > /dev/null 2>&1
 
 echo "--------------------------------------------------------------"
 echo "Benchmark completed."

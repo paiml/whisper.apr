@@ -1,5 +1,10 @@
 //! Pipeline Fuzz Tests
 #![cfg(feature = "integration-tests")]
+#![allow(
+    clippy::expect_used,
+    clippy::items_after_statements,
+    clippy::undocumented_unsafe_blocks
+)]
 //!
 //! Property-based and fuzz tests for the encode/decode pipeline.
 //! Validates correctness under various edge cases and random inputs.
@@ -220,7 +225,7 @@ proptest! {
 
         // GELU is approximately linear for large positive values
         // and approximately 0 for large negative values
-        for (_i, (&inp, &out)) in input.iter().zip(output.iter()).enumerate() {
+        for (&inp, &out) in input.iter().zip(output.iter()) {
             if inp > 3.0 {
                 prop_assert!(out > 0.0, "GELU({}) = {} should be positive", inp, out);
             }

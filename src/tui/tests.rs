@@ -1,4 +1,13 @@
 //! Probar-style TUI tests for Whisper Pipeline Visualization
+#![allow(
+    clippy::float_cmp,
+    clippy::field_reassign_with_default,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::large_stack_arrays,
+    dead_code
+)]
 //!
 //! EXTREME TDD: All tests written FIRST before implementation.
 //!

@@ -1,3 +1,4 @@
+#![allow(clippy::format_collect)]
 //! Tests for timestamp segment extraction
 
 use super::*;
@@ -516,6 +517,8 @@ fn test_count_text_tokens_empty() {
 }
 
 #[test]
+#[allow(clippy::format_collect)]
+#[allow(clippy::all)]
 fn test_count_text_tokens_all_special() {
     let tokens = vec![
         special_tokens::SOT,

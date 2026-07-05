@@ -192,15 +192,14 @@ impl LinearWeights {
     /// The encoder runs large batch matrix multiplications which are compute bound,
     /// so caching the f32 transposed weights avoids repeated dequant+transpose overhead.
     pub fn finalize_weights_encoder(&mut self) {
-        let weight_t = if let Some(ref w_f16) = self.weight_f16 {
-            let mut buf = vec![0.0_f32; w_f16.len()];
-            crate::simd::dequant_f16_row(w_f16, &mut buf);
-            crate::simd::transpose(&buf, self.out_features, self.in_features)
-        } else {
-            crate::simd::transpose(&self.weight, self.out_features, self.in_features)
-        };
+        if self.weight_f16.is_some() {
+            return; // fp16 weights use tiled_matmul_f16_into directly
+        }
+
+        let weight_t = crate::simd::transpose(&self.weight, self.out_features, self.in_features);
 
         // Disabled prepacking for now because it seems to be killing parallel scaling
+        // Using tiled_matmul_into is faster for the encoder's large batch sequence lengths
         self.weight_prepacked_b = None;
 
         self.weight_matrix = Some(

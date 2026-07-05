@@ -1,5 +1,5 @@
 //! Tests for vocabulary trie
-
+#![allow(clippy::unwrap_used)]
 use super::*;
 
 // ============================================================

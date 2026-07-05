@@ -6,6 +6,7 @@
 //! Sprint 6: Validation & Integration Tests
 
 #![cfg(feature = "realizar-inference")]
+#![allow(clippy::expect_used)]
 
 use whisper_apr::model::{FusedFFN, QuantizedLinearQ4K, QuantizedTensorQ4K};
 

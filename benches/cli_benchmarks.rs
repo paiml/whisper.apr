@@ -1,4 +1,8 @@
-#![allow(missing_docs)]
+#![allow(
+    missing_docs,
+    clippy::no_effect_underscore_binding,
+    clippy::expect_used
+)]
 //! Benchmarks for whisper-apr-cli components
 //!
 //! Run with: `cargo bench --bench cli_benchmarks`
