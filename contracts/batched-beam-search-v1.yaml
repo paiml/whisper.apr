@@ -1,0 +1,58 @@
+metadata:
+  version: "1.0.0"
+  author: "PAIML Engineering"
+  description: "Batched beam search with per-beam KV caches"
+  references:
+    - "https://arxiv.org/abs/1706.03762"
+
+equations:
+  batched_qkv:
+    formula: "qkv(x_batch) = matmul(x_batch, W_qkv)"
+    domain: "x_batch ∈ ℝ^{N × d}, W_qkv ∈ ℝ^{d × 3d}"
+    invariants:
+      - "Computed in a single matmul operation"
+  per_beam_attention:
+    formula: "attention(q_i, K_i, V_i) for i in 1..N"
+    domain: "q_i ∈ ℝ^{1 × d}, K_i ∈ ℝ^{L_i × d}, V_i ∈ ℝ^{L_i × d}"
+    invariants:
+      - "Each beam queries its own unique KV history"
+  cache_forking:
+    formula: "fork(cache, parent_id, new_id)"
+    invariants:
+      - "Child cache is an exact copy of parent cache at fork time"
+      - "Parent and child caches can diverge independently afterward"
+  batch_vocab:
+    formula: "vocab(x_batch) = matmul(x_batch, W_vocab)"
+    domain: "x_batch ∈ ℝ^{N × d}, W_vocab ∈ ℝ^{d × V}"
+    invariants:
+      - "Computed in a single matmul operation"
+
+proof_obligations:
+  - type: invariant
+    property: "Independent histories"
+    formal: "K_i != K_j for i != j after divergence"
+    applies_to: all
+  - type: invariant
+    property: "Single matmul for QKV"
+    formal: "batch_size > 1 implies use of matmul over batched matvec"
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-BAT-BEAM-001
+    rule: "Independent histories"
+    test: "test_batched_beam_search_independence"
+    prediction: "verified"
+    if_fails: "Attention uses shared KV cache across beams"
+  - id: FALSIFY-BAT-BEAM-002
+    rule: "Cache forking"
+    test: "test_batched_beam_search_forking"
+    prediction: "verified"
+    if_fails: "Forked cache modifies parent or diverges incorrectly"
+
+kani_harnesses:
+  - id: KANI-BAT-BEAM-001
+    obligation: "Independent histories"
+    harness: "verify_independent_histories"
+
+qa_gate:
+  certeza: "strict"

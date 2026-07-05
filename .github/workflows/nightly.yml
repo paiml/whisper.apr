@@ -73,9 +73,10 @@ jobs:
           sed -i.bak '/^\[patch\.crates-io\]/,$ d' Cargo.toml
           # Remove path = "../aprender" from aprender dependency lines
           sed -i.bak 's|, path = "\.\./aprender"||g' Cargo.toml
-          # Fix apr-cli version: 0.3 doesn't exist on crates.io, only 0.4.x
-          sed -i.bak 's|apr-cli = { version = "0.3"|apr-cli = { version = "0.4"|g' Cargo.toml
+          # Fix apr-cli version: match current crates.io reality
+          sed -i.bak 's|apr-cli = { version = "[0-9.]*"|apr-cli = { version = "0.51"|g' Cargo.toml
           rm -f Cargo.toml.bak
+          rm -f .cargo/config.toml
           # Keep the committed Cargo.lock: the build below runs with --locked so the
           # nightly fails loudly on any unexpected lockfile drift instead of silently
           # resolving new dependency versions every run (hermetic, reproducible builds).
@@ -93,9 +94,10 @@ jobs:
           $content = $content -replace '(?ms)\[patch\.crates-io\].*\z', ''
           # Remove path = "../aprender" from aprender dependency lines
           $content = $content -replace ', path = "\.\./aprender"', ''
-          # Fix apr-cli version: 0.3 doesn't exist on crates.io, only 0.4.x
-          $content = $content -replace 'apr-cli = \{ version = "0\.3"', 'apr-cli = { version = "0.4"'
+          # Fix apr-cli version: match current crates.io reality
+          $content = $content -replace 'apr-cli = \{ version = "[0-9.]+"', 'apr-cli = { version = "0.51"'
           Set-Content Cargo.toml -Value $content.TrimEnd() -NoNewline
+          Remove-Item -ErrorAction SilentlyContinue .cargo/config.toml
           # Keep the committed Cargo.lock: the build below runs with --locked so the
           # nightly fails loudly on any unexpected lockfile drift instead of silently
           # resolving new dependency versions every run (hermetic, reproducible builds).

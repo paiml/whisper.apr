@@ -267,6 +267,7 @@ impl ComputeOp for MatMulOp {
             if let (Some(a), Some(b)) = (&self.a_data, &self.b_data) {
                 use crate::gpu::ops::matmul::GpuMatMul;
                 use crate::gpu::{ExecutorConfig, GpuExecutorSync};
+                use std::sync::OnceLock;
 
                 let gpu_op = GpuMatMul::simple(self.m as u32, self.k as u32, self.n as u32)
                     .map_err(|e| {
@@ -275,16 +276,17 @@ impl ComputeOp for MatMulOp {
                         ))
                     })?;
 
-                let executor =
-                    GpuExecutorSync::new(&ExecutorConfig::for_inference()).map_err(|e| {
-                        crate::error::WhisperError::Inference(format!("GPU init failed: {e}"))
+                static EXECUTOR: OnceLock<Option<GpuExecutorSync>> = OnceLock::new();
+                let executor_opt = EXECUTOR.get_or_init(|| {
+                    GpuExecutorSync::new(&ExecutorConfig::for_inference()).ok()
+                });
+
+                if let Some(executor) = executor_opt {
+                    let result = executor.execute_matmul(&gpu_op, a, b).map_err(|e| {
+                        crate::error::WhisperError::Inference(format!("GPU matmul failed: {e}"))
                     })?;
-
-                let result = executor.execute_matmul(&gpu_op, a, b).map_err(|e| {
-                    crate::error::WhisperError::Inference(format!("GPU matmul failed: {e}"))
-                })?;
-
-                return Ok(result);
+                    return Ok(result);
+                }
             }
         }
         // Fall back to SIMD when webgpu feature is disabled or no data attached

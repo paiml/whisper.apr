@@ -15,7 +15,7 @@ pub fn hann_window(size: usize) -> Vec<f32> {
             x.sin().powi(2)
         })
         .collect();
-    debug_assert_eq!(
+    assert_eq!(
         window.len(),
         size,
         "hann window length must match requested size"

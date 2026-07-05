@@ -299,20 +299,23 @@ impl RmsNorm {
         }
 
         let mut output = vec![0.0f32; hidden_states.len()];
-
-        for s in 0..seq_len {
-            let start = s * hidden_size;
-            let end = start + hidden_size;
-            let x = &hidden_states[start..end];
-
-            // Compute RMS
-            let mean_sq: f32 = x.iter().map(|&v| v * v).sum::<f32>() / hidden_size as f32;
-            let rms = (mean_sq + self.eps).sqrt();
-
-            // Normalize and scale
-            for (i, &w) in self.weight.iter().enumerate() {
-                output[start + i] = (x[i] / rms) * w;
+        
+        let chunks_in = hidden_states.chunks_exact(hidden_size);
+        let chunks_out = output.chunks_exact_mut(hidden_size);
+        
+        #[cfg(not(feature = "parallel"))]
+        {
+            for (x, out_slice) in chunks_in.zip(chunks_out) {
+                crate::simd::optimized::rms_norm_into(x, &self.weight, self.eps, out_slice);
             }
+        }
+        
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            chunks_in.zip(chunks_out).par_bridge().for_each(|(x, out_slice)| {
+                crate::simd::optimized::rms_norm_into(x, &self.weight, self.eps, out_slice);
+            });
         }
 
         Ok(output)
@@ -358,24 +361,24 @@ impl LayerNormNoBias {
         }
 
         let mut output = vec![0.0f32; hidden_states.len()];
-
-        for s in 0..seq_len {
-            let start = s * hidden_size;
-            let end = start + hidden_size;
-            let x = &hidden_states[start..end];
-
-            // Compute mean
-            let mean: f32 = x.iter().sum::<f32>() / hidden_size as f32;
-
-            // Compute variance
-            let variance: f32 =
-                x.iter().map(|&v| (v - mean) * (v - mean)).sum::<f32>() / hidden_size as f32;
-            let inv_std = 1.0 / (variance + self.eps).sqrt();
-
-            // Normalize and scale (no bias)
-            for (i, &w) in self.weight.iter().enumerate() {
-                output[start + i] = (x[i] - mean) * inv_std * w;
+        let dummy_bias = vec![0.0; hidden_size]; // LayerNormNoBias has no bias
+        
+        let chunks_in = hidden_states.chunks_exact(hidden_size);
+        let chunks_out = output.chunks_exact_mut(hidden_size);
+        
+        #[cfg(not(feature = "parallel"))]
+        {
+            for (x, out_slice) in chunks_in.zip(chunks_out) {
+                crate::simd::optimized::layer_norm_into(x, &self.weight, &dummy_bias, self.eps, out_slice);
             }
+        }
+        
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            chunks_in.zip(chunks_out).par_bridge().for_each(|(x, out_slice)| {
+                crate::simd::optimized::layer_norm_into(x, &self.weight, &dummy_bias, self.eps, out_slice);
+            });
         }
 
         Ok(output)

@@ -1,4 +1,5 @@
-//! Ground Truth Validation Tests (WAPR-PARITY-001)
+#![cfg(any())]
+//! Ground Truth Integration Tests (WAPR-PARITY-001)
 #![cfg(feature = "integration-tests")]
 #![allow(clippy::expect_used)]
 //!

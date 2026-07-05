@@ -399,7 +399,8 @@ impl StreamingProcessor {
         let resampler = if config.input_sample_rate == config.output_sample_rate {
             None
         } else {
-            SincResampler::new(config.input_sample_rate, config.output_sample_rate).ok()
+            Some(SincResampler::new(config.input_sample_rate, config.output_sample_rate)
+                .unwrap_or_else(|e| panic!("failed to create resampler: {e}")))
         };
 
         let vad_config = VadConfig {

@@ -202,7 +202,8 @@ fn decode_with_symphonia(data: &[u8], ext: &str) -> Result<Vec<f32>, AudioDecode
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
 
     let mut hint = Hint::new();
-    hint.with_extension(ext);
+    let hint_ext = if ext == "mov" { "mp4" } else { ext };
+    hint.with_extension(hint_ext);
 
     let probed = symphonia::default::get_probe()
         .format(

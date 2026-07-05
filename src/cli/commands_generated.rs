@@ -195,13 +195,26 @@ fn resolve_gpu_backend(requested: bool, global: &Args) -> CliResult<bool> {
         return Ok(false);
     }
 
-    #[cfg(not(feature = "realizar-gpu"))]
+    #[cfg(all(feature = "webgpu", not(feature = "realizar-gpu")))]
+    {
+        let _ = global;
+        if requested {
+            if !global.quiet {
+                eprintln!("[INFO] GPU enabled: AMD/Vulkan via WebGPU backend");
+            }
+            std::env::set_var("WHISPER_USE_WEBGPU", "1");
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+
+    #[cfg(not(any(feature = "realizar-gpu", feature = "webgpu")))]
     {
         let _ = global; // GH-42: global unused without realizar-gpu feature
         if requested {
             return Err(CliError::InvalidArgument(
-                "GPU requested but whisper-apr was not compiled with 'realizar-gpu' feature. \
-                 Rebuild with: cargo build --features realizar-gpu"
+                "GPU requested but whisper-apr was not compiled with 'realizar-gpu' or 'webgpu' feature. \
+                 Rebuild with: cargo build --features webgpu"
                     .to_string(),
             ));
         }
@@ -210,7 +223,7 @@ fn resolve_gpu_backend(requested: bool, global: &Args) -> CliResult<bool> {
 }
 
 /// Build transcription options from CLI arguments
-fn build_transcribe_options(args: &TranscribeArgs, verbose: bool) -> TranscribeOptions {
+fn build_transcribe_options(args: &TranscribeArgs, _verbose: bool) -> TranscribeOptions {
     let task = if args.translate {
         Task::Translate
     } else {
@@ -235,7 +248,7 @@ fn build_transcribe_options(args: &TranscribeArgs, verbose: bool) -> TranscribeO
         task,
         strategy,
         word_timestamps: args.word_timestamps,
-        profile: verbose,
+        profile: args.profile,
         prompt: if args.prompt.is_empty() {
             None
         } else {
@@ -287,6 +300,28 @@ fn print_component_profile(
         inference_ms,
         (inference_ms / timings.total_ms) * 100.0
     );
+
+    if let Some(prof) = &result.profiling {
+        if let Some(&mel) = prof.breakdown.get("mel_ms") {
+            eprintln!("  - Mel spectrogram: {:>7.1}ms", mel);
+        }
+        if let Some(&enc) = prof.breakdown.get("encoder_ms") {
+            eprintln!("  - Encoder:         {:>7.1}ms", enc);
+            if let Some(&norm) = prof.breakdown.get("brick_norm_ms") {
+                eprintln!("      > Norm: {:>7.1}ms", norm);
+            }
+            if let Some(&attn) = prof.breakdown.get("brick_attn_ms") {
+                eprintln!("      > Attn: {:>7.1}ms", attn);
+            }
+            if let Some(&ffn) = prof.breakdown.get("brick_ffn_ms") {
+                eprintln!("      > FFN:  {:>7.1}ms", ffn);
+            }
+        }
+        if let Some(&dec) = prof.breakdown.get("decoder_ms") {
+            eprintln!("  - Decoder:         {:>7.1}ms", dec);
+        }
+    }
+
     eprintln!("[PROFILE] --------------------------------");
     eprintln!("[PROFILE] Total:          {:>7.1}ms", timings.total_ms);
     eprintln!("[PROFILE] Audio duration: {:>7.2}s", audio_duration_secs);
@@ -722,7 +757,7 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
 
     // Generate summary
     // GH-42: Status messages go to stderr to avoid contaminating --format json output
-    if !global.quiet {
+    if !global.quiet && args.format != crate::cli::args::SummarizeFormat::Json {
         if args.stream {
             eprintln!("Generating summary (streaming)...\n");
         } else {
@@ -732,7 +767,7 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
 
     let (output_ids, gen_stats) = generate_summary(&model, &tokenizer, &input_ids, &args, global)?;
 
-    if args.stream && !global.quiet {
+    if args.stream && !global.quiet && args.format != crate::cli::args::SummarizeFormat::Json {
         eprintln!("\n");
     }
 
@@ -875,7 +910,7 @@ fn generate_summary(
                 args.max_tokens as usize,
                 args.temperature,
                 Some(|token: u32, _idx: usize| {
-                    if !quiet {
+                    if !quiet && args.format != crate::cli::args::SummarizeFormat::Json {
                         let text = tokenizer_ref.decode(&[token]);
                         print!("{text}");
                         let _ = io::stdout().flush();
@@ -963,8 +998,8 @@ fn write_summary_result(
         if !global.quiet {
             eprintln!("Summary written to: {}", output_path.display());
         }
-    } else if !global.quiet {
-        println!("\n{output}");
+    } else {
+        println!("{output}");
     }
 
     // GH-42: Timing stats to stderr to avoid contaminating JSON output
@@ -984,11 +1019,12 @@ fn write_summary_result(
 ///
 /// When implemented, this will use:
 /// - `aprender::native` for audio capture from microphone
-pub fn run_record(args: RecordArgs, _global: &Args) -> CliResult<CommandResult> {
+pub fn run_record(args: RecordArgs, global: &Args) -> CliResult<CommandResult> {
     if args.list_devices {
-        // List audio devices (placeholder)
-        println!("Audio devices:");
-        println!("  0: Default Input");
+        if !global.quiet {
+            println!("Audio devices:");
+            println!("  0: Default Input");
+        }
         return Ok(CommandResult::success("Listed devices"));
     }
 
@@ -2239,7 +2275,8 @@ pub fn run_tui(global: &Args) -> CliResult<CommandResult> {
 
 /// Run TUI command - stub when TUI feature is disabled
 #[cfg(not(feature = "tui"))]
-pub fn run_tui(_global: &Args) -> CliResult<CommandResult> {
+pub fn run_tui(global: &Args) -> CliResult<CommandResult> {
+    warn_ignored_global(global, "tui");
     Err(CliError::NotImplemented(
         "TUI requires the 'tui' feature. Rebuild with: cargo build --features tui".to_string(),
     ))
@@ -2283,7 +2320,7 @@ pub fn run_test(args: TestArgs, global: &Args) -> CliResult<CommandResult> {
 }
 
 /// Test a specific backend
-fn test_backend(backend: BackendArg, _global: &Args) -> CliResult<()> {
+fn test_backend(backend: BackendArg, global: &Args) -> CliResult<()> {
     match backend {
         BackendArg::Simd => {
             // SIMD is always available
@@ -2291,25 +2328,37 @@ fn test_backend(backend: BackendArg, _global: &Args) -> CliResult<()> {
             let samples = vec![0.0f32; 16000]; // 1 second of silence
             let options = TranscribeOptions::default();
             let _result = whisper.transcribe(&samples, options)?;
-            println!("  SIMD: PASS");
+            if !global.quiet {
+                println!("  SIMD: PASS");
+            }
             Ok(())
         }
         BackendArg::Wasm => {
             // WASM test would require browser
-            println!("  WASM: SKIPPED (requires browser)");
+            if !global.quiet {
+                println!("  WASM: SKIPPED (requires browser)");
+            }
             Ok(())
         }
         BackendArg::Cuda => {
-            // Check for CUDA availability
-            let cuda_available = std::process::Command::new("nvidia-smi")
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
-
-            if cuda_available {
-                println!("  CUDA: PASS (GPU detected)");
-            } else {
-                println!("  CUDA: SKIPPED (no GPU)");
+            #[cfg(feature = "realizar-gpu")]
+            {
+                use realizar::cuda::CudaExecutor;
+                if CudaExecutor::is_available() {
+                    let mut whisper = WhisperApr::tiny().into_cuda(0)
+                        .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
+                    
+                    let samples = vec![0.0f32; 16000];
+                    let options = TranscribeOptions::default();
+                    let _result = whisper.transcribe_gpu(&samples, options)?;
+                    if !global.quiet {
+                        println!("  CUDA: PASS");
+                    }
+                    return Ok(());
+                }
+            }
+            if !global.quiet {
+                println!("  CUDA: SKIPPED (not available)");
             }
             Ok(())
         }
@@ -3208,7 +3257,9 @@ fn parse_srt_time(s: &str) -> Option<f64> {
 /// When implemented, this will use:
 /// - `aprender::native` for audio capture and preprocessing
 /// - `realizar::inference` for real-time model execution
-pub fn run_stream(_args: StreamArgs, _global: &Args) -> CliResult<CommandResult> {
+pub fn run_stream(args: StreamArgs, global: &Args) -> CliResult<CommandResult> {
+    let _ = args;
+    warn_ignored_global(global, "stream");
     Err(CliError::NotImplemented(
         "Real-time streaming not yet implemented (requires aprender::native audio capture)"
             .to_string(),
@@ -3220,7 +3271,9 @@ pub fn run_stream(_args: StreamArgs, _global: &Args) -> CliResult<CommandResult>
 /// When implemented, this will use:
 /// - `realizar::serve` for HTTP server and API endpoints
 /// - `realizar::api` for OpenAI-compatible API handlers
-pub fn run_serve(_args: ServeArgs, _global: &Args) -> CliResult<CommandResult> {
+pub fn run_serve(args: ServeArgs, global: &Args) -> CliResult<CommandResult> {
+    let _ = args;
+    warn_ignored_global(global, "serve");
     Err(CliError::NotImplemented(
         "HTTP server not yet implemented (requires realizar::serve)".to_string(),
     ))
@@ -3423,7 +3476,9 @@ pub fn run_quantize(args: QuantizeArgs, global: &Args) -> CliResult<CommandResul
 /// - `aprender::native` for audio capture
 /// - `realizar::inference` for real-time model execution
 /// - Pattern matching against configured command phrases
-pub fn run_command(_args: CommandArgs, _global: &Args) -> CliResult<CommandResult> {
+pub fn run_command(args: CommandArgs, global: &Args) -> CliResult<CommandResult> {
+    let _ = args;
+    warn_ignored_global(global, "command");
     Err(CliError::NotImplemented(
         "Voice command recognition not yet implemented (requires aprender::native audio capture)"
             .to_string(),
@@ -3887,33 +3942,16 @@ pub(crate) fn load_audio_samples(path: &Path, data: &[u8]) -> CliResult<Vec<f32>
         .unwrap_or("")
         .to_lowercase();
 
-    let result = match ext.as_str() {
-        "wav" => {
-            let wav = parse_wav_file(data)?;
-            let samples = if wav.sample_rate == 16000 {
-                wav.samples
-            } else {
-                resample(&wav.samples, wav.sample_rate, 16000)
-            };
-            return Ok(samples);
+    let result = crate::audio::decode::load_audio_samples(data, &ext).map_err(|e| match e {
+        crate::audio::decode::AudioDecodeError::UnsupportedFormat(ext) => {
+            CliError::UnsupportedFormat(ext)
         }
-        #[cfg(feature = "symphonia")]
-        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov" | "webm" | "mkv" | "avi"
-        | "opus" => decode_with_symphonia(data, &ext),
-        #[cfg(not(feature = "symphonia"))]
-        "mp3" | "flac" | "ogg" | "m4a" | "aac" | "mp4" | "mov" | "webm" | "mkv" | "avi"
-        | "opus" => Err(CliError::NotImplemented(format!(
-            "{ext} format requires 'symphonia' feature. Build with: cargo build --features cli"
-        ))),
-        _ => Err(CliError::UnsupportedFormat(ext)),
-    };
+        crate::audio::decode::AudioDecodeError::FeatureRequired(msg) => {
+            CliError::NotImplemented(msg)
+        }
+        _ => CliError::InvalidArgument(e.to_string()),
+    });
 
-    // Fallback to ffmpeg for codecs symphonia can't handle (e.g. HE-AAC).
-    // Preserve `UnsupportedFormat` and `NotImplemented` — those errors describe
-    // a structural reason ffmpeg can't help with (no recognized extension at
-    // all, or the symphonia feature is disabled), and tests assert that these
-    // surface unchanged. Only fall through on decode errors from a format we
-    // *did* recognize.
     match result {
         Ok(samples) => Ok(samples),
         Err(e @ (CliError::UnsupportedFormat(_) | CliError::NotImplemented(_))) => Err(e),
@@ -3922,149 +3960,6 @@ pub(crate) fn load_audio_samples(path: &Path, data: &[u8]) -> CliResult<Vec<f32>
     }
 }
 
-/// Decode audio using symphonia (multi-format decoder)
-#[cfg(feature = "symphonia")]
-fn decode_with_symphonia(data: &[u8], ext: &str) -> CliResult<Vec<f32>> {
-    use std::io::Cursor;
-    use symphonia::core::codecs::DecoderOptions;
-    use symphonia::core::formats::FormatOptions;
-    use symphonia::core::io::MediaSourceStream;
-    use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::probe::Hint;
-
-    let cursor = Cursor::new(data.to_vec());
-    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
-
-    let mut hint = Hint::new();
-    hint.with_extension(ext);
-
-    let probed = symphonia::default::get_probe()
-        .format(
-            &hint,
-            mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
-        )
-        .map_err(|e| CliError::InvalidArgument(format!("Failed to probe {ext} format: {e}")))?;
-
-    let mut format = probed.format;
-
-    let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)
-        .ok_or_else(|| CliError::InvalidArgument("No audio track found".to_string()))?;
-
-    let track_id = track.id;
-    let sample_rate = track
-        .codec_params
-        .sample_rate
-        .ok_or_else(|| CliError::InvalidArgument("Unknown sample rate".to_string()))?;
-
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
-        .map_err(|e| CliError::InvalidArgument(format!("Failed to create decoder: {e}")))?;
-
-    let samples = decode_all_packets(&mut format, &mut *decoder, track_id)?;
-
-    if sample_rate != 16000 {
-        Ok(resample(&samples, sample_rate, 16000))
-    } else {
-        Ok(samples)
-    }
-}
-
-/// Read and decode the next audio packet, returning interleaved samples and channel count.
-/// Returns None at end of stream.
-#[cfg(feature = "symphonia")]
-/// Read the next packet belonging to the given track, returning None at EOF
-#[cfg(feature = "symphonia")]
-fn next_packet_for_track(
-    format: &mut Box<dyn symphonia::core::formats::FormatReader>,
-    track_id: u32,
-) -> CliResult<Option<symphonia::core::formats::Packet>> {
-    loop {
-        match format.next_packet() {
-            Ok(p) if p.track_id() == track_id => return Ok(Some(p)),
-            Ok(_) => continue,
-            Err(symphonia::core::errors::Error::IoError(ref e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                return Ok(None);
-            }
-            Err(e) => {
-                return Err(CliError::InvalidArgument(format!(
-                    "Failed to read packet: {e}"
-                )));
-            }
-        }
-    }
-}
-
-/// Read and decode the next audio packet, returning interleaved samples and channel count.
-/// Returns None at end of stream. Skips packets with decode errors.
-#[cfg(feature = "symphonia")]
-fn read_next_audio_packet(
-    format: &mut Box<dyn symphonia::core::formats::FormatReader>,
-    decoder: &mut dyn symphonia::core::codecs::Decoder,
-    track_id: u32,
-) -> CliResult<Option<(Vec<f32>, usize)>> {
-    use symphonia::core::audio::SampleBuffer;
-
-    loop {
-        let packet = match next_packet_for_track(format, track_id)? {
-            Some(p) => p,
-            None => return Ok(None),
-        };
-
-        match decoder.decode(&packet) {
-            Ok(decoded) => {
-                let spec = *decoded.spec();
-                let mut sample_buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-                sample_buf.copy_interleaved_ref(decoded);
-                return Ok(Some((sample_buf.samples().to_vec(), spec.channels.count())));
-            }
-            Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
-            Err(e) => return Err(CliError::InvalidArgument(format!("Decode error: {e}"))),
-        }
-    }
-}
-
-/// Decode all audio packets from a symphonia format reader, mixing to mono
-#[cfg(feature = "symphonia")]
-fn decode_all_packets(
-    format: &mut Box<dyn symphonia::core::formats::FormatReader>,
-    decoder: &mut dyn symphonia::core::codecs::Decoder,
-    track_id: u32,
-) -> CliResult<Vec<f32>> {
-    let mut samples: Vec<f32> = Vec::new();
-
-    loop {
-        match read_next_audio_packet(format, decoder, track_id)? {
-            Some((interleaved, channels)) => mix_to_mono(&interleaved, channels, &mut samples),
-            None => break,
-        }
-    }
-
-    Ok(samples)
-}
-
-/// Mix interleaved multi-channel audio to mono
-///
-/// Delegates to `aprender::audio::stereo_to_mono` for 2-channel input.
-#[cfg(feature = "symphonia")]
-fn mix_to_mono(interleaved: &[f32], channels: usize, output: &mut Vec<f32>) {
-    match channels {
-        1 => output.extend_from_slice(interleaved),
-        2 => output.extend(aprender::audio::stereo_to_mono(interleaved)),
-        n => {
-            for chunk in interleaved.chunks(n) {
-                let sum: f32 = chunk.iter().sum();
-                output.push(sum / n as f32);
-            }
-        }
-    }
-}
 
 /// Convert format argument to OutputFormat
 fn convert_format_arg(arg: OutputFormatArg) -> OutputFormat {
@@ -6102,5 +5997,11 @@ mod tests {
         let output = format_batch_output(&result, OutputFormatArg::Srt);
         assert!(output.contains("00:00:00,000 --> 00:00:30,000"));
         assert!(output.contains("Hello world"));
+    }
+}
+
+pub(crate) fn warn_ignored_global(global: &Args, cmd: &str) {
+    if global.verbose || global.quiet || global.json || global.trace.is_some() || global.no_color {
+        eprintln!("[WARN] Global flags are currently ignored by the '{}' command", cmd);
     }
 }

@@ -75,7 +75,7 @@ pub(in super::super) fn run_quantize(
                 continue;
             };
 
-            total_original_bytes += qblock.original_size_bytes() as u64;
+            total_original_bytes += (data.len() * 4) as u64;
             total_quantized_bytes += qblock.size_bytes() as u64;
             tensor_count += 1;
 

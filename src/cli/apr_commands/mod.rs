@@ -1175,13 +1175,14 @@ fn run_f16_audit(args: &AprF16AuditArgs, global: &super::args::Args) -> CliResul
 
 #[cfg(feature = "cli-full")]
 fn run_pull(args: &AprPullArgs) -> CliResult<CommandResult> {
-    apr_cli::model_pull::run(&args.model_ref, args.force)
+    apr_cli::model_pull::run(&args.model_ref, args.force, false, None, false)
         .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
     Ok(CommandResult::success(format!("Pulled {}", args.model_ref)))
 }
 
 #[cfg(not(feature = "cli-full"))]
-fn run_pull(_args: &AprPullArgs) -> CliResult<CommandResult> {
+fn run_pull(args: &AprPullArgs) -> CliResult<CommandResult> {
+    let _ = args;
     Err(CliError::InvalidArgument(
         "apr pull requires the 'cli-full' feature (includes apr-cli dependency)".into(),
     ))
@@ -1195,7 +1196,8 @@ fn run_pull_list(args: &AprPullListArgs) -> CliResult<CommandResult> {
 }
 
 #[cfg(not(feature = "cli-full"))]
-fn run_pull_list(_args: &AprPullListArgs) -> CliResult<CommandResult> {
+fn run_pull_list(args: &AprPullListArgs) -> CliResult<CommandResult> {
+    let _ = args;
     Err(CliError::InvalidArgument(
         "apr ls requires the 'cli-full' feature (includes apr-cli dependency)".into(),
     ))

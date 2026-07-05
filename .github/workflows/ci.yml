@@ -13,7 +13,8 @@ jobs:
   ci:
     uses: paiml/.github/.github/workflows/sovereign-ci.yml@main
     with:
-      repo: ${{ github.event.repository.name }}
+      repo: "whisper.apr"
+      extra_pkgs: "make"
       # Lint shipped artifacts only (library + binaries). Test/example/bench
       # code contains idiomatic `expect()` — tests panic on failure BY
       # DESIGN, which is the test contract. `cargo test` enforces test

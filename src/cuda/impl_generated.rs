@@ -1617,7 +1617,9 @@ impl WhisperCuda {
         let mut hidden_gpu = GpuResidentTensor::from_host(ctx, token_embedding)
             .map_err(|e| WhisperError::Inference(format!("embedding upload: {e}")))?;
         if profile_layers {
-            stream.synchronize().ok();
+            if let Err(e) = stream.synchronize() {
+                eprintln!("[CUDA] stream sync failed: {}", e);
+            }
             eprintln!(
                 "[PROFILE-DEC-EMBED] pos={} embed_upload: {:.2}ms",
                 pos,
@@ -1636,7 +1638,9 @@ impl WhisperCuda {
                 enc_seq_len,
             )?;
             if profile_layers {
-                stream.synchronize().ok();
+                if let Err(e) = stream.synchronize() {
+                    eprintln!("[CUDA] stream sync failed: {}", e);
+                }
                 eprintln!(
                     "[PROFILE-DEC-LAYER] pos={} layer={} time: {:.2}ms",
                     pos,
