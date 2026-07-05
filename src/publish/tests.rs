@@ -1,5 +1,5 @@
 //! Tests for HuggingFace Hub publishing module
-
+#![allow(clippy::unwrap_used, clippy::large_stack_arrays)]
 use super::*;
 
 #[test]

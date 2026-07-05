@@ -1,5 +1,10 @@
 //! Integration Tests for HuggingFace Publishing (WAPR-PUB-001)
 #![cfg(feature = "integration-tests")]
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::no_effect_underscore_binding
+)]
 //!
 //! End-to-end tests for the publish workflow:
 //! 1. APR → SafeTensors export

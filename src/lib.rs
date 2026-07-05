@@ -30,6 +30,20 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
 #![deny(clippy::unwrap_used)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::large_stack_arrays,
+        clippy::float_cmp,
+        clippy::needless_range_loop,
+        clippy::wrong_self_convention,
+        clippy::field_reassign_with_default,
+        clippy::no_effect_underscore_binding
+    )
+)]
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;

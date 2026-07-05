@@ -168,8 +168,6 @@ pub fn tiled_matmul_into(
         });
 }
 
-
-
 /// RMS normalization (faster than LayerNorm).
 ///
 /// RMSNorm(x) = x / sqrt(mean(x²) + eps) * weight

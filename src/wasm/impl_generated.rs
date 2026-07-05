@@ -1,3 +1,8 @@
+#![allow(
+    clippy::expect_used,
+    clippy::manual_string_new,
+    clippy::large_stack_arrays
+)]
 use wasm_bindgen::prelude::*;
 
 use crate::detection::LanguageProbs;

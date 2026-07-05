@@ -1,3 +1,4 @@
+#![allow(clippy::map_identity)]
 //! Model Download and Registry
 //!
 //! This module provides functionality for downloading models from HuggingFace

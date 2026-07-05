@@ -1,4 +1,5 @@
 //! Output formatters for whisper-apr CLI
+#![allow(clippy::expect_used, clippy::single_char_pattern)]
 //!
 //! Supports multiple output formats: txt, srt, vtt, json, csv, md
 

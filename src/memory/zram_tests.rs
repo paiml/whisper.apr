@@ -1,3 +1,4 @@
+#![allow(clippy::assertions_on_constants, clippy::overly_complex_bool_expr)]
 use super::*;
 
 #[test]
@@ -699,7 +700,8 @@ fn test_check_mounts_for_ublk_ublk_substring_in_longer_device() {
 fn test_check_mounts_for_ublk_path_prefix_false_positive() {
     // Mount point /mnt/data should NOT match /mnt/data2/file
     // Actually starts_with("/mnt/data") is true for "/mnt/data2/file"
-    // This documents the current behavior
+    #![allow(clippy::assertions_on_constants, clippy::overly_complex_bool_expr)]
+    //! Tests for ZRAM integration and behavior
     let mounts = "/dev/ublk0 /mnt/data ext4 rw 0 0\n";
     // "/mnt/data2/file" does start with "/mnt/data", so this matches
     assert!(check_mounts_for_ublk(mounts, "/mnt/data2/file"));

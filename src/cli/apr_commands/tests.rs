@@ -1,3 +1,12 @@
+#![allow(
+    unused_imports,
+    unused_variables,
+    clippy::expect_used,
+    clippy::items_after_statements,
+    clippy::unwrap_used,
+    clippy::match_wild_err_arm,
+    clippy::panic
+)]
 use super::*;
 
 // Phase 3 arg types (not re-exported from mod.rs)

@@ -1,5 +1,5 @@
 //! Tests for backend trait abstractions
-
+#![allow(clippy::expect_used, clippy::float_cmp, clippy::large_stack_arrays)]
 use super::*;
 
 #[test]

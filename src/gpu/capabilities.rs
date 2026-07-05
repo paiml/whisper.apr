@@ -1,4 +1,5 @@
-//! GPU capabilities detection and reporting
+#![allow(clippy::field_reassign_with_default)]
+//! GPU capabilities detection and managementing
 
 use std::fmt;
 

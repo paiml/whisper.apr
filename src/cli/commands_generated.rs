@@ -15,7 +15,12 @@
     clippy::struct_excessive_bools,
     clippy::range_plus_one,
     clippy::comparison_to_empty,
-    clippy::default_trait_access
+    clippy::default_trait_access,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::no_effect_underscore_binding,
+    clippy::large_stack_arrays
 )]
 
 use std::fs;

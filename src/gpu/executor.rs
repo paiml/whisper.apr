@@ -9,6 +9,8 @@
 //! GpuMatMul::generate_shader() → WGSL → GpuExecutor → wgpu → GPU
 //! ```
 
+#![allow(clippy::expect_used)]
+
 use crate::gpu::error::{GpuError, GpuResult};
 use crate::gpu::ops::matmul::GpuMatMul;
 
@@ -508,7 +510,7 @@ mod tests {
                     // Expected: [[1*5+2*7, 1*6+2*8], [3*5+4*7, 3*6+4*8]]
                     //         = [[19, 22], [43, 50]]
                     assert_eq!(c.len(), 4);
-                    let expected = vec![19.0, 22.0, 43.0, 50.0];
+                    let expected = [19.0, 22.0, 43.0, 50.0];
                     for (i, (got, exp)) in c.iter().zip(expected.iter()).enumerate() {
                         assert!(
                             (got - exp).abs() < 1e-5,

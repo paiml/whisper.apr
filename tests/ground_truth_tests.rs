@@ -1,4 +1,6 @@
+//! Ground Truth Integration Tests (WAPR-PARITY-001)
 #![cfg(any())]
+#![allow(missing_docs)]
 //! Ground Truth Integration Tests (WAPR-PARITY-001)
 #![cfg(feature = "integration-tests")]
 #![allow(clippy::expect_used)]

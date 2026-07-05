@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::float_cmp)]
 //! GPU softmax operation (WAPR-131)
 //!
 //! Provides numerically stable softmax computation using compute shaders.

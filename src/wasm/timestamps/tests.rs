@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used)]
 //! Tests for WASM timestamp bindings
 
 use super::*;

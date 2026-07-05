@@ -1,4 +1,5 @@
 //! Tests for parity testing framework
+#![allow(clippy::field_reassign_with_default)]
 
 use super::*;
 

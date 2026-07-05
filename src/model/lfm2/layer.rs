@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used)]
 //! LFM2 Layer components
 //!
 //! Contains the layer-level building blocks for LFM2:

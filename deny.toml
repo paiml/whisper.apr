@@ -9,6 +9,8 @@ no-default-features = false
 
 [advisories]
 ignore = [
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error: unmaintained, transitive via derive macros" },
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2: unmaintained, transitive fork of proc-macro-error" },
     # Unmaintained transitive deps with no available fix.
     # Reviewed 2026-03-26 — all are deep transitive, no direct usage.
     { id = "RUSTSEC-2024-0384", reason = "instant: transitive via web-time, no replacement available" },

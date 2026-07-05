@@ -1,4 +1,5 @@
 //! Probar Full Stack Integration Tests for whisper.apr
+#![allow(clippy::unwrap_used, clippy::field_reassign_with_default)]
 //!
 //! Tests the complete probar testing infrastructure on a real WASM project:
 //! - Zero-JS validation (PROBAR-SPEC-012)

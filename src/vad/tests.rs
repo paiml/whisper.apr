@@ -1,3 +1,8 @@
+#![allow(
+    clippy::field_reassign_with_default,
+    clippy::no_effect_underscore_binding,
+    clippy::float_cmp
+)]
 //! Tests for Voice Activity Detection (VAD)
 
 use super::*;

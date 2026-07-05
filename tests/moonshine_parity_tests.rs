@@ -1,4 +1,6 @@
+//! Moonshine End-to-End Numerical Parity Tests (WAPR-MOONSHINE-012)
 #![cfg(any())]
+#![allow(missing_docs)]
 //! Moonshine End-to-End Numerical Parity Tests (WAPR-MOONSHINE-012)
 #![cfg(feature = "integration-tests")]
 #![allow(clippy::expect_used)]

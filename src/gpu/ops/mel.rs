@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::float_cmp)]
 //! GPU mel filterbank computation (WAPR-WEBGPU-001)
 //!
 //! Provides GPU-accelerated mel spectrogram computation using WebGPU compute shaders.

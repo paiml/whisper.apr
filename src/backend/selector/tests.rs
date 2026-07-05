@@ -1,4 +1,5 @@
 //! Tests for backend selection
+#![allow(clippy::ignore_without_reason, clippy::expect_used)]
 
 use super::super::traits::MatMulOp;
 use super::*;
@@ -896,7 +897,6 @@ fn test_is_gpu_worthwhile_flops_one_below_threshold() {
 
 #[ignore]
 #[test]
-#[ignore]
 fn test_is_gpu_worthwhile_gpu_caps_none_not_available() {
     // Test the path where gpu_available is false and gpu_caps is None
     // This is the normal BackendSelector::new path without webgpu feature
@@ -1146,7 +1146,6 @@ fn test_select_threshold_memory_exceeds_with_high_flops() {
 
 #[ignore]
 #[test]
-#[ignore]
 fn test_select_threshold_no_gpu_available() {
     // Threshold strategy without GPU
     let config = SelectorConfig::default().with_strategy(SelectionStrategy::threshold(1));
@@ -1434,7 +1433,6 @@ fn test_select_automatic_transitions_based_on_workload_size() {
 
 #[ignore]
 #[test]
-#[ignore]
 fn test_prefer_gpu_no_gpu_falls_back_to_simd_reason() {
     // Without webgpu feature, GPU is never available
     let selector = BackendSelector::new(SelectorConfig::prefer_gpu());
@@ -1558,7 +1556,6 @@ fn test_is_gpu_worthwhile_no_gpu_caps_but_available() {
 /// when GPU is not available (the else branch at line 158-160).
 #[ignore]
 #[test]
-#[ignore]
 fn test_new_no_gpu_stores_none_caps() {
     let config = SelectorConfig::default();
     let selector = BackendSelector::new(config);
@@ -1596,7 +1593,6 @@ fn test_new_stores_custom_config() {
 /// when webgpu feature is disabled.
 #[ignore]
 #[test]
-#[ignore]
 fn test_new_prefer_gpu_config_no_webgpu() {
     let selector = BackendSelector::new(SelectorConfig::prefer_gpu());
 
@@ -1660,7 +1656,6 @@ fn test_select_prefer_gpu_arm_memory_exceeds() {
 /// PreferGpu without GPU -> SIMD (line 212).
 #[ignore]
 #[test]
-#[ignore]
 fn test_select_prefer_gpu_arm_no_gpu() {
     let selector = BackendSelector::new(SelectorConfig::prefer_gpu());
     let op = MatMulOp::new(32, 32, 32);
@@ -1714,7 +1709,6 @@ fn test_select_threshold_arm_below_min_flops() {
 /// Threshold without GPU -> early return SIMD (line 220).
 #[ignore]
 #[test]
-#[ignore]
 fn test_select_threshold_arm_no_gpu() {
     let config = SelectorConfig::default().with_strategy(SelectionStrategy::threshold(1));
     let selector = BackendSelector::new(config);
@@ -1758,7 +1752,6 @@ fn test_select_automatic_arm_delegates() {
 /// select_automatic: GPU not available -> early return SIMD (line 241-243).
 #[ignore]
 #[test]
-#[ignore]
 fn test_select_automatic_no_gpu_early_return() {
     let selector = BackendSelector::new(SelectorConfig::default());
     // Confirm no GPU
@@ -1923,7 +1916,6 @@ fn test_is_gpu_worthwhile_returns_false_can_handle_fails() {
 /// Exercise select_automatic path 1: GPU not available -> SIMD.
 #[ignore]
 #[test]
-#[ignore]
 fn test_select_automatic_path_gpu_not_available() {
     // Standard constructor without webgpu feature -> no GPU
     let config = SelectorConfig::default();
@@ -2018,7 +2010,6 @@ fn test_select_batch_exercises_select_automatic_gpu() {
 /// This covers lines 146 (simd_caps), 147 (gpu_result), 158-160 (else branch).
 #[ignore]
 #[test]
-#[ignore]
 fn test_new_covers_no_gpu_detection_path() {
     let config = SelectorConfig::default();
     let selector = BackendSelector::new(config);

@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::float_cmp)]
 //! GPU GELU activation (WAPR-133)
 //!
 //! Provides Gaussian Error Linear Unit activation using compute shaders.

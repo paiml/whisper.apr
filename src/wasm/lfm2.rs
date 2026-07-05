@@ -589,10 +589,10 @@ mod tests {
 
     #[test]
     fn test_lfm2_wasm_warnings_json_format() {
-        let warnings = vec!["Warning 1".to_string(), "Warning 2".to_string()];
+        let expected_warnings = ["Warning 1".to_string(), "Warning 2".to_string()];
         let json = format!(
             "[{}]",
-            warnings
+            expected_warnings
                 .iter()
                 .map(|w| format!(r#""{}""#, w.replace('"', "\\\"")))
                 .collect::<Vec<_>>()
@@ -617,7 +617,7 @@ mod tests {
         };
 
         // Simulate token generation with callback
-        let tokens_to_emit = vec![100u32, 200, 300, 400];
+        let tokens_to_emit = [100u32, 200, 300, 400];
         for (idx, token) in tokens_to_emit.iter().enumerate() {
             let should_continue = callback(*token, idx);
             assert!(should_continue);
@@ -644,7 +644,7 @@ mod tests {
         };
 
         // Simulate token generation
-        let tokens_to_emit = vec![100u32, 200, 300, 400];
+        let tokens_to_emit = [100u32, 200, 300, 400];
         let mut generated = Vec::new();
         for (idx, token) in tokens_to_emit.iter().enumerate() {
             generated.push(*token);

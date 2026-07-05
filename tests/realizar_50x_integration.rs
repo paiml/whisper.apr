@@ -4,6 +4,12 @@
 //! Reference: docs/specifications/wasm-50x-performance-10x-smaller.md
 
 #![cfg(feature = "realizar-inference")]
+#![allow(
+    clippy::float_cmp,
+    clippy::no_effect_underscore_binding,
+    clippy::expect_used,
+    clippy::unwrap_used
+)]
 
 use whisper_apr::model::{Decoder, Encoder, ModelConfig};
 use whisper_apr::realizar_inference::{dequantize_q4_k, fused_q4k_dot_simd, PagedKvCache};

@@ -1,5 +1,5 @@
 //! Tests for pre-publish verification module
-
+#![allow(clippy::unwrap_used, clippy::large_stack_arrays)]
 use super::*;
 use std::io::Write;
 use tempfile::NamedTempFile;

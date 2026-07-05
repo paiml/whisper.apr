@@ -1,4 +1,5 @@
-//! GPU matrix multiplication (WAPR-130)
+#![allow(clippy::expect_used, clippy::float_cmp)]
+//! GPU Matrix Multiplication operation (WAPR-128)
 //!
 //! Provides tiled matrix multiplication using compute shaders.
 //! Optimized for transformer attention and feed-forward operations.

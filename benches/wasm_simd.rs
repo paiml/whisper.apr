@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+#![allow(missing_docs, clippy::excessive_precision)]
 //! Benchmarks for WASM SIMD operations
 //!
 //! This benchmark suite compares scalar vs WASM SIMD 128-bit performance
