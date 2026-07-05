@@ -47,8 +47,8 @@ pub const GPU_THRESHOLD: usize = 100_000;
 #[must_use]
 #[allow(clippy::needless_range_loop)] // Index used for weight offset computation
 pub fn tiled_matvec(weights: &[f32], x: &[f32], rows: usize, cols: usize) -> Vec<f32> {
-    debug_assert_eq!(weights.len(), rows * cols, "weight dimensions mismatch");
-    debug_assert_eq!(x.len(), cols, "input dimension mismatch");
+    assert_eq!(weights.len(), rows * cols, "weight dimensions mismatch");
+    assert_eq!(x.len(), cols, "input dimension mismatch");
 
     // For large matrices, parallelize across output rows
     #[cfg(feature = "parallel")]
@@ -79,9 +79,9 @@ pub fn tiled_matvec(weights: &[f32], x: &[f32], rows: usize, cols: usize) -> Vec
 /// Zero-allocation variant for hot paths where output buffer is reused.
 #[allow(clippy::needless_range_loop)] // Index used for weight offset computation
 pub fn tiled_matvec_into(weights: &[f32], x: &[f32], out: &mut [f32], rows: usize, cols: usize) {
-    debug_assert_eq!(weights.len(), rows * cols, "weight dimensions mismatch");
-    debug_assert_eq!(x.len(), cols, "input dimension mismatch");
-    debug_assert_eq!(out.len(), rows, "output dimension mismatch");
+    assert_eq!(weights.len(), rows * cols, "weight dimensions mismatch");
+    assert_eq!(x.len(), cols, "input dimension mismatch");
+    assert_eq!(out.len(), rows, "output dimension mismatch");
 
     // For large matrices, parallelize across output rows
     #[cfg(feature = "parallel")]
@@ -113,9 +113,9 @@ pub fn tiled_matmul_into(
     rows: usize,
     cols: usize,
 ) {
-    debug_assert_eq!(weights.len(), rows * cols);
-    debug_assert_eq!(input.len(), seq_len * cols);
-    debug_assert_eq!(out.len(), seq_len * rows);
+    assert_eq!(weights.len(), rows * cols);
+    assert_eq!(input.len(), seq_len * cols);
+    assert_eq!(out.len(), seq_len * rows);
 
     #[cfg(target_arch = "x86_64")]
     let use_avx2 = is_x86_feature_detected!("fma") && is_x86_feature_detected!("avx2");
@@ -177,7 +177,7 @@ pub fn tiled_matmul_into(
 /// model variants or future optimization experiments.
 #[must_use]
 pub fn rms_norm(x: &[f32], weight: &[f32], eps: f32) -> Vec<f32> {
-    debug_assert_eq!(x.len(), weight.len(), "dimension mismatch");
+    assert_eq!(x.len(), weight.len(), "dimension mismatch");
 
     if x.is_empty() {
         return vec![];
@@ -200,8 +200,8 @@ pub fn rms_norm(x: &[f32], weight: &[f32], eps: f32) -> Vec<f32> {
 
 /// RMS normalization writing to pre-allocated output.
 pub fn rms_norm_into(x: &[f32], weight: &[f32], eps: f32, out: &mut [f32]) {
-    debug_assert_eq!(x.len(), weight.len(), "dimension mismatch");
-    debug_assert_eq!(x.len(), out.len(), "output dimension mismatch");
+    assert_eq!(x.len(), weight.len(), "dimension mismatch");
+    assert_eq!(x.len(), out.len(), "output dimension mismatch");
 
     if x.is_empty() {
         return;
@@ -255,12 +255,12 @@ pub fn layer_norm_into(x: &[f32], weight: &[f32], bias: &[f32], eps: f32, out: &
 #[must_use]
 #[allow(clippy::needless_range_loop)]
 pub fn tiled_matvec_f16(weights_f16: &[u16], x: &[f32], rows: usize, cols: usize) -> Vec<f32> {
-    debug_assert_eq!(
+    assert_eq!(
         weights_f16.len(),
         rows * cols,
         "fp16 weight dimensions mismatch"
     );
-    debug_assert_eq!(x.len(), cols, "input dimension mismatch");
+    assert_eq!(x.len(), cols, "input dimension mismatch");
 
     // For large matrices, parallelize across output rows
     // Thread-local dequant buffer avoids per-row heap allocation (PMAT-014 O5)
@@ -312,13 +312,13 @@ pub fn tiled_matvec_f16_into(
     rows: usize,
     cols: usize,
 ) {
-    debug_assert_eq!(
+    assert_eq!(
         weights_f16.len(),
         rows * cols,
         "fp16 weight dimensions mismatch"
     );
-    debug_assert_eq!(x.len(), cols, "input dimension mismatch");
-    debug_assert_eq!(out.len(), rows, "output dimension mismatch");
+    assert_eq!(x.len(), cols, "input dimension mismatch");
+    assert_eq!(out.len(), rows, "output dimension mismatch");
 
     // For large matrices, parallelize across output rows
     // Thread-local dequant buffer avoids per-row heap allocation (PMAT-014 O5)
@@ -365,14 +365,14 @@ pub fn tiled_matvec_i8_into(
     rows: usize,
     cols: usize,
 ) {
-    debug_assert_eq!(
+    assert_eq!(
         weights_i8.len(),
         rows * cols,
         "i8 weight dimensions mismatch"
     );
-    debug_assert_eq!(scales.len(), rows, "scales dimension mismatch");
-    debug_assert_eq!(x.len(), cols, "input dimension mismatch");
-    debug_assert_eq!(out.len(), rows, "output dimension mismatch");
+    assert_eq!(scales.len(), rows, "scales dimension mismatch");
+    assert_eq!(x.len(), cols, "input dimension mismatch");
+    assert_eq!(out.len(), rows, "output dimension mismatch");
 
     #[cfg(feature = "parallel")]
     if rows * cols >= PARALLEL_THRESHOLD {
@@ -407,15 +407,15 @@ pub fn tiled_matvec_i4_into(
     cols: usize,
     group_size: usize,
 ) {
-    debug_assert_eq!(
+    assert_eq!(
         weights_i4.len(),
         rows * cols / 2,
         "i4 weight dimensions mismatch"
     );
     let groups_per_row = cols / group_size;
-    debug_assert_eq!(scales.len(), rows * groups_per_row, "scales dimension mismatch");
-    debug_assert_eq!(x.len(), cols, "input dimension mismatch");
-    debug_assert_eq!(out.len(), rows, "output dimension mismatch");
+    assert_eq!(scales.len(), rows * groups_per_row, "scales dimension mismatch");
+    assert_eq!(x.len(), cols, "input dimension mismatch");
+    assert_eq!(out.len(), rows, "output dimension mismatch");
 
     #[cfg(feature = "parallel")]
     if rows * cols >= PARALLEL_THRESHOLD {

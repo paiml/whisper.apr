@@ -45,7 +45,7 @@ pub fn scaled_dot_product_attention(
     // Apply mask by adding mask values to scores
     // Mask values: 0.0 for positions to attend to, NEG_INFINITY for masked positions
     if let Some(m) = mask {
-        debug_assert_eq!(m.len(), seq_len * kv_len, "mask dimensions mismatch");
+        assert_eq!(m.len(), seq_len * kv_len, "mask dimensions mismatch");
         for (i, &mask_val) in m.iter().enumerate() {
             scores[i] += mask_val;
         }

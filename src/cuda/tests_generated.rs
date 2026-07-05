@@ -3733,13 +3733,13 @@ fn test_gpu_conv1d_vs_cpu() {
         let max_diff: f32 = cpu_conv1_gelu
             .iter()
             .zip(gpu_conv1_host.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .fold(0.0f32, f32::max);
 
         let avg_diff: f32 = cpu_conv1_gelu
             .iter()
             .zip(gpu_conv1_host.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .sum::<f32>()
             / cpu_conv1_gelu.len() as f32;
 
@@ -3803,13 +3803,13 @@ fn test_gpu_conv1d_vs_cpu() {
         let max_diff: f32 = cpu_conv2_gelu
             .iter()
             .zip(gpu_conv2_host.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .fold(0.0f32, f32::max);
 
         let avg_diff: f32 = cpu_conv2_gelu
             .iter()
             .zip(gpu_conv2_host.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .sum::<f32>()
             / cpu_conv2_gelu.len() as f32;
 
@@ -3859,13 +3859,13 @@ fn test_gpu_conv1d_vs_cpu() {
         let max_diff: f32 = cpu_frontend
             .iter()
             .zip(gpu_conv2_host.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .fold(0.0f32, f32::max);
 
         let avg_diff: f32 = cpu_frontend
             .iter()
             .zip(gpu_conv2_host.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .sum::<f32>()
             / cpu_frontend.len() as f32;
 
@@ -3983,13 +3983,13 @@ fn test_encode_gpu_vs_total_offload() {
         let max_diff: f32 = encoder_output_cpu_conv
             .iter()
             .zip(encoder_output_gpu_conv.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .fold(0.0f32, f32::max);
 
         let avg_diff: f32 = encoder_output_cpu_conv
             .iter()
             .zip(encoder_output_gpu_conv.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .sum::<f32>()
             / encoder_output_cpu_conv.len() as f32;
 
@@ -4155,7 +4155,7 @@ fn test_encoder_layer_by_layer_divergence() {
         cpu_conv_output
             .iter()
             .zip(gpu_conv_output.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .fold(0.0f32, f32::max)
     } else {
         eprintln!(
@@ -4201,7 +4201,7 @@ fn test_encoder_layer_by_layer_divergence() {
         cpu_with_pos
             .iter()
             .zip(gpu_with_pos.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .fold(0.0f32, f32::max)
     } else {
         f32::MAX
@@ -4260,7 +4260,7 @@ fn test_encoder_layer_by_layer_divergence() {
             let layer_max_diff = cpu_layer_outputs[layer_idx]
                 .iter()
                 .zip(gpu_layer_out.iter())
-                .map(|(\&c, \&g)| (c - g).abs())
+                .map(|(&c, &g)| (c - g).abs())
                 .fold(0.0f32, f32::max);
 
             eprintln!(
@@ -4401,7 +4401,7 @@ fn test_encoder_single_layer_step_by_step() {
     let ln1_diff = cpu_ln1
         .iter()
         .zip(gpu_ln1.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!(
         "[GPU LN1] mean={:.6}, max_diff={:.6}",
@@ -4439,17 +4439,17 @@ fn test_encoder_single_layer_step_by_step() {
         let w_q_diff: f32 = w_q_cpu_t
             .iter()
             .zip(w_q_gpu.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .fold(0.0f32, f32::max);
         let w_k_diff: f32 = w_k_cpu_t
             .iter()
             .zip(w_k_gpu.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .fold(0.0f32, f32::max);
         let w_v_diff: f32 = w_v_cpu_t
             .iter()
             .zip(w_v_gpu.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .fold(0.0f32, f32::max);
 
         eprintln!(
@@ -4468,7 +4468,7 @@ fn test_encoder_single_layer_step_by_step() {
             .bias
             .iter()
             .zip(b_q_gpu.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .fold(0.0f32, f32::max);
         let b_k_diff: f32 = block
             .self_attn
@@ -4476,7 +4476,7 @@ fn test_encoder_single_layer_step_by_step() {
             .bias
             .iter()
             .zip(b_k_gpu.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .fold(0.0f32, f32::max);
         let b_v_diff: f32 = block
             .self_attn
@@ -4484,7 +4484,7 @@ fn test_encoder_single_layer_step_by_step() {
             .bias
             .iter()
             .zip(b_v_gpu.iter())
-            .map(|(\&c, \&g)| (c - g).abs())
+            .map(|(&c, &g)| (c - g).abs())
             .fold(0.0f32, f32::max);
 
         eprintln!(
@@ -4574,17 +4574,17 @@ fn test_encoder_single_layer_step_by_step() {
     let q_diff = cpu_q
         .iter()
         .zip(gpu_q.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     let k_diff = cpu_k
         .iter()
         .zip(gpu_k.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     let v_diff = cpu_v
         .iter()
         .zip(gpu_v.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!(
         "[GPU Q] mean={:.6}, max_diff={:.6}",
@@ -4633,7 +4633,7 @@ fn test_encoder_single_layer_step_by_step() {
     let attn_diff = cpu_attn_output
         .iter()
         .zip(gpu_attn_output.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!(
         "[GPU Attn] mean={:.6}, max_diff={:.6}",
@@ -4683,7 +4683,7 @@ fn test_encoder_single_layer_step_by_step() {
     let o_diff = cpu_attn_proj
         .iter()
         .zip(gpu_attn_proj.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!(
         "[GPU O_proj] mean={:.6}, max_diff={:.6}",
@@ -4716,7 +4716,7 @@ fn test_encoder_single_layer_step_by_step() {
     let res1_diff = cpu_residual1
         .iter()
         .zip(gpu_residual1.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!(
         "[GPU Res1] mean={:.6}, max_diff={:.6}",
@@ -4751,7 +4751,7 @@ fn test_encoder_single_layer_step_by_step() {
     let ln2_diff = cpu_ln2
         .iter()
         .zip(gpu_ln2.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!(
         "[GPU LN2] mean={:.6}, max_diff={:.6}",
@@ -4802,7 +4802,7 @@ fn test_encoder_single_layer_step_by_step() {
     let ffn_diff = cpu_ffn
         .iter()
         .zip(gpu_ffn.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!(
         "[GPU FFN] mean={:.6}, max_diff={:.6}",
@@ -4835,7 +4835,7 @@ fn test_encoder_single_layer_step_by_step() {
     let output_diff = cpu_output
         .iter()
         .zip(gpu_output.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!(
         "[GPU Output] mean={:.6}, max_diff={:.6}",
@@ -4986,7 +4986,7 @@ fn test_linear_weight_transpose_correctness() {
     let max_diff = cpu_output
         .iter()
         .zip(gpu_output.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!("\n[Comparison] max_diff = {:.6}", max_diff);
 
@@ -5093,13 +5093,13 @@ fn test_wmma_gemm_correctness() {
     let max_diff = cpu_output
         .iter()
         .zip(gpu_output.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
 
     let mean_diff = cpu_output
         .iter()
         .zip(gpu_output.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .sum::<f32>()
         / cpu_output.len() as f32;
 
@@ -5113,7 +5113,7 @@ fn test_wmma_gemm_correctness() {
         .iter()
         .zip(gpu_output.iter())
         .enumerate()
-        .map(|(i, (\&c, \&g))| (i, (c - g).abs()))
+        .map(|(i, (&c, &g))| (i, (c - g).abs()))
         .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
         .unwrap();
     let b = max_idx / out_feat;
@@ -5232,12 +5232,12 @@ fn test_wmma_encoder_like_dims() {
     let max_diff = cpu_output
         .iter()
         .zip(gpu_output.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     let mean_diff = cpu_output
         .iter()
         .zip(gpu_output.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .sum::<f32>()
         / cpu_output.len() as f32;
 
@@ -5251,7 +5251,7 @@ fn test_wmma_encoder_like_dims() {
         .iter()
         .zip(gpu_output.iter())
         .enumerate()
-        .map(|(i, (\&c, \&g))| (i, (c - g).abs()))
+        .map(|(i, (&c, &g))| (i, (c - g).abs()))
         .collect();
     diffs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
@@ -5384,7 +5384,7 @@ fn test_wmma_multiple_consecutive_calls() {
     let diff_clear_1: f32 = cpu_out_1
         .iter()
         .zip(gpu_same_1.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!("[Cache-clear call 1] max_diff = {:.6}", diff_clear_1);
 
@@ -5407,7 +5407,7 @@ fn test_wmma_multiple_consecutive_calls() {
     let diff_clear_2: f32 = cpu_out_2
         .iter()
         .zip(gpu_same_2.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!("[Cache-clear call 2] max_diff = {:.6}", diff_clear_2);
 
@@ -5430,7 +5430,7 @@ fn test_wmma_multiple_consecutive_calls() {
     let diff_clear_3: f32 = cpu_out_3
         .iter()
         .zip(gpu_same_3.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!("[Cache-clear call 3] max_diff = {:.6}\n", diff_clear_3);
 
@@ -5454,7 +5454,7 @@ fn test_wmma_multiple_consecutive_calls() {
     let diff_1: f32 = cpu_out_1
         .iter()
         .zip(gpu_out_1.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!("[With-bias call 1] max_diff = {:.6}", diff_1);
 
@@ -5474,7 +5474,7 @@ fn test_wmma_multiple_consecutive_calls() {
     let diff_2: f32 = cpu_out_2
         .iter()
         .zip(gpu_out_2.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!("[With-bias call 2] max_diff = {:.6}", diff_2);
 
@@ -5494,7 +5494,7 @@ fn test_wmma_multiple_consecutive_calls() {
     let diff_3: f32 = cpu_out_3
         .iter()
         .zip(gpu_out_3.iter())
-        .map(|(\&c, \&g)| (c - g).abs())
+        .map(|(&c, &g)| (c - g).abs())
         .fold(0.0f32, f32::max);
     eprintln!("[With-bias call 3] max_diff = {:.6}", diff_3);
 

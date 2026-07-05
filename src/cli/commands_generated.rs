@@ -223,7 +223,7 @@ fn resolve_gpu_backend(requested: bool, global: &Args) -> CliResult<bool> {
 }
 
 /// Build transcription options from CLI arguments
-fn build_transcribe_options(args: &TranscribeArgs, verbose: bool) -> TranscribeOptions {
+fn build_transcribe_options(args: &TranscribeArgs, _verbose: bool) -> TranscribeOptions {
     let task = if args.translate {
         Task::Translate
     } else {
@@ -757,7 +757,7 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
 
     // Generate summary
     // GH-42: Status messages go to stderr to avoid contaminating --format json output
-    if !global.quiet {
+    if !global.quiet && args.format != crate::cli::args::SummarizeFormat::Json {
         if args.stream {
             eprintln!("Generating summary (streaming)...\n");
         } else {
@@ -767,7 +767,7 @@ pub fn run_summarize(args: SummarizeArgs, global: &Args) -> CliResult<CommandRes
 
     let (output_ids, gen_stats) = generate_summary(&model, &tokenizer, &input_ids, &args, global)?;
 
-    if args.stream && !global.quiet {
+    if args.stream && !global.quiet && args.format != crate::cli::args::SummarizeFormat::Json {
         eprintln!("\n");
     }
 
@@ -2276,7 +2276,7 @@ pub fn run_tui(global: &Args) -> CliResult<CommandResult> {
 /// Run TUI command - stub when TUI feature is disabled
 #[cfg(not(feature = "tui"))]
 pub fn run_tui(global: &Args) -> CliResult<CommandResult> {
-    let _ = global;
+    warn_ignored_global(global, "tui");
     Err(CliError::NotImplemented(
         "TUI requires the 'tui' feature. Rebuild with: cargo build --features tui".to_string(),
     ))
@@ -3259,7 +3259,7 @@ fn parse_srt_time(s: &str) -> Option<f64> {
 /// - `realizar::inference` for real-time model execution
 pub fn run_stream(args: StreamArgs, global: &Args) -> CliResult<CommandResult> {
     let _ = args;
-    let _ = global;
+    warn_ignored_global(global, "stream");
     Err(CliError::NotImplemented(
         "Real-time streaming not yet implemented (requires aprender::native audio capture)"
             .to_string(),
@@ -3273,7 +3273,7 @@ pub fn run_stream(args: StreamArgs, global: &Args) -> CliResult<CommandResult> {
 /// - `realizar::api` for OpenAI-compatible API handlers
 pub fn run_serve(args: ServeArgs, global: &Args) -> CliResult<CommandResult> {
     let _ = args;
-    let _ = global;
+    warn_ignored_global(global, "serve");
     Err(CliError::NotImplemented(
         "HTTP server not yet implemented (requires realizar::serve)".to_string(),
     ))
@@ -3476,7 +3476,9 @@ pub fn run_quantize(args: QuantizeArgs, global: &Args) -> CliResult<CommandResul
 /// - `aprender::native` for audio capture
 /// - `realizar::inference` for real-time model execution
 /// - Pattern matching against configured command phrases
-pub fn run_command(_args: CommandArgs, _global: &Args) -> CliResult<CommandResult> {
+pub fn run_command(args: CommandArgs, global: &Args) -> CliResult<CommandResult> {
+    let _ = args;
+    warn_ignored_global(global, "command");
     Err(CliError::NotImplemented(
         "Voice command recognition not yet implemented (requires aprender::native audio capture)"
             .to_string(),
@@ -5995,5 +5997,11 @@ mod tests {
         let output = format_batch_output(&result, OutputFormatArg::Srt);
         assert!(output.contains("00:00:00,000 --> 00:00:30,000"));
         assert!(output.contains("Hello world"));
+    }
+}
+
+pub(crate) fn warn_ignored_global(global: &Args, cmd: &str) {
+    if global.verbose || global.quiet || global.json || global.trace.is_some() || global.no_color {
+        eprintln!("[WARN] Global flags are currently ignored by the '{}' command", cmd);
     }
 }

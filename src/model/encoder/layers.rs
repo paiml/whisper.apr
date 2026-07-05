@@ -48,7 +48,7 @@ impl LayerNorm {
         }
         debug_assert_eq!(input.len(), output.len());
 
-        let seq_len = input.len() / self.normalized_shape;
+        let _seq_len = input.len() / self.normalized_shape;
 
         let chunks_in = input.chunks_exact(self.normalized_shape);
         let chunks_out = output.chunks_exact_mut(self.normalized_shape);
@@ -139,6 +139,8 @@ impl FeedForward {
         self.fc2.finalize_weights();
     }
 
+    /// Finalize weights for the encoder.
+    /// This caches the transposed f32 weights to avoid repeated overhead during inference.
     pub fn finalize_weights_encoder(&mut self) {
         self.fc1.finalize_weights_encoder();
         self.fc2.finalize_weights_encoder();

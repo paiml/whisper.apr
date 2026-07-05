@@ -9,7 +9,7 @@ pub fn dot(a: &[f32], b: &[f32]) -> f32 {
 
     let va = Vector::from_slice(a);
     let vb = Vector::from_slice(b);
-    va.dot(&vb).unwrap_or(0.0)
+    va.dot(&vb).unwrap_or_else(|_| dot_scalar(a, b))
 }
 
 /// Zero-allocation dot product with AVX2+FMA runtime dispatch (PMAT-014 O5, pv:avx2-fma-dot-v1).
@@ -203,7 +203,7 @@ pub fn scale(a: &[f32], s: f32) -> Vec<f32> {
 #[must_use]
 pub fn sum(a: &[f32]) -> f32 {
     let va = Vector::from_slice(a);
-    va.sum().unwrap_or(0.0)
+    va.sum().unwrap_or_else(|_| a.iter().sum())
 }
 
 /// SIMD-accelerated mean
@@ -222,7 +222,10 @@ pub fn variance(a: &[f32]) -> f32 {
         return 0.0;
     }
     let va = Vector::from_slice(a);
-    va.variance().unwrap_or(0.0)
+    va.variance().unwrap_or_else(|_| {
+        let mean = a.iter().sum::<f32>() / a.len() as f32;
+        a.iter().map(|&x| (x - mean) * (x - mean)).sum::<f32>() / a.len() as f32
+    })
 }
 
 /// SIMD-accelerated standard deviation

@@ -6,8 +6,8 @@ use trueno::Vector;
 ///
 /// LayerNorm(x) = (x - mean(x)) / sqrt(var(x) + eps) * gamma + beta
 pub fn layer_norm(x: &[f32], gamma: &[f32], beta: &[f32], eps: f32) -> Vec<f32> {
-    debug_assert_eq!(x.len(), gamma.len(), "gamma dimension mismatch");
-    debug_assert_eq!(x.len(), beta.len(), "beta dimension mismatch");
+    assert_eq!(x.len(), gamma.len(), "gamma dimension mismatch");
+    assert_eq!(x.len(), beta.len(), "beta dimension mismatch");
 
     if x.is_empty() {
         return vec![];
@@ -32,9 +32,9 @@ pub fn batch_layer_norm(
     features: usize,
     eps: f32,
 ) -> Vec<f32> {
-    debug_assert_eq!(x.len(), batch_size * features, "x dimensions mismatch");
-    debug_assert_eq!(gamma.len(), features, "gamma dimension mismatch");
-    debug_assert_eq!(beta.len(), features, "beta dimension mismatch");
+    assert_eq!(x.len(), batch_size * features, "x dimensions mismatch");
+    assert_eq!(gamma.len(), features, "gamma dimension mismatch");
+    assert_eq!(beta.len(), features, "beta dimension mismatch");
 
     let mut output = Vec::with_capacity(x.len());
 

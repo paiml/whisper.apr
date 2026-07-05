@@ -1181,7 +1181,8 @@ fn run_pull(args: &AprPullArgs) -> CliResult<CommandResult> {
 }
 
 #[cfg(not(feature = "cli-full"))]
-fn run_pull(_args: &AprPullArgs) -> CliResult<CommandResult> {
+fn run_pull(args: &AprPullArgs) -> CliResult<CommandResult> {
+    let _ = args;
     Err(CliError::InvalidArgument(
         "apr pull requires the 'cli-full' feature (includes apr-cli dependency)".into(),
     ))
@@ -1195,7 +1196,8 @@ fn run_pull_list(args: &AprPullListArgs) -> CliResult<CommandResult> {
 }
 
 #[cfg(not(feature = "cli-full"))]
-fn run_pull_list(_args: &AprPullListArgs) -> CliResult<CommandResult> {
+fn run_pull_list(args: &AprPullListArgs) -> CliResult<CommandResult> {
+    let _ = args;
     Err(CliError::InvalidArgument(
         "apr ls requires the 'cli-full' feature (includes apr-cli dependency)".into(),
     ))

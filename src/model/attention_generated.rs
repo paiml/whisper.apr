@@ -180,8 +180,10 @@ impl LinearWeights {
 
         // Create trueno Matrix from transposed weights (WAPR-BENCH-001 optimization)
         // This avoids repeated Matrix::from_vec() calls in forward_simd()
-        self.weight_matrix =
-            Matrix::from_vec(self.in_features, self.out_features, weight_t.clone()).ok();
+        self.weight_matrix = Some(
+            Matrix::from_vec(self.in_features, self.out_features, weight_t.clone())
+                .expect("failed to create matrix from weights"),
+        );
 
         self.weight_transposed = Some(weight_t);
     }
@@ -201,8 +203,10 @@ impl LinearWeights {
         // Disabled prepacking for now because it seems to be killing parallel scaling
         self.weight_prepacked_b = None;
 
-        self.weight_matrix =
-            trueno::Matrix::from_vec(self.in_features, self.out_features, weight_t.clone()).ok();
+        self.weight_matrix = Some(
+            trueno::Matrix::from_vec(self.in_features, self.out_features, weight_t.clone())
+                .expect("failed to create matrix from weights"),
+        );
 
         self.weight_transposed = Some(weight_t);
     }

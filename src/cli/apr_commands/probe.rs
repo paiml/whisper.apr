@@ -21,7 +21,7 @@ pub(super) fn run_probe(
     global: &super::super::args::Args,
 ) -> CliResult<CommandResult> {
     // GH-42: global flags (--verbose, --quiet, --json) not yet used in probe
-    let _ = global;
+    crate::cli::commands::warn_ignored_global(global, "probe");
     // Load model
     let model_bytes =
         fs::read(&args.model).map_err(|e| CliError::InvalidArgument(format!("Model: {e}")))?;
@@ -98,7 +98,7 @@ pub(super) fn run_parity(
     global: &super::super::args::Args,
 ) -> CliResult<CommandResult> {
     // GH-42: global flags (--verbose, --quiet, --json) not yet used in parity
-    let _ = global;
+    crate::cli::commands::warn_ignored_global(global, "parity");
     let ours = load_probe_output(&args.ours, "Ours")?;
     let reference = load_probe_output(&args.reference, "Reference")?;
 
@@ -304,7 +304,7 @@ pub(super) fn run_config_check(
     global: &super::super::args::Args,
 ) -> CliResult<CommandResult> {
     // GH-42: global flags (--verbose, --quiet, --json) not yet used in config-check
-    let _ = global;
+    crate::cli::commands::warn_ignored_global(global, "config-check");
     // Load model
     let model_bytes =
         fs::read(&args.model).map_err(|e| CliError::InvalidArgument(format!("Model: {e}")))?;
