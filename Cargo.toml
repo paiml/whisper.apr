@@ -83,7 +83,9 @@ parallel = ["rayon"]
 wasm-threads = ["wasm-bindgen-rayon"]
 tracing = ["dep:tracing"]
 converter = ["reqwest", "serde", "serde_json", "tokio", "indicatif", "safetensors", "dirs", "zip"]
-cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "symphonia", "dirs", "parallel", "memmap2", "dep:apr-cli"]
+cli = ["clap", "serde", "serde_json", "tracing-subscriber", "hf-hub", "safetensors", "symphonia", "dirs", "parallel", "memmap2"]
+# Back-compat no-op alias: `apr pull`/`apr ls` are now self-contained (built on
+# the in-tree ModelDownloader), so `cli-full` no longer pulls the apr-cli crate.
 cli-full = ["cli"]
 # Multi-format audio decoding (MP3, FLAC, OGG, AAC, etc.)
 symphonia = ["dep:symphonia"]
@@ -112,10 +114,14 @@ dhat-profiler = ["dep:dhat"]
 thiserror = "2"
 
 # SIMD acceleration (trueno integration)
-# Using crates.io versions for reproducible builds
-trueno = { version = "0.19" }
+# APR-MONO: the standalone `trueno`/`trueno-gpu` crates were consolidated into
+# the aprender monorepo. `aprender-compute` ships `[lib] name = "trueno"` and
+# `aprender-gpu` ships `[lib] name = "trueno_gpu"`, so importing as `trueno` /
+# `trueno_gpu` is unchanged — only the published package name moved. Pinned to
+# the unified 0.51 line to avoid pulling the legacy 0.29 compute crates.
+trueno = { package = "aprender-compute", version = "0.51" }
 # GPU-resident tensor architecture (WAPR-PERF-004)
-trueno-gpu = { version = "0.4.36", optional = true }
+trueno-gpu = { package = "aprender-gpu", version = "0.51", optional = true }
 
 # Model format (aprender is the canonical .apr format library)
 # Note: safetensors-compare pulls hf-hub which doesn't support WASM
@@ -123,12 +129,16 @@ trueno-gpu = { version = "0.4.36", optional = true }
 # Using local path for WASM-compatible trueno
 aprender = { package = "aprender-core", version = "0.51", default-features = false, features = ["audio"] }
 
-# APR CLI (proxied commands: pull, list)
-apr-cli = { version = "0.51", optional = true }
+# APR CLI: removed. `apr pull`/`apr ls` are self-contained on the in-tree
+# ModelDownloader (src/model/download.rs); depending on the full apr-cli crate
+# dragged in the entire batuta/orchestrate/arrow/tonic/axum/wgpu stack (~465
+# transitive crates) for two proxied calls. See contracts/model-pull-v1.yaml.
 
 # Inference primitives from realizar (shared attention, quantization, caching)
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
-realizar = { version = "0.9", optional = true, default-features = false }
+# APR-MONO: standalone `realizar` folded into the monorepo as `aprender-serve`
+# (`[lib] name = "realizar"`), unified 0.51 line — imports stay `use realizar::`.
+realizar = { package = "aprender-serve", version = "0.51", optional = true, default-features = false }
 
 # fp16 weight storage (2 bytes/weight vs 4 bytes/weight for f32)
 half = "2"
@@ -172,7 +182,11 @@ zip = { version = "2", optional = true, default-features = false, features = ["d
 # Optional: CLI dependencies
 clap = { version = "4", features = ["derive"], optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
-hf-hub = { version = "0.4", optional = true }
+# Sync (ureq) backend only — matches aprender-core's hf-hub config. hf-hub's
+# default features pull the reqwest/tokio async client + native-tls -> openssl;
+# ModelDownloader (src/model/download.rs) uses only hf_hub::api::sync::Api, so
+# `["ureq"]` (rustls-backed) drops reqwest, native-tls, openssl-sys and tokio.
+hf-hub = { version = "0.4", optional = true, default-features = false, features = ["ureq"] }
 
 # Optional: Phase 3 crypto dependencies (feature-gated through format-*)
 ed25519-dalek = { version = "2", optional = true }
@@ -204,7 +218,11 @@ symphonia = { version = "0.5", optional = true, default-features = false, featur
     "wav",      # WAV container (fallback)
     "pcm",      # PCM codec
 ] }
-provable-contracts-macros = "0.1"
+# APR-MONO: provable-contracts consolidated into the aprender monorepo as
+# `aprender-contracts-macros` (`[lib] name = "provable_contracts_macros"`), so
+# `#[provable_contracts_macros::contract(...)]` call sites are unchanged. Unified
+# on the 0.51 line to collapse the legacy 0.1/0.2/0.3 standalone fan-out.
+provable-contracts-macros = { package = "aprender-contracts-macros", version = "0.51" }
 
 [dev-dependencies]
 proptest = "1"
@@ -347,10 +365,11 @@ used_underscore_binding = "allow"
 # Local development: patch crates.io deps to use local versions with WASM fixes
 # Commented out for crates.io publish — uncomment for local full-stack dev
 # [patch.crates-io]
-# trueno = { path = "../trueno" }
-# trueno-gpu = { path = "../trueno/trueno-gpu" }
-# trueno-explain = { path = "../trueno/trueno-explain" }
-# aprender = { path = "../aprender" }
-# apr-cli = { path = "../aprender/crates/apr-cli" }
-# realizar = { path = "../realizar" }
-# jugar-probar = { path = "../probar/crates/probar" }
+# APR-MONO: all siblings live in the aprender monorepo now (old standalone
+# repos are archived). Uncomment for local development against ../aprender:
+# trueno = { path = "../aprender/crates/aprender-compute", package = "aprender-compute" }
+# trueno-gpu = { path = "../aprender/crates/aprender-gpu", package = "aprender-gpu" }
+# aprender = { path = "../aprender/crates/aprender-core", package = "aprender-core" }
+# realizar = { path = "../aprender/crates/aprender-serve", package = "aprender-serve" }
+# provable-contracts-macros = { path = "../aprender/crates/aprender-contracts-macros", package = "aprender-contracts-macros" }
+# jugar-probar = { path = "../aprender/crates/aprender-test-lib", package = "aprender-test-lib" }

@@ -1,0 +1,127 @@
+metadata:
+  version: "1.0.0"
+  created: "2026-07-05"
+  author: "Sovereign AI Stack"
+  description: "Model cache contract: `apr pull` is idempotent and cache-confined, `apr ls` reflects exactly the model dirs under default_cache_dir() — reimplemented on whisper.apr's own ModelDownloader"
+  kind: pattern
+  crate: "whisper-apr"
+  references:
+    - "src/model/download.rs ModelDownloader — default_cache_dir(), is_cached(), cache_dir(), download(), download_safetensors() (single source of truth for cache layout)"
+    - "src/model/download.rs default_cache_dir() = dirs::cache_dir()/whisper-apr/models (feature = cli)"
+    - "src/cli/apr_commands/mod.rs run_pull / run_pull_list (self-contained; no apr-cli dependency)"
+    - "hf_hub::api::sync::Api — HuggingFace Hub download backend used by ModelDownloader"
+    - "Meyer (1992). Applying Design by Contract. IEEE Computer 25(10) — precondition/frame/postcondition obligations"
+    - "Popper (1959). The Logic of Scientific Discovery — falsification-driven verification"
+
+equations:
+  pull_cache_contract:
+    formula: |
+      pull(ref, force):
+        slug  := find_model(ref).name  OR  repo_id(ref) with '/' -> '--'
+        cache := default_cache_dir() = dirs::cache_dir()/whisper-apr/models
+        if !force and dir_has_files(cache/slug):
+            report{ model: ref, status: "cached" }   # NO network fetch, cache unchanged
+        else:
+            sources := download(ref)                 # hf_hub blob cache paths
+            copy sources -> cache/slug/*
+            report{ model: ref, status: "downloaded", copied }
+    domain: "ref in model names / repo_ids; force in {true, false}; filesystem state of default_cache_dir()"
+    codomain: "CommandResult{ status in {cached, downloaded} } | Err(CliError)"
+    invariants:
+      - "Idempotent when cached: dir_has_files(cache/slug) and !force => no HTTP fetch is issued and report says cached"
+      - "Cache invariance on hit: a force=false pull of an already-cached ref leaves cache/slug byte-for-byte unchanged"
+      - "Write containment: every filesystem path written by pull is a descendant of default_cache_dir()"
+      - "Failure atomicity: a failed download copies nothing, so no partial model dir is registered as cached"
+  list_cache_contract:
+    formula: |
+      ls()      = { name | d in read_dir(default_cache_dir()), d.is_dir(), name = d.file_name() }
+      ls_json() = serde_json::to_string_pretty(sorted(ls()))   # parseable as a JSON array
+    domain: "filesystem state of default_cache_dir()"
+    codomain: "Vec<String> (human table) | JSON array string (--json)"
+    invariants:
+      - "Soundness (no phantom entries): forall e in ls(): default_cache_dir().join(e).is_dir() == true"
+      - "Completeness (none dropped): forall model dir d under default_cache_dir(): d.file_name() appears in ls()"
+      - "Non-dir entries (stray files) are excluded from ls()"
+      - "JSON validity: ls --json output parses via serde_json and is a JSON array"
+      - "A missing cache directory lists as empty, not an error"
+
+proof_obligations:
+  - type: idempotency
+    property: "Second pull of a cached ref with force=false is a no-op reporting cached"
+    formal: "dir_has_files(cache/slug) and force == false => status == cached and unchanged(cache/slug)"
+    applies_to: pull_cache_contract
+  - type: frame
+    property: "pull writes only inside default_cache_dir()"
+    formal: "forall p in writes(pull(ref, _)): p.starts_with(default_cache_dir()) == true"
+    applies_to: pull_cache_contract
+  - type: postcondition
+    property: "A failed download leaves no partial model registered as cached"
+    formal: "download(ref) == Err(_) => dir_has_files(cache/slug) unchanged from pre-state"
+    applies_to: pull_cache_contract
+  - type: soundness
+    property: "No phantom entries: every listed model corresponds to an existing cache directory"
+    formal: "forall e in ls(): default_cache_dir().join(e).is_dir() == true"
+    applies_to: list_cache_contract
+  - type: completeness
+    property: "No dropped entries: every model directory under the cache is listed"
+    formal: "forall d in read_dir(default_cache_dir()) where d.is_dir(): exists e in ls(): e == d.file_name()"
+    applies_to: list_cache_contract
+  - type: invariant
+    property: "ls --json emits a valid, parseable JSON array"
+    formal: "serde_json::from_str::<Vec<serde_json::Value>>(ls_json()).is_ok() == true"
+    applies_to: list_cache_contract
+
+falsification_tests:
+  - id: FALSIFY-PULL-001
+    rule: "Idempotent when cached: a second force=false pull is a no-op reporting cached"
+    test: "test_pull_idempotent_when_cached"
+    prediction: "verified"
+    if_fails: "pull re-downloads or re-writes an already-cached model, or misreports status != cached — wasted bandwidth and non-deterministic cache state"
+  - id: FALSIFY-PULL-002
+    rule: "Write containment: pull writes only under default_cache_dir()"
+    test: "test_pull_idempotent_when_cached"
+    prediction: "verified"
+    if_fails: "pull writes outside cache_dir() (e.g. cwd or hf_hub default cache) — cache is not the single source of truth and `apr ls` cannot see the model"
+  - id: FALSIFY-PULL-003
+    rule: "Bijection: ls() matches exactly the model dirs under default_cache_dir()"
+    test: "test_list_matches_cache_dir"
+    prediction: "verified"
+    if_fails: "ls() drops a present model dir or invents an absent one — the listing diverges from what is actually cached"
+  - id: FALSIFY-PULL-004
+    rule: "Soundness: ls() omits non-model / non-directory entries and a missing dir is empty"
+    test: "test_list_matches_cache_dir"
+    prediction: "verified"
+    if_fails: "ls() reports a stray file as a cached model, or errors on a missing cache dir — phantom entries / spurious failures mislead the user"
+  - id: FALSIFY-PULL-005
+    rule: "JSON validity: ls --json emits a parseable JSON array"
+    test: "test_list_json_is_valid"
+    prediction: "verified"
+    if_fails: "ls --json emits malformed JSON (unescaped names, trailing comma, non-array root) — downstream tooling cannot parse the model list"
+  - id: FALSIFY-PULL-006
+    rule: "Failure atomicity: a failed materialize leaves no file-bearing (cached) model dir"
+    test: "test_failed_pull_leaves_no_cached_model"
+    prediction: "verified"
+    if_fails: "an interrupted/failed download leaves a directory that dir_has_files() reports true — a later pull skips the real download and inference loads a truncated model"
+
+kani_harnesses:
+  - id: KANI-PULL-001
+    obligation: "pull writes only inside default_cache_dir()"
+    bound: 8
+    strategy: exhaustive
+    harness: verify_cache_path_containment
+  - id: KANI-PULL-002
+    obligation: "No phantom entries: every listed model corresponds to an existing cache directory"
+    bound: 8
+    strategy: exhaustive
+    harness: verify_list_entry_is_existing_dir
+
+qa_gate:
+  id: QA-MODEL-PULL
+  name: "model pull/list cache-fidelity contract"
+  min_coverage: 0.90
+  max_complexity: 10
+  required_tests:
+    - test_pull_idempotent_when_cached
+    - test_failed_pull_leaves_no_cached_model
+    - test_list_matches_cache_dir
+    - test_list_json_is_valid
