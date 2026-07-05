@@ -1,6 +1,6 @@
 {
   "version": "3.24.2",
-  "created_at": "2026-07-05T13:44:54.837236151Z",
+  "created_at": "2026-07-05T19:35:21.266984896Z",
   "git_context": null,
   "files": {
     "./benches/cli_benchmarks.rs": {
@@ -15141,48 +15141,48 @@
     },
     "./src/cli/apr_commands/mod.rs": {
       "content_hash": [
-        5,
-        61,
-        113,
-        110,
+        242,
+        64,
+        240,
+        101,
+        78,
+        211,
+        43,
+        189,
+        52,
+        238,
+        36,
+        213,
+        9,
         169,
-        204,
-        121,
-        176,
-        145,
-        159,
-        205,
-        51,
-        83,
-        142,
-        26,
-        10,
-        191,
+        174,
+        39,
+        226,
+        196,
         72,
-        166,
-        207,
-        88,
-        228,
-        47,
+        212,
+        54,
+        154,
+        44,
+        140,
+        233,
+        160,
         161,
-        37,
-        7,
-        35,
-        25,
-        190,
-        48,
-        4,
-        70
+        125,
+        72,
+        146,
+        206,
+        200
       ],
       "score": {
         "structural_complexity": 0.0,
         "semantic_complexity": 20.0,
-        "duplication_ratio": 17.608183,
+        "duplication_ratio": 17.688604,
         "coupling_score": 15.0,
         "doc_coverage": 10.0,
         "consistency_score": 10.0,
         "entropy_score": 5.0,
-        "total": 77.608185,
+        "total": 77.68861,
         "grade": "B",
         "confidence": 1.0,
         "language": "Rust",
@@ -15194,15 +15194,15 @@
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Found 87 duplicate code patterns"
+            "issue": "Found 81 duplicate code patterns"
           },
           {
             "source_metric": "Duplication",
-            "amount": 2.3918173,
+            "amount": 2.3113964,
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Code duplication: 12.0%"
+            "issue": "Code duplication: 11.6%"
           },
           {
             "source_metric": "StructuralComplexity",
@@ -15219,6 +15219,85 @@
               "StructuralComplexity"
             ],
             "issue": "High cyclomatic complexity: 176"
+          }
+        ],
+        "critical_defects_count": 0,
+        "has_critical_defects": false,
+        "has_contract_coverage": false
+      },
+      "components": {
+        "complexity_breakdown": {},
+        "duplication_sources": [],
+        "coupling_dependencies": [],
+        "doc_missing_items": [],
+        "consistency_violations": []
+      },
+      "git_context": null
+    },
+    "./src/cli/apr_commands/model_pull.rs": {
+      "content_hash": [
+        218,
+        62,
+        95,
+        113,
+        86,
+        206,
+        232,
+        102,
+        21,
+        46,
+        7,
+        115,
+        185,
+        228,
+        159,
+        76,
+        210,
+        87,
+        200,
+        230,
+        249,
+        93,
+        153,
+        40,
+        233,
+        234,
+        35,
+        147,
+        137,
+        155,
+        255,
+        110
+      ],
+      "score": {
+        "structural_complexity": 20.8,
+        "semantic_complexity": 20.0,
+        "duplication_ratio": 20.0,
+        "coupling_score": 15.0,
+        "doc_coverage": 10.0,
+        "consistency_score": 10.0,
+        "entropy_score": 5.0,
+        "total": 91.63637,
+        "grade": "AMinus",
+        "confidence": 1.0,
+        "language": "Rust",
+        "file_path": "./src/cli/apr_commands/model_pull.rs",
+        "penalties_applied": [
+          {
+            "source_metric": "Duplication",
+            "amount": 5.0,
+            "applied_to": [
+              "Duplication"
+            ],
+            "issue": "Found 15 duplicate code patterns"
+          },
+          {
+            "source_metric": "StructuralComplexity",
+            "amount": 4.2000003,
+            "applied_to": [
+              "StructuralComplexity"
+            ],
+            "issue": "High cognitive complexity: 29"
           }
         ],
         "critical_defects_count": 0,
@@ -30976,10 +31055,10 @@
     }
   },
   "summary": {
-    "total_files": 397,
-    "avg_score": 94.56858,
+    "total_files": 398,
+    "avg_score": 94.56142,
     "grade_distribution": {
-      "AMinus": 371,
+      "AMinus": 372,
       "BPlus": 5,
       "B": 13,
       "BMinus": 7,
@@ -30988,7 +31067,7 @@
     "languages": {
       "JavaScript": 16,
       "Python": 9,
-      "Rust": 366,
+      "Rust": 367,
       "TypeScript": 6
     }
   }

@@ -18,7 +18,7 @@ FAST_TEST_FILTER := -E 'not test(/encoder_forward|transcription|encode_3_second|
 .ONESHELL:
 
 .PHONY: help all build build-release build-wasm test test-fast test-doc test-property test-all
-.PHONY: lint lint-fast lint-check fmt fmt-check check clean
+.PHONY: lint lint-fast lint-check fmt fmt-check check check-features clean
 .PHONY: coverage coverage-open coverage-ci coverage-clean clean-coverage
 .PHONY: tier1 tier2 tier3 quality-gates kaizen
 .PHONY: bench bench-wasm bench-pipeline bench-regression bench-tui bench-tui-test bench-tui-render bench-tui-playbook mutants mutants-quick
@@ -49,17 +49,19 @@ tier1: ## Tier 1: Sub-second feedback for rapid iteration (ON-SAVE)
 tier2: ## Tier 2: Full test suite for commits (ON-COMMIT)
 	@echo "🔍 TIER 2: Comprehensive validation (1-5 minutes)"
 	@echo ""
-	@echo "  [1/6] Formatting check..."
+	@echo "  [1/7] Formatting check..."
 	@cargo fmt -- --check
-	@echo "  [2/6] Full clippy..."
+	@echo "  [2/7] Full clippy..."
 	@cargo clippy --all-targets --all-features --quiet -- -D warnings
-	@echo "  [3/6] All tests..."
+	@echo "  [3/7] Feature-matrix build (wasm + minimal-lib — guards feature gating)..."
+	@$(MAKE) --no-print-directory check-features
+	@echo "  [4/7] All tests..."
 	@cargo test --all-features --quiet
-	@echo "  [4/6] Property tests (full cases)..."
+	@echo "  [5/7] Property tests (full cases)..."
 	@PROPTEST_CASES=25 cargo test property_ --all-features --quiet || true
-	@echo "  [5/6] Coverage analysis..."
+	@echo "  [6/7] Coverage analysis..."
 	@$(MAKE) --no-print-directory coverage-summary 2>/dev/null || echo "    ⚠️  Run 'make coverage' for detailed report"
-	@echo "  [6/6] SATD check..."
+	@echo "  [7/7] SATD check..."
 	@! grep -rn "TODO\|FIXME\|HACK" src/ 2>/dev/null || { echo "    ⚠️  SATD comments found (Toyota Way: zero tolerance)"; }
 	@echo ""
 	@echo "✅ Tier 2 complete - Ready to commit!"
@@ -100,7 +102,7 @@ build-release: ## Build release version
 build-wasm: ## Build WASM module (requires wasm-pack)
 	@echo "🌐 Building WASM module..."
 	@command -v wasm-pack >/dev/null 2>&1 || { echo "Installing wasm-pack..."; cargo install wasm-pack; }
-	wasm-pack build --target web --features wasm
+	wasm-pack build --target web --no-default-features --features wasm
 	@echo "✅ WASM build complete: pkg/"
 
 # ============================================================================
@@ -173,6 +175,14 @@ fmt-check: ## Check formatting without modifying
 check: ## Type check the project
 	@echo "🔍 Type checking..."
 	@cargo check --all-targets --all-features
+
+check-features: ## Feature-matrix regression guard: crate must compile for wasm + minimal-lib
+	@echo "🔍 Feature matrix (no-default-features builds — parallel/rayon must be gated)..."
+	@echo "  [1/2] wasm32 (--no-default-features --features wasm)..."
+	@cargo check --target wasm32-unknown-unknown --no-default-features --features wasm
+	@echo "  [2/2] minimal library (--no-default-features --features std)..."
+	@cargo check --no-default-features --features std
+	@echo "✅ Feature matrix OK — parallel/rayon correctly gated for wasm/minimal builds"
 
 # ============================================================================
 # COVERAGE (cargo llvm-cov test pattern — no nextest, no profraw explosion)

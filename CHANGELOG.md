@@ -41,6 +41,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `make install` prevents duplicate binary installs: removes stale copies outside `~/.cargo/bin/` before
   install, verifies single binary post-install (exits non-zero if duplicates detected).
 
+## [0.3.2] - 2026-07-05
+
+### Fixed
+- **WASM / minimal-feature builds now compile.** `cargo build --target wasm32-unknown-unknown
+  --no-default-features --features wasm` (and any `default-features = false, features = ["std"]`
+  library consumer) failed to compile because `simd::optimized::tiled_matmul_into` and
+  `simd::matrix::{matmul, matmul_with_prepacked}` called `rayon` (`current_num_threads`,
+  `into_par_iter`, `par_chunks_mut`) without `#[cfg(feature = "parallel")]` guards, but `rayon`
+  is gated behind the `parallel` feature (not implied by `std`/`wasm`). Each site now gates the
+  parallel path and adds a single-threaded serial fallback, matching the other SIMD functions.
+  (The wasm/minimal build still emits a few benign dead-code / unused-import warnings from
+  feature-gated and generated code — pre-existing and non-blocking; this release fixes the hard
+  compile *errors* that previously stopped the build entirely.)
+
+### Changed
+- `make build-wasm` now builds with `--no-default-features` (it previously used the default
+  feature set, which pulls wasm-incompatible deps — masking the breakage above).
+- Auto-download error message in `load_or_download_model` is now actionable (points to
+  `cargo install whisper-apr --features converter` or `--model-path`), and the README no longer
+  implies the default install auto-downloads models (it requires the `converter` feature, kept
+  opt-in to preserve the small default dependency tree).
+
+### Added
+- `make check-features` — a feature-matrix regression guard that compiles the crate for wasm and
+  the minimal `std`-only library config. Wired into `make tier2` so this class of feature-gating
+  regression is caught before merge (Jidoka: build quality in).
+
 ## [0.3.1] - 2026-07-05
 
 ### Changed

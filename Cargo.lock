@@ -5116,7 +5116,7 @@ dependencies = [
 
 [[package]]
 name = "whisper-apr"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "aes-gcm",
  "aprender-compute",

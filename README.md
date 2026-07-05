@@ -117,14 +117,20 @@
 The CLI ships in the default feature set as of 0.2.9 ([#55](https://github.com/paiml/whisper.apr/issues/55)) — no `--features cli` flag required. The canonical binary name is `whisper-apr`; the older `whisper-apr-cli` alias was dropped.
 
 ```bash
-# Install (no feature flag needed)
-cargo install whisper-apr
+# Install the CLI. The default build transcribes local model files but does NOT
+# auto-download models. To enable auto-download (HuggingFace fetch +
+# safetensors→.apr conversion), add the `converter` feature — it pulls a heavier
+# dependency set (reqwest/tokio/zip), which is why it is opt-in.
+cargo install whisper-apr                       # transcribe with --model-path only
+cargo install whisper-apr --features converter  # + auto-download by --model name
 
 # Or from a local checkout
-cargo install --path .
+cargo install --path . --features converter
 
-# Transcribe audio (auto-downloads model)
-whisper-apr transcribe -f audio.wav
+# Transcribe audio. With --features converter this auto-downloads the model;
+# otherwise pass --model-path to a local .apr file.
+whisper-apr transcribe -f audio.wav --model tiny        # needs `converter`
+whisper-apr transcribe -f audio.wav --model-path model.apr  # works in default build
 
 # Use specific model
 whisper-apr transcribe -f audio.wav --model base

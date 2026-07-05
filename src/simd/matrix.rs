@@ -75,25 +75,34 @@ pub fn matmul(a: &[f32], b: &[f32], rows: usize, inner: usize, cols: usize) -> V
     });
 
     if !used_profiler {
-        use rayon::prelude::*;
-        let num_threads = rayon::current_num_threads();
-        let chunk_rows = rows.div_ceil(num_threads);
-        let chunk_rows = chunk_rows.max(1);
-
-        if rows <= 512 {
-            c.par_chunks_mut(chunk_rows * cols)
-                .enumerate()
-                .for_each(|(i, c_chunk)| {
-                    let r_start = i * chunk_rows;
-                    let r_count = c_chunk.len() / cols;
-                    let a_chunk = &a[r_start * inner..(r_start + r_count) * inner];
-                    let _ =
-                        trueno::blis::gemm_blis(r_count, cols, inner, a_chunk, b, c_chunk, None);
-                });
-        } else if trueno::blis::parallel::gemm_blis_parallel(rows, cols, inner, a, b, &mut c)
-            .is_err()
+        #[cfg(feature = "parallel")]
         {
-            return vec![0.0; rows * cols];
+            use rayon::prelude::*;
+            let num_threads = rayon::current_num_threads();
+            let chunk_rows = rows.div_ceil(num_threads).max(1);
+
+            if rows <= 512 {
+                c.par_chunks_mut(chunk_rows * cols)
+                    .enumerate()
+                    .for_each(|(i, c_chunk)| {
+                        let r_start = i * chunk_rows;
+                        let r_count = c_chunk.len() / cols;
+                        let a_chunk = &a[r_start * inner..(r_start + r_count) * inner];
+                        let _ = trueno::blis::gemm_blis(
+                            r_count, cols, inner, a_chunk, b, c_chunk, None,
+                        );
+                    });
+            } else if trueno::blis::parallel::gemm_blis_parallel(rows, cols, inner, a, b, &mut c)
+                .is_err()
+            {
+                return vec![0.0; rows * cols];
+            }
+        }
+        // Serial fallback (no `parallel` feature, e.g. wasm32 where rayon is
+        // unavailable): single-threaded BLIS GEMM over the whole matrix.
+        #[cfg(not(feature = "parallel"))]
+        {
+            let _ = trueno::blis::gemm_blis(rows, cols, inner, a, b, &mut c, None);
         }
     }
     c
@@ -164,39 +173,55 @@ pub fn matmul_with_prepacked(
 
     let mut c = vec![0.0_f32; rows * cols];
 
-    if rows <= 512 {
-        use rayon::prelude::*;
-        let num_threads = rayon::current_num_threads();
-        let chunk_rows = rows.div_ceil(num_threads);
-        let chunk_rows = chunk_rows.max(1);
-
-        c.par_chunks_mut(chunk_rows * cols)
-            .enumerate()
-            .for_each(|(i, c_chunk)| {
-                let r_start = i * chunk_rows;
-                let r_count = c_chunk.len() / cols;
-                let a_chunk = &a[r_start * inner..(r_start + r_count) * inner];
-                let _ = trueno::blis::gemm_blis_with_prepacked_b(
-                    r_count,
-                    cols,
-                    inner,
-                    a_chunk,
-                    prepacked_b,
-                    c_chunk,
-                    None,
-                );
-            });
-    } else if trueno::blis::parallel::gemm_blis_parallel_with_prepacked_b(
-        rows,
-        cols,
-        inner,
-        a,
-        prepacked_b,
-        &mut c,
-    )
-    .is_err()
+    #[cfg(feature = "parallel")]
     {
-        return vec![0.0; rows * cols];
+        use rayon::prelude::*;
+        if rows <= 512 {
+            let num_threads = rayon::current_num_threads();
+            let chunk_rows = rows.div_ceil(num_threads).max(1);
+
+            c.par_chunks_mut(chunk_rows * cols)
+                .enumerate()
+                .for_each(|(i, c_chunk)| {
+                    let r_start = i * chunk_rows;
+                    let r_count = c_chunk.len() / cols;
+                    let a_chunk = &a[r_start * inner..(r_start + r_count) * inner];
+                    let _ = trueno::blis::gemm_blis_with_prepacked_b(
+                        r_count,
+                        cols,
+                        inner,
+                        a_chunk,
+                        prepacked_b,
+                        c_chunk,
+                        None,
+                    );
+                });
+        } else if trueno::blis::parallel::gemm_blis_parallel_with_prepacked_b(
+            rows,
+            cols,
+            inner,
+            a,
+            prepacked_b,
+            &mut c,
+        )
+        .is_err()
+        {
+            return vec![0.0; rows * cols];
+        }
+    }
+    // Serial fallback (no `parallel` feature, e.g. wasm32): single-threaded BLIS
+    // GEMM with the prepacked B panel over the whole matrix.
+    #[cfg(not(feature = "parallel"))]
+    {
+        let _ = trueno::blis::gemm_blis_with_prepacked_b(
+            rows,
+            cols,
+            inner,
+            a,
+            prepacked_b,
+            &mut c,
+            None,
+        );
     }
     c
 }

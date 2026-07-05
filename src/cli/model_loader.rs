@@ -807,8 +807,8 @@ pub fn load_or_download_model(
 
     #[cfg(not(feature = "converter"))]
     Err(ModelLoaderError::Download(format!(
-        "Model {:?} not cached and auto-download requires 'converter' feature. \
-         Use --model-path to specify a .apr file.",
+        "Model {:?} not cached; auto-download needs the 'converter' feature (off by default to keep deps small). \
+         Reinstall with `cargo install whisper-apr --features converter`, or pass --model-path <FILE.apr>.",
         size
     )))
 }
