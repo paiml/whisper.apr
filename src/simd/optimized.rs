@@ -113,9 +113,6 @@ pub fn tiled_matmul_into(
     rows: usize,
     cols: usize,
 ) {
-    #[cfg(feature = "parallel")]
-    use rayon::prelude::*;
-
     assert_eq!(weights.len(), rows * cols);
     assert_eq!(input.len(), seq_len * cols);
     assert_eq!(out.len(), seq_len * rows);
@@ -125,47 +122,48 @@ pub fn tiled_matmul_into(
     #[cfg(not(target_arch = "x86_64"))]
     let use_avx2 = false;
 
-    // Parallelize over chunks of the output features (rows).
-    // This allows each thread to keep a small slice of the weights in L1/L2 cache
-    // and reuse it across all sequence tokens, maximizing memory bandwidth.
+    // `out` is written via a raw pointer (carried as usize) so this closure is
+    // Send + Sync; parallel chunks touch disjoint output ranges, so no data race.
     let out_ptr = out.as_mut_ptr() as usize;
-
-    let num_threads = rayon::current_num_threads();
-    let chunk_size = rows.div_ceil(num_threads);
-    let chunk_size = chunk_size.max(1);
-
-    (0..rows)
-        .into_par_iter()
-        .step_by(chunk_size)
-        .for_each(|r_start| {
-            let r_end = (r_start + chunk_size).min(rows);
-            for s in 0..seq_len {
-                let in_row = &input[s * cols..(s + 1) * cols];
-                for i in r_start..r_end {
-                    let row_offset = i * cols;
-                    let a_slice = &weights[row_offset..row_offset + cols];
-
-                    let dot = if use_avx2 {
-                        #[cfg(target_arch = "x86_64")]
-                        // SAFETY: Target architecture ensures AVX2 is supported
-                        unsafe {
-                            crate::simd::vector::dot_fma_avx2_public(a_slice, in_row)
-                        }
-                        #[cfg(not(target_arch = "x86_64"))]
-                        crate::simd::vector::dot_scalar(a_slice, in_row)
-                    } else {
-                        crate::simd::vector::dot_scalar(a_slice, in_row)
-                    };
-
-                    // SAFETY: Pointer is valid and within bounds
+    let compute_range = |r_start: usize, r_end: usize| {
+        for s in 0..seq_len {
+            let in_row = &input[s * cols..(s + 1) * cols];
+            for i in r_start..r_end {
+                let a_slice = &weights[i * cols..i * cols + cols];
+                let dot = if use_avx2 {
+                    #[cfg(target_arch = "x86_64")]
+                    // SAFETY: Target architecture ensures AVX2 is supported
                     unsafe {
-                        // out is [seq_len, rows]
-                        let ptr = out_ptr as *mut f32;
-                        *ptr.add(s * rows + i) = dot;
+                        crate::simd::vector::dot_fma_avx2_public(a_slice, in_row)
                     }
+                    #[cfg(not(target_arch = "x86_64"))]
+                    crate::simd::vector::dot_scalar(a_slice, in_row)
+                } else {
+                    crate::simd::vector::dot_scalar(a_slice, in_row)
+                };
+                // SAFETY: pointer valid and within bounds; out is [seq_len, rows]
+                unsafe {
+                    *(out_ptr as *mut f32).add(s * rows + i) = dot;
                 }
             }
-        });
+        }
+    };
+
+    // Parallelize over row chunks when `parallel` is enabled (each thread keeps a
+    // weight slice hot in L1/L2 and reuses it across tokens); fall back to a serial
+    // pass on wasm32/minimal builds where rayon is unavailable.
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = rows.div_ceil(num_threads).max(1);
+        (0..rows)
+            .into_par_iter()
+            .step_by(chunk_size)
+            .for_each(|r_start| compute_range(r_start, (r_start + chunk_size).min(rows)));
+    }
+    #[cfg(not(feature = "parallel"))]
+    compute_range(0, rows);
 }
 
 /// RMS normalization (faster than LayerNorm).
