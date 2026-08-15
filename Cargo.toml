@@ -1,6 +1,6 @@
 [package]
 name = "whisper-apr"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 rust-version = "1.75"
 # PMAT-158 / issue #54: disable auto-discovery of the 104 ad-hoc debug examples
@@ -119,15 +119,15 @@ thiserror = "2"
 # `aprender-gpu` ships `[lib] name = "trueno_gpu"`, so importing as `trueno` /
 # `trueno_gpu` is unchanged — only the published package name moved. Pinned to
 # the unified 0.51 line to avoid pulling the legacy 0.29 compute crates.
-trueno = { package = "aprender-compute", version = "0.51" }
+trueno = { package = "aprender-compute", version = "0.63" }
 # GPU-resident tensor architecture (WAPR-PERF-004)
-trueno-gpu = { package = "aprender-gpu", version = "0.51", optional = true }
+trueno-gpu = { package = "aprender-gpu", version = "0.63", optional = true }
 
 # Model format (aprender is the canonical .apr format library)
 # Note: safetensors-compare pulls hf-hub which doesn't support WASM
 # Use target-specific deps below to enable it only for native builds
 # Using local path for WASM-compatible trueno
-aprender = { package = "aprender-core", version = "0.51", default-features = false, features = ["audio"] }
+aprender = { package = "aprender-core", version = "0.63", default-features = false, features = ["audio"] }
 
 # APR CLI: removed. `apr pull`/`apr ls` are self-contained on the in-tree
 # ModelDownloader (src/model/download.rs); depending on the full apr-cli crate
@@ -138,7 +138,7 @@ aprender = { package = "aprender-core", version = "0.51", default-features = fal
 # This gives us: Flash Attention, Sliding Window, FusedLayerNorm, KVCache, PagedKV, Q4_K/Q6_K
 # APR-MONO: standalone `realizar` folded into the monorepo as `aprender-serve`
 # (`[lib] name = "realizar"`), unified 0.51 line — imports stay `use realizar::`.
-realizar = { package = "aprender-serve", version = "0.51", optional = true, default-features = false }
+realizar = { package = "aprender-serve", version = "0.63", optional = true, default-features = false }
 
 # fp16 weight storage (2 bytes/weight vs 4 bytes/weight for f32)
 half = "2"
@@ -222,7 +222,7 @@ symphonia = { version = "0.5", optional = true, default-features = false, featur
 # `aprender-contracts-macros` (`[lib] name = "provable_contracts_macros"`), so
 # `#[provable_contracts_macros::contract(...)]` call sites are unchanged. Unified
 # on the 0.51 line to collapse the legacy 0.1/0.2/0.3 standalone fan-out.
-provable-contracts-macros = { package = "aprender-contracts-macros", version = "0.51" }
+provable-contracts-macros = { package = "aprender-contracts-macros", version = "0.63" }
 
 [dev-dependencies]
 proptest = "1"
@@ -243,7 +243,7 @@ getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] 
 # Enable safetensors-compare only for native builds
 # safetensors-compare: pulls hf-hub which doesn't support WASM
 # Note: inference-monitoring disabled due to cyclic dependency with entrenar
-aprender = { package = "aprender-core", version = "0.51", default-features = false }
+aprender = { package = "aprender-core", version = "0.63", default-features = false }
 
 # Dev/test debuginfo tuning (build-perf). Full `debug = 2` DWARF for this crate's
 # huge dep graph produced a ~391 MiB test binary and slow cold links.

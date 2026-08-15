@@ -21,6 +21,7 @@ pub use validator::AprValidator;
 
 use crate::error::{WhisperError, WhisperResult};
 use crate::format::{metadata_to_model_config, AprV2ReaderRef};
+use aprender::format::AprV2DequantExt;
 
 /// Validate an APR file from bytes
 ///

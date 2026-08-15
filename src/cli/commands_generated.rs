@@ -23,14 +23,14 @@
     clippy::large_stack_arrays
 )]
 
+use crate::audio::wav::{parse_wav_file, resample};
+use crate::parallel::configure_thread_pool;
+use crate::{DecodingStrategy, ProfilingStats, Task, TranscribeOptions, WhisperApr};
+use aprender::format::AprV2DequantExt;
 use std::fs;
 use std::io::{self, Write as IoWrite};
 use std::path::Path;
 use std::time::Instant;
-
-use crate::audio::wav::{parse_wav_file, resample};
-use crate::parallel::configure_thread_pool;
-use crate::{DecodingStrategy, ProfilingStats, Task, TranscribeOptions, WhisperApr};
 
 use crate::cli::args::{
     Args, BackendArg, BatchArgs, BenchmarkArgs, Command, CommandArgs, ConvertArgs, DiagnoseArgs,

@@ -148,10 +148,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "aprender-common"
-version = "0.51.0"
+name = "apr-format"
+version = "0.63.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bebc5ac5949a252f72fbd9e399df887d261da98c59def43202974a3780540417"
+checksum = "a8c5b10e2563892c926973f929628da0b5024bb2c32f65323e1309e5be541a83"
+dependencies = [
+ "bincode",
+ "half",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "aprender-common"
+version = "0.63.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6b5eb4a03c70fcec738bb7851bba0c824342276d3061dafd6754c8559075ad0"
 dependencies = [
  "lz4_flex",
  "zstd",
@@ -159,9 +174,9 @@ dependencies = [
 
 [[package]]
 name = "aprender-compute"
-version = "0.51.0"
+version = "0.63.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85d1db47a775c6b9a1304932710c524e6e3daf0386f8e162c1b627265da42ef8"
+checksum = "f7d308c83405625901a35697aefcaa3859c0334b761a67ce96d4e9d74b6c1b04"
 dependencies = [
  "anyhow",
  "aprender-gemm-codegen",
@@ -183,9 +198,9 @@ dependencies = [
 
 [[package]]
 name = "aprender-contracts-macros"
-version = "0.51.0"
+version = "0.63.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c576fd1e5c91671f2f7dc2e3b627c12a270113c7be03be8ba5cb959e825af63"
+checksum = "6d6deedaaaaa450b86c535d67be254a681ef532e61f39c85b88ae2c07867b0ad"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -194,10 +209,11 @@ dependencies = [
 
 [[package]]
 name = "aprender-core"
-version = "0.51.0"
+version = "0.63.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec2cfb8b3f3b525f6a8f98e4b61e5bb741bb187cb8e79e022909189c6ac0adac"
+checksum = "3df7683adf5c1ee94a63b1c25a2dc1fb5003084f5e63f438376779ee63a4b5da"
 dependencies = [
+ "apr-format",
  "aprender-common",
  "aprender-compute",
  "aprender-quant",
@@ -220,9 +236,9 @@ dependencies = [
 
 [[package]]
 name = "aprender-gemm-codegen"
-version = "0.51.0"
+version = "0.63.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a50433d206667a18eaba87cb53bae444490456a1914031d32a15335699632ba4"
+checksum = "6e73c74a4dfe3eef0d776121a935ea0881d6f26bb89d1796513b27a340fdb755"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -231,9 +247,9 @@ dependencies = [
 
 [[package]]
 name = "aprender-gpu"
-version = "0.51.0"
+version = "0.63.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17e321dbcf6d41b10f19547f58eb9d2ab6c29ec1e102a7d87e6d76c47b90926d"
+checksum = "a1e0819cdd7aa880d7ad432414647dab6235c1a7ed90f57a8fbbd5a66f735612"
 dependencies = [
  "aprender-common",
  "thiserror 2.0.18",
@@ -241,9 +257,9 @@ dependencies = [
 
 [[package]]
 name = "aprender-profile-core"
-version = "0.51.0"
+version = "0.63.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f281aedfecf1d372d6e266d753436fa0dd0ba700392aeb5a19ff03ef7155d89"
+checksum = "22ab08d4c93a6eb8d5803c6408a981322f04105a2d1eeb352a9b366f308a1dcb"
 dependencies = [
  "hex",
  "serde",
@@ -253,18 +269,18 @@ dependencies = [
 
 [[package]]
 name = "aprender-quant"
-version = "0.51.0"
+version = "0.63.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "123744c9fb4a17984ff389fce9e444a2c0b1c5dd108b4753348cb3eed1ce8913"
+checksum = "1a115d6bef5ae17d2caddce9107df5a8af0b29820ca5b36dd5eb059487d9fd18"
 dependencies = [
  "half",
 ]
 
 [[package]]
 name = "aprender-serve"
-version = "0.51.0"
+version = "0.63.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61385e467d04043c354fce6ebe02ecdd0ab947eb5033b57f00c25b33241447be"
+checksum = "17199e6a92474e1976eca1341b451a7dbae1ad9a868e9196567dc5bbf8c8dcbb"
 dependencies = [
  "anyhow",
  "aprender-compute",
@@ -855,9 +871,9 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-epoch"
-version = "0.9.18"
+version = "0.9.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
+checksum = "2d6914041f254d6e9176c01941b21115dcfb7089e55135a35411081bd106ef3f"
 dependencies = [
  "crossbeam-utils",
 ]
@@ -5116,7 +5132,7 @@ dependencies = [
 
 [[package]]
 name = "whisper-apr"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "aes-gcm",
  "aprender-compute",
