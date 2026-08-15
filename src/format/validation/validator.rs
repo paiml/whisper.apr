@@ -4,7 +4,7 @@ use super::check::{ValidationCheck, ValidationReport};
 use super::stats::TensorStats;
 use crate::format::AprV2ReaderRef;
 use crate::model::ModelConfig;
-
+use aprender::format::AprV2DequantExt;
 /// Specification for a bulk mean-range validation check.
 struct BulkMeanSpec {
     id: u8,

@@ -7,8 +7,8 @@ use crate::cuda;
 use crate::{
     audio, detection, error, format, inference, model, progress, timestamps, tokenizer, vad,
 };
+use aprender::format::AprV2DequantExt;
 pub use error::{WhisperError, WhisperResult};
-
 /// Whisper model configuration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelType {
