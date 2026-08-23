@@ -227,9 +227,26 @@ jobs:
             case "$TARGET" in
               aarch64-*)
                 # Strip via cross Docker image with target-appropriate strip tool
+                # Each cross image ships only ITS OWN strip. Hardcoding the gnu name
+                # fails the musl job with
+                #   exec aarch64-linux-gnu-strip failed: No such file or directory
+                # and exit 127 — AFTER publish has already succeeded, so the release
+                # goes out missing one of its binaries and nobody looks at the red run.
+                #
+                # Verified by listing /usr/bin in both images rather than assuming the
+                # naming convention held: the musl image has aarch64-linux-musl-strip and
+                # NO gnu one; the gnu image has aarch64-linux-gnu-strip. Both also carry
+                # a bare `strip` and an x86_64-linux-gnu-strip — those are the HOST
+                # tools, so "use whichever exists" would strip an aarch64 binary with an
+                # x86_64 tool.
+                case "$TARGET" in
+                  *-musl) STRIP_TOOL="aarch64-linux-musl-strip" ;;
+                  *-gnu)  STRIP_TOOL="aarch64-linux-gnu-strip" ;;
+                  *) echo "::error::no strip tool known for $TARGET"; exit 1 ;;
+                esac
                 docker run --rm -v "$PWD/target:/target:Z" \
                   "ghcr.io/cross-rs/${TARGET}:main" \
-                  aarch64-linux-gnu-strip "/$BIN_PATH"
+                  "$STRIP_TOOL" "/$BIN_PATH"
                 ;;
               *)
                 strip "$BIN_PATH"
