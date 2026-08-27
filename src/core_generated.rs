@@ -401,6 +401,13 @@ impl WhisperApr {
     /// Overlap between chunks (5 seconds at 16kHz)
     const OVERLAP_SAMPLES: usize = 5 * audio::SAMPLE_RATE as usize; // 80,000 samples
 
+    /// Smallest advance a window may make (1 second at 16kHz).
+    ///
+    /// Only a floor to keep the window loop O(duration) when a decode
+    /// degenerates to almost nothing. The sliver it steps over is still at the
+    /// head of the next 30s window, so the encoder never stops seeing it.
+    const MIN_ADVANCE_SAMPLES: usize = audio::SAMPLE_RATE as usize; // 16,000 samples
+
     /// Maximum subtitle segment duration (seconds) for SRT output
     const MAX_SUBTITLE_SECS: f32 = 10.0;
 
@@ -728,8 +735,6 @@ impl WhisperApr {
     #[must_use]
     pub fn chunk_windows(audio_len: usize) -> Vec<(usize, usize)> {
         let chunk_size = Self::CHUNK_SAMPLES;
-        let overlap = Self::OVERLAP_SAMPLES;
-        let step = chunk_size - overlap;
         let min_tail = audio::SAMPLE_RATE as usize / 2; // 0.5s
 
         if audio_len <= chunk_size {
@@ -743,16 +748,118 @@ impl WhisperApr {
         let mut offset = 0;
         while offset < audio_len {
             let end = (offset + chunk_size).min(audio_len);
-            if end - offset < min_tail {
+            let window = end - offset;
+            if window < min_tail {
                 break;
             }
             out.push((offset, end));
             if end == audio_len {
                 break;
             }
-            offset += step;
+            // The plan a fully-transcribed run produces: a window that decodes
+            // end to end advances by the step, which is where the overlap
+            // comes from. Shares `window_advance` with the real loop so the
+            // plan and the loop cannot drift apart.
+            offset += Self::window_advance(window, window);
         }
         out
+    }
+
+    /// How far the window loop may advance after a decode that placed
+    /// `covered_samples` of a `window_samples`-long window on the timeline.
+    ///
+    /// Whisper terminates a 30s window early all the time — it emits
+    /// `<|17.00|><|endoftext|>` and stops with 13s of the window still
+    /// untranscribed. The loop used to advance by a constant
+    /// `CHUNK_SAMPLES - OVERLAP_SAMPLES` (25s) regardless, so those 13s were
+    /// never handed to the model again: on a 52s recording the emitted
+    /// timeline jumped 17.00 -> 25.00 with 59% of that window voiced, and on a
+    /// 193s recording 36.00 -> 50.00 with 67% voiced (issue #84). The 5s
+    /// overlap could only ever paper over a 5s shortfall.
+    ///
+    /// The rule is the one the reference implementation uses: seek to where the
+    /// decode actually got, never past it.
+    ///
+    /// * `covered == 0` — the decode ran over the whole window and put nothing
+    ///   on the timeline. That audio was examined and rejected, not skipped, so
+    ///   the stride applies.
+    /// * otherwise — advance by the covered span, capped at the step (a window
+    ///   that decoded past the step keeps the declared overlap) and floored at
+    ///   `MIN_ADVANCE_SAMPLES` so the loop cannot crawl.
+    ///
+    /// Contract `window_advance`, FALSIFY-CHUNKGAP-001/002/003.
+    #[must_use]
+    #[provable_contracts_macros::contract("whisper-chunk-advance-v1", equation = "window_advance")]
+    pub fn window_advance(window_samples: usize, covered_samples: usize) -> usize {
+        let step = Self::CHUNK_SAMPLES - Self::OVERLAP_SAMPLES;
+        if covered_samples == 0 {
+            return step.min(window_samples);
+        }
+        let floor = Self::MIN_ADVANCE_SAMPLES.min(window_samples);
+        covered_samples.min(step).max(floor)
+    }
+
+    /// How much of a `window_samples`-long window these segments put on the
+    /// timeline, in window-local samples.
+    ///
+    /// This is the number `window_advance` needs and the number nothing used
+    /// to compute: the loop knew how wide the window was and never asked how
+    /// far the decode got inside it.
+    #[must_use]
+    pub fn covered_samples(segments: &[Segment], window_samples: usize) -> usize {
+        let secs = segments
+            .iter()
+            .fold(0.0f32, |acc, seg| acc.max(seg.end))
+            .max(0.0);
+        ((secs * audio::SAMPLE_RATE as f32) as usize).min(window_samples)
+    }
+
+    /// Words to drop from the head of a window's text because the previous
+    /// window already transcribed them.
+    ///
+    /// `overlap_samples` is the *measured* overlap — how far the previous
+    /// decode reached past this window's start — not `OVERLAP_SAMPLES`. Read
+    /// as the constant, this dropped words that were never said twice: seven
+    /// of them from the flat text of the 52s recording in issue #84, because
+    /// the window before it had stopped 13s short and there was no overlap at
+    /// all to trim.
+    #[must_use]
+    pub fn overlap_skip_words(
+        word_count: usize,
+        overlap_samples: usize,
+        window_samples: usize,
+    ) -> usize {
+        if overlap_samples == 0 || window_samples == 0 {
+            return 0;
+        }
+        let ratio = overlap_samples as f32 / window_samples as f32;
+        let skip = ((word_count as f32) * ratio * 0.8) as usize;
+        skip.min(word_count)
+    }
+
+    /// Move a window's segments onto the absolute timeline.
+    ///
+    /// A window's decode cannot describe audio the window does not contain,
+    /// but nothing stopped it from claiming to: the model will emit
+    /// `<|3.00|>` inside a 1.38s tail window, which put cues at 54.2s on a
+    /// 52.58s recording. Segments beyond the window are dropped, and one
+    /// straddling the edge is clamped to it.
+    #[must_use]
+    pub fn place_window_segments(
+        segments: Vec<Segment>,
+        window_secs: f32,
+        time_offset: f32,
+    ) -> Vec<Segment> {
+        segments
+            .into_iter()
+            .filter(|seg| seg.start < window_secs)
+            .map(|mut seg| {
+                seg.end = seg.end.min(window_secs);
+                seg.start += time_offset;
+                seg.end += time_offset;
+                seg
+            })
+            .collect()
     }
 
     fn transcribe_chunked(
@@ -761,13 +868,6 @@ impl WhisperApr {
         options: TranscribeOptions,
     ) -> WhisperResult<TranscriptionResult> {
         let chunk_size = Self::CHUNK_SAMPLES;
-        let overlap = Self::OVERLAP_SAMPLES;
-        // Advance by LESS than a chunk, so consecutive windows overlap by
-        // `overlap`. This read `step = chunk_size` with the comment
-        // "non-overlapping step for clean boundaries", which contradicted
-        // `OVERLAP_SAMPLES` existing at all: the code declared an overlap and
-        // then stepped past it.
-        let step = chunk_size - overlap;
 
         // Determine language from first chunk (for consistency)
         let language = options.language.clone().unwrap_or_else(|| "en".to_string());
@@ -775,6 +875,10 @@ impl WhisperApr {
         let mut all_segments: Vec<Segment> = Vec::new();
         let mut all_text = String::new();
         let mut chunk_idx = 0;
+
+        // Absolute sample index the decode has actually reached. Everything
+        // before it is on the timeline; everything after it is still owed.
+        let mut decoded_until = 0usize;
 
         // Process audio in chunks
         let mut offset = 0;
@@ -811,22 +915,24 @@ impl WhisperApr {
             // Calculate time offset for this chunk
             let time_offset = offset as f32 / audio::SAMPLE_RATE as f32;
 
-            // Merge text: trim overlap from previous chunk's end
+            // How much of THIS window the decode actually placed on the
+            // timeline, in window-local samples. A premature `<|endoftext|>`
+            // leaves this well short of `chunk.len()`.
+            let covered = Self::covered_samples(&chunk_result.segments, chunk.len());
+
+            // How much of this window the PREVIOUS window already transcribed.
+            // Derived, not assumed: it is `OVERLAP_SAMPLES` only when the
+            // previous window decoded past the step.
+            let overlap_now = decoded_until.saturating_sub(offset);
+
+            // Merge text: trim the overlap that is really there
             let chunk_text = if chunk_idx == 0 {
                 // First chunk: use full text
                 chunk_result.text.clone()
             } else {
-                // Subsequent chunks: remove overlap from beginning
-                // Overlap is ~2 seconds, which corresponds to first ~2 seconds of text
-                // We use simple heuristic: skip first few words proportional to overlap
-                let overlap_ratio = overlap as f32 / chunk.len() as f32;
                 let words: Vec<&str> = chunk_result.text.split_whitespace().collect();
-                let skip_words = ((words.len() as f32) * overlap_ratio * 0.8) as usize;
-                words
-                    .into_iter()
-                    .skip(skip_words)
-                    .collect::<Vec<_>>()
-                    .join(" ")
+                let skip = Self::overlap_skip_words(words.len(), overlap_now, chunk.len());
+                words.into_iter().skip(skip).collect::<Vec<_>>().join(" ")
             };
 
             // Append to accumulated text
@@ -838,14 +944,18 @@ impl WhisperApr {
             }
 
             // Adjust segment timestamps and add to all_segments
-            for mut seg in chunk_result.segments {
-                seg.start += time_offset;
-                seg.end += time_offset;
-                all_segments.push(seg);
-            }
+            let window_secs = chunk.len() as f32 / audio::SAMPLE_RATE as f32;
+            all_segments.extend(Self::place_window_segments(
+                chunk_result.segments,
+                window_secs,
+                time_offset,
+            ));
 
-            // Advance to next chunk
-            offset += step;
+            // Advance to where this window's decode actually got, never past
+            // it. A constant stride here is what dropped 8s and 14s of speech
+            // in issue #84.
+            decoded_until = decoded_until.max(offset + covered);
+            offset += Self::window_advance(chunk.len(), covered);
             chunk_idx += 1;
         }
 
@@ -5561,6 +5671,236 @@ mod tests {
         assert_eq!(WhisperApr::chunk_windows(10 * 16_000), vec![(0, 160_000)]);
         assert_eq!(WhisperApr::chunk_windows(30 * 16_000), vec![(0, 480_000)]);
         assert!(WhisperApr::chunk_windows(0).is_empty());
+    }
+
+    // =========================================================================
+    // Contract: chunk-advance-follows-the-decode (issue #84)
+    //
+    // "No audio span is skipped between windows." The window PLAN above covers
+    // the audio with no gaps and always did — that is why nothing caught #84.
+    // What is emitted is not the plan, it is the union of the spans each
+    // window's decode actually reached, and Whisper terminates a 30s window
+    // early all the time. These falsifiers are about that union.
+    // =========================================================================
+
+    /// Seconds of window-local coverage measured with `whisper-base.apr` on
+    /// the two recordings in issue #84. Windows 30s wide throughout except the
+    /// final short ones. Real numbers, not invented ones.
+    const UH16K_COVERAGE_SECS: &[f32] = &[17.00, 27.20, 9.20, 1.38];
+    const CLI16K_COVERAGE_SECS: &[f32] = &[
+        26.64, 11.00, 25.84, 21.92, 24.32, 4.50, 29.60, 17.40, 27.36, 13.40, 0.85,
+    ];
+
+    fn segments_covering(secs: f32) -> Vec<Segment> {
+        vec![Segment {
+            start: 0.0,
+            end: secs,
+            text: "x".to_string(),
+            tokens: vec![],
+        }]
+    }
+
+    /// Replay the window loop against a coverage oracle, returning
+    /// `(offset, covered)` in samples for every window it runs.
+    fn replay_windows(audio_len: usize, coverage_secs: &[f32]) -> Vec<(usize, usize)> {
+        let min_tail = 16_000 / 2;
+        let mut out = Vec::new();
+        let mut offset = 0usize;
+        let mut i = 0usize;
+        while offset < audio_len && i < coverage_secs.len() {
+            let end = (offset + WhisperApr::CHUNK_SAMPLES).min(audio_len);
+            let window = end - offset;
+            if window < min_tail {
+                break;
+            }
+            let covered = WhisperApr::covered_samples(&segments_covering(coverage_secs[i]), window);
+            out.push((offset, covered));
+            offset += WhisperApr::window_advance(window, covered);
+            i += 1;
+        }
+        out
+    }
+
+    /// FALSIFY-CHUNKGAP-001 — THE regression. A window that decoded 17s of its
+    /// 30s must not advance 25s. Restoring `offset += step` fails here.
+    #[test]
+    fn window_advance_never_outruns_the_decode() {
+        let step = WhisperApr::CHUNK_SAMPLES - WhisperApr::OVERLAP_SAMPLES;
+        let mut short_rows = 0;
+        // (window secs, covered secs) measured on the #84 recordings.
+        for &(window_s, covered_s) in &[
+            (30.0_f32, 17.00_f32), // uh16k window 0 -> the 8s gap
+            (30.0, 11.00),         // cli16k window 1 -> the 14s gap
+            (30.0, 4.50),
+            (14.25, 13.40), // cli16k tail -> the 4.96s tail gap
+            (10.58, 9.20),
+        ] {
+            let window = (window_s * 16_000.0) as usize;
+            let covered = (covered_s * 16_000.0) as usize;
+            let advance = WhisperApr::window_advance(window, covered);
+            assert!(
+                advance <= covered,
+                "{covered_s}s decoded in a {window_s}s window advanced {:.2}s — \
+                 {:.2}s of audio the model never reached is skipped",
+                advance as f32 / 16_000.0,
+                (advance - covered) as f32 / 16_000.0,
+            );
+            assert!(advance > 0, "the loop must make progress");
+            if covered < step {
+                short_rows += 1;
+            }
+        }
+        // Anti-vacuity: the table must actually contain short decodes, or
+        // "advance <= covered" is trivially satisfied by the step.
+        assert_eq!(short_rows, 5, "every row must be a short decode");
+    }
+
+    /// FALSIFY-CHUNKGAP-002 — the declared overlap survives. A window that
+    /// decodes past the step still advances by the step, so the text merge
+    /// keeps something to trim. Without this the #84 fix could be "advance by
+    /// covered always", which silently deletes the overlap.
+    #[test]
+    fn a_full_decode_still_advances_by_the_step() {
+        let step = WhisperApr::CHUNK_SAMPLES - WhisperApr::OVERLAP_SAMPLES;
+        let window = WhisperApr::CHUNK_SAMPLES;
+        assert_eq!(WhisperApr::window_advance(window, window), step);
+        assert_eq!(
+            WhisperApr::window_advance(window, (29.6 * 16_000.0) as usize),
+            step
+        );
+        // A decode that produced nothing examined the whole window: stride.
+        assert_eq!(WhisperApr::window_advance(window, 0), step);
+        // ...but never past the end of a short final window.
+        assert_eq!(WhisperApr::window_advance(10 * 16_000, 0), 10 * 16_000);
+        // Progress floor keeps the loop O(duration) on a degenerate decode.
+        assert_eq!(WhisperApr::window_advance(window, 100), 16_000);
+    }
+
+    /// FALSIFY-CHUNKGAP-003 — end to end over the real coverage profiles: the
+    /// decoded spans must tile the audio with no hole and reach the last
+    /// sample. With `offset += step` the uh16k replay leaves 17.00..25.00 and
+    /// the cli16k replay leaves 36.00..50.00 and a 4.96s tail.
+    #[test]
+    fn decoded_spans_leave_no_hole_in_the_audio() {
+        for (name, audio_secs, coverage) in [
+            ("uh16k", 52.58_f32, UH16K_COVERAGE_SECS),
+            ("cli16k", 193.40, CLI16K_COVERAGE_SECS),
+        ] {
+            let audio_len = (audio_secs * 16_000.0) as usize;
+            let windows = replay_windows(audio_len, coverage);
+
+            // Anti-vacuity: a run that produced no windows, one window, or no
+            // decoded audio at all must not pass as "no holes".
+            assert!(
+                windows.len() >= 2,
+                "{name}: expected a multi-window run, got {}",
+                windows.len()
+            );
+            assert!(
+                windows.iter().all(|&(_, covered)| covered > 0),
+                "{name}: a window covered nothing"
+            );
+            assert!(
+                windows.iter().any(|&(offset, covered)| offset + covered
+                    < offset + WhisperApr::CHUNK_SAMPLES.min(audio_len)),
+                "{name}: no window under-covered, so the profile cannot expose the bug"
+            );
+
+            let mut reached = 0usize;
+            for &(offset, covered) in &windows {
+                assert!(
+                    offset <= reached,
+                    "{name}: window starts at {:.2}s but the decode only reached {:.2}s — \
+                     {:.2}s of audio is absent from the timeline",
+                    offset as f32 / 16_000.0,
+                    reached as f32 / 16_000.0,
+                    (offset - reached) as f32 / 16_000.0,
+                );
+                reached = reached.max(offset + covered);
+            }
+            assert!(
+                reached + 16_000 / 2 >= audio_len,
+                "{name}: timeline stops at {:.2}s of {:.2}s — the tail is missing",
+                reached as f32 / 16_000.0,
+                audio_secs,
+            );
+        }
+    }
+
+    /// FALSIFY-CHUNKGAP-004 — the text merge trims the overlap that exists,
+    /// not the one the constant advertises. `overlap_samples` came from
+    /// `OVERLAP_SAMPLES` regardless of whether the previous window had reached
+    /// this one, deleting words nobody said twice.
+    #[test]
+    fn text_merge_trims_only_the_overlap_that_is_really_there() {
+        let window = WhisperApr::CHUNK_SAMPLES;
+        // uh16k window 1: the window before it stopped 13s short, so nothing
+        // overlaps and nothing may be dropped.
+        assert_eq!(WhisperApr::overlap_skip_words(50, 0, window), 0);
+        // Anti-vacuity: with a real overlap the heuristic still trims, so the
+        // test cannot pass by making the function a constant zero.
+        let real = WhisperApr::overlap_skip_words(50, WhisperApr::OVERLAP_SAMPLES, window);
+        assert!(real > 0, "a genuine 5s overlap must still be trimmed");
+        assert!(real <= 50, "cannot skip more words than exist");
+        assert_eq!(WhisperApr::overlap_skip_words(0, 80_000, window), 0);
+    }
+
+    /// FALSIFY-CHUNKGAP-005 — a window cannot describe audio it does not
+    /// contain. The 1.38s tail window of uh16k emitted `<|3.00|>`, putting
+    /// cues at 54.2s on a 52.58s recording.
+    #[test]
+    fn segments_never_escape_their_window() {
+        let segs = vec![
+            Segment {
+                start: 0.0,
+                end: 1.0,
+                text: "inside".to_string(),
+                tokens: vec![],
+            },
+            Segment {
+                start: 1.0,
+                end: 3.0,
+                text: "straddles".to_string(),
+                tokens: vec![],
+            },
+            Segment {
+                start: 1.9,
+                end: 3.0,
+                text: "outside".to_string(),
+                tokens: vec![],
+            },
+        ];
+        let placed = WhisperApr::place_window_segments(segs, 1.38, 51.2);
+        // Anti-vacuity: the in-window content survives, placed on the timeline.
+        assert_eq!(placed.len(), 2, "in-window segments must be kept");
+        assert_eq!(placed[0].text, "inside");
+        assert!((placed[0].start - 51.2).abs() < 1e-3);
+        for seg in &placed {
+            assert!(
+                seg.end <= 51.2 + 1.38 + 1e-3,
+                "cue ends at {:.3}s, past the {:.3}s window it came from",
+                seg.end,
+                51.2 + 1.38
+            );
+        }
+    }
+
+    /// FALSIFY-CHUNKGAP-006 — coverage is measured, not assumed. Returns 0 for
+    /// a decode that emitted nothing, and never exceeds the window.
+    #[test]
+    fn coverage_is_measured_from_the_segments() {
+        let window = WhisperApr::CHUNK_SAMPLES;
+        assert_eq!(WhisperApr::covered_samples(&[], window), 0);
+        assert_eq!(
+            WhisperApr::covered_samples(&segments_covering(17.0), window),
+            17 * 16_000
+        );
+        // Anti-vacuity: a hallucinated over-long segment cannot inflate the
+        // advance past the window it came from.
+        assert_eq!(
+            WhisperApr::covered_samples(&segments_covering(99.0), window),
+            window
+        );
     }
 
     #[test]
