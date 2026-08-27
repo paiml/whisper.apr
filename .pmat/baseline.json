@@ -1,6 +1,6 @@
 {
-  "version": "3.30.1",
-  "created_at": "2026-08-15T09:59:49.526778312Z",
+  "version": "3.32.0",
+  "created_at": "2026-08-27T10:30:26.335954912Z",
   "git_context": null,
   "files": {
     "./book/book/ace.js": {
@@ -7618,48 +7618,48 @@
     },
     "./src/core_generated.rs": {
       "content_hash": [
-        117,
-        85,
-        116,
-        101,
-        32,
-        14,
-        230,
-        85,
-        250,
-        60,
-        86,
-        222,
-        87,
-        150,
-        176,
-        225,
-        55,
-        7,
-        110,
-        69,
-        5,
-        186,
-        120,
-        60,
-        106,
-        76,
-        250,
+        61,
+        12,
+        207,
+        192,
+        77,
+        81,
+        61,
+        194,
+        223,
+        33,
+        175,
+        214,
+        164,
+        132,
         13,
-        40,
-        239,
-        111,
-        46
+        167,
+        0,
+        203,
+        33,
+        171,
+        43,
+        32,
+        246,
+        118,
+        88,
+        69,
+        60,
+        7,
+        189,
+        161,
+        161,
+        236
       ],
       "score": {
         "structural_complexity": 0.0,
         "semantic_complexity": 20.0,
-        "duplication_ratio": 15.0557,
+        "duplication_ratio": 15.10128,
         "coupling_score": 14.8,
         "doc_coverage": 10.0,
         "consistency_score": 10.0,
         "entropy_score": 5.0,
-        "total": 74.8557,
+        "total": 74.901276,
         "grade": "B-",
         "confidence": 1.0,
         "language": "Rust",
@@ -7671,15 +7671,15 @@
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Found 451 duplicate code patterns"
+            "issue": "Found 458 duplicate code patterns"
           },
           {
             "source_metric": "Duplication",
-            "amount": 4.9442997,
+            "amount": 4.8987193,
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Code duplication: 24.7%"
+            "issue": "Code duplication: 24.5%"
           },
           {
             "source_metric": "StructuralComplexity",
@@ -7687,7 +7687,7 @@
             "applied_to": [
               "StructuralComplexity"
             ],
-            "issue": "High cognitive complexity: 269"
+            "issue": "High cognitive complexity: 284"
           },
           {
             "source_metric": "StructuralComplexity",
@@ -7695,7 +7695,7 @@
             "applied_to": [
               "StructuralComplexity"
             ],
-            "issue": "High cyclomatic complexity: 217"
+            "issue": "High cyclomatic complexity: 227"
           },
           {
             "source_metric": "Coupling",
@@ -18784,7 +18784,7 @@
   },
   "summary": {
     "total_files": 236,
-    "avg_score": 93.93714,
+    "avg_score": 93.93733,
     "grade_distribution": {
       "A+": 126,
       "A": 82,

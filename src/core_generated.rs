@@ -406,7 +406,7 @@ impl WhisperApr {
 
     /// Transcribe audio samples
     ///
-    /// Automatically handles long audio by chunking with 2-second overlap.
+    /// Automatically handles long audio by chunking with 5-second overlap.
     /// For audio ≤30 seconds, processes in a single pass.
     /// For audio >30 seconds, uses chunked streaming with overlap.
     ///
@@ -714,6 +714,47 @@ impl WhisperApr {
     ///
     /// # Returns
     /// Merged transcription result
+    /// The audio windows `transcribe_chunked` will hand to the encoder.
+    ///
+    /// Pure and model-free ON PURPOSE. The bug this replaces produced 35s
+    /// windows for a 30s encoder, and no test could see it: the only chunking
+    /// test asserted the value of `CHUNK_SAMPLES`, which was always correct.
+    /// The defect was in what the loop DID with it. A boundary calculation
+    /// that cannot be inspected without loading a 277MB model is a boundary
+    /// calculation nothing will check.
+    ///
+    /// Every returned window satisfies `end - start <= CHUNK_SAMPLES`, which
+    /// is the encoder's hard limit (1500 mel frames = 30s).
+    #[must_use]
+    pub fn chunk_windows(audio_len: usize) -> Vec<(usize, usize)> {
+        let chunk_size = Self::CHUNK_SAMPLES;
+        let overlap = Self::OVERLAP_SAMPLES;
+        let step = chunk_size - overlap;
+        let min_tail = audio::SAMPLE_RATE as usize / 2; // 0.5s
+
+        if audio_len <= chunk_size {
+            return if audio_len == 0 {
+                Vec::new()
+            } else {
+                vec![(0, audio_len)]
+            };
+        }
+        let mut out = Vec::new();
+        let mut offset = 0;
+        while offset < audio_len {
+            let end = (offset + chunk_size).min(audio_len);
+            if end - offset < min_tail {
+                break;
+            }
+            out.push((offset, end));
+            if end == audio_len {
+                break;
+            }
+            offset += step;
+        }
+        out
+    }
+
     fn transcribe_chunked(
         &self,
         audio: &[f32],
@@ -721,7 +762,12 @@ impl WhisperApr {
     ) -> WhisperResult<TranscriptionResult> {
         let chunk_size = Self::CHUNK_SAMPLES;
         let overlap = Self::OVERLAP_SAMPLES;
-        let step = chunk_size; // Non-overlapping step for clean boundaries
+        // Advance by LESS than a chunk, so consecutive windows overlap by
+        // `overlap`. This read `step = chunk_size` with the comment
+        // "non-overlapping step for clean boundaries", which contradicted
+        // `OVERLAP_SAMPLES` existing at all: the code declared an overlap and
+        // then stepped past it.
+        let step = chunk_size - overlap;
 
         // Determine language from first chunk (for consistency)
         let language = options.language.clone().unwrap_or_else(|| "en".to_string());
@@ -733,8 +779,15 @@ impl WhisperApr {
         // Process audio in chunks
         let mut offset = 0;
         while offset < audio.len() {
-            // Calculate chunk boundaries
-            let chunk_end = (offset + chunk_size + overlap).min(audio.len());
+            // Calculate chunk boundaries.
+            //
+            // The window is `chunk_size` and NOT `chunk_size + overlap`: the
+            // encoder accepts at most 1500 mel frames (30s), and a 35s window
+            // is 1750, so every audio longer than one chunk failed with
+            // "sequence length 1750 exceeds max 1500". Overlap comes from the
+            // shorter `step` above, which is where it belongs — extending the
+            // window instead only made it too big for the model to accept.
+            let chunk_end = (offset + chunk_size).min(audio.len());
             let chunk = &audio[offset..chunk_end];
 
             // Skip very short final chunks (less than 0.5 seconds)
@@ -5429,8 +5482,85 @@ mod tests {
         // Verify chunk size matches spec: 30 seconds at 16kHz
         assert_eq!(WhisperApr::CHUNK_SAMPLES, 30 * 16000);
 
-        // Verify overlap matches spec: 2 seconds at 16kHz
+        // 5 seconds, not 2. The comment here said "2 seconds" while asserting
+        // 5 — the same disagreement the `transcribe` doc carried.
         assert_eq!(WhisperApr::OVERLAP_SAMPLES, 5 * 16000);
+    }
+
+    /// THE regression. A 145s recording failed with
+    /// "sequence length 1750 exceeds max 1500" because the loop built windows
+    /// of `chunk_size + overlap` = 35s against a 30s encoder. 1750 mel frames
+    /// is exactly 35s at 50 frames/s.
+    #[test]
+    fn no_window_exceeds_the_encoder_limit() {
+        for secs in [31, 35, 60, 145, 600, 3600] {
+            let len = secs * 16_000;
+            let windows = WhisperApr::chunk_windows(len);
+            assert!(!windows.is_empty(), "{secs}s produced no windows");
+            for (start, end) in windows {
+                assert!(
+                    end - start <= WhisperApr::CHUNK_SAMPLES,
+                    "{secs}s: window {start}..{end} is {:.1}s, over the 30s encoder limit",
+                    (end - start) as f32 / 16_000.0
+                );
+            }
+        }
+    }
+
+    /// The overlap the constant promises is actually delivered — it comes from
+    /// the step, not from a longer window. Without this the bug could be
+    /// "fixed" by dropping overlap entirely, which would break the text merge
+    /// that assumes overlap sits at each later chunk's start.
+    #[test]
+    fn consecutive_windows_overlap_by_the_declared_amount() {
+        let windows = WhisperApr::chunk_windows(145 * 16_000);
+        assert!(
+            windows.len() >= 3,
+            "expected several windows, got {}",
+            windows.len()
+        );
+        for pair in windows.windows(2) {
+            let (_, prev_end) = pair[0];
+            let (next_start, _) = pair[1];
+            if prev_end == 145 * 16_000 {
+                continue; // final window is clamped
+            }
+            assert_eq!(
+                prev_end - next_start,
+                WhisperApr::OVERLAP_SAMPLES,
+                "overlap between windows is not OVERLAP_SAMPLES"
+            );
+        }
+    }
+
+    /// Full coverage: the windows must span the audio with no gap, or speech
+    /// between two chunks is silently dropped.
+    #[test]
+    fn windows_cover_the_whole_audio_without_gaps() {
+        let len = 145 * 16_000;
+        let windows = WhisperApr::chunk_windows(len);
+        assert_eq!(windows[0].0, 0, "first window must start at 0");
+        assert_eq!(
+            windows.last().unwrap().1,
+            len,
+            "last window must reach the end"
+        );
+        for pair in windows.windows(2) {
+            assert!(
+                pair[1].0 < pair[0].1,
+                "gap between windows: {:?} then {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+    }
+
+    /// Anti-vacuity: short audio is still one pass, unchanged.
+    #[test]
+    fn short_audio_is_a_single_window() {
+        assert_eq!(WhisperApr::chunk_windows(10 * 16_000), vec![(0, 160_000)]);
+        assert_eq!(WhisperApr::chunk_windows(30 * 16_000), vec![(0, 480_000)]);
+        assert!(WhisperApr::chunk_windows(0).is_empty());
     }
 
     #[test]
