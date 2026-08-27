@@ -1,0 +1,124 @@
+metadata:
+  version: "1.0.0"
+  author: "Sovereign AI Stack"
+  description: "Long-audio window advance contract: the window loop follows what the decode covered, so no voiced span is absent from the emitted timeline"
+  crate: "whisper-apr"
+  references:
+    - "whisper.apr issue #84 (multi-second spans of speech silently dropped: 17.00->25.00 on a 52.58s recording, 36.00->50.00 plus a 4.96s tail on a 193.40s recording)"
+    - "whisper.apr issue #82/#83 (window WIDTH; this contract is about window ADVANCE and is a different failure)"
+    - "src/core_generated.rs WhisperApr::window_advance — single source of truth for the advance"
+    - "OpenAI whisper transcribe(): seek advances to the last emitted timestamp, never by a constant stride"
+
+equations:
+  window_advance:
+    formula: "advance(w, c) = if c = 0 then min(step, w) else max(min(c, step), min(floor, w))"
+    domain: "w = window samples > 0, c = covered samples in [0, w], step = CHUNK_SAMPLES - OVERLAP_SAMPLES, floor = MIN_ADVANCE_SAMPLES"
+    invariants:
+      - "c > 0 and c >= floor implies advance(w, c) <= c — the loop never starts a window past the point the previous decode reached"
+      - "advance(w, c) >= 1 — the loop always makes progress and terminates"
+      - "c >= step implies advance(w, c) = step — a window that decoded past the step keeps the declared overlap"
+      - "c = 0 implies advance(w, c) = min(step, w) — a window the decode examined and rejected is strided past, not re-examined forever"
+  decoded_coverage:
+    formula: "covered(S, w) = min(w, round(max{ seg.end : seg in S } * SAMPLE_RATE))"
+    domain: "S = segments a window's decode emitted, in window-local seconds"
+    invariants:
+      - "covered(empty, w) = 0"
+      - "covered(S, w) <= w — a hallucinated over-long segment cannot inflate the advance past its own window"
+  timeline_coverage:
+    formula: "union over windows i of [offset_i, offset_i + covered_i] = [0, audio_len]"
+    domain: "the window loop of transcribe_chunked over any audio longer than CHUNK_SAMPLES"
+    invariants:
+      - "offset_{i+1} <= offset_i + covered_i — the emitted timeline has no hole"
+      - "the last window's decoded span reaches audio_len (up to the 0.5s tail guard)"
+  segment_placement:
+    formula: "place(S, w_secs, t0) = { (max(s.start,0)+t0, min(s.end,w_secs)+t0) : s in S, s.start < w_secs }"
+    domain: "S = one window's segments in window-local seconds, w_secs = window duration, t0 = window offset"
+    invariants:
+      - "no emitted cue ends after the end of the window it was decoded from"
+  overlap_trim:
+    formula: "skip(n, o, w) = if o = 0 then 0 else min(n, floor(n * (o / w) * 0.8))"
+    domain: "n = words in this window's text, o = MEASURED overlap samples with the previous decode, w = window samples"
+    invariants:
+      - "o = 0 implies skip = 0 — words are only dropped when they were really said twice"
+      - "skip <= n"
+
+proof_obligations:
+  - type: invariant
+    property: "Advance never outruns the decode"
+    formal: "forall w, c: c >= MIN_ADVANCE_SAMPLES implies window_advance(w, c) <= c"
+    applies_to: all
+  - type: invariant
+    property: "Loop progress"
+    formal: "forall w > 0, c: window_advance(w, c) > 0"
+    applies_to: all
+  - type: invariant
+    property: "Declared overlap survives a full decode"
+    formal: "c >= step implies window_advance(w, c) = step"
+    applies_to: all
+  - type: invariant
+    property: "No hole in the emitted timeline"
+    formal: "forall i: offset_{i+1} <= offset_i + covered_i"
+    applies_to: all
+  - type: invariant
+    property: "Cues stay inside the window they came from"
+    formal: "forall s in place(S, w_secs, t0): s.end <= t0 + w_secs"
+    applies_to: all
+  - type: invariant
+    property: "Only a measured overlap is trimmed"
+    formal: "overlap_skip_words(n, 0, w) = 0"
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-CHUNKGAP-001
+    rule: "Advance never outruns the decode"
+    test: "window_advance_never_outruns_the_decode"
+    prediction: "verified"
+    if_fails: "A window that decoded 17s of its 30s advances 25s, so 8s of speech is never handed to the model again (issue #84 regression)"
+  - id: FALSIFY-CHUNKGAP-002
+    rule: "Declared overlap survives a full decode; loop terminates"
+    test: "a_full_decode_still_advances_by_the_step"
+    prediction: "verified"
+    if_fails: "Either the 5s overlap was silently deleted, or a degenerate decode makes the loop crawl one sample at a time"
+  - id: FALSIFY-CHUNKGAP-003
+    rule: "No hole in the emitted timeline"
+    test: "decoded_spans_leave_no_hole_in_the_audio"
+    prediction: "verified"
+    if_fails: "Replaying the measured coverage of the #84 recordings leaves 17.00-25.00, 36.00-50.00, or a 4.96s tail absent from the timeline"
+  - id: FALSIFY-CHUNKGAP-004
+    rule: "Only a measured overlap is trimmed"
+    test: "text_merge_trims_only_the_overlap_that_is_really_there"
+    prediction: "verified"
+    if_fails: "The flat text drops words from the head of a window that no earlier window ever reached (7 words on the 52s recording)"
+  - id: FALSIFY-CHUNKGAP-005
+    rule: "Cues stay inside the window they came from"
+    test: "segments_never_escape_their_window"
+    prediction: "verified"
+    if_fails: "A 1.38s tail window emits cues past the end of the recording (54.2s on a 52.58s file)"
+  - id: FALSIFY-CHUNKGAP-006
+    rule: "Coverage is measured, and bounded by the window"
+    test: "coverage_is_measured_from_the_segments"
+    prediction: "verified"
+    if_fails: "Coverage is assumed rather than measured, or a hallucinated over-long segment inflates the advance past its window"
+
+qa_gate:
+  id: QA-CHUNK-ADVANCE
+  name: "long-audio window advance contract"
+  min_coverage: 0.90
+  max_complexity: 10
+  required_tests:
+    - window_advance_never_outruns_the_decode
+    - a_full_decode_still_advances_by_the_step
+    - decoded_spans_leave_no_hole_in_the_audio
+    - text_merge_trims_only_the_overlap_that_is_really_there
+    - segments_never_escape_their_window
+    - coverage_is_measured_from_the_segments
+
+kani_harnesses:
+  - id: chunk-advance-kani-001
+    obligation: "Advance never outruns the decode"
+    bound: 8
+    strategy: exhaustive
+  - id: chunk-advance-kani-002
+    obligation: "Loop progress"
+    bound: 8
+    strategy: exhaustive
