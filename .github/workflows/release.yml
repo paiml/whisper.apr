@@ -35,6 +35,7 @@ jobs:
   # Draft prevents users from seeing incomplete releases.
   create-release:
     runs-on: [self-hosted, clean-room]
+    timeout-minutes: 30
     outputs:
       version: ${{ steps.parse.outputs.version }}
       crate_name: ${{ steps.parse.outputs.crate_name }}
@@ -115,6 +116,7 @@ jobs:
   verify:
     needs: [create-release, gate]
     runs-on: [self-hosted, clean-room]
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -132,6 +134,7 @@ jobs:
   publish:
     needs: [create-release, verify]
     runs-on: [self-hosted, clean-room]
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -155,6 +158,7 @@ jobs:
     needs: [create-release, publish]
     if: needs.create-release.outputs.has_binaries == 'true'
     runs-on: [self-hosted, clean-room]
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -291,6 +295,7 @@ jobs:
     needs: [create-release, publish, build-binaries]
     if: always() && needs.publish.result == 'success'
     runs-on: [self-hosted, clean-room]
+    timeout-minutes: 15
     steps:
       - name: Publish GitHub Release
         env:

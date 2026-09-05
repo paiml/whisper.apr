@@ -12,6 +12,7 @@ jobs:
   check:
     name: Check for new commits
     runs-on: ubuntu-latest
+    timeout-minutes: 21
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
       sha: ${{ steps.check.outputs.sha }}
@@ -45,6 +46,7 @@ jobs:
     needs: check
     if: needs.check.outputs.should_build == 'true'
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 34
     strategy:
       fail-fast: false
       matrix:
@@ -149,6 +151,7 @@ jobs:
     name: Release
     needs: [check, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 21
     steps:
       - uses: actions/checkout@v6
 
