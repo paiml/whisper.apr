@@ -29,6 +29,7 @@ jobs:
   # The reusable workflow produces "ci / gate" but rulesets need exact match on "gate".
   gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 21
     needs: [ci]
     if: always()
     steps:
