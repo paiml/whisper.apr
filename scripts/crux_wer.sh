@@ -60,10 +60,17 @@ while IFS=$'\t' read -r id path want; do
     echo "crux_wer: REFUSED $id: sha256 $got != manifest $want" >&2; exit 2
   fi
   c1="$out/text/$id.cpp1.txt"; c2="$out/text/$id.cpp2.txt"; a="$out/text/$id.apr.txt"
-  "$cpp" -m "$cpp_model" -f "$here/$path" -bs 1 -bo 1 -nf -nt -l en --no-prints > "$c1" 2>/dev/null
-  "$cpp" -m "$cpp_model" -f "$here/$path" -bs 1 -bo 1 -nf -nt -l en --no-prints > "$c2" 2>/dev/null
-  "$apr" transcribe -f "$here/$path" --model-path "$apr_model" --beam-size 1 --best-of 1 \
-    --temperature 0 --no-fallback --no-timestamps -l en -o txt --no-gpu > "$a" 2>/dev/null
+  err="$out/text/$id.err"
+  # An engine that fails is a REFUSAL with its own stderr, never a silent empty transcript.
+  for c in "$c1" "$c2"; do
+    if ! "$cpp" -m "$cpp_model" -f "$here/$path" -bs 1 -bo 1 -nf -nt -l en --no-prints > "$c" 2> "$err"; then
+      cat "$err" >&2; echo "crux_wer: REFUSED $id: whisper.cpp failed" >&2; exit 2
+    fi
+  done
+  if ! "$apr" transcribe -f "$here/$path" --model-path "$apr_model" --beam-size 1 --best-of 1 \
+      --temperature 0 --no-fallback --no-timestamps -l en -o txt --no-gpu > "$a" 2> "$err"; then
+    cat "$err" >&2; echo "crux_wer: REFUSED $id: whisper-apr failed" >&2; exit 2
+  fi
   oracle=$(python3 "$wer_py" "$c1" "$c2")
   w=$(python3 "$wer_py" "$c1" "$a")
   if [ "$oracle" != "0.000000" ]; then oracle_bad=1; fi
