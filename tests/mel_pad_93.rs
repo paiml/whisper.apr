@@ -3,6 +3,8 @@
 //! Before the fix a 1.5 s clip gave 150 mel frames (12,000 values) instead of
 //! 3000 (240,000), the decoder saw no trailing silence, and it kept generating.
 
+#![allow(clippy::expect_used)]
+
 use whisper_apr::WhisperApr;
 
 const N_MELS: usize = 80;
