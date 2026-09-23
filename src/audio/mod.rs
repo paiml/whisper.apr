@@ -9,6 +9,7 @@ pub mod decode;
 #[path = "mel_filterbank_data_generated.rs"]
 #[allow(clippy::all)]
 pub mod mel_filterbank_data;
+mod pad;
 mod resampler;
 mod ring_buffer;
 mod streaming;
@@ -17,6 +18,7 @@ pub mod wav;
 pub use aprender::audio::{MelConfig, MelFilterbank};
 pub use batch::{split_into_chunks, AudioBatch, BatchMelResult, BatchPreprocessor};
 pub use conv_stem::{ConvStem, GroupNorm, CONV_STEM_TOTAL_STRIDE};
+pub use pad::pad_or_trim;
 pub use resampler::{Resampler, SincResampler};
 pub use ring_buffer::RingBuffer;
 pub use streaming::{
