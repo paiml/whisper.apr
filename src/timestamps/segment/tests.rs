@@ -63,10 +63,10 @@ fn test_is_control_token() {
 
 #[test]
 fn test_is_language_token() {
-    assert!(is_language_token(special_tokens::LANG_BASE)); // English
-    assert!(is_language_token(special_tokens::LANG_BASE + 50)); // Some language
-    assert!(!is_language_token(special_tokens::SOT));
-    assert!(!is_language_token(special_tokens::TRANSCRIBE));
+    assert!(V2.is_language_token(special_tokens::LANG_BASE)); // English
+    assert!(V2.is_language_token(special_tokens::LANG_BASE + 50)); // Some language
+    assert!(!V2.is_language_token(special_tokens::SOT));
+    assert!(!V2.is_language_token(special_tokens::TRANSCRIBE));
 }
 
 // =========================================================================
@@ -765,4 +765,25 @@ fn test_segment_extractor_multiple_finalize() {
     let segments = extract_segments(&tokens, decode);
     // Only segments with actual text should be included
     assert_eq!(segments.len(), 2);
+}
+
+/// On large-v3/turbo (51866) `<|0.00|>` is 50365 and 50364 is
+/// `<|notimestamps|>`: segments read the v3 table (issue #108).
+#[test]
+fn v3_segments_use_the_v3_timestamp_base() {
+    let v3 = SpecialTokens::multilingual_v3();
+    let tokens = [50_258, 50_259, 50_360, 50_365, 100, 101, 50_415, 50_257];
+    let decode = |ts: &[u32]| Some(ts.iter().map(|t| format!("w{t}")).collect::<String>());
+    let segments = extract_segments_with(&v3, &tokens, decode);
+    assert_eq!(segments.len(), 1);
+    assert!((segments[0].start - 0.0).abs() < 1e-6);
+    assert!((segments[0].end - 1.0).abs() < 1e-6);
+    assert_eq!(segments[0].text, "w100w101");
+
+    assert!(!has_timestamps_with(&v3, &[50_258, 50_259, 50_360, 50_364]));
+    assert!(has_timestamps_with(&v3, &[50_365]));
+    assert_eq!(seconds_to_timestamp_token_with(&v3, 0.0), 50_365);
+    assert_eq!(seconds_to_timestamp_token_with(&v3, 1.0), 50_415);
+    // The v2 plain functions are unchanged.
+    assert_eq!(seconds_to_timestamp_token(0.0), 50_364);
 }

@@ -19,11 +19,16 @@ mod tests;
 ///
 /// These tokens control the decoder's behavior during transcription.
 ///
-/// IMPORTANT: Whisper has two tokenizer variants:
-/// - English-only models (tiny.en, base.en, etc.): GPT-2 tokenizer, EOT=50256
-/// - Multilingual models (tiny, base, etc.): Extended tokenizer, EOT=50257
+/// IMPORTANT: Whisper has three special-token layouts, told apart by the
+/// vocabulary size:
+/// - English-only models (tiny.en .. medium.en), 51864 tokens: EOT=50256
+/// - Multilingual v1/v2 models, 51865 tokens: EOT=50257, `<|0.00|>`=50364
+/// - large-v3 and large-v3-turbo, 51866 tokens: a 100th language moves every
+///   id from translate on up by one (`<|transcribe|>`=50360, `<|0.00|>`=50365)
 ///
-/// Use `SpecialTokens::for_vocab_size(n_vocab)` to get correct token IDs.
+/// Use [`SpecialTokens::from_vocab_size`] (or `try_for_vocab_size`) for every
+/// id. The plain constants and free functions below are the v2 (51865)
+/// layout only and are kept for the public API; they are wrong on v3.
 pub mod special_tokens {
     /// Vocabulary size threshold for multilingual models
     /// Models with vocab >= 51865 are multilingual
@@ -54,8 +59,9 @@ pub mod special_tokens {
     pub const NO_TIMESTAMPS_MULTILINGUAL: u32 = 50363;
 
     // =========================================================================
-    // Legacy constants (for backwards compatibility, assume multilingual)
-    // Use SpecialTokens::for_vocab_size() for new code
+    // Legacy constants: the multilingual v1/v2 (51865) layout ONLY. They are
+    // wrong on large-v3/turbo (51866) and on English-only models; kept for
+    // the public API. Use SpecialTokens::from_vocab_size() for every id.
     // =========================================================================
 
     /// End of text token - signals end of transcription
@@ -80,72 +86,142 @@ pub mod special_tokens {
     /// Begin timestamps token / Timestamp token base
     pub const TIMESTAMP_BASE: u32 = 50364;
 
-    /// Dynamic special token lookup based on vocabulary size
+    /// Vocabulary size of the English-only models (tiny.en .. medium.en).
+    pub const ENGLISH_ONLY_VOCAB: usize = 51864;
+    /// Vocabulary size of the multilingual v1/v2 models (99 languages).
+    pub const MULTILINGUAL_V2_VOCAB: usize = 51865;
+    /// Vocabulary size of large-v3 and large-v3-turbo (100 languages: `<|yue|>`
+    /// was added, which moves every special id after the language block up
+    /// by one).
+    pub const MULTILINGUAL_V3_VOCAB: usize = 51866;
+
+    /// Every special token id of one Whisper vocabulary — the single source
+    /// for special ids (issue #108). Build it with [`SpecialTokens::from_vocab_size`]
+    /// (strict) or [`SpecialTokens::try_for_vocab_size`]; never mix it with
+    /// the v2-only legacy constants above.
     ///
-    /// Whisper has two tokenizer variants with different token IDs:
-    /// - English-only models use GPT-2 tokenizer (EOT=50256)
-    /// - Multilingual models use extended tokenizer (EOT=50257)
+    /// | id | 51864 (.en) | 51865 (v1/v2) | 51866 (v3, turbo) |
+    /// |---|---|---|---|
+    /// | eot | 50256 | 50257 | 50257 |
+    /// | sot | 50257 | 50258 | 50258 |
+    /// | lang_base | 50258 | 50259 | 50259 |
+    /// | translate | 50357 | 50358 | 50359 |
+    /// | transcribe | 50358 | 50359 | 50360 |
+    /// | start_of_lm | 50359 | 50360 | 50361 |
+    /// | prev | 50360 | 50361 | 50362 |
+    /// | no_speech | 50361 | 50362 | 50363 |
+    /// | no_timestamps | 50362 | 50363 | 50364 |
+    /// | timestamp_base | 50363 | 50364 | 50365 |
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct SpecialTokens {
         /// End of text token
         pub eot: u32,
         /// Start of transcript token
         pub sot: u32,
-        /// Language token base
+        /// Language token base (`<|en|>`)
         pub lang_base: u32,
+        /// Number of language tokens (99, or 100 on v3)
+        pub n_languages: u32,
+        /// Translate task token
+        pub translate: u32,
         /// Transcribe task token
         pub transcribe: u32,
+        /// `<|startoflm|>` (the tinydiarize speaker-turn token on v2)
+        pub start_of_lm: u32,
+        /// `<|startofprev|>`: precedes the prompt tokens
+        pub prev: u32,
+        /// `<|nospeech|>` (`<|nocaptions|>` before v3)
+        pub no_speech: u32,
         /// No timestamps token
         pub no_timestamps: u32,
-        /// Timestamp base token
+        /// Timestamp base token (`<|0.00|>`)
         pub timestamp_base: u32,
         /// Whether this is a multilingual model
         pub is_multilingual: bool,
     }
 
     impl SpecialTokens {
-        /// Create special tokens for the given vocabulary size
+        /// The ids laid out after `eot` exactly as Whisper's tokenizer does:
+        /// sot, the language block, then translate .. notimestamps, then the
+        /// 1501 timestamps.
+        const fn layout(eot: u32, n_languages: u32, is_multilingual: bool) -> Self {
+            let lang_base = eot + 2;
+            let translate = lang_base + n_languages;
+            Self {
+                eot,
+                sot: eot + 1,
+                lang_base,
+                n_languages,
+                translate,
+                transcribe: translate + 1,
+                start_of_lm: translate + 2,
+                prev: translate + 3,
+                no_speech: translate + 4,
+                no_timestamps: translate + 5,
+                timestamp_base: translate + 6,
+                is_multilingual,
+            }
+        }
+
+        /// The special ids of a known Whisper vocabulary size (51864, 51865
+        /// or 51866), or `None` for any other size.
+        #[must_use]
+        #[provable_contracts_macros::contract("whisper-special-tokens-v1", equation = "id_table")]
+        pub const fn from_vocab_size(n_vocab: usize) -> Option<Self> {
+            match n_vocab {
+                ENGLISH_ONLY_VOCAB => Some(Self::english_only()),
+                MULTILINGUAL_V2_VOCAB => Some(Self::multilingual()),
+                MULTILINGUAL_V3_VOCAB => Some(Self::multilingual_v3()),
+                _ => None,
+            }
+        }
+
+        /// [`SpecialTokens::from_vocab_size`], refusing an unknown size.
         ///
-        /// # Arguments
-        /// * `n_vocab` - Vocabulary size of the model
+        /// # Errors
+        /// `WhisperError::Model` when `n_vocab` is not 51864, 51865 or 51866.
+        #[provable_contracts_macros::contract("whisper-special-tokens-v1", equation = "refusal")]
+        pub fn try_for_vocab_size(n_vocab: usize) -> crate::error::WhisperResult<Self> {
+            Self::from_vocab_size(n_vocab).ok_or_else(|| {
+                crate::error::WhisperError::Model(format!(
+                    "unsupported Whisper vocabulary size {n_vocab}: expected \
+                     {ENGLISH_ONLY_VOCAB} (English-only), {MULTILINGUAL_V2_VOCAB} \
+                     (multilingual v1/v2) or {MULTILINGUAL_V3_VOCAB} (large-v3/turbo)"
+                ))
+            })
+        }
+
+        /// Special tokens for an already validated vocabulary size.
         ///
-        /// # Returns
-        /// Special tokens configured for the model type
+        /// Exact for 51864, 51865 and 51866. Model loading refuses any other
+        /// size, so another size only reaches this from an in-memory test
+        /// config; it then falls back to the v2 layout (>= 51865) or the
+        /// English-only layout.
         #[must_use]
         pub fn for_vocab_size(n_vocab: usize) -> Self {
-            if n_vocab >= MULTILINGUAL_VOCAB_THRESHOLD {
+            Self::from_vocab_size(n_vocab).unwrap_or(if n_vocab >= MULTILINGUAL_VOCAB_THRESHOLD {
                 Self::multilingual()
             } else {
                 Self::english_only()
-            }
+            })
         }
 
-        /// Special tokens for multilingual models
+        /// Special tokens for multilingual v1/v2 models (51865 tokens)
         #[must_use]
         pub const fn multilingual() -> Self {
-            Self {
-                eot: EOT_MULTILINGUAL,
-                sot: SOT_MULTILINGUAL,
-                lang_base: LANG_BASE_MULTILINGUAL,
-                transcribe: TRANSCRIBE_MULTILINGUAL,
-                no_timestamps: NO_TIMESTAMPS_MULTILINGUAL,
-                timestamp_base: 50364,
-                is_multilingual: true,
-            }
+            Self::layout(EOT_MULTILINGUAL, 99, true)
         }
 
-        /// Special tokens for English-only models
+        /// Special tokens for large-v3 and large-v3-turbo (51866 tokens)
+        #[must_use]
+        pub const fn multilingual_v3() -> Self {
+            Self::layout(EOT_MULTILINGUAL, 100, true)
+        }
+
+        /// Special tokens for English-only models (51864 tokens)
         #[must_use]
         pub const fn english_only() -> Self {
-            Self {
-                eot: EOT_ENGLISH,
-                sot: SOT_ENGLISH,
-                lang_base: 50258, // Same offset structure
-                transcribe: 50358,
-                no_timestamps: 50362,
-                timestamp_base: 50363,
-                is_multilingual: false,
-            }
+            Self::layout(EOT_ENGLISH, 99, false)
         }
 
         /// Get initial tokens for transcription
@@ -160,6 +236,58 @@ pub mod special_tokens {
                 self.no_timestamps,
             ]
         }
+
+        /// Language token for a language code, if this vocabulary has it.
+        #[must_use]
+        pub fn language_token(&self, lang_code: &str) -> Option<u32> {
+            language_offset(lang_code)
+                .filter(|&offset| offset < self.n_languages)
+                .map(|offset| self.lang_base + offset)
+        }
+
+        /// Whether `token` is a language token.
+        #[must_use]
+        pub const fn is_language_token(&self, token: u32) -> bool {
+            token >= self.lang_base && token < self.translate
+        }
+
+        /// Whether `token` is a timestamp token.
+        #[must_use]
+        pub const fn is_timestamp(&self, token: u32) -> bool {
+            token >= self.timestamp_base
+        }
+
+        /// Timestamp token to seconds (20ms steps).
+        #[must_use]
+        pub fn timestamp_to_seconds(&self, token: u32) -> Option<f32> {
+            self.is_timestamp(token)
+                .then(|| (token - self.timestamp_base) as f32 * 0.02)
+        }
+
+        /// Whether `token` is a control token: eot, sot, a language, a task
+        /// token, `<|startoflm|>`, `<|startofprev|>`, `<|nospeech|>` or
+        /// `<|notimestamps|>` — every special id below the timestamps.
+        #[must_use]
+        pub const fn is_control_token(&self, token: u32) -> bool {
+            token >= self.eot && token < self.timestamp_base
+        }
+
+        /// The token's name, for the special ids this table names.
+        #[must_use]
+        pub fn name_of(&self, token: u32) -> Option<&'static str> {
+            let names = [
+                (self.eot, "<|endoftext|>"),
+                (self.sot, "<|startoftranscript|>"),
+                (self.translate, "<|translate|>"),
+                (self.transcribe, "<|transcribe|>"),
+                (self.start_of_lm, "<|startoflm|>"),
+                (self.prev, "<|startofprev|>"),
+                (self.no_speech, "<|nospeech|>"),
+                (self.no_timestamps, "<|notimestamps|>"),
+                (self.timestamp_base, "<|0.00|>"),
+            ];
+            names.iter().find(|(id, _)| *id == token).map(|(_, n)| *n)
+        }
     }
 
     impl Default for SpecialTokens {
@@ -169,6 +297,8 @@ pub mod special_tokens {
     }
 
     /// Get language token ID for a language code
+    ///
+    /// v2 (51865) layout only; use [`SpecialTokens::language_token`].
     ///
     /// # Arguments
     /// * `lang_code` - Two-letter ISO 639-1 language code (e.g., "en", "es", "ja")
@@ -181,6 +311,8 @@ pub mod special_tokens {
     }
 
     /// Check if a token ID is a timestamp token
+    ///
+    /// v2 (51865) layout only; use [`SpecialTokens::is_timestamp`].
     #[must_use]
     pub const fn is_timestamp(token_id: u32) -> bool {
         token_id >= TIMESTAMP_BASE
@@ -189,6 +321,8 @@ pub mod special_tokens {
     /// Convert timestamp token to time in seconds
     ///
     /// Timestamps are in 20ms increments (50 per second)
+    ///
+    /// v2 (51865) layout only; use [`SpecialTokens::timestamp_to_seconds`].
     #[must_use]
     pub fn timestamp_to_seconds(token_id: u32) -> Option<f32> {
         if token_id >= TIMESTAMP_BASE {

@@ -565,20 +565,7 @@ impl WhisperApr {
         let text = self.tokenizer.decode(&tokens)?;
 
         // 7. Extract segments with timestamps (fallback: sentence-split for full audio)
-        let segments = if timestamps::has_timestamps(&tokens) {
-            timestamps::extract_segments(&tokens, |ts| self.tokenizer.decode(ts).ok())
-        } else if !text.trim().is_empty() {
-            let duration = audio.len() as f32 / audio::SAMPLE_RATE as f32;
-            let single = vec![Segment {
-                start: 0.0,
-                end: duration,
-                text: text.clone(),
-                tokens: tokens.clone(),
-            }];
-            timestamps::split_long_segments(&single, Self::MAX_SUBTITLE_SECS)
-        } else {
-            Vec::new()
-        };
+        let segments = self.segments_from_tokens(&tokens, &text, audio.len());
 
         // 8. Build result with profiling from BrickProfiler (sovereign tooling)
         #[cfg(feature = "std")]
@@ -700,6 +687,27 @@ impl WhisperApr {
             segments,
             profiling,
         })
+    }
+
+    /// A window's segments: from its timestamps when it has them, otherwise
+    /// the whole window's text split at sentence boundaries.
+    fn segments_from_tokens(&self, tokens: &[u32], text: &str, audio_len: usize) -> Vec<Segment> {
+        let specials = self.specials();
+        if timestamps::has_timestamps_with(&specials, tokens) {
+            return timestamps::extract_segments_with(&specials, tokens, |ts| {
+                self.tokenizer.decode(ts).ok()
+            });
+        }
+        if text.trim().is_empty() {
+            return Vec::new();
+        }
+        let single = vec![Segment {
+            start: 0.0,
+            end: audio_len as f32 / audio::SAMPLE_RATE as f32,
+            text: text.to_string(),
+            tokens: tokens.to_vec(),
+        }];
+        timestamps::split_long_segments(&single, Self::MAX_SUBTITLE_SECS)
     }
 
     /// Transcribe long audio using chunked streaming with overlap
@@ -1054,12 +1062,20 @@ impl WhisperApr {
         self.decoder.forward_probed(tokens, &audio_features, probe)
     }
 
+    /// Every special token id of this model's vocabulary (issue #108).
+    ///
+    /// Exact for 51864, 51865 and 51866 tokens; `load_from_apr` refuses any
+    /// other Whisper vocabulary size.
+    fn specials(&self) -> tokenizer::special_tokens::SpecialTokens {
+        tokenizer::special_tokens::SpecialTokens::for_vocab_size(self.config.n_vocab as usize)
+    }
+
     /// Get the end-of-transcription token ID for the current model
     fn eot_token(&self) -> u32 {
         if self.config.model_family == format::ModelFamily::Moonshine {
             2 // SentencePiece EOS token
         } else {
-            tokenizer::special_tokens::EOT
+            self.specials().eot
         }
     }
 
@@ -1125,10 +1141,9 @@ impl WhisperApr {
         }
 
         // Whisper: SOT + language + task tokens
-        use tokenizer::special_tokens::{self, SpecialTokens};
-
-        // Get correct special tokens for this model's vocabulary size
-        let specials = SpecialTokens::for_vocab_size(self.config.n_vocab as usize);
+        // Every id from this model's vocabulary size: on large-v3/turbo
+        // (51866) the task ids are one higher than on v2 (issue #108).
+        let specials = self.specials();
 
         let mut tokens = vec![specials.sot];
 
@@ -1136,14 +1151,17 @@ impl WhisperApr {
         // For multilingual models, language tokens start at lang_base
         // For English-only models, we skip the language token
         if specials.is_multilingual {
-            let lang_offset = special_tokens::language_offset(language).unwrap_or(0);
-            tokens.push(specials.lang_base + lang_offset);
+            tokens.push(
+                specials
+                    .language_token(language)
+                    .unwrap_or(specials.lang_base),
+            );
         }
 
         // Add task token
         match task {
             Task::Transcribe => tokens.push(specials.transcribe),
-            Task::Translate => tokens.push(special_tokens::TRANSLATE),
+            Task::Translate => tokens.push(specials.translate),
         }
 
         // Timestamp mode: do NOT push no_timestamps token
@@ -1180,7 +1198,7 @@ impl WhisperApr {
 
         // Whisper convention: <|startofprev|> + prompt_tokens + <|startoftranscript|> + ...
         let mut prefix = Vec::with_capacity(1 + truncated.len() + tokens.len());
-        prefix.push(tokenizer::special_tokens::PREV);
+        prefix.push(self.specials().prev);
         prefix.extend_from_slice(truncated);
         prefix.append(&mut tokens);
         prefix
@@ -1226,7 +1244,7 @@ impl WhisperApr {
 
         // 4. Detect language
         let detector = detection::LanguageDetector::new();
-        detector.detect(logits_fn)
+        detector.detect_with(&self.specials(), logits_fn)
     }
 
     /// Decode tokens from audio features
@@ -1250,7 +1268,7 @@ impl WhisperApr {
 
         // Create Whisper token suppressor using realizar's LogitProcessor architecture
         // This provides composable, reusable pre-sampling transforms
-        let suppressor = inference::WhisperTokenSuppressor::new()
+        let suppressor = inference::WhisperTokenSuppressor::for_specials(&self.specials())
             .with_timestamp_suppression(false)
             .with_vocab_size(n_vocab);
 
@@ -1523,6 +1541,11 @@ impl WhisperApr {
         let reader = format::AprV2ReaderRef::from_bytes(data)
             .map_err(|e| error::WhisperError::Format(e.to_string()))?;
         let config = format::metadata_to_model_config(reader.metadata());
+        // Every special id is derived from the vocabulary size; refuse a
+        // Whisper vocabulary whose ids are unknown (issue #108).
+        if config.model_family == format::ModelFamily::Whisper {
+            tokenizer::special_tokens::SpecialTokens::try_for_vocab_size(config.n_vocab as usize)?;
+        }
         tracker.next_phase();
 
         let is_f16 = reader
@@ -2581,8 +2604,10 @@ impl WhisperApr {
             let tokens = self.decode(&audio_features, &initial_tokens, &options)?;
 
             // Extract segments
-            let segments = if timestamps::has_timestamps(&tokens) {
-                timestamps::extract_segments(&tokens, |ts| self.tokenizer.decode(ts).ok())
+            let segments = if timestamps::has_timestamps_with(&self.specials(), &tokens) {
+                timestamps::extract_segments_with(&self.specials(), &tokens, |ts| {
+                    self.tokenizer.decode(ts).ok()
+                })
             } else {
                 Vec::new()
             };
@@ -2659,8 +2684,10 @@ impl WhisperApr {
             let initial_tokens = self.get_initial_tokens(&language, options.task);
             let tokens = self.decode(features, &initial_tokens, &options)?;
 
-            let segments = if timestamps::has_timestamps(&tokens) {
-                timestamps::extract_segments(&tokens, |ts| self.tokenizer.decode(ts).ok())
+            let segments = if timestamps::has_timestamps_with(&self.specials(), &tokens) {
+                timestamps::extract_segments_with(&self.specials(), &tokens, |ts| {
+                    self.tokenizer.decode(ts).ok()
+                })
             } else {
                 Vec::new()
             };
@@ -3623,6 +3650,66 @@ mod tests {
 
         let whisper = result.expect("should load");
         assert_eq!(whisper.model_type(), ModelType::Tiny);
+    }
+
+    /// A Whisper .apr whose metadata declares `n_vocab` tokens.
+    fn test_apr_with_vocab(n_vocab: u32) -> Vec<u8> {
+        let config = model::ModelConfig {
+            n_vocab,
+            ..model::ModelConfig::tiny()
+        };
+        let mut writer = format::AprV2Writer::new(format::build_whisper_metadata(&config, "test"));
+        writer.add_f32_tensor("test.weight", vec![2, 2], &[1.0, 2.0, 3.0, 4.0]);
+        writer.write().expect("in-memory apr write")
+    }
+
+    /// FALSIFY-SPECIAL-005 at model load: a Whisper vocabulary whose special
+    /// ids are unknown is refused, and the three known sizes load (#108).
+    #[test]
+    fn loading_an_unknown_whisper_vocab_size_is_refused() {
+        for n_vocab in [50_000, 51_863, 51_867] {
+            let err = WhisperApr::load_from_apr(&test_apr_with_vocab(n_vocab))
+                .err()
+                .expect("an unknown vocabulary size must be refused");
+            assert!(
+                err.to_string()
+                    .contains(&format!("unsupported Whisper vocabulary size {n_vocab}")),
+                "{err}"
+            );
+        }
+        let v3 = WhisperApr::load_from_apr(&test_apr_with_vocab(51_866)).expect("51866 loads");
+        assert_eq!(v3.specials().transcribe, 50_360);
+    }
+
+    /// Every prompt id of a large-v3/turbo (51866) model comes from the v3
+    /// layout: transcribe 50360, translate 50359, PREV 50362 (#108); a v2
+    /// model keeps the old ids.
+    #[test]
+    fn a_v3_model_builds_its_prompt_from_v3_ids() {
+        let v3 = WhisperApr::from_config(model::ModelConfig {
+            n_vocab: 51_866,
+            ..model::ModelConfig::tiny()
+        });
+        assert_eq!(
+            v3.get_initial_tokens("en", Task::Transcribe),
+            vec![50_258, 50_259, 50_360]
+        );
+        assert_eq!(
+            v3.get_initial_tokens("de", Task::Translate),
+            vec![50_258, 50_261, 50_359]
+        );
+        let prompted = v3.build_initial_tokens("en", Task::Transcribe, Some("hi"));
+        assert_eq!(prompted.first(), Some(&50_362));
+        assert_eq!(prompted[prompted.len() - 3..], [50_258, 50_259, 50_360]);
+        assert_eq!(v3.eot_token(), 50_257);
+
+        let v2 = WhisperApr::tiny();
+        assert_eq!(
+            v2.get_initial_tokens("en", Task::Transcribe),
+            vec![50_258, 50_259, 50_359]
+        );
+        let prompted = v2.build_initial_tokens("en", Task::Transcribe, Some("hi"));
+        assert_eq!(prompted.first(), Some(&50_361));
     }
 
     #[test]

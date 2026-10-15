@@ -17,7 +17,7 @@
 //! Or with timestamps:
 //! `<|startoftranscript|> <|lang|> <|task|> <|0.00|> text... <|2.50|> <|2.50|> more... <|5.00|> <|endoftext|>`
 
-use crate::tokenizer::special_tokens;
+use crate::tokenizer::special_tokens::SpecialTokens;
 use crate::Segment;
 
 #[cfg(test)]
@@ -112,7 +112,13 @@ impl SegmentExtractor {
     }
 }
 
+/// The v2 (51865) layout the plain functions below assume.
+const V2: SpecialTokens = SpecialTokens::multilingual();
+
 /// Extract segments with timestamps from token sequence
+///
+/// v2 (51865) layout only; use [`extract_segments_with`] with the model's
+/// [`SpecialTokens`].
 ///
 /// # Arguments
 /// * `tokens` - Token sequence from decoder
@@ -120,19 +126,31 @@ impl SegmentExtractor {
 ///
 /// # Returns
 /// Vector of segments with timestamps and text
-pub fn extract_segments<F>(tokens: &[u32], mut tokenizer_decode: F) -> Vec<Segment>
+pub fn extract_segments<F>(tokens: &[u32], tokenizer_decode: F) -> Vec<Segment>
+where
+    F: FnMut(&[u32]) -> Option<String>,
+{
+    extract_segments_with(&V2, tokens, tokenizer_decode)
+}
+
+/// Extract segments with timestamps from a token sequence, reading the
+/// special ids from `specials` (issue #108).
+pub fn extract_segments_with<F>(
+    specials: &SpecialTokens,
+    tokens: &[u32],
+    mut tokenizer_decode: F,
+) -> Vec<Segment>
 where
     F: FnMut(&[u32]) -> Option<String>,
 {
     let mut extractor = SegmentExtractor::new();
 
     for &token in tokens {
-        if is_control_token(token) {
+        if specials.is_control_token(token) {
             continue;
         }
 
-        if special_tokens::is_timestamp(token) {
-            let time = special_tokens::timestamp_to_seconds(token).unwrap_or(0.0);
+        if let Some(time) = specials.timestamp_to_seconds(token) {
             extractor.handle_timestamp(time, &mut tokenizer_decode);
         } else {
             extractor.current_tokens.push(token);
@@ -144,41 +162,37 @@ where
 }
 
 /// Check if a token is a control token (SOT, EOT, LANG, TASK, etc.)
+///
+/// v2 (51865) layout only; use [`SpecialTokens::is_control_token`].
+#[must_use]
 pub fn is_control_token(token: u32) -> bool {
-    token == special_tokens::SOT
-        || token == special_tokens::EOT
-        || token == special_tokens::TRANSCRIBE
-        || token == special_tokens::TRANSLATE
-        || token == special_tokens::NO_TIMESTAMPS
-        || token == special_tokens::NO_SPEECH
-        || is_language_token(token)
-}
-
-/// Check if a token is a language token
-fn is_language_token(token: u32) -> bool {
-    // Language tokens are in range [LANG_BASE, TRANSCRIBE)
-    (special_tokens::LANG_BASE..special_tokens::TRANSCRIBE).contains(&token)
+    V2.is_control_token(token)
 }
 
 /// Check if a token is a timestamp token
+///
+/// v2 (51865) layout only; use [`SpecialTokens::is_timestamp`].
 #[must_use]
 pub fn is_timestamp(token: u32) -> bool {
-    special_tokens::is_timestamp(token)
+    V2.is_timestamp(token)
 }
 
 /// Convert timestamp token to seconds
+///
+/// v2 (51865) layout only; use [`SpecialTokens::timestamp_to_seconds`].
 #[must_use]
 pub fn timestamp_to_seconds(token: u32) -> Option<f32> {
-    special_tokens::timestamp_to_seconds(token)
+    V2.timestamp_to_seconds(token)
 }
 
 /// Parse timestamps from a token sequence (without decoding text)
 ///
-/// Returns pairs of (start_time, end_time) for each segment.
+/// Returns pairs of (start_time, end_time) for each segment. v2 (51865)
+/// layout only.
 pub fn parse_timestamp_pairs(tokens: &[u32]) -> Vec<(f32, f32)> {
     let timestamps: Vec<f32> = tokens
         .iter()
-        .filter_map(|&token| special_tokens::timestamp_to_seconds(token))
+        .filter_map(|&token| V2.timestamp_to_seconds(token))
         .collect();
 
     timestamps
@@ -189,36 +203,54 @@ pub fn parse_timestamp_pairs(tokens: &[u32]) -> Vec<(f32, f32)> {
 }
 
 /// Convert seconds to timestamp token
+///
+/// v2 (51865) layout only; use [`seconds_to_timestamp_token_with`].
 #[must_use]
 pub fn seconds_to_timestamp_token(seconds: f32) -> u32 {
+    seconds_to_timestamp_token_with(&V2, seconds)
+}
+
+/// Convert seconds to the timestamp token of `specials`' vocabulary.
+#[must_use]
+pub fn seconds_to_timestamp_token_with(specials: &SpecialTokens, seconds: f32) -> u32 {
     let clamped = seconds.clamp(0.0, MAX_TIMESTAMP_SECONDS);
     let offset = (clamped / TIMESTAMP_RESOLUTION).round() as u32;
-    special_tokens::TIMESTAMP_BASE + offset.min(MAX_TIMESTAMP_TOKENS)
+    specials.timestamp_base + offset.min(MAX_TIMESTAMP_TOKENS)
 }
 
 /// Get all timestamp tokens in a token sequence
+///
+/// v2 (51865) layout only.
 pub fn get_timestamps(tokens: &[u32]) -> Vec<(usize, f32)> {
     tokens
         .iter()
         .enumerate()
-        .filter_map(|(idx, &token)| {
-            special_tokens::timestamp_to_seconds(token).map(|time| (idx, time))
-        })
+        .filter_map(|(idx, &token)| V2.timestamp_to_seconds(token).map(|time| (idx, time)))
         .collect()
 }
 
 /// Check if token sequence has timestamps
+///
+/// v2 (51865) layout only; use [`has_timestamps_with`].
 #[must_use]
 pub fn has_timestamps(tokens: &[u32]) -> bool {
-    tokens.iter().any(|&t| special_tokens::is_timestamp(t))
+    has_timestamps_with(&V2, tokens)
+}
+
+/// Check if a token sequence has timestamps of `specials`' vocabulary.
+#[must_use]
+pub fn has_timestamps_with(specials: &SpecialTokens, tokens: &[u32]) -> bool {
+    tokens.iter().any(|&t| specials.is_timestamp(t))
 }
 
 /// Count text tokens (non-special, non-timestamp)
+///
+/// v2 (51865) layout only.
 #[must_use]
 pub fn count_text_tokens(tokens: &[u32]) -> usize {
     tokens
         .iter()
-        .filter(|&&t| !special_tokens::is_timestamp(t) && !is_control_token(t))
+        .filter(|&&t| !V2.is_timestamp(t) && !V2.is_control_token(t))
         .count()
 }
 
