@@ -3504,12 +3504,7 @@ impl WhisperCuda {
 
             let chunk_options = TranscribeOptions {
                 language: Some(language.clone()),
-                task: options.task,
-                strategy: options.strategy,
-                word_timestamps: options.word_timestamps,
-                profile: options.profile,
-                prompt: options.prompt.clone(),
-                hotwords: options.hotwords.clone(),
+                ..options.clone()
             };
 
             let chunk_result = self.transcribe_gpu_single_chunk(chunk, &chunk_options)?;

@@ -27,6 +27,9 @@ pub struct GreedyDecoder {
     max_tokens: usize,
     /// Temperature for logit scaling (0.0 = argmax)
     temperature: f32,
+    /// Seed of a real sampler for temperature > 0 (issue #107); `None`
+    /// keeps the legacy argmax of the scaled distribution.
+    seed: Option<u64>,
 }
 
 impl GreedyDecoder {
@@ -36,6 +39,7 @@ impl GreedyDecoder {
         Self {
             max_tokens,
             temperature: 0.0,
+            seed: None,
         }
     }
 
@@ -46,6 +50,14 @@ impl GreedyDecoder {
     #[must_use]
     pub const fn with_temperature(mut self, temperature: f32) -> Self {
         self.temperature = temperature;
+        self
+    }
+
+    /// Sample from `softmax(logits / temperature)` with a generator seeded
+    /// by `seed`, so a decode at temperature > 0 is random yet reproducible.
+    #[must_use]
+    pub const fn with_seed(mut self, seed: u64) -> Self {
+        self.seed = Some(seed);
         self
     }
 
@@ -126,6 +138,10 @@ impl GreedyDecoder {
     {
         let mut tokens = initial_tokens.to_vec();
         let eot = eot_token;
+        let mut rng = self
+            .seed
+            .filter(|_| self.temperature > 0.0)
+            .map(super::fallback::SplitMix64::new);
 
         // Loop until we hit max_tokens total (not max_tokens NEW tokens)
         while tokens.len() < self.max_tokens {
@@ -133,7 +149,10 @@ impl GreedyDecoder {
             let logits = logits_fn(&tokens)?;
 
             // Select next token
-            let next_token = self.decode_step(&logits);
+            let next_token = match rng.as_mut() {
+                Some(rng) => super::fallback::sample_token(&logits, self.temperature, rng),
+                None => self.decode_step(&logits),
+            };
 
             // Stop if EOT
             if next_token == eot {

@@ -1865,3 +1865,21 @@ roadmap:
   - kind:code
   notes: null
   epic: 90
+- id: PMAT-107
+  github_issue: 107
+  item_type: task
+  title: 'decode: replace repetition penalties with OpenAI temperature fallback + no-speech skip'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-15T11:17:22Z
+  updated: 2026-10-15T11:17:22Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 90

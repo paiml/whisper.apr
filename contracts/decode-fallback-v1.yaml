@@ -1,0 +1,97 @@
+metadata:
+  version: "1.0.0"
+  author: "Sovereign AI Stack"
+  description: "Decoding quality control as OpenAI does it: the decode loop no longer rewrites logits with repetition penalties; each finished window is judged by compression ratio and average log-probability and retried at the next temperature of 0.0, 0.2 ... 1.0; a window of silence or music (no-speech probability above 0.6 and average log-probability below -1.0) emits no segments. Sampling is seeded from the window index, so output is reproducible"
+  crate: "whisper-apr"
+  references:
+    - "whisper.apr issue #107 (repetition penalties distort normal windows; a tail hallucination 'Thank you so much for joining us today' is emitted over closing music)"
+    - "OpenAI whisper transcribe.py decode_with_fallback: temperatures (0.0, 0.2, 0.4, 0.6, 0.8, 1.0), compression_ratio_threshold 2.4, logprob_threshold -1.0, no_speech_threshold 0.6"
+    - "src/inference/fallback.rs DecodeFallback; WhisperApr::decode_window routes every window through it"
+
+equations:
+  fallback_policy:
+    formula: "retry(s) = not no_speech(s) and (s.compression_ratio > 2.4 or s.avg_logprob < -1.0); attempts(w) = the first i in 0..6 with not retry(stats_i), else the last, at temperatures T_i = 0.2 * i"
+    domain: "s = DecodeStats of one finished decode of window w"
+    codomain: "the kept decode and the number of attempts"
+    invariants:
+      - "attempt 0 is the configured strategy at temperature 0.0; attempts above 0 sample with a seeded generator"
+      - "a window that passes at temperature 0.0 runs exactly one decode"
+      - "thresholds, temperatures and seed are DecodeFallback fields in TranscribeOptions, never constants in the decode loop"
+  no_speech_skip:
+    formula: "silent(s) = s.no_speech_prob > 0.6 and s.avg_logprob < -1.0; a silent window emits no segments and is never retried; no_speech_prob = softmax(raw SOT logits)[no_speech id of the vocabulary]"
+    domain: "s = DecodeStats of the window's kept decode"
+    invariants:
+      - "the no-speech id is SpecialTokens::no_speech of the model's n_vocab, never a constant"
+      - "a window with likely tokens or a low no-speech probability is kept"
+  attempt_seed:
+    formula: "seed(w, i) = SplitMix64(base_seed xor rotl(w, 32)) advanced i times; depends on the base seed, the window index and the attempt index only"
+    domain: "w = window index, i = attempt index"
+    invariants:
+      - "the same input and options decode to identical tokens on every run"
+
+proof_obligations:
+  - type: invariant
+    property: "A repetition loop triggers the fallback"
+    formal: "compression_ratio(loop text) > 2.4 implies retry and attempts > 1"
+    applies_to: all
+  - type: invariant
+    property: "A silent window emits no segments"
+    formal: "no_speech_prob > 0.6 and avg_logprob < -1.0 implies silent, with a single attempt"
+    applies_to: all
+  - type: invariant
+    property: "Decoding is deterministic"
+    formal: "decode(x, opts) = decode(x, opts) byte for byte, including at temperature above 0"
+    applies_to: all
+  - type: invariant
+    property: "A normal window is not escalated"
+    formal: "compression_ratio <= 2.4 and avg_logprob >= -1.0 implies attempts = 1 at temperature 0.0"
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-FALLBACK-001
+    rule: "A repetition loop triggers the fallback"
+    test: "a_planted_repetition_loop_triggers_the_fallback"
+    prediction: "verified"
+    if_fails: "A looping decode is kept at temperature 0.0 and the loop reaches the transcript"
+  - id: FALSIFY-FALLBACK-002
+    rule: "A silent window emits no segments"
+    test: "a_planted_silent_window_emits_nothing"
+    prediction: "verified"
+    if_fails: "Music or silence yields an invented line such as 'Thank you so much for joining us today'"
+  - id: FALSIFY-FALLBACK-003
+    rule: "Decoding is deterministic"
+    test: "the_same_input_decodes_to_identical_bytes_twice"
+    prediction: "verified"
+    if_fails: "A fallback attempt samples from an unseeded or window-independent generator"
+  - id: FALSIFY-FALLBACK-004
+    rule: "A normal window is not escalated"
+    test: "a_normal_window_is_not_escalated"
+    prediction: "verified"
+    if_fails: "A clean decode is retried at a higher temperature and loses accuracy"
+  - id: FALSIFY-FALLBACK-005
+    rule: "The fallback stops at the first passing temperature"
+    test: "the_fallback_stops_at_the_first_temperature_that_passes"
+    prediction: "verified"
+    if_fails: "Attempts continue after a decode that needs no fallback"
+
+qa_gate:
+  id: QA-DECODE-FALLBACK
+  name: "Temperature fallback and no-speech skip"
+  min_coverage: 0.90
+  max_complexity: 10
+  required_tests:
+    - a_planted_repetition_loop_triggers_the_fallback
+    - a_planted_silent_window_emits_nothing
+    - the_same_input_decodes_to_identical_bytes_twice
+    - a_normal_window_is_not_escalated
+    - the_fallback_stops_at_the_first_temperature_that_passes
+
+kani_harnesses:
+  - id: decode-fallback-kani-001
+    obligation: "A silent window emits no segments"
+    bound: 3
+    strategy: exhaustive
+  - id: decode-fallback-kani-002
+    obligation: "A normal window is not escalated"
+    bound: 3
+    strategy: exhaustive
