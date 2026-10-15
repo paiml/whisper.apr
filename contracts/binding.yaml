@@ -43,3 +43,9 @@ bindings:
   module_path: whisper_apr::WhisperApr::place_window_segments
   signature: 'pub fn place_window_segments(segments: Vec<Segment>, window_secs: f32, time_offset: f32) -> Vec<Segment>'
   status: implemented
+- contract: timestamp-rules-v1.yaml
+  equation: apply
+  function: apply
+  module_path: whisper_apr::inference::TimestampRules::apply
+  signature: 'pub fn apply(&self, tokens: &[u32], logits: &mut [f32])'
+  status: implemented
