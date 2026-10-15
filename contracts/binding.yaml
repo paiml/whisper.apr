@@ -13,3 +13,33 @@ bindings:
   module_path: whisper_apr::tokenizer::special_tokens::SpecialTokens::try_for_vocab_size
   signature: 'pub fn try_for_vocab_size(n_vocab: usize) -> crate::error::WhisperResult<Self>'
   status: implemented
+- contract: chunk-advance-v1.yaml
+  equation: window_advance
+  function: window_advance
+  module_path: whisper_apr::WhisperApr::window_advance
+  signature: 'pub fn window_advance(window_samples: usize, covered_samples: usize) -> usize'
+  status: implemented
+- contract: chunk-advance-v1.yaml
+  equation: covered_samples
+  function: covered_samples
+  module_path: whisper_apr::WhisperApr::covered_samples
+  signature: 'pub fn covered_samples(segments: &[Segment], window_samples: usize) -> usize'
+  status: implemented
+- contract: chunk-advance-v1.yaml
+  equation: seek_point
+  function: seek_segments
+  module_path: whisper_apr::WhisperApr::seek_segments
+  signature: 'pub fn seek_segments(mut segments: Vec<Segment>, ends_closed: bool, is_last_window: bool, window_samples: usize) -> (Vec<Segment>, usize)'
+  status: implemented
+- contract: chunk-advance-v1.yaml
+  equation: stitch
+  function: stitch_segments
+  module_path: whisper_apr::WhisperApr::stitch_segments
+  signature: 'pub fn stitch_segments(segments: Vec<Segment>) -> Vec<Segment>'
+  status: implemented
+- contract: chunk-advance-v1.yaml
+  equation: segment_placement
+  function: place_window_segments
+  module_path: whisper_apr::WhisperApr::place_window_segments
+  signature: 'pub fn place_window_segments(segments: Vec<Segment>, window_secs: f32, time_offset: f32) -> Vec<Segment>'
+  status: implemented
