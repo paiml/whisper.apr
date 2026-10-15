@@ -1288,6 +1288,10 @@ impl WhisperApr {
             .with_timestamp_suppression(false)
             .with_vocab_size(n_vocab);
 
+        // OpenAI ApplyTimestampRules + SuppressBlank (issue #106), only on
+        // the timestamp path; a <|notimestamps|> decode is left unchanged.
+        let timestamp_rules = self.timestamp_rules(initial_tokens);
+
         // Build hotword booster from text hotwords (WAPR-170)
         let hotword_booster = if !options.hotwords.is_empty() {
             let mut booster = crate::vocabulary::HotwordBooster::new();
@@ -1341,6 +1345,12 @@ impl WhisperApr {
             let eot_id = self.eot_token();
             Self::suppress_repetitions(&mut logits, tokens, eot_id, n_vocab);
 
+            // Timestamp rules last, so their bans are final and the
+            // timestamp-dominance test sees the logits that are sampled.
+            if let Some(ref rules) = timestamp_rules {
+                rules.apply(tokens, &mut logits);
+            }
+
             Ok(logits)
         };
 
@@ -1368,6 +1378,17 @@ impl WhisperApr {
                 decoder.decode(logits_fn, initial_tokens, eot)
             }
         }
+    }
+
+    /// The timestamp rules for a decode from `initial_tokens`: `None` for a
+    /// model that is not Whisper or a `<|notimestamps|>` prompt.
+    fn timestamp_rules(&self, initial_tokens: &[u32]) -> Option<inference::TimestampRules> {
+        if self.config.model_family != format::ModelFamily::Whisper {
+            return None;
+        }
+        let blank = self.tokenizer.encode(" ").unwrap_or_default();
+        inference::TimestampRules::for_prompt(self.config.n_vocab as usize, initial_tokens)
+            .map(|rules| rules.with_blank_tokens(blank))
     }
 
     /// Apply n-gram repetition suppression to logits
