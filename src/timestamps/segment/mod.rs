@@ -243,6 +243,29 @@ pub fn has_timestamps_with(specials: &SpecialTokens, tokens: &[u32]) -> bool {
     tokens.iter().any(|&t| specials.is_timestamp(t))
 }
 
+/// Check whether a decode ended closed: the last token that is not a control
+/// token is a timestamp.
+///
+/// Also true when there is no non-control token at all. When false, the final
+/// segment has no closing timestamp, so its end is only an estimate and its
+/// words may be cut at the window edge.
+///
+/// v2 (51865) layout only; use [`ends_with_timestamp_with`].
+#[must_use]
+pub fn ends_with_timestamp(tokens: &[u32]) -> bool {
+    ends_with_timestamp_with(&V2, tokens)
+}
+
+/// [`ends_with_timestamp`] over `specials`' vocabulary (issue #108).
+#[must_use]
+pub fn ends_with_timestamp_with(specials: &SpecialTokens, tokens: &[u32]) -> bool {
+    tokens
+        .iter()
+        .rev()
+        .find(|&&t| !specials.is_control_token(t))
+        .map_or(true, |&t| specials.is_timestamp(t))
+}
+
 /// Count text tokens (non-special, non-timestamp)
 ///
 /// v2 (51865) layout only.

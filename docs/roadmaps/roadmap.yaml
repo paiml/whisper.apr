@@ -1811,6 +1811,24 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: PMAT-105
+  github_issue: 105
+  item_type: task
+  title: 'chunk seek: no window overlap, stitch without concatenation'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-10-15T09:11:56Z
+  updated: 2026-10-15T09:11:56Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 90
 - id: PMAT-108
   github_issue: 108
   item_type: task
