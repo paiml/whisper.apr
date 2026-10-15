@@ -1,10 +1,11 @@
 metadata:
-  version: "2.0.0"
+  version: "2.1.0"
   author: "Sovereign AI Stack"
-  description: "Long-audio window seek contract: each 30s window starts exactly where the previous decode's kept segments end (no fixed overlap, nothing decoded twice, nothing skipped); an unclosed final segment of a non-last window is dropped and re-decoded; segments are stitched without concatenating text"
+  description: "Long-audio window seek contract: each 30s window starts exactly where the previous decode's kept segments end (no fixed overlap, nothing decoded twice, nothing skipped); an unfinished final segment of a non-last window (unclosed, or ending within EDGE_SECS = 1.0s of the window edge) is dropped and re-decoded from its start; segments are stitched without concatenating text, and punctuation-only segments are not emitted"
   crate: "whisper-apr"
   references:
     - "whisper.apr issue #105 (7-15 repeated 5-grams per 76-117s lesson against 0 for whisper.cpp, and 39s merged cues missing a clause, large-v3-turbo on a GX10)"
+    - "whisper.apr issue #105 follow-up (ff288fb on a GX10: a closed final segment clamped to the window edge, 26.20->30.000 and 52.0->60.000, advanced the full window and lost 19-20 words per lesson; stray \".\" cues at 30.000->30.087)"
     - "whisper.apr issue #84 (multi-second spans of speech silently dropped: 17.00->25.00 on a 52.58s recording, 36.00->50.00 plus a 4.96s tail on a 193.40s recording)"
     - "whisper.apr issue #82/#83 (window WIDTH; this contract is about window ADVANCE and is a different failure)"
     - "src/core_generated.rs WhisperApr::window_advance, seek_segments, stitch_segments — single source of truth for the seek"
@@ -27,24 +28,26 @@ equations:
       - "covered(empty, w) = 0"
       - "covered(S, w) <= w — a hallucinated over-long segment cannot inflate the advance past its own window"
   seek_point:
-    formula: "seek(S, closed, last, w) = (S', covered(S', w)) where S' = S minus its final segment iff not closed and not last and |S| >= 2 and start(final(S)) * SAMPLE_RATE >= min(floor, w), else S' = S"
+    formula: "seek(S, closed, last, w) = (S minus final(S), floor(start(final(S)) * SAMPLE_RATE)) iff unfinished and not last and |S| >= 2 and start(final(S)) * SAMPLE_RATE >= min(floor, w), else (S, covered(S, w)); unfinished = not closed or end(final(S)) >= w / SAMPLE_RATE - EDGE_SECS, EDGE_SECS = 1.0"
     domain: "S = one window's segments, closed = the decode's last non-control token is a timestamp (or it has no timestamps), last = the window reaches the end of the audio"
     codomain: "kept segments and the covered samples that drive window_advance"
     invariants:
       - "a dropped segment's start is where the next window begins, so its words are decoded whole by that window"
-      - "the last window and a closed decode never drop a segment"
+      - "the last window never drops a segment; a closed decode drops its final segment only when that segment ends within EDGE_SECS of the window edge"
+      - "a final segment ending at the window edge never drives a full-window advance, so speech cut by the edge is decoded by the next window"
   segment_placement:
     formula: "place(S, w_secs, t0) = { (max(s.start,0)+t0, min(s.end,w_secs)+t0) : s in S, s.start < w_secs }"
     domain: "S = one window's segments in window-local seconds, w_secs = window duration, t0 = window offset"
     invariants:
       - "no emitted cue ends after the end of the window it was decoded from"
   stitch:
-    formula: "stitch(S) folds S left to right: drop s when trim(s.text) = trim(prev.text) and s overlaps or touches prev within 0.1s; else emit s with start' = max(s.start, prev.end), end' = max(s.end, start')"
+    formula: "stitch(S) folds S left to right: drop s when s.text has no alphanumeric character; drop s when trim(s.text) = trim(prev.text) and s overlaps or touches prev within 0.1s; else emit s with start' = max(s.start, prev.end), end' = max(s.end, start')"
     domain: "S = all windows' placed segments in timeline order"
     invariants:
       - "every emitted text is exactly one input segment's text — text is never concatenated"
       - "emitted starts are non-decreasing and each start >= the previous emitted end"
       - "no two adjacent emitted segments carry the same trimmed text while touching"
+      - "every emitted text contains at least one alphanumeric character"
   timeline_coverage:
     formula: "offset_{i+1} = offset_i + advance(w_i, covered_i)"
     domain: "the window loop of transcribe_chunked over any audio longer than CHUNK_SAMPLES"
@@ -72,7 +75,7 @@ proof_obligations:
     applies_to: all
   - type: invariant
     property: "Unclosed final segment is re-decoded"
-    formal: "not closed and not last and |S| >= 2 and start(final(S)) >= floor implies covered(seek(S)) = covered(S minus final(S))"
+    formal: "not closed and not last and |S| >= 2 and start(final(S)) >= floor implies covered(seek(S)) = start(final(S))"
     applies_to: all
   - type: invariant
     property: "Cues stay inside the window they came from"
@@ -85,6 +88,14 @@ proof_obligations:
   - type: invariant
     property: "Duplicated adjacent segment is emitted once"
     formal: "trim(a.text) = trim(b.text) and b.start <= a.end + 0.1 implies |stitch([a, b])| = 1"
+    applies_to: all
+  - type: invariant
+    property: "Final segment at the window edge is re-decoded"
+    formal: "end(final(S)) >= w_secs - EDGE_SECS and not last and |S| >= 2 and start(final(S)) >= floor implies covered(seek(S)) = start(final(S)) < w"
+    applies_to: all
+  - type: invariant
+    property: "Punctuation-only segments are not emitted"
+    formal: "forall s in stitch(S): exists c in s.text: alphanumeric(c)"
     applies_to: all
 
 falsification_tests:
@@ -133,6 +144,16 @@ falsification_tests:
     test: "a_duplicated_adjacent_segment_is_emitted_once"
     prediction: "verified"
     if_fails: "The same words decoded at the end of one window and the start of the next appear twice in the transcript"
+  - id: FALSIFY-CHUNKGAP-011
+    rule: "Final segment at the window edge is re-decoded"
+    test: "a_final_segment_at_the_window_edge_is_redecoded"
+    prediction: "verified"
+    if_fails: "A closed final segment clamped to the window edge (26.20->30.000) advances the full window, so the speech after its text is never decoded (19-20 words lost per lesson on ff288fb)"
+  - id: FALSIFY-CHUNKGAP-012
+    rule: "Punctuation-only segments are not emitted"
+    test: "punctuation_only_segments_are_not_emitted"
+    prediction: "verified"
+    if_fails: "A stray \".\" cue (30.000->30.087) is emitted as a subtitle with no words"
 
 qa_gate:
   id: QA-CHUNK-ADVANCE
@@ -149,6 +170,8 @@ qa_gate:
     - an_unclosed_final_segment_is_redecoded_by_the_next_window
     - stitching_never_concatenates_and_keeps_starts_monotonic
     - a_duplicated_adjacent_segment_is_emitted_once
+    - a_final_segment_at_the_window_edge_is_redecoded
+    - punctuation_only_segments_are_not_emitted
 
 kani_harnesses:
   - id: chunk-advance-kani-001

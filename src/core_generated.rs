@@ -405,6 +405,11 @@ impl WhisperApr {
     /// head of the next 30s window, so the encoder never stops seeing it.
     const MIN_ADVANCE_SAMPLES: usize = audio::SAMPLE_RATE as usize; // 16,000 samples
 
+    /// A non-last window's final segment that ends within this many seconds
+    /// of the window edge is treated as unfinished: the speech after it was
+    /// cut by the edge, so the next window re-decodes it from its start.
+    const EDGE_SECS: f32 = 1.0;
+
     /// Maximum subtitle segment duration (seconds) for SRT output
     const MAX_SUBTITLE_SECS: f32 = 10.0;
 
@@ -801,17 +806,26 @@ impl WhisperApr {
 
     /// Choose the segments a window keeps, and how far it covered.
     ///
-    /// When a window that is not the last ends without a closing timestamp
-    /// (`ends_closed == false`), its final segment's end was guessed at 60ms
-    /// per token and its words may be cut at the 30s window edge. That segment
-    /// is dropped and the next window re-decodes from its start, provided at
-    /// least two segments were decoded and the dropped one starts at or past
-    /// the progress floor (`MIN_ADVANCE_SAMPLES`), so the loop still moves.
+    /// The final segment of a window that is not the last is unfinished when
+    /// either
     ///
-    /// Returns the kept segments (window-local seconds) and
-    /// `covered_samples` of the kept segments.
+    /// * the decode did not end closed (`ends_closed == false`): its end was
+    ///   guessed at 60ms per token and its words may be cut at the window
+    ///   edge; or
+    /// * it ends within `EDGE_SECS` of the window edge: the speech after its
+    ///   text was cut by the edge, and advancing the full window loses it
+    ///   (19-20 deleted words per lesson, measured on ff288fb).
     ///
-    /// Contract `seek_point`, FALSIFY-CHUNKGAP-008.
+    /// An unfinished final segment is dropped and the next window re-decodes
+    /// from its start, provided at least two segments were decoded and the
+    /// dropped one starts at or past the progress floor
+    /// (`MIN_ADVANCE_SAMPLES`), so the loop still moves.
+    ///
+    /// Returns the kept segments (window-local seconds) and the covered
+    /// samples: the dropped segment's start when one was dropped, otherwise
+    /// `covered_samples` of the segments.
+    ///
+    /// Contract `seek_point`, FALSIFY-CHUNKGAP-008/011.
     #[must_use]
     #[provable_contracts_macros::contract("whisper-chunk-advance-v1", equation = "seek_point")]
     pub fn seek_segments(
@@ -820,16 +834,27 @@ impl WhisperApr {
         is_last_window: bool,
         window_samples: usize,
     ) -> (Vec<Segment>, usize) {
+        let sample_rate = audio::SAMPLE_RATE as f32;
         let floor = Self::MIN_ADVANCE_SAMPLES.min(window_samples);
-        let droppable = !ends_closed && !is_last_window && segments.len() >= 2;
-        if droppable {
-            let last_start = segments.last().map_or(0.0, |seg| seg.start.max(0.0));
-            if (last_start * audio::SAMPLE_RATE as f32) as usize >= floor {
+        let window_secs = window_samples as f32 / sample_rate;
+        let candidate = match segments.last() {
+            Some(last) if !is_last_window && segments.len() >= 2 => Some(last),
+            _ => None,
+        };
+        let drop_at = candidate
+            .filter(|last| !ends_closed || last.end >= window_secs - Self::EDGE_SECS)
+            .map(|last| ((last.start.max(0.0) * sample_rate) as usize).min(window_samples))
+            .filter(|&start| start >= floor);
+        match drop_at {
+            Some(start) => {
                 segments.pop();
+                (segments, start)
+            }
+            None => {
+                let covered = Self::covered_samples(&segments, window_samples);
+                (segments, covered)
             }
         }
-        let covered = Self::covered_samples(&segments, window_samples);
-        (segments, covered)
     }
 
     /// Move a window's segments onto the absolute timeline.
@@ -872,14 +897,19 @@ impl WhisperApr {
     /// * A segment whose trimmed text equals the previous kept segment's
     ///   trimmed text, and whose time range overlaps or touches it (within
     ///   0.1s), is the same words decoded twice and is dropped.
+    /// * A segment whose text has no alphanumeric character (a stray "."
+    ///   cue at a window edge) carries no words and is dropped.
     ///
-    /// Contract `stitch`, FALSIFY-CHUNKGAP-009/010.
+    /// Contract `stitch`, FALSIFY-CHUNKGAP-009/010/012.
     #[must_use]
     #[provable_contracts_macros::contract("whisper-chunk-advance-v1", equation = "stitch")]
     pub fn stitch_segments(segments: Vec<Segment>) -> Vec<Segment> {
         const TOUCH_SECS: f32 = 0.1;
         let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
         for mut seg in segments {
+            if !seg.text.chars().any(char::is_alphanumeric) {
+                continue;
+            }
             if let Some(prev) = out.last() {
                 let touches =
                     seg.start <= prev.end + TOUCH_SECS && seg.end + TOUCH_SECS >= prev.start;
@@ -5983,9 +6013,16 @@ mod tests {
             "next window starts at its start"
         );
 
-        // Anti-vacuity: each condition alone keeps the segment.
-        let (k, c) = WhisperApr::seek_segments(segs(), true, false, window);
-        assert_eq!((k.len(), c), (3, window), "closed decode keeps it");
+        // Anti-vacuity: each condition alone keeps the segment. The closed
+        // case ends the segment well clear of the edge (FALSIFY-011 covers
+        // a closed segment at the edge).
+        let clear = vec![
+            seg(0.0, 10.0, "a"),
+            seg(10.0, 25.0, "b"),
+            seg(25.0, 27.0, "c"),
+        ];
+        let (k, c) = WhisperApr::seek_segments(clear, true, false, window);
+        assert_eq!((k.len(), c), (3, 27 * 16_000), "closed decode keeps it");
         let (k, _) = WhisperApr::seek_segments(segs(), false, true, window);
         assert_eq!(k.len(), 3, "the last window keeps it");
         let (k, _) = WhisperApr::seek_segments(vec![seg(0.0, 31.0, "x")], false, false, window);
@@ -5993,6 +6030,71 @@ mod tests {
         let early = vec![seg(0.0, 0.2, "x"), seg(0.5, 3.0, "y")];
         let (k, _) = WhisperApr::seek_segments(early, false, false, window);
         assert_eq!(k.len(), 2, "a drop below the progress floor is refused");
+    }
+
+    /// FALSIFY-CHUNKGAP-011 — a closed final segment of a non-last window
+    /// that ends within `EDGE_SECS` of the window edge is re-decoded from
+    /// its start. On ff288fb such a segment (26.20 -> 30.000) advanced the
+    /// full window and lost the speech after its text.
+    #[test]
+    fn a_final_segment_at_the_window_edge_is_redecoded() {
+        let window = WhisperApr::CHUNK_SAMPLES;
+        let window_secs = window as f32 / 16_000.0;
+        let edge = |end: f32| {
+            vec![
+                seg(0.0, 12.0, "a"),
+                seg(12.0, 26.2, "b"),
+                seg(26.2, end, "ends at the edge"),
+            ]
+        };
+        for end in [
+            window_secs,
+            window_secs - 0.5,
+            window_secs - WhisperApr::EDGE_SECS,
+        ] {
+            let (kept, covered) = WhisperApr::seek_segments(edge(end), true, false, window);
+            assert_eq!(kept.len(), 2, "segment ending at {end} must be dropped");
+            assert_eq!(kept[1].text, "b");
+            assert_eq!(
+                covered,
+                (26.2_f32 * 16_000.0) as usize,
+                "covered = its start"
+            );
+            assert!(WhisperApr::window_advance(window, covered) < window);
+        }
+
+        // Anti-vacuity: a segment ending more than EDGE_SECS before the edge
+        // is kept, and so is an edge segment of the last window, a lone
+        // segment, or one starting below the progress floor.
+        let (k, c) = WhisperApr::seek_segments(edge(window_secs - 1.5), true, false, window);
+        assert_eq!(k.len(), 3, "a segment clear of the edge is kept");
+        assert_eq!(c, ((window_secs - 1.5) * 16_000.0) as usize);
+        let (k, _) = WhisperApr::seek_segments(edge(window_secs), true, true, window);
+        assert_eq!(k.len(), 3, "the last window keeps it");
+        let lone = vec![seg(0.0, window_secs, "x")];
+        let (k, _) = WhisperApr::seek_segments(lone, true, false, window);
+        assert_eq!(k.len(), 1, "a single segment is kept");
+        let early = vec![seg(0.0, 0.2, "x"), seg(0.5, window_secs, "y")];
+        let (k, _) = WhisperApr::seek_segments(early, true, false, window);
+        assert_eq!(k.len(), 2, "a drop below the progress floor is refused");
+    }
+
+    /// FALSIFY-CHUNKGAP-012 — a segment whose text has no alphanumeric
+    /// character (the stray "." cues at 30.000 -> 30.087) is not emitted.
+    #[test]
+    fn punctuation_only_segments_are_not_emitted() {
+        let out = WhisperApr::stitch_segments(vec![
+            seg(26.2, 30.0, "the first thing"),
+            seg(30.0, 30.087, "."),
+            seg(30.087, 30.2, " ... "),
+            seg(30.2, 31.0, ""),
+            seg(31.0, 34.0, "and then"),
+        ]);
+        let texts: Vec<&str> = out.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(texts, ["the first thing", "and then"]);
+        // Anti-vacuity: text with any letter or digit survives.
+        let out = WhisperApr::stitch_segments(vec![seg(0.0, 1.0, "7."), seg(1.0, 2.0, "Ok!")]);
+        assert_eq!(out.len(), 2, "segments with words must be kept");
     }
 
     /// FALSIFY-CHUNKGAP-009 — stitching never concatenates two segments'
