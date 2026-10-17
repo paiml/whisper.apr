@@ -145,6 +145,26 @@ const MIN_WORDS_PER_SEC: f32 = 0.8;
 /// A short last cue this long after the previous one is closing-music noise.
 const TAIL_GAP_SECS: f32 = 2.0;
 
+/// The decoder's stock closing lines over music: "Thank you.", "Oh, oh.", "you".
+fn is_closing_filler(text: &str) -> bool {
+    let t: String = text
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphabetic() || c.is_whitespace())
+        .collect();
+    matches!(
+        t.split_whitespace().collect::<Vec<_>>().join(" ").as_str(),
+        "thank you"
+            | "thanks"
+            | "you"
+            | "oh"
+            | "oh oh"
+            | "bye"
+            | "god bless you"
+            | "thanks for watching"
+    )
+}
+
 /// Drop the decoder's fillers over music and silence: bracketed sound tags,
 /// one-word flickers, cues far too slow to be speech, and a short last cue
 /// stranded after a gap ("Thank you." over the closing music).
@@ -157,13 +177,16 @@ fn drop_noise_cues(cues: Vec<Segment>) -> Vec<Segment> {
         let words = text.split_whitespace().count() as f32;
         let secs = (cue.end - cue.start).max(1.0e-3);
         let tag = text.starts_with('*') || text.starts_with('[') || text.starts_with('(');
-        let flicker = words <= 1.0 && secs <= 1.0;
+        let flicker = secs < 0.3 || (words <= 1.0 && secs <= 1.0);
         let slow = secs >= 1.0 && words / secs < MIN_WORDS_PER_SEC;
         let stranded = i + 1 == n && words <= 4.0 && cue.start - prev_end >= TAIL_GAP_SECS;
         prev_end = cue.end;
         if !(tag || flicker || slow || stranded) {
             kept.push(cue);
         }
+    }
+    while kept.last().is_some_and(|c| is_closing_filler(&c.text)) {
+        kept.pop();
     }
     kept
 }
@@ -265,6 +288,8 @@ mod tests {
                 "and they can be deployed either standalone or distributed",
             ),
             cue(23.0, 25.0, "God bless you."),
+            cue(26.0, 27.0, "Oh, oh."),
+            cue(27.5, 28.5, "Thank you."),
         ]);
         let texts: Vec<_> = kept.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(
