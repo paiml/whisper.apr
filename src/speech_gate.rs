@@ -39,7 +39,7 @@ pub fn is_silent(audio: &[f32]) -> bool {
 }
 
 use crate::error::{WhisperError, WhisperResult};
-use crate::{TranscribeOptions, TranscriptionResult};
+use crate::{Segment, TranscribeOptions, TranscriptionResult};
 
 /// Refuse silent input: the decoder always emits something (60 s of zeros ->
 /// "Thank you."), so silence must never reach it.
@@ -74,6 +74,69 @@ pub fn silent_window(
             true,
         )
     })
+}
+
+/// Refuse silent audio, transcribe (chunked above 30 s), then snap cues to the signal.
+///
+/// # Errors
+/// `WhisperError::Audio` when the audio is silent, or the decoder fails.
+pub fn transcribe_gated(
+    model: &crate::WhisperApr,
+    audio: &[f32],
+    options: TranscribeOptions,
+) -> WhisperResult<TranscriptionResult> {
+    refuse_silent(audio)?;
+    let result = if audio.len() > crate::WhisperApr::CHUNK_SAMPLES {
+        model.transcribe_chunked(audio, options)
+    } else {
+        model.transcribe_single_chunk(audio, options)
+    }?;
+    Ok(snap_to_signal(result, audio))
+}
+
+/// A frame at or above this RMS (-50 dBFS) carries signal for cue snapping.
+pub const SIGNAL_RMS: f32 = 3.16e-3;
+
+/// Snap one cue to the signal inside it: start moves to the first 20 ms frame
+/// with signal, end to the end of the last. `None` when the span is silent.
+#[must_use]
+#[provable_contracts_macros::contract("speech-gate-v1", equation = "snap_span")]
+pub fn snap_span(audio: &[f32], start: f32, end: f32) -> Option<(f32, f32)> {
+    let sr = SAMPLE_RATE as f32;
+    let lo = ((start.max(0.0) * sr) as usize).min(audio.len());
+    let hi = ((end.max(0.0) * sr) as usize).min(audio.len());
+    let frames: Vec<_> = audio[lo..hi.max(lo)].chunks(FRAME_SAMPLES).collect();
+    let loud = |f: &&[f32]| peak_frame_rms(f) >= SIGNAL_RMS;
+    let first = frames.iter().position(loud)?;
+    let last = frames.iter().rposition(loud)?;
+    let s = (lo + first * FRAME_SAMPLES) as f32 / sr;
+    let e = (lo + ((last + 1) * FRAME_SAMPLES).min(hi - lo)) as f32 / sr;
+    Some((s, e))
+}
+
+/// Snap every cue of `result` to the signal under it and drop cues over pure
+/// silence (decoder timestamps drift into silence: a cue read 0.5->26.3 s over
+/// audio that is silent until 20.9 s).
+#[must_use]
+pub fn snap_to_signal(mut result: TranscriptionResult, audio: &[f32]) -> TranscriptionResult {
+    let snapped: Vec<Segment> = result
+        .segments
+        .into_iter()
+        .filter_map(|mut seg| {
+            let (s, e) = snap_span(audio, seg.start, seg.end)?;
+            seg.start = s;
+            seg.end = e;
+            Some(seg)
+        })
+        .collect();
+    result.text = snapped
+        .iter()
+        .map(|s| s.text.trim())
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    result.segments = snapped;
+    result
 }
 
 #[cfg(test)]
@@ -120,6 +183,19 @@ mod tests {
                 "{secs}s of zeros must be refused, got {r:?}"
             );
         }
+    }
+
+    /// FALSIFY-SPEECHGATE-006 - a cue is trimmed to the signal under it, and a cue over silence is None.
+    #[test]
+    fn cue_edges_snap_to_signal_and_silent_cues_vanish() {
+        let sr = SAMPLE_RATE as usize;
+        let mut a = vec![0.0; 30 * sr];
+        a[20 * sr..27 * sr].copy_from_slice(&tone(7.0, 0.05));
+        let (s, e) = snap_span(&a, 0.5, 26.34).expect("26.34 > 20");
+        assert!((s - 20.0).abs() < 0.03, "start {s}");
+        assert!((e - 26.34).abs() < 0.03, "end {e}");
+        assert_eq!(snap_span(&a, 1.0, 19.0), None);
+        assert_eq!(snap_span(&a, 40.0, 50.0), None);
     }
 
     #[test]

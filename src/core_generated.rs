@@ -396,7 +396,7 @@ impl WhisperApr {
     }
 
     /// Chunk size for long audio processing (30 seconds at 16kHz)
-    const CHUNK_SAMPLES: usize = 30 * audio::SAMPLE_RATE as usize; // 480,000 samples
+    pub(crate) const CHUNK_SAMPLES: usize = 30 * audio::SAMPLE_RATE as usize; // 480,000 samples
 
     /// Smallest advance a window may make (1 second at 16kHz).
     ///
@@ -434,17 +434,13 @@ impl WhisperApr {
         audio: &[f32],
         options: TranscribeOptions,
     ) -> WhisperResult<TranscriptionResult> {
-        crate::speech_gate::refuse_silent(audio)?;
-        if audio.len() > Self::CHUNK_SAMPLES {
-            return self.transcribe_chunked(audio, options);
-        }
-        self.transcribe_single_chunk(audio, options)
+        crate::speech_gate::transcribe_gated(self, audio, options)
     }
 
     /// Transcribe a single chunk of audio (≤30 seconds)
     ///
     /// Internal method for processing audio that fits in a single chunk.
-    fn transcribe_single_chunk(
+    pub(crate) fn transcribe_single_chunk(
         &self,
         audio: &[f32],
         options: TranscribeOptions,
@@ -966,7 +962,7 @@ impl WhisperApr {
     /// 4. advance by what the kept segments covered (`window_advance`);
     /// 5. stitch the segments without concatenating text (`stitch_segments`)
     ///    and build the text from the final segments.
-    fn transcribe_chunked(
+    pub(crate) fn transcribe_chunked(
         &self,
         audio: &[f32],
         options: TranscribeOptions,

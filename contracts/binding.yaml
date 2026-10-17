@@ -61,3 +61,9 @@ bindings:
   module_path: whisper_apr::speech_gate::is_silent
   signature: 'pub fn is_silent(audio: &[f32]) -> bool'
   status: implemented
+- contract: speech-gate-v1.yaml
+  equation: snap_span
+  function: snap_span
+  module_path: whisper_apr::speech_gate::snap_span
+  signature: 'pub fn snap_span(audio: &[f32], start: f32, end: f32) -> Option<(f32, f32)>'
+  status: implemented

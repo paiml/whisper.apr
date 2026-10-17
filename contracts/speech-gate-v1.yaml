@@ -24,6 +24,14 @@ equations:
       - "a window with one 20 ms frame at or above -60 dBFS is not silent"
       - "NaN audio is silent: it is not a signal"
 
+  snap_span:
+    formula: "snap(a, s, e) = (first, last_end) of the 20 ms frames in [s, e] with RMS >= 3.16e-3 (-50 dBFS), None when there is none"
+    domain: "a = mono f32 at 16 kHz, 0 <= s <= e seconds"
+    codomain: "Option of (start, end) with s <= start < end <= e"
+    invariants:
+      - "a cue over pure silence is dropped"
+      - "a snapped cue lies inside the original and starts on signal"
+
 proof_obligations:
   - type: invariant
     property: "Empty and zero audio are silent"
@@ -36,6 +44,11 @@ proof_obligations:
   - type: invariant
     property: "Silent input is refused, not captioned"
     formal: "silent(a) implies transcribe(a) = Err(Audio)"
+    applies_to: all
+
+  - type: invariant
+    property: "Cues are trimmed to the signal under them"
+    formal: "snap(a,s,e) = Some((s2,e2)) implies s <= s2 < e2 <= e and a cue over silence is None"
     applies_to: all
 
 falsification_tests:
@@ -65,6 +78,12 @@ falsification_tests:
     prediction: "verified"
     if_fails: "transcribe() returns Ok with a hallucinated cue for silent input"
 
+  - id: FALSIFY-SPEECHGATE-006
+    rule: "Cues are trimmed to the signal under them"
+    test: "cue_edges_snap_to_signal_and_silent_cues_vanish"
+    prediction: "verified"
+    if_fails: "A cue keeps a start in silence (0.5 s over audio silent until 20.9 s) or a hallucinated cue over silence survives"
+
 qa_gate:
   id: QA-SPEECH-GATE
   name: "silence gate contract"
@@ -76,6 +95,7 @@ qa_gate:
     - a_single_audible_burst_in_silence_is_not_silent
     - hiss_below_the_floor_and_nonfinite_samples_are_silent
     - transcribe_refuses_silent_audio
+    - cue_edges_snap_to_signal_and_silent_cues_vanish
 
 kani_harnesses:
   - id: speech-gate-kani-001
