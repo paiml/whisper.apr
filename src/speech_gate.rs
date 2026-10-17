@@ -97,6 +97,27 @@ pub fn transcribe_gated(
 /// A frame at or above this RMS (-50 dBFS) carries signal for cue snapping.
 pub const SIGNAL_RMS: f32 = 3.16e-3;
 
+/// A silence this long (3 s of frames) inside a cue ends one run of speech.
+const RUN_GAP_FRAMES: usize = 150;
+
+/// The longest run of signal frames, runs split by a gap of `RUN_GAP_FRAMES`:
+/// a cue timed across a 20 s silence belongs to the speech, not the music before it.
+fn dominant_run(loud: impl Iterator<Item = usize>) -> Option<(usize, usize)> {
+    let mut best: Option<(usize, usize)> = None;
+    let mut cur: Option<(usize, usize)> = None;
+    for i in loud {
+        cur = match cur {
+            Some((s, e)) if i - e < RUN_GAP_FRAMES => Some((s, i)),
+            _ => Some((i, i)),
+        };
+        let c = cur?;
+        if best.map_or(true, |(s, e)| c.1 - c.0 > e - s) {
+            best = Some(c);
+        }
+    }
+    best
+}
+
 /// Snap one cue to the signal inside it: start moves to the first 20 ms frame
 /// with signal, end to the end of the last. `None` when the span is silent.
 #[must_use]
@@ -107,8 +128,13 @@ pub fn snap_span(audio: &[f32], start: f32, end: f32) -> Option<(f32, f32)> {
     let hi = ((end.max(0.0) * sr) as usize).min(audio.len());
     let frames: Vec<_> = audio[lo..hi.max(lo)].chunks(FRAME_SAMPLES).collect();
     let loud = |f: &&[f32]| peak_frame_rms(f) >= SIGNAL_RMS;
-    let first = frames.iter().position(loud)?;
-    let last = frames.iter().rposition(loud)?;
+    let (first, last) = dominant_run(
+        frames
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| loud(f))
+            .map(|(i, _)| i),
+    )?;
     let s = (lo + first * FRAME_SAMPLES) as f32 / sr;
     let e = (lo + ((last + 1) * FRAME_SAMPLES).min(hi - lo)) as f32 / sr;
     Some((s, e))
@@ -195,6 +221,11 @@ mod tests {
         assert!((s - 20.0).abs() < 0.03, "start {s}");
         assert!((e - 26.34).abs() < 0.03, "end {e}");
         assert_eq!(snap_span(&a, 1.0, 19.0), None);
+        // music at 0.5-3.5 s, then 17 s of silence, then speech: the speech wins
+        let mut b = a.clone();
+        b[sr / 2..7 * sr / 2].copy_from_slice(&tone(3.0, 0.05));
+        let (s2, _) = snap_span(&b, 0.5, 26.34).expect("speech");
+        assert!((s2 - 20.0).abs() < 0.03, "start {s2}");
         assert_eq!(snap_span(&a, 40.0, 50.0), None);
     }
 

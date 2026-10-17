@@ -1,6 +1,6 @@
 {
   "version": "3.42.0",
-  "created_at": "2026-10-17T13:50:25.008109099Z",
+  "created_at": "2026-10-17T14:58:38.593647740Z",
   "git_context": null,
   "files": {
     "./demos/www-demo/src/audioworklet_js.rs": {
@@ -5912,48 +5912,48 @@
     },
     "./src/core_generated.rs": {
       "content_hash": [
-        165,
-        237,
-        195,
-        27,
-        1,
-        240,
-        66,
-        144,
-        94,
-        61,
+        242,
+        59,
+        216,
+        136,
         34,
-        9,
-        44,
-        89,
-        141,
-        172,
-        214,
-        73,
-        19,
-        225,
-        200,
-        192,
+        53,
         113,
-        253,
-        5,
-        186,
-        114,
-        179,
-        236,
-        155,
-        75,
-        236
+        116,
+        40,
+        17,
+        93,
+        129,
+        207,
+        113,
+        121,
+        38,
+        96,
+        4,
+        240,
+        171,
+        138,
+        213,
+        77,
+        128,
+        40,
+        89,
+        98,
+        18,
+        225,
+        111,
+        247,
+        4
       ],
       "score": {
         "structural_complexity": 0.0,
         "semantic_complexity": 20.0,
-        "duplication_ratio": 15.482502,
+        "duplication_ratio": 15.478667,
         "coupling_score": 15.0,
         "doc_coverage": 10.0,
         "consistency_score": 10.0,
         "entropy_score": 5.0,
-        "total": 75.4825,
+        "total": 75.47867,
         "grade": "B",
         "confidence": 1.0,
         "language": "Rust",
@@ -5969,7 +5969,7 @@
           },
           {
             "source_metric": "Duplication",
-            "amount": 4.5174975,
+            "amount": 4.5213327,
             "applied_to": [
               "Duplication"
             ],
@@ -5981,7 +5981,7 @@
             "applied_to": [
               "StructuralComplexity"
             ],
-            "issue": "High cognitive complexity: 297"
+            "issue": "High cognitive complexity: 296"
           },
           {
             "source_metric": "StructuralComplexity",
@@ -5989,7 +5989,7 @@
             "applied_to": [
               "StructuralComplexity"
             ],
-            "issue": "High cyclomatic complexity: 246"
+            "issue": "High cyclomatic complexity: 245"
           }
         ],
         "critical_defects_count": 0,
@@ -12646,38 +12646,38 @@
     },
     "./src/speech_gate.rs": {
       "content_hash": [
-        78,
-        12,
-        133,
-        143,
-        45,
-        233,
-        58,
-        195,
-        218,
-        203,
-        247,
-        136,
-        203,
-        170,
+        13,
+        74,
+        101,
+        50,
+        179,
         68,
+        158,
+        114,
+        68,
+        68,
+        199,
+        199,
+        226,
+        172,
+        147,
+        128,
+        82,
+        59,
+        177,
+        1,
+        62,
+        49,
+        40,
+        72,
+        122,
         235,
-        21,
-        120,
-        230,
-        235,
-        236,
-        253,
-        4,
-        10,
-        142,
-        169,
-        27,
-        14,
-        246,
-        208,
-        220,
-        97
+        148,
+        128,
+        251,
+        131,
+        180,
+        54
       ],
       "score": {
         "structural_complexity": 25.0,
@@ -12686,8 +12686,8 @@
         "coupling_score": 15.0,
         "doc_coverage": 10.0,
         "consistency_score": 10.0,
-        "entropy_score": 8.0,
-        "total": 98.18182,
+        "entropy_score": 7.0,
+        "total": 97.27273,
         "grade": "A+",
         "confidence": 1.0,
         "language": "Rust",
@@ -12695,11 +12695,11 @@
         "penalties_applied": [
           {
             "source_metric": "Duplication",
-            "amount": 2.0,
+            "amount": 3.0,
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Found 4 duplicate code patterns"
+            "issue": "Found 6 duplicate code patterns"
           }
         ],
         "critical_defects_count": 0,
@@ -17157,7 +17157,7 @@
   },
   "summary": {
     "total_files": 215,
-    "avg_score": 93.76339,
+    "avg_score": 93.75914,
     "grade_distribution": {
       "A+": 109,
       "A": 81,
