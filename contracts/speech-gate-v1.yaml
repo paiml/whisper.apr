@@ -84,6 +84,12 @@ falsification_tests:
     prediction: "verified"
     if_fails: "A cue keeps a start in silence (0.5 s over audio silent until 20.9 s) or a hallucinated cue over silence survives"
 
+  - id: FALSIFY-SPEECHGATE-007
+    rule: "Decoder fillers over closing music are dropped"
+    test: "noise_cues_over_music_are_dropped"
+    prediction: "verified"
+    if_fails: "A caption ends with Thank you. or God bless you. over music (measured on 6 of 13 graph1x lessons)"
+
 qa_gate:
   id: QA-SPEECH-GATE
   name: "silence gate contract"
@@ -96,6 +102,7 @@ qa_gate:
     - hiss_below_the_floor_and_nonfinite_samples_are_silent
     - transcribe_refuses_silent_audio
     - cue_edges_snap_to_signal_and_silent_cues_vanish
+    - noise_cues_over_music_are_dropped
 
 kani_harnesses:
   - id: speech-gate-kani-001

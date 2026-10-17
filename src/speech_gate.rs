@@ -140,6 +140,34 @@ pub fn snap_span(audio: &[f32], start: f32, end: f32) -> Option<(f32, f32)> {
     Some((s, e))
 }
 
+/// Slower than this (words per second) over 1 s or more is not speech.
+const MIN_WORDS_PER_SEC: f32 = 0.8;
+/// A short last cue this long after the previous one is closing-music noise.
+const TAIL_GAP_SECS: f32 = 2.0;
+
+/// Drop the decoder's fillers over music and silence: bracketed sound tags,
+/// one-word flickers, cues far too slow to be speech, and a short last cue
+/// stranded after a gap ("Thank you." over the closing music).
+fn drop_noise_cues(cues: Vec<Segment>) -> Vec<Segment> {
+    let n = cues.len();
+    let mut prev_end = f32::MIN;
+    let mut kept = Vec::with_capacity(n);
+    for (i, cue) in cues.into_iter().enumerate() {
+        let text = cue.text.trim();
+        let words = text.split_whitespace().count() as f32;
+        let secs = (cue.end - cue.start).max(1.0e-3);
+        let tag = text.starts_with('*') || text.starts_with('[') || text.starts_with('(');
+        let flicker = words <= 1.0 && secs <= 1.0;
+        let slow = secs >= 1.0 && words / secs < MIN_WORDS_PER_SEC;
+        let stranded = i + 1 == n && words <= 4.0 && cue.start - prev_end >= TAIL_GAP_SECS;
+        prev_end = cue.end;
+        if !(tag || flicker || slow || stranded) {
+            kept.push(cue);
+        }
+    }
+    kept
+}
+
 /// Snap every cue of `result` to the signal under it and drop cues over pure
 /// silence (decoder timestamps drift into silence: a cue read 0.5->26.3 s over
 /// audio that is silent until 20.9 s).
@@ -155,6 +183,7 @@ pub fn snap_to_signal(mut result: TranscriptionResult, audio: &[f32]) -> Transcr
             Some(seg)
         })
         .collect();
+    let snapped = drop_noise_cues(snapped);
     result.text = snapped
         .iter()
         .map(|s| s.text.trim())
@@ -212,6 +241,41 @@ mod tests {
     }
 
     /// FALSIFY-SPEECHGATE-006 - a cue is trimmed to the signal under it, and a cue over silence is None.
+    /// FALSIFY-SPEECHGATE-007 - decoder fillers over closing music are dropped; real speech stays.
+    #[test]
+    fn noise_cues_over_music_are_dropped() {
+        let cue = |s: f32, e: f32, t: &str| Segment {
+            start: s,
+            end: e,
+            text: t.into(),
+            tokens: vec![],
+        };
+        let kept = drop_noise_cues(vec![
+            cue(
+                0.0,
+                6.0,
+                "these are five key points to discover when you are thinking",
+            ),
+            cue(6.0, 6.4, "you"),
+            cue(6.4, 9.0, "*music*"),
+            cue(9.0, 15.0, "Thank you."),
+            cue(
+                16.0,
+                20.0,
+                "and they can be deployed either standalone or distributed",
+            ),
+            cue(23.0, 25.0, "God bless you."),
+        ]);
+        let texts: Vec<_> = kept.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "these are five key points to discover when you are thinking",
+                "and they can be deployed either standalone or distributed"
+            ]
+        );
+    }
+
     #[test]
     fn cue_edges_snap_to_signal_and_silent_cues_vanish() {
         let sr = SAMPLE_RATE as usize;
