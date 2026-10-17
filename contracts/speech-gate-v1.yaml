@@ -1,0 +1,88 @@
+metadata:
+  version: "1.0.0"
+  author: "Sovereign AI Stack"
+  description: "Silence gate: audio with no signal is refused, never captioned. A window whose loudest 20 ms frame is below -60 dBFS is never decoded; a whole input that is silent is a WhisperError::Audio, not a one-cue transcript"
+  crate: "whisper-apr"
+  references:
+    - "GX10 measurement 2026-10-17 (large-v3-turbo, d46f381 + #109..#111): 60 s of digital zeros -> one cue 'Thank you.' 0->29.98 s, exit 0, 130 s of CPU"
+    - "src/speech_gate.rs is the single source of truth for the gate; src/core_generated.rs WhisperApr::transcribe and transcribe_window call it"
+
+equations:
+  peak_frame_rms:
+    formula: "peak(a) = max over 20 ms frames f of a of sqrt(mean(f^2)); peak([]) = 0"
+    domain: "a = mono f32 samples at 16 kHz"
+    codomain: "f32 in [0, inf)"
+    invariants:
+      - "peak([]) = 0"
+      - "one audible frame anywhere in a makes peak(a) >= that frame's RMS"
+  is_silent:
+    formula: "silent(a) = not (peak(a) finite and peak(a) >= 1e-3)"
+    domain: "a = mono f32 samples at 16 kHz"
+    codomain: "bool"
+    invariants:
+      - "silent([]) and silent(zeros) are true"
+      - "a window with one 20 ms frame at or above -60 dBFS is not silent"
+      - "NaN audio is silent: it is not a signal"
+
+proof_obligations:
+  - type: invariant
+    property: "Empty and zero audio are silent"
+    formal: "silent([]) and forall n: silent(zeros(n))"
+    applies_to: all
+  - type: invariant
+    property: "Audible audio is not silent"
+    formal: "exists frame f with rms(f) >= 1e-3 implies not silent(a)"
+    applies_to: all
+  - type: invariant
+    property: "Silent input is refused, not captioned"
+    formal: "silent(a) implies transcribe(a) = Err(Audio)"
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-SPEECHGATE-001
+    rule: "Empty and zero audio are silent"
+    test: "empty_and_zero_audio_are_silent"
+    prediction: "verified"
+    if_fails: "A minute of zeros reaches the decoder and comes back as the cue 'Thank you.'"
+  - id: FALSIFY-SPEECHGATE-002
+    rule: "Audible audio is not silent"
+    test: "audible_audio_is_not_silent"
+    prediction: "verified"
+    if_fails: "The gate refuses everything (a gate that cannot say no to silence and yes to speech is a constant)"
+  - id: FALSIFY-SPEECHGATE-003
+    rule: "Audible audio is not silent"
+    test: "a_single_audible_burst_in_silence_is_not_silent"
+    prediction: "verified"
+    if_fails: "A second of speech inside a minute of silence is dropped"
+  - id: FALSIFY-SPEECHGATE-004
+    rule: "Empty and zero audio are silent"
+    test: "hiss_below_the_floor_and_nonfinite_samples_are_silent"
+    prediction: "verified"
+    if_fails: "NaN or sub -60 dBFS hiss is decoded into a caption"
+  - id: FALSIFY-SPEECHGATE-005
+    rule: "Silent input is refused, not captioned"
+    test: "transcribe_refuses_silent_audio"
+    prediction: "verified"
+    if_fails: "transcribe() returns Ok with a hallucinated cue for silent input"
+
+qa_gate:
+  id: QA-SPEECH-GATE
+  name: "silence gate contract"
+  min_coverage: 0.90
+  max_complexity: 10
+  required_tests:
+    - empty_and_zero_audio_are_silent
+    - audible_audio_is_not_silent
+    - a_single_audible_burst_in_silence_is_not_silent
+    - hiss_below_the_floor_and_nonfinite_samples_are_silent
+    - transcribe_refuses_silent_audio
+
+kani_harnesses:
+  - id: speech-gate-kani-001
+    obligation: "Empty and zero audio are silent"
+    bound: 8
+    strategy: exhaustive
+  - id: speech-gate-kani-002
+    obligation: "Audible audio is not silent"
+    bound: 8
+    strategy: exhaustive

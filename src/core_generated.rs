@@ -434,12 +434,10 @@ impl WhisperApr {
         audio: &[f32],
         options: TranscribeOptions,
     ) -> WhisperResult<TranscriptionResult> {
-        // Use chunked processing for audio longer than 30 seconds
+        crate::speech_gate::refuse_silent(audio)?;
         if audio.len() > Self::CHUNK_SAMPLES {
             return self.transcribe_chunked(audio, options);
         }
-
-        // Process short audio in a single pass
         self.transcribe_single_chunk(audio, options)
     }
 
@@ -452,7 +450,7 @@ impl WhisperApr {
         options: TranscribeOptions,
     ) -> WhisperResult<TranscriptionResult> {
         self.transcribe_window(audio, options)
-            .map(|(result, _ends_closed)| result)
+            .map(|(result, _closed)| result)
     }
 
     /// Transcribe one window (≤30 seconds) and report whether its decode
@@ -468,13 +466,15 @@ impl WhisperApr {
         audio: &[f32],
         options: TranscribeOptions,
     ) -> WhisperResult<(TranscriptionResult, bool)> {
+        if let Some(skipped) = crate::speech_gate::silent_window(audio, &options) {
+            return Ok(skipped);
+        }
         #[cfg(feature = "std")]
         let start_total = if options.profile {
             Some(std::time::Instant::now())
         } else {
             None
         };
-
         // 1-2. Compute audio features (BrickProfiler: sovereign profiling)
         #[cfg(feature = "std")]
         let start_audio = start_total.map(|_| std::time::Instant::now());

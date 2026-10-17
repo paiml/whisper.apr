@@ -63,6 +63,7 @@ pub mod model;
 pub mod parallel;
 pub mod progress;
 pub mod simd;
+pub mod speech_gate;
 pub mod timestamps;
 pub mod tokenizer;
 #[macro_use]
