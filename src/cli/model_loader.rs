@@ -18,7 +18,7 @@
 //! - `openai/whisper-base` → base.apr
 //! - `openai/whisper-small` → small.apr
 //! - `openai/whisper-medium` → medium.apr
-//! - `openai/whisper-large-v3` → large.apr
+//! - `openai/whisper-large-v2` → large.apr (ModelConfig::large() is v2: 80 mels, 51865 tokens)
 //! - `usefulsensors/moonshine-tiny` → moonshine-tiny.apr
 //! - `usefulsensors/moonshine-base` → moonshine-base.apr
 
@@ -59,7 +59,7 @@ fn get_hf_repo_id(size: ModelSize) -> &'static str {
         ModelSize::Base => "openai/whisper-base",
         ModelSize::Small => "openai/whisper-small",
         ModelSize::Medium => "openai/whisper-medium",
-        ModelSize::Large => "openai/whisper-large-v3",
+        ModelSize::Large => "openai/whisper-large-v2",
         ModelSize::LargeV3Turbo => "openai/whisper-large-v3-turbo",
         ModelSize::MoonshineTiny => "usefulsensors/moonshine-tiny",
         ModelSize::MoonshineBase => "usefulsensors/moonshine-base",
@@ -839,7 +839,7 @@ mod tests {
         assert_eq!(get_hf_repo_id(ModelSize::Tiny), "openai/whisper-tiny");
         assert_eq!(get_hf_repo_id(ModelSize::Base), "openai/whisper-base");
         assert_eq!(get_hf_repo_id(ModelSize::Small), "openai/whisper-small");
-        assert_eq!(get_hf_repo_id(ModelSize::Large), "openai/whisper-large-v3");
+        assert_eq!(get_hf_repo_id(ModelSize::Large), "openai/whisper-large-v2");
         assert_eq!(
             get_hf_repo_id(ModelSize::LargeV3Turbo),
             "openai/whisper-large-v3-turbo"

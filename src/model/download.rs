@@ -128,7 +128,7 @@ pub const MODELS: &[ModelInfo] = &[
     },
     ModelInfo {
         name: "whisper-large",
-        repo_id: "openai/whisper-large-v3",
+        repo_id: "openai/whisper-large-v2",
         family: ModelFamily::Whisper,
         params: "1.5B",
         description: "Best accuracy (not for WASM)",
