@@ -87,6 +87,11 @@ pub fn transcribe_gated(
     options: TranscribeOptions,
 ) -> WhisperResult<TranscriptionResult> {
     refuse_silent(audio)?;
+    if peak_frame_rms(audio) < SIGNAL_RMS {
+        return Err(WhisperError::Audio(
+            "no speech detected: the audio is below -50 dBFS, too quiet to caption".into(),
+        ));
+    }
     let result = if audio.len() > crate::WhisperApr::CHUNK_SAMPLES {
         model.transcribe_chunked(audio, options)
     } else {
@@ -142,13 +147,15 @@ pub fn snap_span(audio: &[f32], start: f32, end: f32) -> Option<(f32, f32)> {
 }
 
 /// Slower than this (words per second) is not speech, once the cue is long enough to judge.
-const MIN_WORDS_PER_SEC: f32 = 0.8;
+const MIN_WORDS_PER_SEC: f32 = 0.5;
 /// `slow` only applies to cues at least this long: a short cue has no rate.
-const SLOW_MIN_SECS: f32 = 2.0;
+const SLOW_MIN_SECS: f32 = 5.0;
 /// A short last cue this long after the previous one is closing-music noise.
 const TAIL_GAP_SECS: f32 = 2.0;
 /// A closing filler is popped only when it stands this far after the cue before it.
-const FILLER_GAP_SECS: f32 = 0.5;
+const FILLER_GAP_SECS: f32 = 1.5;
+/// A one-word or sub-300 ms cue is a flicker only this far after the cue before it.
+const FLICKER_GAP_SECS: f32 = 2.0;
 
 /// A bracketed sound tag: `[MUSIC]`, `(applause)`, `*music*`. The opening and
 /// closing marks must match, so "[1, 2, 3] is a list" is speech, not a tag.
@@ -157,7 +164,11 @@ fn is_sound_tag(text: &str) -> bool {
     let (Some(first), Some(last)) = (chars.next(), chars.next_back()) else {
         return false;
     };
-    matches!((first, last), ('*', '*') | ('[', ']') | ('(', ')'))
+    let inner = &text[first.len_utf8()..text.len() - last.len_utf8()];
+    let sound = inner
+        .chars()
+        .all(|c| c.is_alphabetic() || c == ' ' || c == '_' || c == '-');
+    sound && matches!((first, last), ('*', '*') | ('[', ']') | ('(', ')'))
 }
 
 /// The decoder's stock closing lines over music: "Thank you.", "Oh, oh.", "you".
@@ -193,8 +204,8 @@ fn drop_noise_cues(cues: Vec<Segment>) -> Vec<Segment> {
         let secs = (cue.end - cue.start).max(1.0e-3);
         let gap = prev_end.map_or(0.0, |p| cue.start - p);
         let tag = words <= 4.0 && is_sound_tag(text);
-        let flicker =
-            secs < 0.3 || (words <= 1.0 && secs <= 1.0 && prev_end.is_some() && gap >= 1.0);
+        let isolated = prev_end.is_some() && gap >= FLICKER_GAP_SECS;
+        let flicker = isolated && (secs < 0.3 || (words <= 1.0 && secs <= 1.0));
         let slow = secs >= SLOW_MIN_SECS && words / secs < MIN_WORDS_PER_SEC;
         let stranded = i > 0 && i + 1 == n && words <= 4.0 && gap >= TAIL_GAP_SECS;
         prev_end = Some(cue.end);
@@ -302,17 +313,17 @@ mod tests {
                 6.0,
                 "these are five key points to discover when you are thinking",
             ),
-            cue(7.5, 7.9, "you"),
-            cue(8.0, 9.0, "*music*"),
-            cue(9.0, 15.0, "Thank you."),
+            cue(8.5, 8.9, "you"),
+            cue(9.0, 10.0, "*music*"),
+            cue(10.0, 16.0, "Thank you."),
             cue(
                 16.0,
                 20.0,
                 "and they can be deployed either standalone or distributed",
             ),
             cue(23.0, 25.0, "God bless you."),
-            cue(26.0, 27.0, "Oh, oh."),
-            cue(27.5, 28.5, "Thank you."),
+            cue(27.0, 28.0, "Oh, oh."),
+            cue(29.5, 30.5, "Thank you."),
         ]);
         let texts: Vec<_> = kept.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(
@@ -343,6 +354,7 @@ mod tests {
 
     #[test]
     fn hiss_below_the_floor_and_nonfinite_samples_are_silent() {
+        // between -60 and -50 dBFS: passes the silence gate, still refused before decode
         assert!(is_silent(&tone(5.0, 5.0e-4)));
         assert!(is_silent(&vec![f32::NAN; 16_000]));
         assert!(is_silent(&vec![f32::INFINITY; 16_000]));
@@ -383,5 +395,38 @@ mod tests {
             cue(4.0, 6.0, "[MUSIC]"),
         ]);
         assert_eq!(tag.len(), 1);
+        // reviewer cases: short replies, pauses, breaths, spoken literals, slow talkers
+        let keep = |cues: Vec<Segment>| drop_noise_cues(cues).len();
+        assert_eq!(
+            keep(vec![
+                cue(0.0, 4.0, "Is it a list or a tuple?"),
+                cue(4.2, 4.45, "No."),
+                cue(4.6, 8.0, "It is a tuple in this case.")
+            ]),
+            3
+        );
+        assert_eq!(
+            keep(vec![
+                cue(0.0, 3.0, "Is this a list or a tuple?"),
+                cue(4.0, 4.6, "Yes."),
+                cue(5.0, 8.0, "[1, 2, 3] is a list of three integers.")
+            ]),
+            3
+        );
+        assert_eq!(
+            keep(vec![
+                cue(0.0, 4.0, "That is all for this lesson."),
+                cue(4.6, 5.3, "Thank you.")
+            ]),
+            2
+        );
+        assert_eq!(
+            keep(vec![
+                cue(0.0, 4.0, "Here is a list literal."),
+                cue(4.2, 5.5, "[1, 2, 3]")
+            ]),
+            2
+        );
+        assert_eq!(keep(vec![cue(0.0, 4.0, "Okay, let's go.")]), 1);
     }
 }
