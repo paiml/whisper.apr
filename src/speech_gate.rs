@@ -26,6 +26,7 @@ pub fn peak_frame_rms(audio: &[f32]) -> f32 {
             let sum: f32 = frame.iter().map(|s| s * s).sum();
             (sum / frame.len() as f32).sqrt()
         })
+        .filter(|rms| rms.is_finite())
         .fold(0.0_f32, f32::max)
 }
 
@@ -140,10 +141,24 @@ pub fn snap_span(audio: &[f32], start: f32, end: f32) -> Option<(f32, f32)> {
     Some((s, e))
 }
 
-/// Slower than this (words per second) over 1 s or more is not speech.
+/// Slower than this (words per second) is not speech, once the cue is long enough to judge.
 const MIN_WORDS_PER_SEC: f32 = 0.8;
+/// `slow` only applies to cues at least this long: a short cue has no rate.
+const SLOW_MIN_SECS: f32 = 2.0;
 /// A short last cue this long after the previous one is closing-music noise.
 const TAIL_GAP_SECS: f32 = 2.0;
+/// A closing filler is popped only when it stands this far after the cue before it.
+const FILLER_GAP_SECS: f32 = 0.5;
+
+/// A bracketed sound tag: `[MUSIC]`, `(applause)`, `*music*`. The opening and
+/// closing marks must match, so "[1, 2, 3] is a list" is speech, not a tag.
+fn is_sound_tag(text: &str) -> bool {
+    let mut chars = text.chars();
+    let (Some(first), Some(last)) = (chars.next(), chars.next_back()) else {
+        return false;
+    };
+    matches!((first, last), ('*', '*') | ('[', ']') | ('(', ')'))
+}
 
 /// The decoder's stock closing lines over music: "Thank you.", "Oh, oh.", "you".
 fn is_closing_filler(text: &str) -> bool {
@@ -170,23 +185,31 @@ fn is_closing_filler(text: &str) -> bool {
 /// stranded after a gap ("Thank you." over the closing music).
 fn drop_noise_cues(cues: Vec<Segment>) -> Vec<Segment> {
     let n = cues.len();
-    let mut prev_end = f32::MIN;
+    let mut prev_end: Option<f32> = None;
     let mut kept = Vec::with_capacity(n);
     for (i, cue) in cues.into_iter().enumerate() {
         let text = cue.text.trim();
         let words = text.split_whitespace().count() as f32;
         let secs = (cue.end - cue.start).max(1.0e-3);
-        let tag = text.starts_with('*') || text.starts_with('[') || text.starts_with('(');
-        let flicker = secs < 0.3 || (words <= 1.0 && secs <= 1.0);
-        let slow = secs >= 1.0 && words / secs < MIN_WORDS_PER_SEC;
-        let stranded = i + 1 == n && words <= 4.0 && cue.start - prev_end >= TAIL_GAP_SECS;
-        prev_end = cue.end;
+        let gap = prev_end.map_or(0.0, |p| cue.start - p);
+        let tag = words <= 4.0 && is_sound_tag(text);
+        let flicker =
+            secs < 0.3 || (words <= 1.0 && secs <= 1.0 && prev_end.is_some() && gap >= 1.0);
+        let slow = secs >= SLOW_MIN_SECS && words / secs < MIN_WORDS_PER_SEC;
+        let stranded = i > 0 && i + 1 == n && words <= 4.0 && gap >= TAIL_GAP_SECS;
+        prev_end = Some(cue.end);
         if !(tag || flicker || slow || stranded) {
             kept.push(cue);
         }
     }
-    while kept.last().is_some_and(|c| is_closing_filler(&c.text)) {
-        kept.pop();
+    // Pop closing fillers only when they stand apart from the speech before them:
+    // a real "Thank you." that follows its sentence directly is a sign-off.
+    while let [.., prev, last] = kept.as_slice() {
+        if is_closing_filler(&last.text) && last.start - prev.end >= FILLER_GAP_SECS {
+            kept.pop();
+        } else {
+            break;
+        }
     }
     kept
 }
@@ -279,8 +302,8 @@ mod tests {
                 6.0,
                 "these are five key points to discover when you are thinking",
             ),
-            cue(6.0, 6.4, "you"),
-            cue(6.4, 9.0, "*music*"),
+            cue(7.5, 7.9, "you"),
+            cue(8.0, 9.0, "*music*"),
             cue(9.0, 15.0, "Thank you."),
             cue(
                 16.0,
@@ -322,5 +345,43 @@ mod tests {
     fn hiss_below_the_floor_and_nonfinite_samples_are_silent() {
         assert!(is_silent(&tone(5.0, 5.0e-4)));
         assert!(is_silent(&vec![f32::NAN; 16_000]));
+        assert!(is_silent(&vec![f32::INFINITY; 16_000]));
+        let mut speech = tone(1.0, 0.05);
+        speech[10] = f32::INFINITY;
+        assert!(
+            !is_silent(&speech),
+            "one inf sample must not refuse real audio"
+        );
+    }
+
+    fn cue(s: f32, e: f32, t: &str) -> Segment {
+        Segment {
+            start: s,
+            end: e,
+            text: t.into(),
+            tokens: vec![],
+        }
+    }
+
+    /// FALSIFY-SPEECHGATE-008 - genuine short speech survives the noise filter.
+    #[test]
+    fn short_genuine_cues_survive() {
+        assert_eq!(
+            drop_noise_cues(vec![cue(0.0, 1.5, "Hello there.")]).len(),
+            1
+        );
+        assert_eq!(drop_noise_cues(vec![cue(2.0, 2.8, "Thank you.")]).len(), 1);
+        let kept = drop_noise_cues(vec![
+            cue(0.0, 4.0, "Is this a list or a tuple in Rust?"),
+            cue(4.2, 4.9, "Yes."),
+            cue(5.0, 8.0, "[1, 2, 3] is a list of three integers."),
+            cue(8.1, 9.0, "Thank you."),
+        ]);
+        assert_eq!(kept.len(), 4, "{kept:?}");
+        let tag = drop_noise_cues(vec![
+            cue(0.0, 4.0, "hello world and welcome to the course"),
+            cue(4.0, 6.0, "[MUSIC]"),
+        ]);
+        assert_eq!(tag.len(), 1);
     }
 }
