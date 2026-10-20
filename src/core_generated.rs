@@ -1073,7 +1073,7 @@ impl WhisperApr {
             WhisperError::Audio("mel filterbank not available (Moonshine model?)".into())
         })?;
         let mel = mel_fb
-            .compute(&audio)
+            .compute(&audio::pad_or_trim(audio, Self::CHUNK_SAMPLES)) // #93: Whisper's 30 s window
             .map_err(|e| WhisperError::Audio(e.to_string()))?;
 
         // Mel spectrogram is computed as [frames, mels] = [3000, 80]
