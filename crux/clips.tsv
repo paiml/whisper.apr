@@ -1,0 +1,9 @@
+# CRUX clip set (whisper.apr v0.4.0 R4, epic #89). One row per clip: id, path, sha256.
+# A clip whose bytes do not match its sha256 is REFUSED, never measured.
+# jfk.wav is vendored from whisper.cpp samples/ at 2551e4ce.
+test-speech-1.5s	demos/test-audio/test-speech-1.5s.wav	e00b71664c20cd094d1f2bf0d89c9fa464db7cfac7217922d005d0a36ac0f8f1
+test-speech-3s	demos/test-audio/test-speech-3s.wav	2397801da8077fe07010f6bfb1a8b72b992c14221b36dc8d22fcaf66ae01a5d6
+test-30s	demos/test-audio/test-30s.wav	4151def3dfb3191bfa8fa2ca4b73a4d85e5342b42dd039d6d1fb94a960af2812
+whisper-5s	demos/test-audio/whisper-5s.wav	08770abd05a18b74a5e3ff4cf48925133417b7f4ee10caaad639293577d0f811
+silence-5s	demos/test-audio/silence-5s.wav	1586be3b68ea58210469753e00972fa3614e0938963be5b41a37c7c7df6e1d4f
+jfk	crux/clips/jfk.wav	59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e

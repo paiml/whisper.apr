@@ -1,0 +1,73 @@
+{
+  "schema": "whisper-apr-crux-wer/v1",
+  "host": "yoga",
+  "measured_at": "2026-09-23T18:21:43Z",
+  "engines": {
+    "whisper_apr": {
+      "version": "whisper-apr 0.3.3",
+      "model_sha256": "a333cf46cf8b1615de5bf7c59d6aad618964f832adad0a4e75b42be21dd518a5",
+      "decode": "--beam-size 1 --best-of 1 --temperature 0 --no-fallback --no-timestamps -l en --no-gpu"
+    },
+    "whisper_cpp": {
+      "commit": "2551e4ce98db69027d08bd99bcc3f1a4e2ad2cef",
+      "model_sha256": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+      "decode": "-bs 1 -bo 1 -nf -nt -l en"
+    }
+  },
+  "clips": [
+    {
+      "clip": "test-speech-1.5s",
+      "path": "demos/test-audio/test-speech-1.5s.wav",
+      "sha256": "e00b71664c20cd094d1f2bf0d89c9fa464db7cfac7217922d005d0a36ac0f8f1",
+      "wer_apr_vs_cpp": 12.750000,
+      "oracle_cpp_vs_cpp": 0.000000,
+      "whisper_cpp": "The birds can use",
+      "whisper_apr": "The birds can have the birds can never get to them. The birds could not have their own, but they are just so that it is going to be a little bit more than the other things. So we will see what you do in this video and then we will show us how"
+    },
+    {
+      "clip": "test-speech-3s",
+      "path": "demos/test-audio/test-speech-3s.wav",
+      "sha256": "2397801da8077fe07010f6bfb1a8b72b992c14221b36dc8d22fcaf66ae01a5d6",
+      "wer_apr_vs_cpp": 10.777778,
+      "oracle_cpp_vs_cpp": 0.000000,
+      "whisper_cpp": "The birch can use lid on this mood pipe.",
+      "whisper_apr": "The Burk can use lid on this move point-point. The Burks can use the lid on smooth point-points, and then the barge can be used to it. On this move, pipe line is moved by a pipe line that's not moving from here or from there to there at any point. The barks can also lid on the smooth point points-point lines and then on the other side of the barges can be moved to this move. On, we have a bit of a little bit more than that, but it's not going to get any further motion in our way."
+    },
+    {
+      "clip": "test-30s",
+      "path": "demos/test-audio/test-30s.wav",
+      "sha256": "4151def3dfb3191bfa8fa2ca4b73a4d85e5342b42dd039d6d1fb94a960af2812",
+      "wer_apr_vs_cpp": 19.000000,
+      "oracle_cpp_vs_cpp": 0.000000,
+      "whisper_cpp": "The",
+      "whisper_apr": "The birds can eat. The birds connect. the birds can ate, the bird's can eat, and the bats could eat."
+    },
+    {
+      "clip": "whisper-5s",
+      "path": "demos/test-audio/whisper-5s.wav",
+      "sha256": "08770abd05a18b74a5e3ff4cf48925133417b7f4ee10caaad639293577d0f811",
+      "wer_apr_vs_cpp": 4.500000,
+      "oracle_cpp_vs_cpp": 0.000000,
+      "whisper_cpp": "The birds can use",
+      "whisper_apr": "The birds can have the birds. The bird can have their own, and they are not. They are just like them!"
+    },
+    {
+      "clip": "silence-5s",
+      "path": "demos/test-audio/silence-5s.wav",
+      "sha256": "1586be3b68ea58210469753e00972fa3614e0938963be5b41a37c7c7df6e1d4f",
+      "wer_apr_vs_cpp": 1.000000,
+      "oracle_cpp_vs_cpp": 0.000000,
+      "whisper_cpp": "you",
+      "whisper_apr": "[MUSIC]"
+    },
+    {
+      "clip": "jfk",
+      "path": "crux/clips/jfk.wav",
+      "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e",
+      "wer_apr_vs_cpp": 0.136364,
+      "oracle_cpp_vs_cpp": 0.000000,
+      "whisper_cpp": "And so my fellow Americans ask not what your country can do for you, ask what you can do for your country.",
+      "whisper_apr": "And so my fellow Americans ask not what your country can do for you, ask what you can do"
+    }
+  ]
+}
