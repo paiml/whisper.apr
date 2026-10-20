@@ -205,9 +205,11 @@ fn drop_noise_cues(cues: Vec<Segment>) -> Vec<Segment> {
         let gap = prev_end.map_or(0.0, |p| cue.start - p);
         let tag = words <= 4.0 && is_sound_tag(text);
         let isolated = prev_end.is_some() && gap >= FLICKER_GAP_SECS;
-        let flicker = isolated && (secs < 0.3 || (words <= 1.0 && secs <= 1.0));
+        let flicker =
+            isolated && (secs < 0.3 || (words <= 1.0 && secs <= 1.0 && is_closing_filler(text)));
         let slow = secs >= SLOW_MIN_SECS && words / secs < MIN_WORDS_PER_SEC;
-        let stranded = i > 0 && i + 1 == n && words <= 4.0 && gap >= TAIL_GAP_SECS;
+        let stranded =
+            i > 0 && i + 1 == n && words <= 4.0 && gap >= TAIL_GAP_SECS && is_closing_filler(text);
         prev_end = Some(cue.end);
         if !(tag || flicker || slow || stranded) {
             kept.push(cue);
@@ -376,6 +378,30 @@ mod tests {
     }
 
     /// FALSIFY-SPEECHGATE-008 - genuine short speech survives the noise filter.
+    #[test]
+    fn replies_after_pauses_and_quiet_audio_are_classified() {
+        let keep = |cues: Vec<Segment>| drop_noise_cues(cues).len();
+        assert_eq!(
+            keep(vec![
+                cue(0.0, 3.0, "Is this a list or a tuple?"),
+                cue(5.5, 6.1, "Yes."),
+                cue(6.5, 9.0, "It is a tuple here.")
+            ]),
+            3
+        );
+        assert_eq!(
+            keep(vec![
+                cue(0.0, 5.0, "That is all for this lesson."),
+                cue(7.1, 8.5, "See you next week.")
+            ]),
+            2
+        );
+        // -57 dBFS tone: not silent (>-60), but under the -50 dBFS caption floor
+        let quiet = tone(5.0, 2.0e-3);
+        assert!(!is_silent(&quiet));
+        assert!(peak_frame_rms(&quiet) < SIGNAL_RMS);
+    }
+
     #[test]
     fn short_genuine_cues_survive() {
         assert_eq!(
