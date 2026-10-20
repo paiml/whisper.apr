@@ -420,3 +420,28 @@ fn test_language_detector_detect_error() {
     let result = detector.detect(logits_fn);
     assert!(result.is_err());
 }
+
+/// Detection feeds the vocabulary's own sot and reads its language block:
+/// 50257 on English-only models, 50258 on v2 and v3 (issue #108).
+#[test]
+fn detection_uses_the_vocabularys_sot_and_language_block() {
+    use crate::tokenizer::special_tokens::SpecialTokens;
+
+    for specials in [
+        SpecialTokens::english_only(),
+        SpecialTokens::multilingual(),
+        SpecialTokens::multilingual_v3(),
+    ] {
+        let mut seen = Vec::new();
+        let probs = LanguageDetector::new()
+            .detect_with(&specials, |tokens: &[u32]| -> WhisperResult<Vec<f32>> {
+                seen.extend_from_slice(tokens);
+                let mut logits = vec![0.0f32; 51_866];
+                logits[specials.lang_base as usize + 2] = 10.0; // German
+                Ok(logits)
+            })
+            .expect("detect");
+        assert_eq!(seen, vec![specials.sot]);
+        assert_eq!(probs.top_language(), Some("de"));
+    }
+}

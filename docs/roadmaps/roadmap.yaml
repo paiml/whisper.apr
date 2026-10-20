@@ -1811,3 +1811,21 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: PMAT-108
+  github_issue: 108
+  item_type: task
+  title: 'tokenizer: v3 (51866) special token ids'
+  status: planned
+  priority: critical
+  assigned_to: null
+  created: 2026-10-15T10:21:48Z
+  updated: 2026-10-15T10:21:48Z
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 90

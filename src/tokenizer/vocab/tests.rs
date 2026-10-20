@@ -666,3 +666,219 @@ fn test_special_tokens_equality() {
     let english = special_tokens::SpecialTokens::english_only();
     assert_ne!(multi1, english);
 }
+
+// =========================================================================
+// Special-token layouts per vocabulary size (issue #108,
+// contracts/special-tokens-v1.yaml)
+// =========================================================================
+
+/// OpenAI's language codes in tokenizer order; large-v3 appends "yue".
+const OPENAI_LANGUAGES: [&str; 100] = [
+    "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar", "sv", "it",
+    "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta", "no", "th", "ur",
+    "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn", "sr", "az", "sl", "kn",
+    "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si",
+    "km", "sn", "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo",
+    "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "haw", "ln",
+    "ha", "ba", "jw", "su", "yue",
+];
+
+/// The special-token strings of a Whisper vocabulary exactly as OpenAI's
+/// tokenizer appends them after the BPE ranks, built independently of
+/// `SpecialTokens`: `names[id - eot]` is the token `id` decodes to.
+fn openai_special_names(eot: u32, n_languages: usize) -> (u32, Vec<String>) {
+    let mut names = vec![
+        "<|endoftext|>".to_string(),
+        "<|startoftranscript|>".to_string(),
+    ];
+    names.extend(
+        OPENAI_LANGUAGES[..n_languages]
+            .iter()
+            .map(|l| format!("<|{l}|>")),
+    );
+    for name in [
+        "translate",
+        "transcribe",
+        "startoflm",
+        "startofprev",
+        "nospeech",
+        "notimestamps",
+    ] {
+        names.push(format!("<|{name}|>"));
+    }
+    names.extend((0..=1500).map(|i| format!("<|{:.2}|>", i as f32 * 0.02)));
+    (eot, names)
+}
+
+fn decode_special(reference: &(u32, Vec<String>), id: u32) -> &str {
+    let (eot, names) = reference;
+    &names[(id - eot) as usize]
+}
+
+/// The independent reference fills each vocabulary exactly.
+#[test]
+fn the_reference_special_names_fill_each_vocabulary() {
+    for (n_vocab, eot, langs) in [
+        (51864_usize, 50256, 99),
+        (51865, 50257, 99),
+        (51866, 50257, 100),
+    ] {
+        let (eot, names) = openai_special_names(eot, langs);
+        assert_eq!(eot as usize + names.len(), n_vocab, "n_vocab {n_vocab}");
+    }
+}
+
+/// FALSIFY-SPECIAL-001: on large-v3/turbo (51866) the transcribe task token
+/// decodes to `<|transcribe|>` (it decoded to `<|translate|>` before #108).
+#[test]
+fn on_v3_the_task_token_decodes_to_transcribe() {
+    let v3 = special_tokens::SpecialTokens::from_vocab_size(51866).expect("51866 is known");
+    let reference = openai_special_names(50257, 100);
+    assert_eq!(v3.transcribe, 50360);
+    assert_eq!(decode_special(&reference, v3.transcribe), "<|transcribe|>");
+    assert_eq!(decode_special(&reference, v3.translate), "<|translate|>");
+    assert_eq!(decode_special(&reference, v3.sot), "<|startoftranscript|>");
+    assert_eq!(decode_special(&reference, v3.no_speech), "<|nospeech|>");
+    assert_eq!(
+        decode_special(&reference, v3.no_timestamps),
+        "<|notimestamps|>"
+    );
+    assert_eq!(decode_special(&reference, v3.lang_base + 99), "<|yue|>");
+    assert_eq!(v3.name_of(v3.transcribe), Some("<|transcribe|>"));
+    // The v2 id 50359 is the translate token on v3.
+    assert_eq!(decode_special(&reference, 50359), "<|translate|>");
+}
+
+/// FALSIFY-SPECIAL-002: on 51866 `<|0.00|>` is 50365 and 50364 is
+/// `<|notimestamps|>`, not a timestamp.
+#[test]
+fn on_v3_the_first_timestamp_is_50365() {
+    let v3 = special_tokens::SpecialTokens::from_vocab_size(51866).expect("51866 is known");
+    let reference = openai_special_names(50257, 100);
+    assert_eq!(v3.timestamp_base, 50365);
+    assert_eq!(decode_special(&reference, 50365), "<|0.00|>");
+    assert_eq!(v3.timestamp_to_seconds(50365), Some(0.0));
+    assert!(!v3.is_timestamp(50364));
+    assert!(v3.is_control_token(50364));
+    let last = 51865;
+    assert_eq!(decode_special(&reference, last), "<|30.00|>");
+    assert!((v3.timestamp_to_seconds(last).expect("timestamp") - 30.0).abs() < 1e-4);
+}
+
+/// FALSIFY-SPECIAL-003: on 51866 `<|startofprev|>` is 50362.
+#[test]
+fn on_v3_prev_is_50362() {
+    let v3 = special_tokens::SpecialTokens::from_vocab_size(51866).expect("51866 is known");
+    let reference = openai_special_names(50257, 100);
+    assert_eq!(v3.prev, 50362);
+    assert_eq!(decode_special(&reference, v3.prev), "<|startofprev|>");
+    assert_eq!(decode_special(&reference, v3.start_of_lm), "<|startoflm|>");
+}
+
+/// FALSIFY-SPECIAL-004: on 51865 every id is the one the legacy constants
+/// have always had, and on 51864 the English-only layout.
+#[test]
+fn on_v2_the_old_ids_are_unchanged() {
+    let v2 = special_tokens::SpecialTokens::from_vocab_size(51865).expect("51865 is known");
+    assert_eq!(v2.eot, special_tokens::EOT);
+    assert_eq!(v2.sot, special_tokens::SOT);
+    assert_eq!(v2.lang_base, special_tokens::LANG_BASE);
+    assert_eq!(v2.translate, special_tokens::TRANSLATE);
+    assert_eq!(v2.transcribe, special_tokens::TRANSCRIBE);
+    assert_eq!(v2.start_of_lm, special_tokens::SPEAKER_TURN);
+    assert_eq!(v2.prev, special_tokens::PREV);
+    assert_eq!(v2.no_speech, special_tokens::NO_SPEECH);
+    assert_eq!(v2.no_timestamps, special_tokens::NO_TIMESTAMPS);
+    assert_eq!(v2.timestamp_base, special_tokens::TIMESTAMP_BASE);
+    assert_eq!(
+        [
+            v2.eot,
+            v2.sot,
+            v2.translate,
+            v2.transcribe,
+            v2.prev,
+            v2.no_speech
+        ],
+        [50257, 50258, 50358, 50359, 50361, 50362]
+    );
+    assert_eq!([v2.no_timestamps, v2.timestamp_base], [50363, 50364]);
+    let reference = openai_special_names(50257, 99);
+    for id in [
+        v2.eot,
+        v2.sot,
+        v2.translate,
+        v2.transcribe,
+        v2.prev,
+        v2.no_timestamps,
+    ] {
+        assert_eq!(Some(decode_special(&reference, id)), v2.name_of(id));
+    }
+    assert_eq!(decode_special(&reference, v2.timestamp_base), "<|0.00|>");
+
+    let en = special_tokens::SpecialTokens::from_vocab_size(51864).expect("51864 is known");
+    let reference = openai_special_names(50256, 99);
+    assert_eq!(
+        [en.eot, en.sot, en.transcribe, en.timestamp_base],
+        [50256, 50257, 50358, 50363]
+    );
+    for id in [
+        en.eot,
+        en.sot,
+        en.translate,
+        en.transcribe,
+        en.prev,
+        en.no_timestamps,
+    ] {
+        assert_eq!(Some(decode_special(&reference, id)), en.name_of(id));
+    }
+}
+
+/// FALSIFY-SPECIAL-005: any other vocabulary size is refused.
+#[test]
+fn an_unknown_vocab_size_is_refused() {
+    for n_vocab in [0, 32768, 50257, 51863, 51867, 51872, 100_000] {
+        assert_eq!(
+            special_tokens::SpecialTokens::from_vocab_size(n_vocab),
+            None
+        );
+        let err = special_tokens::SpecialTokens::try_for_vocab_size(n_vocab)
+            .expect_err("unknown size must be refused");
+        assert!(
+            err.to_string()
+                .contains(&format!("unsupported Whisper vocabulary size {n_vocab}")),
+            "{err}"
+        );
+    }
+    for n_vocab in [51864, 51865, 51866] {
+        assert!(special_tokens::SpecialTokens::try_for_vocab_size(n_vocab).is_ok());
+    }
+}
+
+/// Every known layout satisfies the id-table equations of the contract.
+#[test]
+fn every_layout_satisfies_the_id_table() {
+    for (n_vocab, eot, langs) in [
+        (51864_usize, 50256, 99),
+        (51865, 50257, 99),
+        (51866, 50257, 100),
+    ] {
+        let s = special_tokens::SpecialTokens::from_vocab_size(n_vocab).expect("known size");
+        assert_eq!(s.eot, eot);
+        assert_eq!(s.n_languages, langs);
+        assert_eq!(s.sot, s.eot + 1);
+        assert_eq!(s.lang_base, s.eot + 2);
+        assert_eq!(s.translate, s.lang_base + s.n_languages);
+        assert_eq!(
+            [
+                s.transcribe,
+                s.start_of_lm,
+                s.prev,
+                s.no_speech,
+                s.no_timestamps,
+                s.timestamp_base
+            ],
+            [1, 2, 3, 4, 5, 6].map(|k| s.translate + k)
+        );
+        assert_eq!(s.timestamp_base as usize + 1501, n_vocab);
+    }
+}

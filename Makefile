@@ -164,6 +164,39 @@ lint-check: ## Run clippy without fixes (strict)
 	@cargo clippy --all-targets --features "cli,converter,tracing,benchmark-tui,tui,format-encryption,format-signing,format-quantize,format-homomorphic" -- -D warnings
 
 # ============================================================================
+# CONTRACTS (pv)
+# ============================================================================
+PV_OUT := target/pv
+
+.PHONY: pv pv-validate pv-lint pv-ontology
+
+pv: pv-validate pv-lint pv-ontology ## Validate, lint and ontology-check the pv contracts
+
+# Every contract is schema-valid.
+pv-validate:
+	@for f in contracts/*-v1.yaml; do pv validate -q $$f || exit 1; done
+	@echo "pv validate ok"
+
+# pv lint passes with the strict test-binding gate: every falsification test
+# a contract names is a real #[test]. The JSON is checked too, so a failing
+# gate that pv does not arm still fails here.
+pv-lint:
+	@mkdir -p $(PV_OUT)
+	@pv lint contracts --binding contracts/binding.yaml --crate-dir . \
+	  --strict-test-binding --strict -f json > $(PV_OUT)/lint.json || { echo "pv lint failed, see $(PV_OUT)/lint.json"; exit 1; }
+	@jq -e '[.gates[] | select(.verdict == "Fail")] | length == 0' $(PV_OUT)/lint.json > /dev/null \
+	  || { echo "a pv lint gate failed, see $(PV_OUT)/lint.json"; exit 1; }
+	@echo "pv lint ok"
+
+# The signature Σ exports to OWL and its TBox is consistent.
+pv-ontology:
+	@mkdir -p $(PV_OUT)
+	pv ontology export --owl contracts/ontology.yaml > $(PV_OUT)/ontology.owl
+	pv ontology tbox contracts/ontology.yaml > $(PV_OUT)/tbox.json
+	@jq -e '.consistent == true' $(PV_OUT)/tbox.json > /dev/null
+	@echo "consistent: $$(jq -r .consistent $(PV_OUT)/tbox.json)"
+
+# ============================================================================
 # FORMATTING
 # ============================================================================
 fmt: ## Format code
