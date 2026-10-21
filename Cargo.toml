@@ -177,7 +177,7 @@ tokio = { version = "1", features = ["full"], optional = true }
 indicatif = { version = "0.17", optional = true }
 safetensors = { version = "0.4", optional = true }
 dirs = { version = "5", optional = true }
-zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
+zip = { version = "9", optional = true, default-features = false, features = ["deflate"] }
 
 # Optional: CLI dependencies
 clap = { version = "4", features = ["derive"], optional = true }
