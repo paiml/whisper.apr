@@ -1,1454 +1,8 @@
 {
-  "version": "3.32.0",
-  "created_at": "2026-08-27T10:33:06.536340040Z",
+  "version": "3.42.0",
+  "created_at": "2026-10-20T11:00:12.474203295Z",
   "git_context": null,
   "files": {
-    "./book/book/ace.js": {
-      "content_hash": [
-        163,
-        128,
-        119,
-        150,
-        206,
-        255,
-        145,
-        112,
-        141,
-        191,
-        173,
-        60,
-        84,
-        163,
-        5,
-        236,
-        26,
-        170,
-        229,
-        138,
-        28,
-        235,
-        161,
-        143,
-        25,
-        166,
-        232,
-        227,
-        171,
-        143,
-        250,
-        32
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 9.5,
-        "total": 99.545456,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./book/book/ace.js",
-        "penalties_applied": [
-          {
-            "source_metric": "Duplication",
-            "amount": 0.5,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Found 1 duplicate code patterns"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 10.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent semicolon usage detected"
-          }
-        ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./book/book/book.js": {
-      "content_hash": [
-        30,
-        107,
-        83,
-        113,
-        9,
-        30,
-        79,
-        191,
-        86,
-        42,
-        114,
-        198,
-        167,
-        106,
-        172,
-        80,
-        202,
-        195,
-        89,
-        153,
-        99,
-        120,
-        92,
-        89,
-        4,
-        46,
-        143,
-        66,
-        151,
-        246,
-        28,
-        108
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 5.0,
-        "total": 95.454544,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./book/book/book.js",
-        "penalties_applied": [
-          {
-            "source_metric": "Duplication",
-            "amount": 5.0,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Found 51 duplicate code patterns"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 5.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent quote usage detected"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 10.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent semicolon usage detected"
-          }
-        ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./book/book/clipboard.min.js": {
-      "content_hash": [
-        228,
-        7,
-        26,
-        156,
-        206,
-        210,
-        124,
-        20,
-        145,
-        231,
-        75,
-        54,
-        179,
-        199,
-        238,
-        114,
-        182,
-        2,
-        69,
-        99,
-        55,
-        208,
-        1,
-        97,
-        222,
-        234,
-        77,
-        56,
-        211,
-        11,
-        209,
-        88
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 10.0,
-        "total": 100.0,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./book/book/clipboard.min.js",
-        "penalties_applied": [],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./book/book/editor.js": {
-      "content_hash": [
-        57,
-        158,
-        36,
-        233,
-        200,
-        189,
-        195,
-        102,
-        23,
-        20,
-        192,
-        90,
-        134,
-        111,
-        215,
-        84,
-        116,
-        108,
-        50,
-        173,
-        223,
-        210,
-        255,
-        249,
-        3,
-        112,
-        16,
-        236,
-        239,
-        196,
-        21,
-        6
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 9.5,
-        "total": 99.545456,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./book/book/editor.js",
-        "penalties_applied": [
-          {
-            "source_metric": "Duplication",
-            "amount": 0.5,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Found 1 duplicate code patterns"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 5.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent quote usage detected"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 10.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent semicolon usage detected"
-          }
-        ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./book/book/elasticlunr.min.js": {
-      "content_hash": [
-        193,
-        164,
-        130,
-        94,
-        39,
-        184,
-        85,
-        217,
-        70,
-        25,
-        49,
-        125,
-        50,
-        141,
-        144,
-        181,
-        182,
-        168,
-        106,
-        133,
-        86,
-        71,
-        117,
-        123,
-        77,
-        243,
-        118,
-        189,
-        56,
-        86,
-        110,
-        105
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 10.0,
-        "total": 100.0,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./book/book/elasticlunr.min.js",
-        "penalties_applied": [],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./book/book/highlight.js": {
-      "content_hash": [
-        94,
-        247,
-        88,
-        103,
-        10,
-        83,
-        7,
-        55,
-        108,
-        239,
-        9,
-        38,
-        56,
-        59,
-        174,
-        9,
-        247,
-        29,
-        91,
-        61,
-        120,
-        251,
-        116,
-        41,
-        88,
-        210,
-        224,
-        97,
-        254,
-        38,
-        205,
-        129
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 10.0,
-        "total": 100.0,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./book/book/highlight.js",
-        "penalties_applied": [],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./book/book/mark.min.js": {
-      "content_hash": [
-        0,
-        169,
-        162,
-        32,
-        56,
-        176,
-        242,
-        242,
-        218,
-        114,
-        99,
-        170,
-        136,
-        103,
-        209,
-        11,
-        165,
-        147,
-        75,
-        232,
-        210,
-        178,
-        180,
-        177,
-        14,
-        218,
-        40,
-        77,
-        0,
-        239,
-        126,
-        137
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 10.0,
-        "total": 100.0,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./book/book/mark.min.js",
-        "penalties_applied": [],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./book/book/mode-rust.js": {
-      "content_hash": [
-        101,
-        114,
-        9,
-        51,
-        84,
-        129,
-        17,
-        132,
-        218,
-        236,
-        175,
-        248,
-        140,
-        136,
-        207,
-        253,
-        237,
-        48,
-        77,
-        178,
-        220,
-        103,
-        158,
-        172,
-        110,
-        226,
-        216,
-        224,
-        153,
-        101,
-        176,
-        180
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 10.0,
-        "total": 100.0,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./book/book/mode-rust.js",
-        "penalties_applied": [
-          {
-            "source_metric": "Consistency",
-            "amount": 10.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent semicolon usage detected"
-          }
-        ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./book/book/searcher.js": {
-      "content_hash": [
-        183,
-        88,
-        191,
-        155,
-        45,
-        157,
-        186,
-        140,
-        59,
-        165,
-        253,
-        192,
-        3,
-        249,
-        95,
-        175,
-        206,
-        28,
-        59,
-        93,
-        218,
-        57,
-        8,
-        29,
-        217,
-        173,
-        167,
-        112,
-        32,
-        251,
-        189,
-        161
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 5.0,
-        "total": 95.454544,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./book/book/searcher.js",
-        "penalties_applied": [
-          {
-            "source_metric": "Duplication",
-            "amount": 5.0,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Found 21 duplicate code patterns"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 5.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent quote usage detected"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 10.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent semicolon usage detected"
-          }
-        ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./book/book/searchindex.js": {
-      "content_hash": [
-        154,
-        90,
-        19,
-        251,
-        155,
-        165,
-        42,
-        234,
-        123,
-        127,
-        130,
-        45,
-        83,
-        134,
-        56,
-        117,
-        95,
-        110,
-        70,
-        127,
-        173,
-        166,
-        32,
-        135,
-        61,
-        141,
-        155,
-        142,
-        167,
-        67,
-        176,
-        200
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 10.0,
-        "total": 100.0,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./book/book/searchindex.js",
-        "penalties_applied": [],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./book/book/theme-dawn.js": {
-      "content_hash": [
-        224,
-        153,
-        56,
-        154,
-        73,
-        73,
-        47,
-        60,
-        173,
-        253,
-        234,
-        226,
-        58,
-        250,
-        84,
-        2,
-        147,
-        47,
-        105,
-        0,
-        79,
-        181,
-        190,
-        177,
-        155,
-        154,
-        230,
-        28,
-        8,
-        4,
-        145,
-        82
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 10.0,
-        "total": 100.0,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./book/book/theme-dawn.js",
-        "penalties_applied": [
-          {
-            "source_metric": "Consistency",
-            "amount": 10.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent semicolon usage detected"
-          }
-        ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./book/book/theme-tomorrow_night.js": {
-      "content_hash": [
-        118,
-        179,
-        26,
-        36,
-        133,
-        52,
-        192,
-        172,
-        173,
-        242,
-        169,
-        253,
-        35,
-        120,
-        188,
-        122,
-        83,
-        111,
-        108,
-        254,
-        244,
-        57,
-        208,
-        171,
-        110,
-        22,
-        145,
-        132,
-        207,
-        209,
-        136,
-        24
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 10.0,
-        "total": 100.0,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./book/book/theme-tomorrow_night.js",
-        "penalties_applied": [
-          {
-            "source_metric": "Consistency",
-            "amount": 10.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent semicolon usage detected"
-          }
-        ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./book/book/toc.js": {
-      "content_hash": [
-        170,
-        207,
-        123,
-        233,
-        253,
-        155,
-        19,
-        129,
-        71,
-        215,
-        198,
-        44,
-        182,
-        118,
-        190,
-        187,
-        46,
-        226,
-        86,
-        37,
-        42,
-        238,
-        190,
-        53,
-        229,
-        80,
-        144,
-        78,
-        86,
-        0,
-        101,
-        101
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 9.5,
-        "total": 99.545456,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./book/book/toc.js",
-        "penalties_applied": [
-          {
-            "source_metric": "Duplication",
-            "amount": 0.5,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Found 1 duplicate code patterns"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 10.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent semicolon usage detected"
-          }
-        ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./demos/www/pkg/whisper_apr_demo.d.ts": {
-      "content_hash": [
-        209,
-        18,
-        194,
-        137,
-        195,
-        91,
-        195,
-        158,
-        32,
-        65,
-        84,
-        176,
-        248,
-        232,
-        137,
-        148,
-        176,
-        250,
-        87,
-        9,
-        183,
-        61,
-        2,
-        4,
-        92,
-        94,
-        106,
-        251,
-        159,
-        144,
-        108,
-        230
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 5.0,
-        "total": 95.454544,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "TypeScript",
-        "file_path": "./demos/www/pkg/whisper_apr_demo.d.ts",
-        "penalties_applied": [
-          {
-            "source_metric": "Duplication",
-            "amount": 5.0,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Found 80 duplicate code patterns"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 10.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent semicolon usage detected"
-          }
-        ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./demos/www/pkg/whisper_apr_demo.js": {
-      "content_hash": [
-        20,
-        156,
-        54,
-        102,
-        20,
-        133,
-        12,
-        31,
-        104,
-        136,
-        170,
-        146,
-        22,
-        65,
-        163,
-        153,
-        158,
-        144,
-        35,
-        169,
-        181,
-        5,
-        40,
-        202,
-        159,
-        67,
-        227,
-        41,
-        101,
-        252,
-        90,
-        13
-      ],
-      "score": {
-        "structural_complexity": 3.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 13.681177,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 5.0,
-        "total": 76.681175,
-        "grade": "B",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./demos/www/pkg/whisper_apr_demo.js",
-        "penalties_applied": [
-          {
-            "source_metric": "Duplication",
-            "amount": 5.0,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Found 311 duplicate code patterns"
-          },
-          {
-            "source_metric": "Duplication",
-            "amount": 6.318823,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Code duplication: 31.6%"
-          },
-          {
-            "source_metric": "StructuralComplexity",
-            "amount": 10.0,
-            "applied_to": [
-              "StructuralComplexity"
-            ],
-            "issue": "High cognitive complexity: 53"
-          },
-          {
-            "source_metric": "StructuralComplexity",
-            "amount": 12.0,
-            "applied_to": [
-              "StructuralComplexity"
-            ],
-            "issue": "High cyclomatic complexity: 54"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 5.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent quote usage detected"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 10.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent semicolon usage detected"
-          }
-        ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./demos/www/pkg/whisper_apr_demo_bg.wasm.d.ts": {
-      "content_hash": [
-        240,
-        130,
-        18,
-        111,
-        42,
-        0,
-        34,
-        166,
-        47,
-        231,
-        22,
-        216,
-        132,
-        249,
-        101,
-        119,
-        142,
-        23,
-        36,
-        115,
-        175,
-        96,
-        49,
-        193,
-        162,
-        70,
-        236,
-        241,
-        244,
-        163,
-        112,
-        12
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 10.0,
-        "total": 100.0,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "TypeScript",
-        "file_path": "./demos/www/pkg/whisper_apr_demo_bg.wasm.d.ts",
-        "penalties_applied": [],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./demos/www-demo/pkg/whisper_apr_demo.d.ts": {
-      "content_hash": [
-        98,
-        77,
-        200,
-        73,
-        79,
-        133,
-        146,
-        249,
-        107,
-        27,
-        206,
-        63,
-        104,
-        164,
-        124,
-        23,
-        79,
-        84,
-        215,
-        127,
-        92,
-        241,
-        131,
-        202,
-        205,
-        131,
-        111,
-        95,
-        115,
-        20,
-        76,
-        139
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 5.0,
-        "total": 95.454544,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "TypeScript",
-        "file_path": "./demos/www-demo/pkg/whisper_apr_demo.d.ts",
-        "penalties_applied": [
-          {
-            "source_metric": "Duplication",
-            "amount": 5.0,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Found 61 duplicate code patterns"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 10.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent semicolon usage detected"
-          }
-        ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./demos/www-demo/pkg/whisper_apr_demo.js": {
-      "content_hash": [
-        4,
-        228,
-        199,
-        238,
-        243,
-        225,
-        52,
-        220,
-        106,
-        11,
-        232,
-        5,
-        123,
-        211,
-        200,
-        11,
-        64,
-        113,
-        171,
-        67,
-        157,
-        43,
-        188,
-        23,
-        99,
-        140,
-        113,
-        242,
-        40,
-        33,
-        131,
-        99
-      ],
-      "score": {
-        "structural_complexity": 5.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 13.856466,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 5.0,
-        "total": 78.85647,
-        "grade": "B",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./demos/www-demo/pkg/whisper_apr_demo.js",
-        "penalties_applied": [
-          {
-            "source_metric": "Duplication",
-            "amount": 5.0,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Found 285 duplicate code patterns"
-          },
-          {
-            "source_metric": "Duplication",
-            "amount": 6.143534,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Code duplication: 30.7%"
-          },
-          {
-            "source_metric": "StructuralComplexity",
-            "amount": 10.0,
-            "applied_to": [
-              "StructuralComplexity"
-            ],
-            "issue": "High cognitive complexity: 49"
-          },
-          {
-            "source_metric": "StructuralComplexity",
-            "amount": 10.0,
-            "applied_to": [
-              "StructuralComplexity"
-            ],
-            "issue": "High cyclomatic complexity: 50"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 5.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent quote usage detected"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 10.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent semicolon usage detected"
-          }
-        ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./demos/www-demo/pkg/whisper_apr_demo_bg.wasm.d.ts": {
-      "content_hash": [
-        87,
-        73,
-        99,
-        3,
-        101,
-        21,
-        245,
-        86,
-        187,
-        46,
-        15,
-        194,
-        54,
-        125,
-        110,
-        38,
-        39,
-        13,
-        109,
-        86,
-        18,
-        230,
-        210,
-        77,
-        13,
-        69,
-        74,
-        116,
-        90,
-        198,
-        65,
-        205
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 10.0,
-        "total": 100.0,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "TypeScript",
-        "file_path": "./demos/www-demo/pkg/whisper_apr_demo_bg.wasm.d.ts",
-        "penalties_applied": [],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
     "./demos/www-demo/src/audioworklet_js.rs": {
       "content_hash": [
         25,
@@ -3926,266 +2480,6 @@
             "issue": "Code duplication: 11.8%"
           }
         ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./pkg/whisper_apr.d.ts": {
-      "content_hash": [
-        72,
-        242,
-        89,
-        129,
-        119,
-        242,
-        157,
-        124,
-        10,
-        154,
-        135,
-        8,
-        237,
-        109,
-        109,
-        90,
-        166,
-        213,
-        187,
-        221,
-        133,
-        155,
-        2,
-        58,
-        208,
-        102,
-        152,
-        242,
-        48,
-        43,
-        84,
-        199
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 17.978142,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 5.0,
-        "total": 93.61649,
-        "grade": "A",
-        "confidence": 0.9,
-        "language": "TypeScript",
-        "file_path": "./pkg/whisper_apr.d.ts",
-        "penalties_applied": [
-          {
-            "source_metric": "Duplication",
-            "amount": 5.0,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Found 79 duplicate code patterns"
-          },
-          {
-            "source_metric": "Duplication",
-            "amount": 2.021858,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Code duplication: 10.1%"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 10.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent semicolon usage detected"
-          }
-        ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./pkg/whisper_apr.js": {
-      "content_hash": [
-        78,
-        66,
-        183,
-        253,
-        162,
-        199,
-        55,
-        73,
-        49,
-        84,
-        225,
-        152,
-        93,
-        12,
-        87,
-        48,
-        183,
-        240,
-        244,
-        196,
-        66,
-        168,
-        35,
-        189,
-        138,
-        182,
-        151,
-        230,
-        243,
-        136,
-        246,
-        137
-      ],
-      "score": {
-        "structural_complexity": 4.5,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 12.8319845,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 5.0,
-        "total": 77.331985,
-        "grade": "B",
-        "confidence": 0.9,
-        "language": "JavaScript",
-        "file_path": "./pkg/whisper_apr.js",
-        "penalties_applied": [
-          {
-            "source_metric": "Duplication",
-            "amount": 5.0,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Found 278 duplicate code patterns"
-          },
-          {
-            "source_metric": "Duplication",
-            "amount": 7.1680155,
-            "applied_to": [
-              "Duplication"
-            ],
-            "issue": "Code duplication: 35.8%"
-          },
-          {
-            "source_metric": "StructuralComplexity",
-            "amount": 10.0,
-            "applied_to": [
-              "StructuralComplexity"
-            ],
-            "issue": "High cognitive complexity: 50"
-          },
-          {
-            "source_metric": "StructuralComplexity",
-            "amount": 10.5,
-            "applied_to": [
-              "StructuralComplexity"
-            ],
-            "issue": "High cyclomatic complexity: 51"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 5.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent quote usage detected"
-          },
-          {
-            "source_metric": "Consistency",
-            "amount": 10.0,
-            "applied_to": [
-              "Consistency"
-            ],
-            "issue": "Inconsistent semicolon usage detected"
-          }
-        ],
-        "critical_defects_count": 0,
-        "has_critical_defects": false,
-        "has_contract_coverage": false
-      },
-      "components": {
-        "complexity_breakdown": {},
-        "duplication_sources": [],
-        "coupling_dependencies": [],
-        "doc_missing_items": [],
-        "consistency_violations": []
-      },
-      "git_context": null
-    },
-    "./pkg/whisper_apr_bg.wasm.d.ts": {
-      "content_hash": [
-        177,
-        82,
-        94,
-        211,
-        200,
-        185,
-        97,
-        1,
-        93,
-        104,
-        247,
-        60,
-        189,
-        216,
-        182,
-        194,
-        118,
-        32,
-        26,
-        132,
-        193,
-        203,
-        62,
-        49,
-        3,
-        69,
-        110,
-        142,
-        191,
-        1,
-        148,
-        177
-      ],
-      "score": {
-        "structural_complexity": 25.0,
-        "semantic_complexity": 20.0,
-        "duplication_ratio": 20.0,
-        "coupling_score": 15.0,
-        "doc_coverage": 10.0,
-        "consistency_score": 10.0,
-        "entropy_score": 10.0,
-        "total": 100.0,
-        "grade": "A+",
-        "confidence": 0.9,
-        "language": "TypeScript",
-        "file_path": "./pkg/whisper_apr_bg.wasm.d.ts",
-        "penalties_applied": [],
         "critical_defects_count": 0,
         "has_critical_defects": false,
         "has_contract_coverage": false
@@ -6783,48 +5077,48 @@
     },
     "./src/cli/apr_commands/probe.rs": {
       "content_hash": [
-        197,
-        72,
-        43,
-        112,
+        48,
         200,
-        24,
-        159,
-        115,
-        211,
-        2,
-        118,
-        6,
-        201,
-        211,
-        165,
-        147,
-        137,
-        247,
-        115,
         34,
+        245,
+        196,
         99,
-        92,
-        6,
-        89,
-        153,
-        137,
-        175,
-        128,
-        252,
-        191,
-        142,
-        20
+        184,
+        124,
+        146,
+        188,
+        228,
+        40,
+        158,
+        182,
+        108,
+        104,
+        214,
+        36,
+        34,
+        165,
+        242,
+        72,
+        234,
+        159,
+        35,
+        1,
+        28,
+        199,
+        155,
+        43,
+        116,
+        27
       ],
       "score": {
         "structural_complexity": 21.8,
         "semantic_complexity": 20.0,
-        "duplication_ratio": 17.819149,
+        "duplication_ratio": 17.847769,
         "coupling_score": 15.0,
         "doc_coverage": 10.0,
         "consistency_score": 10.0,
         "entropy_score": 5.0,
-        "total": 99.61915,
+        "total": 99.647766,
         "grade": "A+",
         "confidence": 1.0,
         "language": "Rust",
@@ -6840,11 +5134,11 @@
           },
           {
             "source_metric": "Duplication",
-            "amount": 2.180851,
+            "amount": 2.152231,
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Code duplication: 10.9%"
+            "issue": "Code duplication: 10.8%"
           },
           {
             "source_metric": "StructuralComplexity",
@@ -7357,48 +5651,48 @@
     },
     "./src/cli/model_loader.rs": {
       "content_hash": [
-        254,
-        71,
-        91,
-        46,
-        122,
-        236,
-        232,
-        139,
-        243,
-        48,
-        2,
-        99,
-        232,
-        39,
-        19,
-        72,
-        95,
         247,
-        83,
+        72,
+        132,
+        35,
+        189,
+        54,
+        230,
+        147,
+        161,
         31,
-        195,
-        3,
-        91,
+        137,
+        188,
+        19,
+        194,
+        202,
+        236,
+        37,
+        185,
+        44,
+        204,
+        178,
         169,
-        180,
-        20,
-        145,
-        241,
-        126,
-        250,
-        22,
-        52
+        60,
+        91,
+        166,
+        79,
+        232,
+        7,
+        81,
+        42,
+        188,
+        165
       ],
       "score": {
         "structural_complexity": 0.0,
         "semantic_complexity": 19.5,
-        "duplication_ratio": 17.385826,
+        "duplication_ratio": 17.40625,
         "coupling_score": 15.0,
         "doc_coverage": 10.0,
         "consistency_score": 10.0,
         "entropy_score": 5.0,
-        "total": 76.885826,
+        "total": 76.90625,
         "grade": "B",
         "confidence": 1.0,
         "language": "Rust",
@@ -7414,11 +5708,11 @@
           },
           {
             "source_metric": "Duplication",
-            "amount": 2.6141734,
+            "amount": 2.59375,
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Code duplication: 13.1%"
+            "issue": "Code duplication: 13.0%"
           },
           {
             "source_metric": "StructuralComplexity",
@@ -7426,7 +5720,7 @@
             "applied_to": [
               "StructuralComplexity"
             ],
-            "issue": "High cognitive complexity: 81"
+            "issue": "High cognitive complexity: 82"
           },
           {
             "source_metric": "StructuralComplexity",
@@ -7434,7 +5728,7 @@
             "applied_to": [
               "StructuralComplexity"
             ],
-            "issue": "High cyclomatic complexity: 86"
+            "issue": "High cyclomatic complexity: 87"
           },
           {
             "source_metric": "SemanticComplexity",
@@ -7618,49 +5912,49 @@
     },
     "./src/core_generated.rs": {
       "content_hash": [
-        90,
-        147,
+        242,
+        59,
+        216,
+        136,
+        34,
+        53,
+        113,
+        116,
+        40,
+        17,
+        93,
+        129,
+        207,
+        113,
+        121,
+        38,
+        96,
+        4,
+        240,
         171,
-        118,
-        250,
-        71,
-        150,
-        100,
-        128,
-        245,
-        57,
-        220,
-        64,
-        37,
-        212,
-        103,
-        102,
-        85,
-        220,
-        103,
         138,
-        69,
-        162,
-        175,
-        20,
-        124,
-        180,
-        255,
-        205,
-        215,
-        171,
-        130
+        213,
+        77,
+        128,
+        40,
+        89,
+        98,
+        18,
+        225,
+        111,
+        247,
+        4
       ],
       "score": {
         "structural_complexity": 0.0,
         "semantic_complexity": 20.0,
-        "duplication_ratio": 15.111421,
-        "coupling_score": 14.8,
+        "duplication_ratio": 15.478667,
+        "coupling_score": 15.0,
         "doc_coverage": 10.0,
         "consistency_score": 10.0,
         "entropy_score": 5.0,
-        "total": 74.91142,
-        "grade": "B-",
+        "total": 75.47867,
+        "grade": "B",
         "confidence": 1.0,
         "language": "Rust",
         "file_path": "./src/core_generated.rs",
@@ -7671,15 +5965,15 @@
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Found 458 duplicate code patterns"
+            "issue": "Found 473 duplicate code patterns"
           },
           {
             "source_metric": "Duplication",
-            "amount": 4.8885794,
+            "amount": 4.5213327,
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Code duplication: 24.4%"
+            "issue": "Code duplication: 22.6%"
           },
           {
             "source_metric": "StructuralComplexity",
@@ -7687,7 +5981,7 @@
             "applied_to": [
               "StructuralComplexity"
             ],
-            "issue": "High cognitive complexity: 284"
+            "issue": "High cognitive complexity: 296"
           },
           {
             "source_metric": "StructuralComplexity",
@@ -7695,15 +5989,7 @@
             "applied_to": [
               "StructuralComplexity"
             ],
-            "issue": "High cyclomatic complexity: 227"
-          },
-          {
-            "source_metric": "Coupling",
-            "amount": 0.2,
-            "applied_to": [
-              "Coupling"
-            ],
-            "issue": "Too many imports: 21"
+            "issue": "High cyclomatic complexity: 245"
           }
         ],
         "critical_defects_count": 0,
@@ -7721,48 +6007,48 @@
     },
     "./src/cuda/impl_generated.rs": {
       "content_hash": [
-        222,
-        148,
-        92,
-        83,
-        20,
-        178,
+        114,
+        7,
+        127,
         206,
-        59,
-        68,
-        101,
-        170,
+        106,
+        225,
+        165,
         122,
-        176,
-        233,
-        84,
-        246,
-        9,
-        143,
-        240,
+        41,
+        227,
+        198,
+        39,
+        83,
+        202,
+        188,
+        167,
+        119,
+        43,
+        177,
+        23,
+        249,
+        75,
+        6,
+        177,
+        26,
+        4,
+        57,
+        249,
+        234,
         204,
-        121,
-        159,
-        221,
-        201,
-        208,
-        49,
-        192,
-        14,
-        32,
-        85,
-        195,
-        207
+        56,
+        36
       ],
       "score": {
         "structural_complexity": 0.0,
         "semantic_complexity": 20.0,
-        "duplication_ratio": 14.625488,
+        "duplication_ratio": 14.627604,
         "coupling_score": 15.0,
         "doc_coverage": 10.0,
         "consistency_score": 10.0,
         "entropy_score": 5.0,
-        "total": 74.62549,
+        "total": 74.6276,
         "grade": "B-",
         "confidence": 1.0,
         "language": "Rust",
@@ -7774,11 +6060,11 @@
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Found 377 duplicate code patterns"
+            "issue": "Found 381 duplicate code patterns"
           },
           {
             "source_metric": "Duplication",
-            "amount": 5.374512,
+            "amount": 5.3723965,
             "applied_to": [
               "Duplication"
             ],
@@ -7790,7 +6076,7 @@
             "applied_to": [
               "StructuralComplexity"
             ],
-            "issue": "High cognitive complexity: 211"
+            "issue": "High cognitive complexity: 208"
           },
           {
             "source_metric": "StructuralComplexity",
@@ -7798,7 +6084,7 @@
             "applied_to": [
               "StructuralComplexity"
             ],
-            "issue": "High cyclomatic complexity: 168"
+            "issue": "High cyclomatic complexity: 169"
           }
         ],
         "critical_defects_count": 0,
@@ -7878,38 +6164,38 @@
     },
     "./src/detection/mod.rs": {
       "content_hash": [
-        127,
-        133,
-        204,
+        91,
+        87,
+        191,
+        84,
+        157,
         144,
-        135,
-        151,
-        110,
+        254,
+        96,
+        140,
+        73,
+        155,
+        16,
+        192,
+        102,
+        32,
         50,
-        56,
-        103,
-        175,
-        247,
-        217,
-        86,
-        11,
-        46,
-        202,
-        226,
-        162,
-        124,
-        34,
-        227,
-        124,
-        178,
-        30,
-        164,
-        188,
-        227,
-        89,
-        184,
-        207,
-        238
+        253,
+        219,
+        28,
+        1,
+        120,
+        17,
+        156,
+        108,
+        100,
+        33,
+        215,
+        141,
+        100,
+        213,
+        228,
+        172
       ],
       "score": {
         "structural_complexity": 25.0,
@@ -7918,8 +6204,8 @@
         "coupling_score": 15.0,
         "doc_coverage": 10.0,
         "consistency_score": 10.0,
-        "entropy_score": 6.0,
-        "total": 96.36363,
+        "entropy_score": 5.0,
+        "total": 95.454544,
         "grade": "A+",
         "confidence": 1.0,
         "language": "Rust",
@@ -7927,11 +6213,11 @@
         "penalties_applied": [
           {
             "source_metric": "Duplication",
-            "amount": 4.0,
+            "amount": 5.0,
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Found 8 duplicate code patterns"
+            "issue": "Found 11 duplicate code patterns"
           }
         ],
         "critical_defects_count": 0,
@@ -10698,38 +8984,38 @@
     },
     "./src/inference/mod.rs": {
       "content_hash": [
-        145,
-        112,
-        6,
+        124,
+        246,
         190,
-        24,
-        168,
-        233,
+        153,
+        178,
+        9,
+        56,
+        162,
+        191,
+        184,
+        139,
+        89,
         217,
-        224,
-        97,
-        243,
-        51,
-        11,
-        74,
-        183,
-        40,
-        150,
-        255,
-        133,
-        106,
-        182,
-        249,
-        169,
+        127,
         22,
-        29,
-        8,
-        52,
-        76,
+        181,
+        3,
+        201,
+        13,
+        101,
+        234,
+        220,
+        234,
+        229,
+        226,
+        43,
+        207,
+        23,
         159,
-        194,
-        66,
-        220
+        11,
+        115,
+        107
       ],
       "score": {
         "structural_complexity": 25.0,
@@ -10769,48 +9055,48 @@
     },
     "./src/inference/processors.rs": {
       "content_hash": [
-        225,
-        94,
-        60,
-        111,
-        35,
-        230,
-        148,
-        99,
-        155,
-        174,
-        162,
-        51,
-        95,
-        230,
-        67,
-        205,
-        50,
-        11,
-        183,
-        101,
-        188,
-        191,
-        155,
         56,
-        47,
-        184,
-        248,
-        74,
-        228,
-        58,
-        62,
-        7
+        138,
+        75,
+        247,
+        170,
+        238,
+        222,
+        93,
+        236,
+        239,
+        56,
+        186,
+        98,
+        113,
+        152,
+        72,
+        19,
+        129,
+        137,
+        26,
+        152,
+        148,
+        117,
+        49,
+        100,
+        250,
+        109,
+        209,
+        98,
+        210,
+        123,
+        242
       ],
       "score": {
-        "structural_complexity": 25.0,
+        "structural_complexity": 23.8,
         "semantic_complexity": 20.0,
-        "duplication_ratio": 17.201645,
+        "duplication_ratio": 17.581226,
         "coupling_score": 15.0,
         "doc_coverage": 10.0,
         "consistency_score": 10.0,
         "entropy_score": 5.0,
-        "total": 92.91059,
+        "total": 92.16475,
         "grade": "A",
         "confidence": 1.0,
         "language": "Rust",
@@ -10822,15 +9108,23 @@
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Found 16 duplicate code patterns"
+            "issue": "Found 29 duplicate code patterns"
           },
           {
             "source_metric": "Duplication",
-            "amount": 2.7983541,
+            "amount": 2.4187727,
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Code duplication: 14.0%"
+            "issue": "Code duplication: 12.1%"
+          },
+          {
+            "source_metric": "StructuralComplexity",
+            "amount": 1.2,
+            "applied_to": [
+              "StructuralComplexity"
+            ],
+            "issue": "High cognitive complexity: 19"
           }
         ],
         "critical_defects_count": 0,
@@ -10935,38 +9229,38 @@
     },
     "./src/lib.rs": {
       "content_hash": [
-        132,
-        210,
-        20,
-        82,
-        104,
-        113,
-        119,
-        186,
-        199,
-        17,
-        200,
-        63,
-        74,
+        46,
+        135,
+        85,
+        33,
+        131,
+        198,
+        251,
+        109,
+        158,
+        161,
+        164,
+        236,
+        95,
+        18,
+        244,
+        112,
+        44,
         51,
-        94,
-        210,
-        214,
-        113,
-        93,
-        8,
-        69,
-        24,
-        107,
-        123,
-        78,
-        66,
-        162,
-        208,
-        100,
-        129,
-        23,
-        65
+        201,
+        87,
+        121,
+        200,
+        158,
+        92,
+        161,
+        102,
+        13,
+        192,
+        165,
+        86,
+        199,
+        18
       ],
       "score": {
         "structural_complexity": 25.0,
@@ -14350,6 +12644,77 @@
       },
       "git_context": null
     },
+    "./src/speech_gate.rs": {
+      "content_hash": [
+        132,
+        118,
+        3,
+        62,
+        47,
+        127,
+        190,
+        198,
+        89,
+        52,
+        175,
+        179,
+        232,
+        204,
+        219,
+        190,
+        86,
+        133,
+        39,
+        197,
+        250,
+        196,
+        15,
+        19,
+        183,
+        65,
+        104,
+        72,
+        35,
+        249,
+        248,
+        39
+      ],
+      "score": {
+        "structural_complexity": 25.0,
+        "semantic_complexity": 20.0,
+        "duplication_ratio": 20.0,
+        "coupling_score": 15.0,
+        "doc_coverage": 10.0,
+        "consistency_score": 10.0,
+        "entropy_score": 5.0,
+        "total": 95.454544,
+        "grade": "A+",
+        "confidence": 1.0,
+        "language": "Rust",
+        "file_path": "./src/speech_gate.rs",
+        "penalties_applied": [
+          {
+            "source_metric": "Duplication",
+            "amount": 5.0,
+            "applied_to": [
+              "Duplication"
+            ],
+            "issue": "Found 31 duplicate code patterns"
+          }
+        ],
+        "critical_defects_count": 0,
+        "has_critical_defects": false,
+        "has_contract_coverage": false
+      },
+      "components": {
+        "complexity_breakdown": {},
+        "duplication_sources": [],
+        "coupling_dependencies": [],
+        "doc_missing_items": [],
+        "consistency_violations": []
+      },
+      "git_context": null
+    },
     "./src/timestamps/alignment/mod.rs": {
       "content_hash": [
         22,
@@ -14613,38 +12978,38 @@
     },
     "./src/timestamps/mod.rs": {
       "content_hash": [
+        255,
+        224,
+        199,
         109,
+        152,
+        77,
+        246,
+        213,
+        213,
+        77,
+        175,
+        57,
+        164,
+        28,
+        185,
+        12,
+        85,
+        164,
+        61,
+        201,
+        62,
+        244,
+        75,
         225,
-        38,
-        101,
-        209,
-        70,
-        21,
-        92,
-        247,
-        27,
-        104,
-        68,
-        193,
-        134,
-        230,
-        24,
-        237,
-        130,
-        234,
-        137,
-        207,
-        134,
-        73,
-        137,
-        2,
-        139,
-        204,
-        105,
-        173,
-        104,
-        52,
-        248
+        82,
+        172,
+        169,
+        102,
+        236,
+        168,
+        252,
+        83
       ],
       "score": {
         "structural_complexity": 25.0,
@@ -14684,38 +13049,38 @@
     },
     "./src/timestamps/segment/mod.rs": {
       "content_hash": [
-        31,
-        221,
+        216,
+        103,
+        139,
+        228,
+        203,
+        224,
+        82,
+        198,
+        144,
+        162,
+        41,
+        123,
+        58,
+        25,
+        227,
+        191,
+        123,
+        29,
+        206,
+        222,
+        228,
+        50,
+        176,
+        90,
+        188,
+        43,
+        19,
+        80,
         51,
-        178,
-        48,
-        71,
-        186,
-        245,
-        200,
-        83,
-        17,
-        115,
-        236,
-        148,
-        124,
-        88,
-        177,
-        190,
-        124,
-        219,
-        148,
-        179,
-        244,
-        55,
-        85,
-        194,
-        190,
-        79,
-        233,
-        17,
-        172,
-        226
+        30,
+        196,
+        21
       ],
       "score": {
         "structural_complexity": 20.8,
@@ -14737,7 +13102,7 @@
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Found 19 duplicate code patterns"
+            "issue": "Found 18 duplicate code patterns"
           },
           {
             "source_metric": "StructuralComplexity",
@@ -14929,48 +13294,48 @@
     },
     "./src/tokenizer/vocab/mod.rs": {
       "content_hash": [
-        137,
-        96,
-        24,
-        42,
-        15,
-        33,
-        78,
-        5,
-        203,
-        78,
-        120,
-        242,
-        207,
-        248,
-        6,
+        145,
+        251,
+        230,
         175,
-        217,
-        45,
-        116,
-        91,
-        133,
-        60,
-        246,
-        175,
-        210,
-        30,
-        216,
+        101,
+        111,
+        241,
+        87,
+        78,
+        200,
+        223,
+        40,
+        225,
         176,
-        24,
-        129,
-        103,
-        80
+        185,
+        28,
+        86,
+        63,
+        16,
+        240,
+        242,
+        211,
+        207,
+        146,
+        59,
+        193,
+        162,
+        16,
+        60,
+        226,
+        145,
+        139
       ],
       "score": {
-        "structural_complexity": 25.0,
+        "structural_complexity": 24.7,
         "semantic_complexity": 20.0,
-        "duplication_ratio": 17.921146,
+        "duplication_ratio": 17.891739,
         "coupling_score": 15.0,
         "doc_coverage": 10.0,
         "consistency_score": 10.0,
         "entropy_score": 5.0,
-        "total": 93.564674,
+        "total": 93.26521,
         "grade": "A",
         "confidence": 1.0,
         "language": "Rust",
@@ -14982,15 +13347,23 @@
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Found 12 duplicate code patterns"
+            "issue": "Found 13 duplicate code patterns"
           },
           {
             "source_metric": "Duplication",
-            "amount": 2.0788531,
+            "amount": 2.108262,
             "applied_to": [
               "Duplication"
             ],
-            "issue": "Code duplication: 10.4%"
+            "issue": "Code duplication: 10.5%"
+          },
+          {
+            "source_metric": "StructuralComplexity",
+            "amount": 0.3,
+            "applied_to": [
+              "StructuralComplexity"
+            ],
+            "issue": "High cognitive complexity: 16"
           }
         ],
         "critical_defects_count": 0,
@@ -18783,22 +17156,20 @@
     }
   },
   "summary": {
-    "total_files": 236,
-    "avg_score": 93.93738,
+    "total_files": 215,
+    "avg_score": 93.75068,
     "grade_distribution": {
-      "A+": 126,
-      "A": 82,
+      "A+": 109,
+      "A": 81,
       "A-": 7,
       "B+": 3,
-      "B": 10,
-      "B-": 7,
+      "B": 8,
+      "B-": 6,
       "C+": 1
     },
     "languages": {
-      "JavaScript": 16,
       "Python": 9,
-      "Rust": 205,
-      "TypeScript": 6
+      "Rust": 206
     }
   }
 }
