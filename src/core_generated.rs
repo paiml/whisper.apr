@@ -595,6 +595,7 @@ impl WhisperApr {
 
         // 7. Extract segments with timestamps (fallback: sentence-split for full audio)
         let segments = self.segments_from_tokens(&tokens, &text, audio.len());
+        let (text, segments) = Self::spoken_only(text, segments, audio);
 
         // 8. Build result with profiling from BrickProfiler (sovereign tooling)
         #[cfg(feature = "std")]
@@ -938,6 +939,21 @@ impl WhisperApr {
         let specials = self.specials();
         !timestamps::has_timestamps_with(&specials, tokens)
             || timestamps::ends_with_timestamp_with(&specials, tokens)
+    }
+
+    /// A timestamped line over a silent span is an invention, not speech: drop
+    /// those segments and rebuild the text from the rest.
+    fn spoken_only(text: String, segments: Vec<Segment>, audio: &[f32]) -> (String, Vec<Segment>) {
+        let spoken = timestamps::drop_silent_segments(segments.clone(), audio, audio::SAMPLE_RATE);
+        if spoken.len() == segments.len() {
+            return (text, segments);
+        }
+        let joined = spoken
+            .iter()
+            .map(|s| s.text.trim())
+            .collect::<Vec<_>>()
+            .join(" ");
+        (joined, spoken)
     }
 
     /// A window's segments: from its timestamps when it has them, otherwise
