@@ -34,7 +34,7 @@ jobs:
   # Ripgrep pattern: create release once, then matrix jobs upload to it.
   # Draft prevents users from seeing incomplete releases.
   create-release:
-    runs-on: [self-hosted, clean-room]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
       version: ${{ steps.parse.outputs.version }}
@@ -115,7 +115,7 @@ jobs:
   # ── Verify: package tarball integrity ──────────────────
   verify:
     needs: [create-release, gate]
-    runs-on: [self-hosted, clean-room]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -133,7 +133,7 @@ jobs:
   # ── Publish: OIDC trusted publishing to crates.io ──────
   publish:
     needs: [create-release, verify]
-    runs-on: [self-hosted, clean-room]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -157,7 +157,7 @@ jobs:
   build-binaries:
     needs: [create-release, publish]
     if: needs.create-release.outputs.has_binaries == 'true'
-    runs-on: [self-hosted, clean-room]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -294,7 +294,7 @@ jobs:
   publish-release:
     needs: [create-release, publish, build-binaries]
     if: always() && needs.publish.result == 'success'
-    runs-on: [self-hosted, clean-room]
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Publish GitHub Release

@@ -28,7 +28,7 @@ jobs:
   # Top-level gate: satisfies org ruleset which requires check named "gate".
   # The reusable workflow produces "ci / gate" but rulesets need exact match on "gate".
   gate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 21
     needs: [ci]
     if: always()

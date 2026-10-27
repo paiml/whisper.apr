@@ -38,7 +38,7 @@ jobs:
   # real-inference versions here nightly so the end-to-end path keeps coverage.
   perf-tests:
     name: perf-tests (ignored)
-    runs-on: [self-hosted, clean-room]
+    runs-on: ubuntu-24.04
     container:
       image: localhost:5000/sovereign-ci:stable
     timeout-minutes: 30

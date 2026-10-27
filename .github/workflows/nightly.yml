@@ -11,7 +11,7 @@ permissions:
 jobs:
   check:
     name: Is the nightly behind HEAD?
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 21
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
@@ -57,9 +57,9 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             cross: true
           - target: x86_64-apple-darwin
             runner: macos-latest
@@ -155,7 +155,7 @@ jobs:
   release:
     name: Release
     needs: [check, build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 21
     steps:
       - uses: actions/checkout@v6
