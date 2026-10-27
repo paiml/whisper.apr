@@ -49,3 +49,21 @@ bindings:
   module_path: whisper_apr::inference::TimestampRules::apply
   signature: 'pub fn apply(&self, tokens: &[u32], logits: &mut [f32])'
   status: implemented
+- contract: decode-fallback-v1.yaml
+  equation: fallback_policy
+  function: needs_fallback
+  module_path: whisper_apr::inference::DecodeFallback::needs_fallback
+  signature: 'pub fn needs_fallback(&self, stats: &DecodeStats) -> bool'
+  status: implemented
+- contract: decode-fallback-v1.yaml
+  equation: no_speech_skip
+  function: is_silent
+  module_path: whisper_apr::inference::DecodeFallback::is_silent
+  signature: 'pub fn is_silent(&self, stats: &DecodeStats) -> bool'
+  status: implemented
+- contract: decode-fallback-v1.yaml
+  equation: attempt_seed
+  function: attempt_seed
+  module_path: whisper_apr::inference::DecodeFallback::attempt_seed
+  signature: 'pub fn attempt_seed(&self, window_index: u64, temperature_index: usize) -> u64'
+  status: implemented
