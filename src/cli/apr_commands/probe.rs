@@ -42,7 +42,12 @@ pub(super) fn run_probe(
     } else if whisper.config().model_family == crate::format::ModelFamily::Moonshine {
         vec![1] // Moonshine SOT
     } else {
-        vec![crate::tokenizer::special_tokens::SOT]
+        vec![
+            crate::tokenizer::special_tokens::SpecialTokens::for_vocab_size(
+                whisper.config().n_vocab as usize,
+            )
+            .sot,
+        ]
     };
 
     // Build probe

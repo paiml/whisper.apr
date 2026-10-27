@@ -25,7 +25,7 @@
 #[cfg(feature = "realizar-inference")]
 use realizar::generate::{LogitProcessor, LogitProcessorContext};
 
-use crate::tokenizer::special_tokens;
+use crate::tokenizer::special_tokens::{self, SpecialTokens};
 
 /// Whisper-specific token suppressor
 ///
@@ -44,10 +44,14 @@ pub struct WhisperTokenSuppressor {
     suppress_timestamps: bool,
     /// Number of vocabulary entries (for bounds checking)
     n_vocab: usize,
+    /// First timestamp token (`<|0.00|>`) of the vocabulary
+    timestamp_base: u32,
 }
 
 impl WhisperTokenSuppressor {
-    /// Create a new Whisper token suppressor with default suppressions
+    /// Create a new Whisper token suppressor with default suppressions for
+    /// the v2 (51865) vocabulary only; use [`Self::for_specials`] with the
+    /// model's [`SpecialTokens`] (issue #108).
     ///
     /// Default suppressions include:
     /// - SOT (50257)
@@ -60,25 +64,30 @@ impl WhisperTokenSuppressor {
     /// - All language tokens (50258-50357)
     #[must_use]
     pub fn new() -> Self {
-        let mut suppress_ids = vec![
-            special_tokens::SOT,
-            special_tokens::NO_SPEECH,
-            special_tokens::TRANSLATE,
-            special_tokens::TRANSCRIBE,
-            special_tokens::PREV,
-            special_tokens::SPEAKER_TURN,
-            special_tokens::NO_TIMESTAMPS,
-        ];
+        Self::for_specials(&SpecialTokens::multilingual())
+    }
 
-        // Add all language tokens (50258 to 50357)
-        for lang_id in special_tokens::LANG_BASE..special_tokens::TRANSLATE {
-            suppress_ids.push(lang_id);
-        }
+    /// The default suppressions of one vocabulary: sot, `<|nospeech|>`, both
+    /// task tokens, `<|startofprev|>`, `<|startoflm|>`, `<|notimestamps|>`,
+    /// every language token and (unless disabled) every timestamp.
+    #[must_use]
+    pub fn for_specials(specials: &SpecialTokens) -> Self {
+        let mut suppress_ids = vec![
+            specials.sot,
+            specials.no_speech,
+            specials.translate,
+            specials.transcribe,
+            specials.prev,
+            specials.start_of_lm,
+            specials.no_timestamps,
+        ];
+        suppress_ids.extend(specials.lang_base..specials.translate);
 
         Self {
             suppress_ids,
             suppress_timestamps: true,
             n_vocab: 51865,
+            timestamp_base: specials.timestamp_base,
         }
     }
 
@@ -89,6 +98,7 @@ impl WhisperTokenSuppressor {
             suppress_ids: tokens,
             suppress_timestamps: true,
             n_vocab: 51865,
+            timestamp_base: special_tokens::TIMESTAMP_BASE,
         }
     }
 
@@ -137,7 +147,7 @@ impl WhisperTokenSuppressor {
 
         // Suppress timestamps if configured
         if self.suppress_timestamps {
-            let timestamp_start = special_tokens::TIMESTAMP_BASE as usize;
+            let timestamp_start = self.timestamp_base as usize;
             for logit in logits
                 .iter_mut()
                 .skip(timestamp_start)
@@ -385,6 +395,45 @@ mod tests {
         assert!(
             logits[special_tokens::TIMESTAMP_BASE as usize].is_finite(),
             "timestamp base should not be suppressed when n_vocab=0"
+        );
+    }
+
+    /// On large-v3/turbo (51866) the suppressor bans the v3 task, PREV and
+    /// notimestamps ids, and its timestamp range starts at `<|0.00|>` = 50365
+    /// (issue #108).
+    #[test]
+    fn the_v3_suppressor_uses_v3_ids() {
+        let v3 = SpecialTokens::multilingual_v3();
+        let suppressor = WhisperTokenSuppressor::for_specials(&v3).with_vocab_size(51_866);
+        let banned = suppressor.suppressed_tokens();
+        for id in [
+            50_258, 50_259, 50_358, 50_359, 50_360, 50_361, 50_362, 50_363, 50_364,
+        ] {
+            assert!(banned.contains(&id), "{id} must be suppressed");
+        }
+        assert!(!banned.contains(&50_257), "eot stays allowed");
+
+        let mut logits = vec![1.0f32; 51_866];
+        suppressor.apply(&mut logits);
+        assert!(logits[50_364] == f32::NEG_INFINITY);
+        assert!(logits[50_365] == f32::NEG_INFINITY);
+        assert!(logits[51_865] == f32::NEG_INFINITY);
+
+        let mut logits = vec![1.0f32; 51_866];
+        WhisperTokenSuppressor::for_specials(&v3)
+            .with_timestamp_suppression(false)
+            .with_vocab_size(51_866)
+            .apply(&mut logits);
+        assert!(
+            logits[50_364] == f32::NEG_INFINITY,
+            "notimestamps is banned"
+        );
+        assert!(logits[50_365].is_finite(), "<|0.00|> is allowed");
+
+        assert_eq!(
+            WhisperTokenSuppressor::new().suppressed_tokens(),
+            WhisperTokenSuppressor::for_specials(&SpecialTokens::multilingual())
+                .suppressed_tokens()
         );
     }
 }

@@ -1,0 +1,15 @@
+version: 1.0.0
+target_crate: whisper_apr
+bindings:
+- contract: special-tokens-v1.yaml
+  equation: id_table
+  function: from_vocab_size
+  module_path: whisper_apr::tokenizer::special_tokens::SpecialTokens::from_vocab_size
+  signature: 'pub const fn from_vocab_size(n_vocab: usize) -> Option<Self>'
+  status: implemented
+- contract: special-tokens-v1.yaml
+  equation: refusal
+  function: try_for_vocab_size
+  module_path: whisper_apr::tokenizer::special_tokens::SpecialTokens::try_for_vocab_size
+  signature: 'pub fn try_for_vocab_size(n_vocab: usize) -> crate::error::WhisperResult<Self>'
+  status: implemented
