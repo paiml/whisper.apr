@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [main, master]
+  # No branch filter: stacked PRs (base = another PR's branch) must get CI too.
+  # With `branches: [main, master]` a PR whose base is a feature branch ran no
+  # CI at all (whisper.apr #110/#111/#119 showed only authorize / authorize).
   pull_request:
-    branches: [main, master]
   workflow_dispatch:
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
