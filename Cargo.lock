@@ -5158,6 +5158,7 @@ dependencies = [
  "js-sys",
  "jugar-probar",
  "memmap2",
+ "miniz_oxide",
  "pollster",
  "proptest",
  "rand 0.8.6",

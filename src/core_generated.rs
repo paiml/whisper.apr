@@ -95,6 +95,9 @@ pub struct TranscribeOptions {
     /// Hotwords to boost during decoding (WAPR-170).
     /// Each string is tokenized and biased positively in the logit space.
     pub hotwords: Vec<String>,
+    /// Temperature fallback and no-speech thresholds and the sampler seed
+    /// (issue #107; OpenAI defaults).
+    pub fallback: inference::DecodeFallback,
 }
 
 /// A timestamped segment of transcription
@@ -451,7 +454,7 @@ impl WhisperApr {
         audio: &[f32],
         options: TranscribeOptions,
     ) -> WhisperResult<TranscriptionResult> {
-        self.transcribe_window(audio, options)
+        self.transcribe_window(audio, options, 0)
             .map(|(result, _ends_closed)| result)
     }
 
@@ -467,6 +470,7 @@ impl WhisperApr {
         &self,
         audio: &[f32],
         options: TranscribeOptions,
+        window_index: u64,
     ) -> WhisperResult<(TranscriptionResult, bool)> {
         #[cfg(feature = "std")]
         let start_total = if options.profile {
@@ -577,7 +581,11 @@ impl WhisperApr {
         // 5. Decode tokens
         #[cfg(feature = "std")]
         let start_dec = start_total.map(|_| std::time::Instant::now());
-        let tokens = self.decode(&audio_features, &initial_tokens, &options)?;
+        let decoded =
+            self.decode_window(&audio_features, &initial_tokens, &options, window_index)?;
+        // W4 (issue #107): a window of silence or music (no speech, unlikely
+        // tokens) emits no segments, where the model would invent a line.
+        let tokens = decoded.into_kept_output();
         #[cfg(feature = "std")]
         let dec_ms = start_dec.map(|s| s.elapsed().as_secs_f64() * 1000.0);
 
@@ -976,6 +984,7 @@ impl WhisperApr {
         let mut all_segments: Vec<Segment> = Vec::new();
 
         let mut offset = 0;
+        let mut window_index = 0u64;
         while offset < audio.len() {
             // The window is `chunk_size`, never wider: the encoder accepts at
             // most 1500 mel frames (30s).
@@ -989,14 +998,11 @@ impl WhisperApr {
 
             let chunk_options = TranscribeOptions {
                 language: Some(language.clone()),
-                task: options.task,
-                strategy: options.strategy,
-                word_timestamps: options.word_timestamps,
-                profile: options.profile,
-                prompt: options.prompt.clone(),
-                hotwords: options.hotwords.clone(),
+                ..options.clone()
             };
-            let (chunk_result, ends_closed) = self.transcribe_window(chunk, chunk_options)?;
+            let (chunk_result, ends_closed) =
+                self.transcribe_window(chunk, chunk_options, window_index)?;
+            window_index += 1;
 
             let is_last_window = chunk_end >= audio.len();
             let (kept, covered) = Self::seek_segments(
@@ -1263,30 +1269,65 @@ impl WhisperApr {
         detector.detect_with(&self.specials(), logits_fn)
     }
 
-    /// Decode tokens from audio features
+    /// Decode one window with OpenAI's temperature fallback (issue #107).
     ///
-    /// Uses KV cache for O(n) incremental decoding instead of O(n²) full recomputation.
-    fn decode(
+    /// Each attempt runs at the next temperature of `options.fallback` until
+    /// one needs no fallback; sampling is seeded from `window_index`, so the
+    /// same input always decodes to the same tokens.
+    fn decode_window(
         &self,
         audio_features: &[f32],
         initial_tokens: &[u32],
         options: &TranscribeOptions,
-    ) -> WhisperResult<Vec<u32>> {
-        use std::cell::RefCell;
+        window_index: u64,
+    ) -> WhisperResult<inference::FallbackOutcome<Vec<u32>>> {
+        options.fallback.run(window_index, |temperature, seed| {
+            self.decode_attempt(audio_features, initial_tokens, options, temperature, seed)
+        })
+    }
+
+    /// One decode attempt at `temperature` and the stats the fallback reads:
+    /// the text's compression ratio, the sampled tokens' average
+    /// log-probability and the `<|nospeech|>` probability at SOT.
+    ///
+    /// Uses KV cache for O(n) incremental decoding instead of O(n²) full recomputation.
+    fn decode_attempt(
+        &self,
+        audio_features: &[f32],
+        initial_tokens: &[u32],
+        options: &TranscribeOptions,
+        temperature: f32,
+        seed: u64,
+    ) -> WhisperResult<(Vec<u32>, inference::DecodeStats)> {
+        use std::cell::{Cell, RefCell};
 
         let n_vocab = self.config.n_vocab as usize;
-        let max_tokens = self.config.n_text_ctx as usize;
+        let specials = self.specials();
 
         // Create KV cache for incremental decoding (O(n) instead of O(n²))
         // Uses decoder's create_kv_cache() which dispatches GQA vs MHA automatically
         let cache = RefCell::new(self.decoder.create_kv_cache());
         let processed_count = RefCell::new(0usize);
 
+        // The fallback's inputs: each sampled token's log-probability under
+        // the logits it was sampled from, and the raw logits at SOT.
+        let beam_width = match options.strategy {
+            DecodingStrategy::BeamSearch { beam_size, .. } => beam_size,
+            _ => 1,
+        };
+        let ledger = RefCell::new(inference::LogprobLedger::new(beam_width.max(5)));
+        let sot_index = initial_tokens.iter().position(|&t| t == specials.sot);
+        let no_speech_prob = Cell::new(0.0f32);
+
         // Create Whisper token suppressor using realizar's LogitProcessor architecture
         // This provides composable, reusable pre-sampling transforms
         let suppressor = inference::WhisperTokenSuppressor::for_specials(&self.specials())
             .with_timestamp_suppression(false)
             .with_vocab_size(n_vocab);
+
+        // OpenAI ApplyTimestampRules + SuppressBlank (issue #106), only on
+        // the timestamp path; a <|notimestamps|> decode is left unchanged.
+        let timestamp_rules = self.timestamp_rules(initial_tokens);
 
         // Build hotword booster from text hotwords (WAPR-170)
         let hotword_booster = if !options.hotwords.is_empty() {
@@ -1317,13 +1358,20 @@ impl WhisperApr {
             // Process only the tokens we haven't seen yet
             let mut logits = vec![f32::NEG_INFINITY; n_vocab];
 
-            for &token in tokens.iter().take(seq_len).skip(already_processed) {
+            for (position, &token) in tokens.iter().enumerate().skip(already_processed) {
                 logits = self.decoder.forward_one_with_scratch(
                     token,
                     audio_features,
                     &mut cache.borrow_mut(),
                     &mut scratch.borrow_mut(),
                 )?;
+                // Raw logits at SOT, before any suppression (OpenAI).
+                if Some(position) == sot_index {
+                    no_speech_prob.set(inference::fallback::no_speech_prob(
+                        &logits,
+                        specials.no_speech,
+                    ));
+                }
             }
 
             *processed_count.borrow_mut() = seq_len;
@@ -1337,15 +1385,52 @@ impl WhisperApr {
                 booster.apply_bias(&mut logits, tokens);
             }
 
-            // N-gram repetition suppression (prevents hallucinated loops)
-            let eot_id = self.eot_token();
-            Self::suppress_repetitions(&mut logits, tokens, eot_id, n_vocab);
+            // Timestamp rules last, so their bans are final and the
+            // timestamp-dominance test sees the logits that are sampled.
+            if let Some(ref rules) = timestamp_rules {
+                rules.apply(tokens, &mut logits);
+            }
 
+            ledger.borrow_mut().observe(tokens, &logits);
             Ok(logits)
         };
 
-        // Choose decoding strategy
         let eot = self.eot_token();
+        let tokens = self.run_strategy(logits_fn, initial_tokens, options, temperature, seed)?;
+        let sampled = tokens.get(initial_tokens.len()..).unwrap_or(&[]);
+        let text = self.tokenizer.decode(sampled).unwrap_or_default();
+        let stats = inference::DecodeStats {
+            compression_ratio: inference::fallback::compression_ratio(text.trim()),
+            avg_logprob: ledger
+                .borrow()
+                .avg_logprob(&tokens, initial_tokens.len(), eot),
+            no_speech_prob: no_speech_prob.get(),
+        };
+        Ok((tokens, stats))
+    }
+
+    /// Run the decoding strategy. At temperature 0 it is `options.strategy`;
+    /// a fallback attempt at temperature > 0 samples with a seeded generator
+    /// (OpenAI samples, never beam-searches, above 0).
+    fn run_strategy<F>(
+        &self,
+        logits_fn: F,
+        initial_tokens: &[u32],
+        options: &TranscribeOptions,
+        temperature: f32,
+        seed: u64,
+    ) -> WhisperResult<Vec<u32>>
+    where
+        F: FnMut(&[u32]) -> WhisperResult<Vec<f32>>,
+    {
+        let max_tokens = self.config.n_text_ctx as usize;
+        let eot = self.eot_token();
+        if temperature > 0.0 {
+            return inference::GreedyDecoder::new(max_tokens)
+                .with_temperature(temperature)
+                .with_seed(seed)
+                .decode(logits_fn, initial_tokens, eot);
+        }
         match options.strategy {
             DecodingStrategy::Greedy => {
                 let decoder = inference::GreedyDecoder::new(max_tokens);
@@ -1370,78 +1455,15 @@ impl WhisperApr {
         }
     }
 
-    /// Apply n-gram repetition suppression to logits
-    ///
-    /// Prevents hallucinated loops by penalizing repeated tokens, blocking
-    /// trigram completions, forcing EOT on degenerate 4-gram loops, and
-    /// capping unigram frequency in recent output.
-    fn suppress_repetitions(logits: &mut [f32], tokens: &[u32], eot_id: u32, n_vocab: usize) {
-        // Filter to only text tokens (exclude special tokens)
-        // Whisper BPE: text tokens are < EOT (50257); specials are >= EOT
-        // SentencePiece (Moonshine): text tokens are > EOS (2); specials are 0=unk,1=BOS,2=EOS
-        let text_tokens: Vec<u32> = if eot_id <= 3 {
-            tokens.iter().copied().filter(|&t| t > eot_id).collect()
-        } else {
-            tokens.iter().copied().filter(|&t| t < eot_id).collect()
-        };
-
-        // Token-level penalty: penalize recently-seen tokens
-        let window_start = text_tokens.len().saturating_sub(50);
-        for &prev_tok in &text_tokens[window_start..] {
-            if (prev_tok as usize) < n_vocab {
-                logits[prev_tok as usize] -= 2.0;
-            }
+    /// The timestamp rules for a decode from `initial_tokens`: `None` for a
+    /// model that is not Whisper or a `<|notimestamps|>` prompt.
+    fn timestamp_rules(&self, initial_tokens: &[u32]) -> Option<inference::TimestampRules> {
+        if self.config.model_family != format::ModelFamily::Whisper {
+            return None;
         }
-
-        // Trigram blocking: if (prev2, prev1, X) already appeared, suppress X
-        if text_tokens.len() >= 3 {
-            let prev2 = text_tokens[text_tokens.len() - 2];
-            let prev1 = text_tokens[text_tokens.len() - 1];
-            for w in text_tokens[..text_tokens.len() - 2].windows(3) {
-                if w[0] == prev2 && w[1] == prev1 && (w[2] as usize) < n_vocab {
-                    logits[w[2] as usize] -= 10.0;
-                }
-            }
-        }
-
-        Self::suppress_degenerate_loops(logits, &text_tokens, eot_id, n_vocab);
-    }
-
-    /// Detect and suppress degenerate repetition loops (4-gram and unigram frequency)
-    fn suppress_degenerate_loops(
-        logits: &mut [f32],
-        text_tokens: &[u32],
-        eot_id: u32,
-        n_vocab: usize,
-    ) {
-        // Force EOT if any 4-gram repeats 3+ times
-        if text_tokens.len() >= 12 {
-            let mut fourgram_counts = std::collections::HashMap::<[u32; 4], u32>::new();
-            for w in text_tokens.windows(4) {
-                *fourgram_counts.entry([w[0], w[1], w[2], w[3]]).or_insert(0) += 1;
-            }
-            if fourgram_counts.values().any(|&c| c >= 3) && (eot_id as usize) < n_vocab {
-                logits[eot_id as usize] = 100.0;
-                return;
-            }
-        }
-
-        // Unigram frequency cap: suppress tokens dominating recent output
-        if text_tokens.len() >= 80 {
-            let window = &text_tokens[text_tokens.len() - 80..];
-            let mut freq = std::collections::HashMap::<u32, u32>::new();
-            for &t in window {
-                *freq.entry(t).or_insert(0) += 1;
-            }
-            for (&tok, &count) in &freq {
-                if count >= 8 && (tok as usize) < n_vocab {
-                    logits[tok as usize] -= (count as f32 - 7.0) * 3.0;
-                }
-            }
-            if freq.len() as f32 / 80.0 < 0.35 && (eot_id as usize) < n_vocab {
-                logits[eot_id as usize] = 100.0;
-            }
-        }
+        let blank = self.tokenizer.encode(" ").unwrap_or_default();
+        inference::TimestampRules::for_prompt(self.config.n_vocab as usize, initial_tokens)
+            .map(|rules| rules.with_blank_tokens(blank))
     }
 
     /// Set resampler for non-16kHz audio
@@ -2609,7 +2631,7 @@ impl WhisperApr {
         let language = options.language.clone().unwrap_or_else(|| "en".to_string());
 
         // Process each mel spectrogram
-        for mel in &mel_result.mels {
+        for (window_index, mel) in (0u64..).zip(&mel_result.mels) {
             // Encode audio features
             let audio_features = self.encode(mel)?;
 
@@ -2617,7 +2639,9 @@ impl WhisperApr {
             let initial_tokens = self.get_initial_tokens(&language, options.task);
 
             // Decode
-            let tokens = self.decode(&audio_features, &initial_tokens, &options)?;
+            let tokens = self
+                .decode_window(&audio_features, &initial_tokens, &options, window_index)?
+                .output;
 
             // Extract segments
             let segments = if timestamps::has_timestamps_with(&self.specials(), &tokens) {
@@ -2696,9 +2720,11 @@ impl WhisperApr {
         let language = options.language.clone().unwrap_or_else(|| "en".to_string());
 
         // Decode each encoder output
-        for features in &encoder_outputs {
+        for (window_index, features) in (0u64..).zip(&encoder_outputs) {
             let initial_tokens = self.get_initial_tokens(&language, options.task);
-            let tokens = self.decode(features, &initial_tokens, &options)?;
+            let tokens = self
+                .decode_window(features, &initial_tokens, &options, window_index)?
+                .output;
 
             let segments = if timestamps::has_timestamps_with(&self.specials(), &tokens) {
                 timestamps::extract_segments_with(&self.specials(), &tokens, |ts| {
@@ -5168,6 +5194,7 @@ mod tests {
             profile: false,
             prompt: Some("domain-specific prompt".into()),
             hotwords: vec!["hotword1".into(), "hotword2".into()],
+            fallback: inference::DecodeFallback::default(),
         };
 
         assert_eq!(options.language, Some("fr".to_string()));
