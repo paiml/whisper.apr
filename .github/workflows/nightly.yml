@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   check:
-    name: Check for new commits
+    name: Is the nightly behind HEAD?
     runs-on: ubuntu-latest
     timeout-minutes: 21
     outputs:
@@ -21,7 +21,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check for commits in last 24 hours
+      - name: Is the published nightly behind HEAD?
         id: check
         run: |
           SHA=$(git rev-parse HEAD)
@@ -31,14 +31,19 @@ jobs:
             echo "Manual trigger — building regardless of commit age"
             exit 0
           fi
-          RECENT=$(git log --since="24 hours ago" --oneline)
-          if [ -n "$RECENT" ]; then
+          # Build when the `nightly` tag is not HEAD. The old gate asked "any commit
+          # in the last 24h?" -- a wall-clock window, not "was HEAD built?". A failed
+          # nightly was never retried on a quiet day, and a scheduled run that was
+          # dropped, queued or fired late left commits outside every window
+          # (infra PMAT-1055). The release tags `nightly` at github.sha, so
+          # tag == HEAD means built.
+          NIGHTLY_SHA=$(git rev-parse -q --verify 'refs/tags/nightly^{commit}' || echo none)
+          if [ "$NIGHTLY_SHA" != "$SHA" ]; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
-            echo "New commits found:"
-            echo "$RECENT"
+            echo "nightly $NIGHTLY_SHA is not HEAD $SHA"
           else
             echo "should_build=false" >> "$GITHUB_OUTPUT"
-            echo "No new commits in the last 24 hours — skipping build"
+            echo "nightly is HEAD $SHA — skipping build"
           fi
 
   build:
@@ -168,6 +173,10 @@ jobs:
       - uses: softprops/action-gh-release@v3
         with:
           tag_name: nightly
+          # Pin the tag to the commit this run BUILT. Unset, GitHub tags the default
+          # branch tip at API-call time, and a commit landing mid-build would read as
+          # built to the tag-vs-HEAD gate above and never be built.
+          target_commitish: ${{ github.sha }}
           name: Nightly Build
           prerelease: true
           make_latest: false
