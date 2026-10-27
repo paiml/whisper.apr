@@ -311,6 +311,38 @@ pub fn merge_segments(segments: &[Segment], max_gap: f32) -> Vec<Segment> {
     merged
 }
 
+/// RMS level (dBFS) below which a segment's audio span is silence.
+pub const SILENT_RMS_DBFS: f32 = -45.0;
+
+/// Drop segments whose audio span holds no speech.
+///
+/// The decoder keeps emitting timestamped text after the last spoken word of
+/// a window when the window ends in silence (e.g. "- Paul? Medical" after
+/// "...starts from there."). Spoken spans measure -38 dBFS RMS or louder;
+/// these spans measure -50 to -67 dBFS, so a span whose RMS is below
+/// [`SILENT_RMS_DBFS`]
+/// carries no words and its segment is an invention.
+/// A span that lies past the end of `audio` is silent.
+#[must_use]
+pub fn drop_silent_segments(
+    segments: Vec<Segment>,
+    audio: &[f32],
+    sample_rate: u32,
+) -> Vec<Segment> {
+    let floor = 10.0_f32.powf(SILENT_RMS_DBFS / 20.0);
+    let rate = sample_rate as f32;
+    segments
+        .into_iter()
+        .filter(|s| {
+            let from = ((s.start.max(0.0) * rate) as usize).min(audio.len());
+            let to = ((s.end.max(0.0) * rate).ceil() as usize).min(audio.len());
+            let span = &audio[from..to.max(from)];
+            let power = span.iter().map(|x| x * x).sum::<f32>() / span.len().max(1) as f32;
+            power.sqrt() >= floor
+        })
+        .collect()
+}
+
 /// Split long segments at sentence boundaries
 pub fn split_long_segments(segments: &[Segment], max_duration: f32) -> Vec<Segment> {
     let mut result = Vec::new();
