@@ -786,4 +786,40 @@ fn v3_segments_use_the_v3_timestamp_base() {
     assert_eq!(seconds_to_timestamp_token_with(&v3, 1.0), 50_415);
     // The v2 plain functions are unchanged.
     assert_eq!(seconds_to_timestamp_token(0.0), 50_364);
+    // 50364 is <|notimestamps|> (a control token) on v3, so text before it
+    // leaves the decode unclosed.
+    assert!(ends_with_timestamp_with(
+        &v3,
+        &[50_365, 100, 50_415, 50_257]
+    ));
+    assert!(!ends_with_timestamp_with(&v3, &[50_365, 100, 50_364]));
+}
+
+#[test]
+fn ends_with_timestamp_reads_the_last_non_control_token() {
+    let ts = special_tokens::TIMESTAMP_BASE;
+    // Closed: text then a closing timestamp, then EOT (a control token).
+    assert!(ends_with_timestamp(&[
+        ts,
+        100,
+        ts + 50,
+        special_tokens::EOT
+    ]));
+    // Unclosed: the last segment's text runs into EOT with no timestamp.
+    assert!(!ends_with_timestamp(&[
+        ts,
+        100,
+        ts + 50,
+        ts + 50,
+        101,
+        special_tokens::EOT
+    ]));
+    // No non-control token at all counts as closed.
+    assert!(ends_with_timestamp(&[]));
+    assert!(ends_with_timestamp(&[
+        special_tokens::SOT,
+        special_tokens::EOT
+    ]));
+    // Text only, no timestamps: the last non-control token is text.
+    assert!(!ends_with_timestamp(&[100, 101, special_tokens::EOT]));
 }
