@@ -5167,6 +5167,7 @@ dependencies = [
  "safetensors",
  "serde",
  "serde_json",
+ "sha2",
  "symphonia",
  "tempfile",
  "thiserror 2.0.18",

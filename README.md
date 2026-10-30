@@ -76,6 +76,9 @@
 - **Streaming Transcription**: Real-time audio processing with chunked inference
 - **Translation Mode**: Speech-to-English translation for all supported languages
 - **Multi-Format Audio**: MP3, FLAC, OGG, AAC, M4A, WAV via symphonia
+- **Speaker diarization (experimental)**: the current speaker-embedding path is
+  heuristic, unvalidated, not a speaker model. It uses hand-built MFCC features
+  with no trained speaker weights and has no measured diarization error rate.
 
 ### Optimization Features
 
