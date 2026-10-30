@@ -340,6 +340,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "aprender-test-lib"
+version = "0.72.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfc25c8cdfe0080f9bea013d133896b2774cb3fb745249293e56e89104ef1011"
+dependencies = [
+ "base64 0.22.1",
+ "bincode",
+ "chrono",
+ "flate2",
+ "js-sys",
+ "proc-macro2",
+ "regex",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "sha2",
+ "syn 2.0.119",
+ "thiserror 2.0.21",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "argon2"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2190,32 +2217,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jugar-probar"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5a299150747f498a5970f057f1da1f56fbc99a80dca81ef797a9cb014eecce9"
-dependencies = [
- "base64 0.22.1",
- "bincode",
- "chrono",
- "js-sys",
- "proc-macro2",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "sha2",
- "syn 2.0.119",
- "thiserror 2.0.21",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "kasuari"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3823,19 +3824,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_yaml_ng"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
-dependencies = [
- "indexmap",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
-]
-
-[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4683,16 +4671,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-serde"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "704b1aeb7be0d0a84fc9828cae51dab5970fee5088f83d1dd7ee6f6246fc6ff1"
-dependencies = [
- "serde",
- "tracing-core",
-]
-
-[[package]]
 name = "tracing-subscriber"
 version = "0.3.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4702,15 +4680,12 @@ dependencies = [
  "nu-ansi-term",
  "once_cell",
  "regex-automata",
- "serde",
- "serde_json",
  "sharded-slab",
  "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
  "tracing-log",
- "tracing-serde",
 ]
 
 [[package]]
@@ -5419,6 +5394,7 @@ dependencies = [
  "aprender-core",
  "aprender-gpu",
  "aprender-serve",
+ "aprender-test-lib",
  "argon2",
  "bytemuck",
  "clap",
@@ -5435,7 +5411,6 @@ dependencies = [
  "hf-hub",
  "indicatif",
  "js-sys",
- "jugar-probar",
  "memmap2",
  "pollster",
  "proptest",

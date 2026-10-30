@@ -228,7 +228,7 @@ provable-contracts-macros = { package = "aprender-contracts-macros", version = "
 proptest = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
 # WASM testing with Probar (Playwright-compatible testing framework)
-jugar-probar = { version = "1.0", default-features = false }
+jugar-probar = { package = "aprender-test-lib", version = "0.72", default-features = false }
 # Tempfile for CLI tests
 tempfile = "3"
 # serde_json needed for whisper_metadata test helpers (build_whisper_metadata, create_test_apr)
