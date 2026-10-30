@@ -2,6 +2,11 @@
 //!
 //! Provides d-vector extraction for speaker identification.
 //!
+//! **Status: heuristic, unvalidated, not a speaker model.** The encoder below
+//! is a fixed hand-built MFCC projection with no trained speaker weights. Its
+//! output has not been scored against reference diarization (no DER
+//! measurement), and it must not be presented as a speaker-recognition model.
+//!
 //! # Overview
 //!
 //! Speaker embeddings are fixed-length vector representations of speaker

@@ -225,6 +225,7 @@ symphonia = { version = "0.5", optional = true, default-features = false, featur
 provable-contracts-macros = { package = "aprender-contracts-macros", version = "0.63" }
 
 [dev-dependencies]
+sha2 = "0.10"
 proptest = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
 # WASM testing with Probar (Playwright-compatible testing framework)
