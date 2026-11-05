@@ -823,3 +823,82 @@ fn ends_with_timestamp_reads_the_last_non_control_token() {
     // Text only, no timestamps: the last non-control token is text.
     assert!(!ends_with_timestamp(&[100, 101, special_tokens::EOT]));
 }
+
+// =========================================================================
+// Silent-span hallucination guard
+// =========================================================================
+
+fn seg(start: f32, end: f32, text: &str) -> Segment {
+    Segment {
+        start,
+        end,
+        text: text.to_string(),
+        tokens: Vec::new(),
+    }
+}
+
+/// 16 kHz audio: `speech_secs` of a 0.2-amplitude tone, then `quiet_secs`
+/// of a -55 dBFS hiss (the shape of the 2.1.10 / 2.1.3 clip tails).
+fn tone_then_hiss(speech_secs: f32, quiet_secs: f32) -> Vec<f32> {
+    let rate = 16_000.0_f32;
+    let speech = (speech_secs * rate) as usize;
+    let quiet = (quiet_secs * rate) as usize;
+    (0..speech + quiet)
+        .map(|i| {
+            let wave = (i as f32 * 0.1).sin();
+            if i < speech {
+                0.2 * wave
+            } else {
+                0.0018 * wave
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn a_segment_in_a_silent_tail_is_dropped() {
+    let audio = tone_then_hiss(5.0, 3.0);
+    let segments = vec![
+        seg(0.0, 5.0, "Next time, it starts from there."),
+        seg(5.0, 6.0, "- Paul?"),
+        seg(6.0, 8.0, "Medical"),
+    ];
+    let kept = drop_silent_segments(segments, &audio, 16_000);
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].text, "Next time, it starts from there.");
+}
+
+#[test]
+fn spoken_segments_are_all_kept() {
+    let audio = tone_then_hiss(8.0, 0.0);
+    let segments = vec![seg(0.0, 4.0, "one"), seg(4.0, 8.0, "two")];
+    assert_eq!(drop_silent_segments(segments, &audio, 16_000).len(), 2);
+}
+
+#[test]
+fn a_segment_past_the_audio_end_is_not_a_panic() {
+    let audio = tone_then_hiss(2.0, 0.0);
+    let segments = vec![seg(0.0, 2.0, "kept"), seg(2.0, 9.0, "beyond")];
+    let kept = drop_silent_segments(segments, &audio, 16_000);
+    assert_eq!(kept.len(), 1);
+}
+
+#[test]
+fn a_short_span_at_minus_50_dbfs_is_dropped_but_minus_30_is_kept() {
+    // The 2.1.13 tail: a 0.26 s span at -50 dBFS RMS after "...conversation."
+    let rms_to_amp = |db: f32| 10.0_f32.powf(db / 20.0) * std::f32::consts::SQRT_2;
+    let tone = |amp: f32, n: usize| (0..n).map(move |i| amp * (i as f32 * 0.1).sin());
+    let mut audio: Vec<f32> = tone(0.2, 16_000).collect();
+    audio.extend(tone(rms_to_amp(-50.0), 4_160));
+    let quiet = vec![
+        seg(0.0, 1.0, "spoken"),
+        seg(1.0, 1.26, "I'll see you next time."),
+    ];
+    let kept = drop_silent_segments(quiet, &audio, 16_000);
+    assert_eq!(kept.len(), 1);
+
+    let mut audio: Vec<f32> = tone(0.2, 16_000).collect();
+    audio.extend(tone(rms_to_amp(-30.0), 4_160));
+    let spoken = vec![seg(0.0, 1.0, "a"), seg(1.0, 1.26, "b")];
+    assert_eq!(drop_silent_segments(spoken, &audio, 16_000).len(), 2);
+}

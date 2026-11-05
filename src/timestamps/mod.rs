@@ -33,7 +33,7 @@ pub use alignment::{
 pub use boundaries::{BoundaryConfig, BoundaryDetector, WordBoundary};
 pub use interpolation::{InterpolationConfig, TimestampInterpolator, TokenTimestamp};
 pub use segment::{
-    count_text_tokens, ends_with_timestamp, ends_with_timestamp_with,
+    count_text_tokens, drop_silent_segments, ends_with_timestamp, ends_with_timestamp_with,
     estimate_duration_from_tokens, extract_segments, extract_segments_with, get_timestamps,
     has_timestamps, has_timestamps_with, is_control_token, is_timestamp, merge_segments,
     parse_timestamp_pairs, seconds_to_timestamp_token, seconds_to_timestamp_token_with,

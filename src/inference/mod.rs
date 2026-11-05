@@ -22,13 +22,15 @@
 //! ```
 
 mod beam;
+pub mod fallback;
 mod greedy;
 pub mod processors;
 mod streaming;
 
 pub use beam::{BeamSearchDecoder, Hypothesis};
+pub use fallback::{DecodeFallback, DecodeStats, FallbackOutcome, LogprobLedger};
 pub use greedy::GreedyDecoder;
-pub use processors::WhisperTokenSuppressor;
+pub use processors::{TimestampRules, WhisperTokenSuppressor};
 pub use streaming::{
     StreamingConfig, StreamingResult, StreamingStats, StreamingTranscriber, TranscriberState,
 };
