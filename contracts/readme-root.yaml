@@ -1,0 +1,91 @@
+# readme-root — the repository README as a graded document (#133, PMAT-134).
+# Same shape and checker as paiml/forjar#1017, paiml/bashrs#512, paiml/paiml-mcp-agent-toolkit#1757,
+# paiml/paiml-implement#768, paiml/apex#233, paiml/infra#4337, paiml/catalogue#1042, paiml/pmat-book#77,
+# paiml/rmedia#2706, paiml/agile-practices-using-ai#11, paiml/xpile#2193.
+name: readme-root
+version: "1.0.0"
+scope: >
+  README.md at the repository root: its frontmatter, its sections, and every command it presents as runnable.
+  Out of scope: prose accuracy, link targets, anything in a non-claim fence.
+status: active
+
+metadata:
+  version: "1.0.0"
+  kind: pattern
+  created: '2026-11-13'
+  last_modified: '2026-11-13'
+  author: PAIML Engineering
+  description: >
+    README.md becomes a readme:Readme node; every claim-fence command must be one a merge-path CI step runs,
+    every entrypoint must exist, and the contract count it prints must equal census.json n_files.
+  references:
+    - 'paiml/forjar#1017, paiml/bashrs#512, paiml/paiml-mcp-agent-toolkit#1757, paiml/infra#4337, paiml/rmedia#2706 (same pattern)'
+    - >-
+      DIVERGENCE (paiml/whisper.apr#133, measured 2026-11-13): this repo's merge-path CI
+      (.github/workflows/ci.yml, push/pull_request) is a single `uses:` call into the reusable workflow
+      paiml/.github/.github/workflows/sovereign-ci.yml@main. pv-readme's ci-step resolver only inspects
+      `run:` steps declared directly in this repo's own workflow YAML; it cannot see into a called reusable
+      workflow at all, confirmed empirically — a literal, unconditional run: line copied verbatim out of a
+      LOCAL file (nightly.yml's `cargo install cross --git https://github.com/cross-rs/cross`) also failed
+      to resolve, because nightly.yml triggers on schedule only, not push/pull_request (the resolver is
+      correctly merge-path-aware; it is just blind past a `uses:` boundary). This repo's `ci.yml` has no
+      local run: line matching any product command, and adding one would mean either (a) a new job on the
+      pull_request trigger, banned on the PR path as a third state by C324 s6, or (b) editing the shared
+      `gate`/`ci` job itself, a one-way-door gate-content change outside this ticket's authority. So
+      `readme:verifiedCommand` is relaxed to minCount 0 for this repo only, and this README makes no CI
+      command claim. The fix that would restore minCount 1 honestly is a pv-readme change that resolves
+      `uses:` reusable-workflow calls by reading the called file too — filed as a feature gap, not routed
+      around here.
+
+entity:
+  type: readme
+  ref: README.md
+
+shape:
+  targetClass: readme:Readme
+  closed: true
+  properties:
+    - {path: readme:schemaVersion, minCount: 1, maxCount: 1, pattern: "^[0-9]+\\.[0-9]+$"}
+    - {path: readme:kind, minCount: 1, maxCount: 1, in: [library, cli, service, spec]}
+    - {path: readme:entrypoint, minCount: 1, resolves: path}
+    - {path: readme:verifiedCommand, minCount: 0, resolves: ci-step}
+    - {path: readme:section, minCount: 3}
+    - {path: readme:contractCount, maxCount: 1, resolves: census}
+
+equations:
+  claim_resolves:
+    formula: "∀ c ∈ claims(README.md): normalise(c) ∈ run_lines(merge_path_workflows)"
+    domain: every command line of every claim fence in README.md
+    codomain: readme:verifiedCommand values, or a refusal naming the command
+    invariants:
+      - a claim is decided by its fence's info token, never by its content
+      - an unresolved claim is refused by name, never skipped
+    preconditions:
+      - .github/workflows/*.yml parse
+    postconditions:
+      - every command README.md presents as runnable is one CI runs on the merge path
+    lean_theorem: "none — L4 not declared"
+
+invariants:
+  - id: RDM-INV-001
+    property: every README claim-fence command is one a merge-path workflow runs
+    formal: '∀ c ∈ claims(README.md): normalise(c) ∈ run_lines(W_merge)'
+    prose: false
+  - id: RDM-INV-002
+    property: the printed contract count equals the census
+    formal: 'frontmatter(README.md).contract_count ≡ census.json.n_files'
+    prose: false
+
+falsification_tests:
+  - id: FALSIFY-RDM-001
+    rule: an unrun claim is refused
+    prediction: >
+      adding a bash fence to README.md whose command no workflow runs makes `pv-readme --check` exit 1 naming
+      `readme:verifiedCommand unresolved: <cmd>`; relabelling it `text` makes it pass again
+    test: sh tests/readme-shape-falsifier.sh
+    if_fails: the README can advertise a command nothing has ever run
+  - id: FALSIFY-RDM-002
+    rule: a README without its frontmatter is refused
+    prediction: removing the `kind:` line, or the whole frontmatter, makes `pv-readme --check` exit 1
+    test: sh tests/readme-shape-falsifier.sh
+    if_fails: the README can drop the facts the shape grades and still pass

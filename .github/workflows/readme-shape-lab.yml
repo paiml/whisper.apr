@@ -1,0 +1,36 @@
+# readme-shape-lab — LAB check for the pv-readme SHACL gate on README.md (#133, C324).
+#
+# LAB, not GATE: this repo's PR-path runners are ubuntu-latest (GitHub-hosted) or the sovereign
+# self-hosted pool via the reusable sovereign-ci.yml workflow; pv-readme is not preinstalled on
+# either and this job installs it itself, so a transient install failure must never redden an
+# ordinary PR on a tool problem, not a real README defect. Same scoping as paiml/infra#4342,
+# paiml/catalogue#1046, paiml/pmat-book#77, paiml/rmedia#2706, paiml/agile-practices-using-ai#11
+# and paiml/xpile#2193's readme-shape-lab. Promotion to the PR gate needs three green nights on
+# main, an operator yes, and a gate named for retirement (C324 item 7).
+name: readme-shape-lab
+
+on:
+  schedule:
+    - cron: '7 5 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: readme-shape-lab
+  cancel-in-progress: false
+
+jobs:
+  readme-shape-lab:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install pv-readme
+        run: cargo install pv-readme --locked
+
+      - name: pv-readme --check
+        run: pv-readme --check
+
+      - name: readme-shape-falsifier (6 cases)
+        run: sh tests/readme-shape-falsifier.sh
