@@ -1811,6 +1811,25 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: PMAT-127
+  github_issue: 127
+  item_type: task
+  title: 'main red: RUSTSEC advisories in Cargo.lock (rustls, quinn-proto, zstd, webpki, zip 2.x)'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-11-09T08:21:18Z
+  updated: 2026-11-09T08:21:18Z
+  spec: null
+  acceptance_criteria:
+  - whisper.apr#127
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 90
 - id: PMAT-122
   github_issue: 122
   item_type: task
