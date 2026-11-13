@@ -728,8 +728,8 @@ that reason — see `contracts/readme-root.yaml` for the full account.
 
 `tests/readme-shape-falsifier.sh` proves the check can still fail (6 cases): an unrun claim is refused by
 name, the same command in a `text` fence passes, a missing `kind:` is refused, a nonexistent entrypoint is
-refused, and a wrong contract count is refused. The nightly `readme-shape-lab` workflow runs it; it is LAB,
-not a merge-path gate (C324).
+refused, and a wrong contract count is refused. No CI job runs it yet: `pv-readme` is not on the runners,
+so run it by hand.
 
 ## See Also
 
