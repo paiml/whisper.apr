@@ -1830,3 +1830,98 @@ roadmap:
   - kind:code
   notes: null
   epic: 90
+- id: PMAT-122
+  github_issue: 122
+  item_type: task
+  title: 'whisper.apr: bump deps to clear RustSec advisories (nightly green, N28)'
+  status: inprogress
+  priority: high
+  assigned_to: null
+  created: 2026-10-30T11:37:23Z
+  updated: 2026-10-30T11:37:30.585018948+00:00
+  spec: null
+  acceptance_criteria:
+  - Head CI red on cargo deny + cargo audit. No waivers. Operator ruling N28, exit green by 18:00Z.
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 90
+- id: PMAT-123
+  github_issue: 123
+  item_type: task
+  title: 'P0 #123: label diarization embedder heuristic + frozen DER snapshot test'
+  status: planned
+  priority: critical
+  assigned_to: null
+  created: 2026-10-30T12:21:45Z
+  updated: 2026-10-30T12:21:45Z
+  spec: null
+  acceptance_criteria:
+  - N33. Steps 1-2 now (heuristic label in rustdoc/README, VoxConverse fixtures + SHA manifest). Step 3 DER snapshot needs aprender#6523 (A1 scorer), open, no PR. Non-author mutation proof at the gate. No weights redistributed.
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:code
+  notes: null
+  epic: 90
+- id: PMAT-134
+  github_issue: 134
+  item_type: task
+  title: 'pv-readme shape: contracts/readme-root.yaml + census'
+  status: planned
+  priority: medium
+  assigned_to: null
+  created: 2026-11-13T14:21:04Z
+  updated: 2026-11-13T14:21:04Z
+  spec: null
+  acceptance_criteria:
+  - readme-root.yaml shape + census.json
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:docs
+  notes: null
+  epic: 133
+- id: PMAT-135
+  github_issue: 135
+  item_type: task
+  title: 'README.md rewrite: frontmatter + claim-fence triage'
+  status: planned
+  priority: high
+  assigned_to: null
+  created: 2026-11-13T14:21:26Z
+  updated: 2026-11-13T14:21:26Z
+  spec: null
+  acceptance_criteria:
+  - frontmatter + CONTRACT_COUNT trailer; claim-fence triage
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:docs
+  notes: null
+  epic: 133
+- id: PMAT-136
+  github_issue: 136
+  item_type: task
+  title: readme-shape-falsifier.sh + LAB nightly check
+  status: planned
+  priority: medium
+  assigned_to: null
+  created: 2026-11-13T14:21:30Z
+  updated: 2026-11-13T14:21:30Z
+  spec: null
+  acceptance_criteria:
+  - 6-case falsifier + LAB-only workflow
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels:
+  - kind:docs
+  notes: null
+  epic: 133
