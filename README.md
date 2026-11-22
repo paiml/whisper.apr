@@ -744,3 +744,7 @@ Licensed under the MIT License. See [LICENSE](LICENSE) for details.
 <p align="center">
   <sub>Built with Rust and a passion for edge AI</sub>
 </p>
+
+<!-- FUNNEL-001 footer: replace whisper.apr with the repo name -->
+---
+📚 **Learn this hands-on:** [Pragmatic AI Labs courses on Coursera](https://www.coursera.org/partners/pragmatic-ai-labs?utm_source=github&utm_medium=readme&utm_campaign=funnel_2026q4&utm_content=whisper.apr) · ✉ [Free newsletter](https://ds500.paiml.com/mailing?utm_source=github&utm_medium=readme&utm_campaign=funnel_2026q4&utm_content=whisper.apr)
