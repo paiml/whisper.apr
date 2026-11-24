@@ -23,6 +23,13 @@ jobs:
       # entirely in non-shipped scaffolding.
       # Tracked: https://github.com/paiml/whisper.apr/issues/54 (PMAT-158)
       clippy_args: "--lib --bins"
+      # One run of the suite per push, not two. `test` (cargo test --lib) and
+      # `coverage` (cargo llvm-cov test --lib) run the SAME tests; measured on
+      # run 42892540079: test job 1001 s (Run tests 799 s) + 2803 s queued,
+      # coverage job 584 s. With this on, `test` is skipped and `ci / gate`
+      # takes coverage=success as the test verdict; a coverage that failed,
+      # was cancelled or skipped is RED (paiml/infra#3828).
+      test_via_coverage: true
     secrets: inherit
 
   # Top-level gate: satisfies org ruleset which requires check named "gate".

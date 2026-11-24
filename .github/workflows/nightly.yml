@@ -70,47 +70,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Patch path dependencies for standalone build
-        if: runner.os != 'Windows'
-        run: |
-          # ROOT CAUSE: Cargo.toml has [patch.crates-io] with local path
-          # overrides (apr-cli, aprender, trueno, etc.) that don't exist on CI runners.
-          # This was the actual source of "Unable to update ../aprender/crates/apr-cli".
-          # Remove the entire [patch.crates-io] section from Cargo.toml
-          sed -i.bak '/^\[patch\.crates-io\]/,$ d' Cargo.toml
-          # Remove path = "../aprender" from aprender dependency lines
-          sed -i.bak 's|, path = "\.\./aprender"||g' Cargo.toml
-          # Fix apr-cli version: match current crates.io reality
-          sed -i.bak 's|apr-cli = { version = "[0-9.]*"|apr-cli = { version = "0.51"|g' Cargo.toml
-          rm -f Cargo.toml.bak
-          rm -f .cargo/config.toml
-          # Keep the committed Cargo.lock: the build below runs with --locked so the
-          # nightly fails loudly on any unexpected lockfile drift instead of silently
-          # resolving new dependency versions every run (hermetic, reproducible builds).
-          echo "=== Patched Cargo.toml dependency sections ==="
-          grep -n 'aprender\|apr-cli\|\[patch' Cargo.toml || true
-
-      - name: Patch path dependencies for standalone build
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          # ROOT CAUSE: Cargo.toml has [patch.crates-io] with local path
-          # overrides that don't exist on CI runners.
-          $content = Get-Content Cargo.toml -Raw
-          # Remove the entire [patch.crates-io] section
-          $content = $content -replace '(?ms)\[patch\.crates-io\].*\z', ''
-          # Remove path = "../aprender" from aprender dependency lines
-          $content = $content -replace ', path = "\.\./aprender"', ''
-          # Fix apr-cli version: match current crates.io reality
-          $content = $content -replace 'apr-cli = \{ version = "[0-9.]+"', 'apr-cli = { version = "0.51"'
-          Set-Content Cargo.toml -Value $content.TrimEnd() -NoNewline
-          Remove-Item -ErrorAction SilentlyContinue .cargo/config.toml
-          # Keep the committed Cargo.lock: the build below runs with --locked so the
-          # nightly fails loudly on any unexpected lockfile drift instead of silently
-          # resolving new dependency versions every run (hermetic, reproducible builds).
-          Write-Host "=== Patched Cargo.toml dependency sections ==="
-          Select-String -Path Cargo.toml -Pattern 'aprender|apr-cli|\[patch'
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}

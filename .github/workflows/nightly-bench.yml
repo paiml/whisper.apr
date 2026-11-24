@@ -46,32 +46,27 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - name: Checkout sibling repos (path deps)
+      # No sibling checkouts: every aprender-* dependency resolves from crates.io
+      # through the committed Cargo.lock (Cargo.toml has no path dependency and no
+      # active [patch] section), so the 13 clones this job used to make were unused.
+      - name: Install build packages
         run: |
           sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev make || true
-          cd "$GITHUB_WORKSPACE/.."
-          for repo in provable-contracts generated_contracts probar trueno trueno-rag trueno-db trueno-viz alimentar presentar aprender renacer batuta realizar; do
-            if [ -e "$repo" ] && [ ! -d "$repo" ]; then rm -f "$repo"; fi
-            if [ -d "$repo" ]; then
-              git -C "$repo" fetch --depth 1 origin main 2>/dev/null && git -C "$repo" reset --hard FETCH_HEAD 2>/dev/null || true
-            else
-              for attempt in 1 2 3; do
-                git clone --depth 1 --quiet "https://github.com/paiml/$repo.git" "$repo" 2>&1 && break
-                rm -rf "$repo"
-                echo "::warning::Retry $attempt for $repo clone"
-                sleep 2
-              done
-            fi
-          done
       - name: Run perf-tier (ignored) RTF breakdown tests
+        shell: bash
         run: |
+          set -euo pipefail
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          # Run ONLY the perf-tier RTF breakdown tests (real opt-level=0 Q4K
-          # inference) that the PR gate skips via #[ignore]. Scoped by name so
-          # this job is not entangled with other, environment-gated ignored
-          # tests (e.g. ones needing on-disk model files).
-          cargo nextest run --lib --run-ignored all \
-            -E 'test(component_proportions) or test(bottleneck_identification) or test(component_timing_all_positive)' 2>&1 || \
-          cargo test --lib -- --ignored \
-            test_component_proportions test_bottleneck_identification test_component_timing_all_positive 2>&1 || \
-          { echo "::error::perf-tier RTF breakdown tests failed"; exit 1; }
+          # Run ONLY the three perf-tier RTF breakdown tests (real opt-level=0 Q4K
+          # inference) that the PR gate skips via #[ignore]. ONE invocation, exact
+          # names: the old `nextest || cargo test` chain gave a failing test a second
+          # run, and its substring filters passed with 0 tests matched if a test was
+          # renamed. The count line below is red unless exactly these 3 ran and passed.
+          cargo test --locked --lib -- --ignored --exact \
+            benchmark_generated::tests::test_component_proportions \
+            benchmark_generated::tests::test_bottleneck_identification \
+            benchmark_generated::tests::test_component_timing_all_positive 2>&1 | tee perf-tier.log
+          if ! grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' perf-tier.log; then
+            echo "::error::perf-tier: expected exactly 3 tests run and passed (a rename or a failure lands here)"
+            exit 1
+          fi
