@@ -52,6 +52,8 @@ use realizar::inference_trace::{InferenceTracer, ModelInfo, TraceConfig, TraceSt
 
 // GPU-Resident Tensor imports (WAPR-PERF-004)
 #[cfg(feature = "cuda")]
+use trueno_gpu::driver::CudaContext;
+#[cfg(feature = "cuda")]
 #[allow(unused_imports)] // total_d2h_transfers, total_h2d_transfers used only in tests
 use trueno_gpu::memory::resident::{
     batched_multihead_attention,
@@ -158,6 +160,82 @@ pub struct WhisperCuda {
     gpu_enc_ln_post_beta: Option<GpuResidentTensor<f32>>,
 }
 
+/// aprender-gpu 0.63.0 multiplies in FP16 by default, and that kernel leaves output
+/// values at 0 when the row count is not a multiple of 16 (the encoder runs 1500
+/// frames), differently from run to run. This variable is the library's only switch
+/// to the FP32 kernel. Call it before the first GPU operation.
+#[cfg(feature = "cuda")]
+pub fn require_deterministic_gemm() {
+    const FORCE_FP32: &str = "TRUENO_FORCE_FP32_GEMM";
+    if std::env::var_os(FORCE_FP32).is_none() {
+        std::env::set_var(FORCE_FP32, "1");
+    }
+}
+
+/// Reorder convolution weights `[out, in, 3]` into the `[in * 3, out]` matrix that
+/// multiplies the rows built by `conv3_windows`.
+#[cfg(feature = "cuda")]
+pub fn conv3_weight_matrix(weight: &[f32], cin: usize, cout: usize) -> Vec<f32> {
+    let width = cin * 3;
+    let mut matrix = vec![0.0_f32; width * cout];
+    for (o, row) in weight.chunks_exact(width).take(cout).enumerate() {
+        for (i, &w) in row.iter().enumerate() {
+            matrix[i * cout + o] = w;
+        }
+    }
+    matrix
+}
+
+/// The input of a kernel-3, padding-1 convolution over `x` (`[len, cin]`) as one row
+/// per output frame, ordered `(channel, tap)` like the weights.
+#[cfg(feature = "cuda")]
+fn conv3_windows(x: &[f32], cin: usize, stride: usize) -> Vec<f32> {
+    let len = x.len() / cin;
+    let out_len = (len + 2 - 3) / stride + 1;
+    let mut rows = vec![0.0_f32; out_len * cin * 3];
+    for (t, row) in rows.chunks_exact_mut(cin * 3).enumerate() {
+        for tap in 0..3 {
+            // padding: the frame before the first and after the last stay zero
+            let src = (t * stride + tap).wrapping_sub(1);
+            if src < len {
+                for (c, &v) in x[src * cin..(src + 1) * cin].iter().enumerate() {
+                    row[c * 3 + tap] = v;
+                }
+            }
+        }
+    }
+    rows
+}
+
+/// Convolution (kernel 3, padding 1) followed by the same tanh GELU as the CPU
+/// encoder. `GpuResidentTensor::conv1d` uses the `x * sigmoid(1.702 x)` estimate,
+/// which is off by up to 0.02, so this runs as one matrix multiply instead.
+#[cfg(feature = "cuda")]
+pub fn conv3_gelu_gpu(
+    ctx: &CudaContext,
+    x: &[f32],
+    matrix: &GpuResidentTensor<f32>,
+    bias: &GpuResidentTensor<f32>,
+    cin: usize,
+    stride: usize,
+) -> WhisperResult<GpuResidentTensor<f32>> {
+    let rows = conv3_windows(x, cin, stride);
+    let out_len = rows.len() / (cin * 3);
+    let cout = bias.len();
+    GpuResidentTensor::from_host(ctx, &rows)
+        .and_then(|input| {
+            input.fused_linear_gelu(
+                ctx,
+                matrix,
+                bias,
+                out_len as u32,
+                (cin * 3) as u32,
+                cout as u32,
+            )
+        })
+        .map_err(|e| WhisperError::Inference(format!("conv GPU: {e}")))
+}
+
 impl WhisperCuda {
     /// Create a new CUDA-accelerated Whisper model.
     ///
@@ -253,6 +331,8 @@ impl WhisperCuda {
                 "CUDA not available. Install CUDA drivers or use CPU backend.".into(),
             ));
         }
+
+        require_deterministic_gemm();
 
         let executor = CudaExecutor::new(device_ordinal)
             .map_err(|e| WhisperError::Inference(format!("CUDA initialization failed: {e}")))?;
@@ -454,28 +534,28 @@ impl WhisperCuda {
             let name = format!("dec_b{block_idx}_self_q");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.self_attn.w_q().weight)
+                .load_weights(&name, &block.self_attn.w_q().dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("dec_b{block_idx}_self_k");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.self_attn.w_k().weight)
+                .load_weights(&name, &block.self_attn.w_k().dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("dec_b{block_idx}_self_v");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.self_attn.w_v().weight)
+                .load_weights(&name, &block.self_attn.w_v().dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("dec_b{block_idx}_self_o");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.self_attn.w_o().weight)
+                .load_weights(&name, &block.self_attn.w_o().dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
@@ -483,28 +563,28 @@ impl WhisperCuda {
             let name = format!("dec_b{block_idx}_cross_q");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.cross_attn.w_q().weight)
+                .load_weights(&name, &block.cross_attn.w_q().dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("dec_b{block_idx}_cross_k");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.cross_attn.w_k().weight)
+                .load_weights(&name, &block.cross_attn.w_k().dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("dec_b{block_idx}_cross_v");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.cross_attn.w_v().weight)
+                .load_weights(&name, &block.cross_attn.w_v().dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("dec_b{block_idx}_cross_o");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.cross_attn.w_o().weight)
+                .load_weights(&name, &block.cross_attn.w_o().dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
@@ -512,14 +592,14 @@ impl WhisperCuda {
             let name = format!("dec_b{block_idx}_ffn_fc1");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.ffn.fc1.weight)
+                .load_weights(&name, &block.ffn.fc1.dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("dec_b{block_idx}_ffn_fc2");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.ffn.fc2.weight)
+                .load_weights(&name, &block.ffn.fc2.dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
         }
@@ -545,28 +625,28 @@ impl WhisperCuda {
             let name = format!("enc_b{block_idx}_self_q");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.self_attn.w_q().weight)
+                .load_weights(&name, &block.self_attn.w_q().dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("enc_b{block_idx}_self_k");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.self_attn.w_k().weight)
+                .load_weights(&name, &block.self_attn.w_k().dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("enc_b{block_idx}_self_v");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.self_attn.w_v().weight)
+                .load_weights(&name, &block.self_attn.w_v().dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("enc_b{block_idx}_self_o");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.self_attn.w_o().weight)
+                .load_weights(&name, &block.self_attn.w_o().dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
@@ -574,14 +654,14 @@ impl WhisperCuda {
             let name = format!("enc_b{block_idx}_ffn_fc1");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.ffn.fc1.weight)
+                .load_weights(&name, &block.ffn.fc1.dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
 
             let name = format!("enc_b{block_idx}_ffn_fc2");
             let bytes = self
                 .executor
-                .load_weights(&name, &block.ffn.fc2.weight)
+                .load_weights(&name, &block.ffn.fc2.dense_weight())
                 .map_err(|e| WhisperError::Inference(format!("Failed to upload {name}: {e}")))?;
             total_bytes += bytes;
         }
@@ -675,25 +755,25 @@ impl WhisperCuda {
             // Upload Q/K/V/O projection weights (TRANSPOSED from [out, in] to [in, out])
             // CPU: [d_model, d_model] as [out_features, in_features]
             // GPU: [d_model, d_model] as [in_features, out_features]
-            let w_q_t = transpose_weights(&block.self_attn.w_q().weight, d_model, d_model);
+            let w_q_t = transpose_weights(&block.self_attn.w_q().dense_weight(), d_model, d_model);
             let w_q = GpuResidentTensor::from_host(ctx, &w_q_t)
                 .map_err(|e| WhisperError::Inference(format!("w_q upload: {e}")))?;
             let b_q = GpuResidentTensor::from_host(ctx, &block.self_attn.w_q().bias)
                 .map_err(|e| WhisperError::Inference(format!("b_q upload: {e}")))?;
 
-            let w_k_t = transpose_weights(&block.self_attn.w_k().weight, d_model, d_model);
+            let w_k_t = transpose_weights(&block.self_attn.w_k().dense_weight(), d_model, d_model);
             let w_k = GpuResidentTensor::from_host(ctx, &w_k_t)
                 .map_err(|e| WhisperError::Inference(format!("w_k upload: {e}")))?;
             let b_k = GpuResidentTensor::from_host(ctx, &block.self_attn.w_k().bias)
                 .map_err(|e| WhisperError::Inference(format!("b_k upload: {e}")))?;
 
-            let w_v_t = transpose_weights(&block.self_attn.w_v().weight, d_model, d_model);
+            let w_v_t = transpose_weights(&block.self_attn.w_v().dense_weight(), d_model, d_model);
             let w_v = GpuResidentTensor::from_host(ctx, &w_v_t)
                 .map_err(|e| WhisperError::Inference(format!("w_v upload: {e}")))?;
             let b_v = GpuResidentTensor::from_host(ctx, &block.self_attn.w_v().bias)
                 .map_err(|e| WhisperError::Inference(format!("b_v upload: {e}")))?;
 
-            let w_o_t = transpose_weights(&block.self_attn.w_o().weight, d_model, d_model);
+            let w_o_t = transpose_weights(&block.self_attn.w_o().dense_weight(), d_model, d_model);
             let w_o = GpuResidentTensor::from_host(ctx, &w_o_t)
                 .map_err(|e| WhisperError::Inference(format!("w_o upload: {e}")))?;
             let b_o = GpuResidentTensor::from_host(ctx, &block.self_attn.w_o().bias)
@@ -707,14 +787,14 @@ impl WhisperCuda {
 
             // Upload FFN weights (TRANSPOSED)
             // FFN up: [d_ff, d_model] -> transposed to [d_model, d_ff]
-            let ffn_up_t = transpose_weights(&block.ffn.fc1.weight, d_ff, d_model);
+            let ffn_up_t = transpose_weights(&block.ffn.fc1.dense_weight(), d_ff, d_model);
             let ffn_up_w = GpuResidentTensor::from_host(ctx, &ffn_up_t)
                 .map_err(|e| WhisperError::Inference(format!("ffn_up_w upload: {e}")))?;
             let ffn_up_b = GpuResidentTensor::from_host(ctx, &block.ffn.fc1.bias)
                 .map_err(|e| WhisperError::Inference(format!("ffn_up_b upload: {e}")))?;
 
             // FFN down: [d_model, d_ff] -> transposed to [d_ff, d_model]
-            let ffn_down_t = transpose_weights(&block.ffn.fc2.weight, d_model, d_ff);
+            let ffn_down_t = transpose_weights(&block.ffn.fc2.dense_weight(), d_model, d_ff);
             let ffn_down_w = GpuResidentTensor::from_host(ctx, &ffn_down_t)
                 .map_err(|e| WhisperError::Inference(format!("ffn_down_w upload: {e}")))?;
             let ffn_down_b = GpuResidentTensor::from_host(ctx, &block.ffn.fc2.bias)
@@ -777,14 +857,18 @@ impl WhisperCuda {
             .conv_frontend()
             .ok_or_else(|| WhisperError::Inference("no conv frontend for GPU upload".into()))?;
 
-        // Upload conv1 weights [out_channels, in_channels, kernel_size]
-        let conv1_weight = GpuResidentTensor::from_host(ctx, &conv_frontend.conv1.weight)
+        // Upload conv1 weights as [in * 3, out] matrices
+        let d_model = self.config.n_audio_state as usize;
+        let n_mels = self.config.n_mels as usize;
+        let matrix1 = conv3_weight_matrix(&conv_frontend.conv1.weight, n_mels, d_model);
+        let conv1_weight = GpuResidentTensor::from_host(ctx, &matrix1)
             .map_err(|e| WhisperError::Inference(format!("conv1_weight upload: {e}")))?;
         let conv1_bias = GpuResidentTensor::from_host(ctx, &conv_frontend.conv1.bias)
             .map_err(|e| WhisperError::Inference(format!("conv1_bias upload: {e}")))?;
 
-        // Upload conv2 weights [out_channels, in_channels, kernel_size]
-        let conv2_weight = GpuResidentTensor::from_host(ctx, &conv_frontend.conv2.weight)
+        // Upload conv2 weights as [in * 3, out] matrices
+        let matrix2 = conv3_weight_matrix(&conv_frontend.conv2.weight, d_model, d_model);
+        let conv2_weight = GpuResidentTensor::from_host(ctx, &matrix2)
             .map_err(|e| WhisperError::Inference(format!("conv2_weight upload: {e}")))?;
         let conv2_bias = GpuResidentTensor::from_host(ctx, &conv_frontend.conv2.bias)
             .map_err(|e| WhisperError::Inference(format!("conv2_bias upload: {e}")))?;
@@ -841,25 +925,29 @@ impl WhisperCuda {
                 .map_err(|e| WhisperError::Inference(format!("dec ln1_beta L{layer_idx}: {e}")))?;
 
             // Self-attention Q/K/V/O (transposed for GPU linear: [in, out])
-            let self_w_q_t = transpose_weights(&block.self_attn.w_q().weight, d_model, d_model);
+            let self_w_q_t =
+                transpose_weights(&block.self_attn.w_q().dense_weight(), d_model, d_model);
             let self_w_q = GpuResidentTensor::from_host(ctx, &self_w_q_t)
                 .map_err(|e| WhisperError::Inference(format!("dec self_w_q L{layer_idx}: {e}")))?;
             let self_b_q = GpuResidentTensor::from_host(ctx, &block.self_attn.w_q().bias)
                 .map_err(|e| WhisperError::Inference(format!("dec self_b_q L{layer_idx}: {e}")))?;
 
-            let self_w_k_t = transpose_weights(&block.self_attn.w_k().weight, d_model, d_model);
+            let self_w_k_t =
+                transpose_weights(&block.self_attn.w_k().dense_weight(), d_model, d_model);
             let self_w_k = GpuResidentTensor::from_host(ctx, &self_w_k_t)
                 .map_err(|e| WhisperError::Inference(format!("dec self_w_k L{layer_idx}: {e}")))?;
             let self_b_k = GpuResidentTensor::from_host(ctx, &block.self_attn.w_k().bias)
                 .map_err(|e| WhisperError::Inference(format!("dec self_b_k L{layer_idx}: {e}")))?;
 
-            let self_w_v_t = transpose_weights(&block.self_attn.w_v().weight, d_model, d_model);
+            let self_w_v_t =
+                transpose_weights(&block.self_attn.w_v().dense_weight(), d_model, d_model);
             let self_w_v = GpuResidentTensor::from_host(ctx, &self_w_v_t)
                 .map_err(|e| WhisperError::Inference(format!("dec self_w_v L{layer_idx}: {e}")))?;
             let self_b_v = GpuResidentTensor::from_host(ctx, &block.self_attn.w_v().bias)
                 .map_err(|e| WhisperError::Inference(format!("dec self_b_v L{layer_idx}: {e}")))?;
 
-            let self_w_o_t = transpose_weights(&block.self_attn.w_o().weight, d_model, d_model);
+            let self_w_o_t =
+                transpose_weights(&block.self_attn.w_o().dense_weight(), d_model, d_model);
             let self_w_o = GpuResidentTensor::from_host(ctx, &self_w_o_t)
                 .map_err(|e| WhisperError::Inference(format!("dec self_w_o L{layer_idx}: {e}")))?;
             let self_b_o = GpuResidentTensor::from_host(ctx, &block.self_attn.w_o().bias)
@@ -871,25 +959,29 @@ impl WhisperCuda {
             let ln2_beta = GpuResidentTensor::from_host(ctx, &block.ln2.bias)
                 .map_err(|e| WhisperError::Inference(format!("dec ln2_beta L{layer_idx}: {e}")))?;
 
-            let cross_w_q_t = transpose_weights(&block.cross_attn.w_q().weight, d_model, d_model);
+            let cross_w_q_t =
+                transpose_weights(&block.cross_attn.w_q().dense_weight(), d_model, d_model);
             let cross_w_q = GpuResidentTensor::from_host(ctx, &cross_w_q_t)
                 .map_err(|e| WhisperError::Inference(format!("dec cross_w_q L{layer_idx}: {e}")))?;
             let cross_b_q = GpuResidentTensor::from_host(ctx, &block.cross_attn.w_q().bias)
                 .map_err(|e| WhisperError::Inference(format!("dec cross_b_q L{layer_idx}: {e}")))?;
 
-            let cross_w_k_t = transpose_weights(&block.cross_attn.w_k().weight, d_model, d_model);
+            let cross_w_k_t =
+                transpose_weights(&block.cross_attn.w_k().dense_weight(), d_model, d_model);
             let cross_w_k = GpuResidentTensor::from_host(ctx, &cross_w_k_t)
                 .map_err(|e| WhisperError::Inference(format!("dec cross_w_k L{layer_idx}: {e}")))?;
             let cross_b_k = GpuResidentTensor::from_host(ctx, &block.cross_attn.w_k().bias)
                 .map_err(|e| WhisperError::Inference(format!("dec cross_b_k L{layer_idx}: {e}")))?;
 
-            let cross_w_v_t = transpose_weights(&block.cross_attn.w_v().weight, d_model, d_model);
+            let cross_w_v_t =
+                transpose_weights(&block.cross_attn.w_v().dense_weight(), d_model, d_model);
             let cross_w_v = GpuResidentTensor::from_host(ctx, &cross_w_v_t)
                 .map_err(|e| WhisperError::Inference(format!("dec cross_w_v L{layer_idx}: {e}")))?;
             let cross_b_v = GpuResidentTensor::from_host(ctx, &block.cross_attn.w_v().bias)
                 .map_err(|e| WhisperError::Inference(format!("dec cross_b_v L{layer_idx}: {e}")))?;
 
-            let cross_w_o_t = transpose_weights(&block.cross_attn.w_o().weight, d_model, d_model);
+            let cross_w_o_t =
+                transpose_weights(&block.cross_attn.w_o().dense_weight(), d_model, d_model);
             let cross_w_o = GpuResidentTensor::from_host(ctx, &cross_w_o_t)
                 .map_err(|e| WhisperError::Inference(format!("dec cross_w_o L{layer_idx}: {e}")))?;
             let cross_b_o = GpuResidentTensor::from_host(ctx, &block.cross_attn.w_o().bias)
@@ -902,14 +994,14 @@ impl WhisperCuda {
                 .map_err(|e| WhisperError::Inference(format!("dec ln3_beta L{layer_idx}: {e}")))?;
 
             // FFN up: [d_ff, d_model] -> transposed to [d_model, d_ff]
-            let ffn_up_t = transpose_weights(&block.ffn.fc1.weight, d_ff, d_model);
+            let ffn_up_t = transpose_weights(&block.ffn.fc1.dense_weight(), d_ff, d_model);
             let ffn_up_w = GpuResidentTensor::from_host(ctx, &ffn_up_t)
                 .map_err(|e| WhisperError::Inference(format!("dec ffn_up_w L{layer_idx}: {e}")))?;
             let ffn_up_b = GpuResidentTensor::from_host(ctx, &block.ffn.fc1.bias)
                 .map_err(|e| WhisperError::Inference(format!("dec ffn_up_b L{layer_idx}: {e}")))?;
 
             // FFN down: [d_model, d_ff] -> transposed to [d_ff, d_model]
-            let ffn_down_t = transpose_weights(&block.ffn.fc2.weight, d_model, d_ff);
+            let ffn_down_t = transpose_weights(&block.ffn.fc2.dense_weight(), d_model, d_ff);
             let ffn_down_w = GpuResidentTensor::from_host(ctx, &ffn_down_t).map_err(|e| {
                 WhisperError::Inference(format!("dec ffn_down_w L{layer_idx}: {e}"))
             })?;
@@ -1660,6 +1752,23 @@ impl WhisperCuda {
         Ok(hidden_gpu)
     }
 
+    /// Both frontend convolutions on the GPU: mel `[frames, mels]` in, features
+    /// `[frames / 2, d_model]` out. Needs `upload_conv_weights_to_gpu()` first.
+    #[cfg(feature = "cuda")]
+    fn conv_frontend_gpu(&self, mel: &[f32]) -> WhisperResult<GpuResidentTensor<f32>> {
+        let ctx = self.executor.context();
+        let d_model = self.config.n_audio_state as usize;
+        let n_mels = self.config.n_mels as usize;
+        let w = self
+            .gpu_conv_weights
+            .as_ref()
+            .ok_or_else(|| WhisperError::Inference("GPU conv weights not uploaded".into()))?;
+        let hidden = conv3_gelu_gpu(ctx, mel, &w.conv1_weight, &w.conv1_bias, n_mels, 1)?
+            .to_host()
+            .map_err(|e| WhisperError::Inference(format!("conv1 download: {e}")))?;
+        conv3_gelu_gpu(ctx, &hidden, &w.conv2_weight, &w.conv2_bias, d_model, 2)
+    }
+
     /// Full GPU encoder (WAPR-PERF-004: Total Offload)
     ///
     /// Runs the entire encoder on GPU with minimal host transfers:
@@ -1694,54 +1803,9 @@ impl WhisperCuda {
 
         // WAPR-PERF-012: GPU Convolutional frontend
         let conv_start = std::time::Instant::now();
-        let seq_len_in = mel.len() / n_mels;
-
-        // Upload mel to GPU
-        let mel_gpu = GpuResidentTensor::from_host(ctx, mel)
-            .map_err(|e| WhisperError::Inference(format!("mel upload: {e}")))?;
-
-        let conv_weights = self
-            .gpu_conv_weights
-            .as_ref()
-            .ok_or_else(|| WhisperError::Inference("GPU conv weights not uploaded".into()))?;
-
-        // Conv1: 80 → 384, kernel=3, stride=1, padding=1 + GELU
-        let conv1_out = mel_gpu
-            .conv1d(
-                ctx,
-                &conv_weights.conv1_weight,
-                Some(&conv_weights.conv1_bias),
-                n_mels as u32,     // in_channels
-                d_model as u32,    // out_channels
-                3,                 // kernel_size
-                1,                 // stride
-                1,                 // padding
-                seq_len_in as u32, // seq_len
-            )
-            .map_err(|e| WhisperError::Inference(format!("conv1 GPU: {e}")))?;
-
-        // After conv1: seq_len stays same (stride=1), channels = d_model
-        let seq_len_after_conv1 = seq_len_in;
-
-        // Conv2: 384 → 384, kernel=3, stride=2, padding=1 + GELU
-        let mut conv2_out = conv1_out
-            .conv1d(
-                ctx,
-                &conv_weights.conv2_weight,
-                Some(&conv_weights.conv2_bias),
-                d_model as u32, // in_channels
-                d_model as u32, // out_channels
-                3,              // kernel_size
-                2,              // stride
-                1,              // padding
-                seq_len_after_conv1 as u32,
-            )
-            .map_err(|e| WhisperError::Inference(format!("conv2 GPU: {e}")))?;
-
+        let seq_len = (mel.len() / n_mels + 2 - 3) / 2 + 1;
+        let mut conv2_out = self.conv_frontend_gpu(mel)?;
         let conv_time = conv_start.elapsed();
-
-        // After conv2: seq_len halved (stride=2)
-        let seq_len = (seq_len_after_conv1 + 2 - 3) / 2 + 1;
 
         // Download conv output to add positional embedding (CPU - small overhead)
         let pos_start = std::time::Instant::now();
@@ -1840,7 +1904,6 @@ impl WhisperCuda {
 
         // Step 2: Run encoder to compile kernels - match actual transcribe_gpu path
         // WAPR-PERF-020: Check which encoder path will be used in transcribe_gpu
-        let use_gpu_total_offload = std::env::var("WHISPER_GPU_TOTAL_OFFLOAD").is_ok();
         let use_gpu_encoder = std::env::var("WHISPER_GPU_ENCODER").is_ok();
         let use_gpu_decoder = std::env::var("WHISPER_GPU_DECODER_OFFLOAD").is_ok();
 
@@ -1849,17 +1912,12 @@ impl WhisperCuda {
         let d_model = self.config.n_text_state as usize;
         let dummy_mel: Vec<f32> = vec![0.0; n_mels * n_frames];
 
-        let enc_output = if use_gpu_total_offload {
-            // Full GPU encoder path - compile all encoder kernels
-            self.encode_gpu_total_offload(&dummy_mel)?
-        } else if use_gpu_encoder {
+        let enc_output = if use_gpu_encoder {
             // Partial GPU encoder path - compile attention kernels
             self.encode_gpu(&dummy_mel)?
         } else {
-            // CPU encoder path - no GPU kernels to compile for encoder
-            // Use a small mel to avoid wasting time on CPU encoder
-            let small_mel: Vec<f32> = vec![0.0; n_mels * 100]; // 100 frames
-            self.encoder.forward_mel(&small_mel)?
+            // Full GPU encoder path - compile all encoder kernels
+            self.encode_gpu_total_offload(&dummy_mel)?
         };
         let enc_seq_len = enc_output.len() / d_model;
 
@@ -1919,47 +1977,9 @@ impl WhisperCuda {
         let n_mels = self.config.n_mels as usize;
 
         // Step 1: Convolutional frontend on GPU
-        let seq_len_in = mel.len() / n_mels;
-        let mel_gpu = GpuResidentTensor::from_host(ctx, mel)
-            .map_err(|e| WhisperError::Inference(format!("mel upload: {e}")))?;
+        let seq_len = (mel.len() / n_mels + 2 - 3) / 2 + 1;
+        let conv2_out = self.conv_frontend_gpu(mel)?;
 
-        let conv_weights = self
-            .gpu_conv_weights
-            .as_ref()
-            .ok_or_else(|| WhisperError::Inference("Conv weights not uploaded".into()))?;
-
-        // Conv1: 80 → d_model, kernel=3, stride=1, padding=1 + GELU
-        let conv1_out = mel_gpu
-            .conv1d(
-                ctx,
-                &conv_weights.conv1_weight,
-                Some(&conv_weights.conv1_bias),
-                n_mels as u32,
-                d_model as u32,
-                3,
-                1,
-                1,
-                seq_len_in as u32,
-            )
-            .map_err(|e| WhisperError::Inference(format!("conv1: {e}")))?;
-
-        // Conv2: d_model → d_model, kernel=3, stride=2, padding=1 + GELU
-        let conv2_out = conv1_out
-            .conv1d(
-                ctx,
-                &conv_weights.conv2_weight,
-                Some(&conv_weights.conv2_bias),
-                d_model as u32,
-                d_model as u32,
-                3,
-                2,
-                1,
-                seq_len_in as u32,
-            )
-            .map_err(|e| WhisperError::Inference(format!("conv2: {e}")))?;
-
-        // After conv2: seq_len halved (stride=2)
-        let seq_len = (seq_len_in + 2 - 3) / 2 + 1;
         let pos_emb = self.encoder.positional_embedding();
         let pos_slice = &pos_emb[..seq_len * d_model];
         let pos_gpu = GpuResidentTensor::from_host(ctx, pos_slice)
@@ -2193,6 +2213,25 @@ impl WhisperCuda {
         Ok(residual)
     }
 
+    /// Row-wise softmax in place over a `[width, width]` score matrix.
+    fn softmax_rows(scores: &mut [f32], width: usize) {
+        for row_slice in scores.chunks_mut(width) {
+            // Subtract the max for numerical stability
+            let max_val = row_slice.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+
+            let mut sum = 0.0f32;
+            for val in row_slice.iter_mut() {
+                *val = (*val - max_val).exp();
+                sum += *val;
+            }
+
+            let inv_sum = if sum > 0.0 { 1.0 / sum } else { 0.0 };
+            for val in row_slice.iter_mut() {
+                *val *= inv_sum;
+            }
+        }
+    }
+
     /// GPU attention using basic gemm primitives (WAPR-PERF-005).
     ///
     /// This is the "dumb but working" approach that bypasses the failing
@@ -2267,26 +2306,7 @@ impl WhisperCuda {
             }
 
             // Step 3: Softmax (CPU - simple row-wise softmax)
-            for row in 0..seq_len {
-                let row_start = row * seq_len;
-                let row_slice = &mut scores[row_start..row_start + seq_len];
-
-                // Find max for numerical stability
-                let max_val = row_slice.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-
-                // Exp and sum
-                let mut sum = 0.0f32;
-                for val in row_slice.iter_mut() {
-                    *val = (*val - max_val).exp();
-                    sum += *val;
-                }
-
-                // Normalize
-                let inv_sum = if sum > 0.0 { 1.0 / sum } else { 0.0 };
-                for val in row_slice.iter_mut() {
-                    *val *= inv_sum;
-                }
-            }
+            Self::softmax_rows(&mut scores, seq_len);
 
             // Step 4: output_h = attn_weights @ V_h using GPU gemm
             // scores: [seq_len, seq_len], V_h: [seq_len, head_dim] -> output_h: [seq_len, head_dim]
@@ -2792,7 +2812,8 @@ impl WhisperCuda {
         // Whisper constants
         const N_SAMPLES_30S: usize = 480_000; // 30 seconds at 16kHz
         const N_FRAMES: usize = 3000; // Whisper expects exactly 3000 frames
-        const N_MELS: usize = 80;
+        #[allow(non_snake_case)]
+        let N_MELS = self.config.n_mels as usize;
 
         // Pad/truncate audio to 30 seconds (same as WhisperApr::compute_mel)
         let padded_audio = match audio.len().cmp(&N_SAMPLES_30S) {
@@ -3296,21 +3317,10 @@ impl WhisperCuda {
         Ok(output)
     }
 
-    /// Transcribe using GPU-accelerated decoding.
+    /// Transcribe with the encoder on the GPU.
     ///
-    /// Uses SIMD-accelerated CPU decoder with proper KV caching.
-    /// GPU acceleration is available for weights upload but self-attention
-    /// runs on CPU due to CUDA kernel compatibility issues (WAPR-PERF-006).
-    ///
-    /// # WAPR-PERF-004: Performance Analysis
-    ///
-    /// Current approach:
-    /// 1. CPU encoder (SIMD-accelerated via trueno)
-    /// 2. CPU decoder with KV cache (proven correct)
-    /// 3. CPU output projection (trueno matmul)
-    ///
-    /// GPU flash_attention_cached has kernel compatibility issues that need investigation.
-    /// The CPU path with trueno SIMD is the reliable baseline.
+    /// The encoder runs on the GPU. Token generation is the same CPU loop the CPU
+    /// pipeline uses (`WHISPER_GPU_DECODER_OFFLOAD` is a separate, experimental path).
     ///
     /// # APR-Style Tracing
     ///
@@ -3341,9 +3351,9 @@ impl WhisperCuda {
         audio: &[f32],
         options: &TranscribeOptions,
     ) -> WhisperResult<TranscriptionResult> {
-        const N_SAMPLES_30S: usize = 480_000;
         const N_FRAMES: usize = 3000;
-        const N_MELS: usize = 80;
+        #[allow(non_snake_case)]
+        let N_MELS = self.config.n_mels as usize;
 
         let profile_all = std::env::var("WHISPER_PROFILE_DECODER").is_ok();
         let transcribe_start = std::time::Instant::now();
@@ -3351,7 +3361,14 @@ impl WhisperCuda {
         // === TRACE: Mel spectrogram (mapped to EMBED step) ===
         self.tracer.start_step(TraceStep::Embed);
 
-        let mel = self.prepare_mel(audio, N_SAMPLES_30S, N_FRAMES, N_MELS, profile_all)?;
+        // whisper.apr#103: pad the audio with silence to the 30 s window; unpadded chunks
+        // drop words, and odd encoder lengths fault the WMMA kernel.
+        let mut padded = audio.to_vec();
+        padded.resize(crate::audio::gpu_chunk_len(audio.len()), 0.0);
+        let mel = self
+            .mel_filters
+            .compute(&padded)
+            .map_err(|e| WhisperError::Audio(e.to_string()))?;
 
         // Trace mel computation (token_count=N_FRAMES, hidden_dim=N_MELS)
         self.tracer.trace_embed(N_FRAMES, N_MELS, Some(&mel));
@@ -3372,69 +3389,21 @@ impl WhisperCuda {
         #[allow(clippy::items_after_statements)]
         use crate::tokenizer::special_tokens::SpecialTokens;
         let specials = SpecialTokens::for_vocab_size(self.config.n_vocab as usize);
-        let mut tokens = Self::build_initial_tokens(&specials, options);
-
-        // Hybrid GPU path:
-        // - CPU decoder blocks (GPU flash_attention_cached has kernel compatibility issues)
-        // - GPU output projection via executor.gemm() (FIX 1 - working!)
-        let max_tokens = self.config.n_text_ctx as usize;
-        let n_layers = self.config.n_text_layer as usize;
+        let initial_tokens = Self::build_initial_tokens(&specials, options);
         let n_vocab = self.config.n_vocab as usize;
-        let eot_token = specials.eot;
 
-        let mut cache = DecoderKVCache::new(n_layers, d_model, max_tokens);
-
-        // Token suppressor — do NOT suppress timestamps (needed for segment extraction)
-        let suppressor = crate::inference::WhisperTokenSuppressor::new()
-            .with_timestamp_suppression(false)
-            .with_vocab_size(n_vocab);
-
-        // Process initial tokens (prefill)
-        self.prefill_tokens(&tokens, &encoder_output, &mut cache)?;
-
-        // Generate tokens
-        let profile_decoder = std::env::var("WHISPER_PROFILE_DECODER").is_ok();
-        let mut decoder_token_times: Vec<u128> = Vec::new();
-        let decoder_start = std::time::Instant::now();
-        for gen_idx in 0..max_tokens.saturating_sub(tokens.len()) {
-            let token_start = std::time::Instant::now();
-            let last_token = *tokens.last().unwrap_or(&specials.sot);
-
-            // === TRACE: LM_HEAD (output projection) ===
-            self.tracer.start_step(TraceStep::LmHead);
-
-            let mut logits = self.forward_one_gpu(last_token, &encoder_output, &mut cache)?;
-
-            // Trace output projection
-            self.tracer.trace_lm_head(gen_idx, &logits, n_vocab);
-
-            Self::debug_logits(profile_decoder, gen_idx, &logits);
-
-            // === TRACE: SAMPLE (token selection) ===
-            self.tracer.start_step(TraceStep::Sample);
-
-            suppressor.apply(&mut logits);
-
-            // All strategies currently use greedy argmax
-            let next_token = crate::simd::argmax(&logits) as u32;
-
-            // Trace sampling result (temperature=0.0 for greedy, top_k=1)
-            self.tracer
-                .trace_sample(gen_idx, &logits, next_token, 0.0, 1);
-
-            // Track per-token timing
-            if profile_decoder {
-                decoder_token_times.push(token_start.elapsed().as_micros());
-            }
-
-            if next_token == eot_token {
-                break;
-            }
-
-            tokens.push(next_token);
-        }
-
-        Self::print_decoder_profile(profile_decoder, &decoder_token_times, &decoder_start);
+        // The encoder ran on the GPU; token generation is the same loop the CPU
+        // pipeline uses (whisper.apr#103).
+        self.tracer.start_step(TraceStep::LmHead);
+        let tokens = crate::WhisperApr::decode_features(
+            &self.decoder,
+            &self.config,
+            specials.eot,
+            |word| self.tokenizer.encode(word).ok(),
+            &encoder_output,
+            &initial_tokens,
+            options,
+        )?;
 
         // === TRACE: DECODE (detokenization) ===
         self.tracer.start_step(TraceStep::Decode);
@@ -3533,42 +3502,14 @@ impl WhisperCuda {
 
     /// Select and run the encoder path based on environment variables.
     fn run_encoder(&mut self, mel: &[f32]) -> WhisperResult<Vec<f32>> {
-        #[cfg(feature = "cuda")]
-        {
-            let use_gpu_total_offload = std::env::var("WHISPER_GPU_TOTAL_OFFLOAD").is_ok();
-            let use_gpu_encoder = std::env::var("WHISPER_GPU_ENCODER").is_ok();
-            if use_gpu_total_offload {
-                eprintln!("[WAPR-PERF-014] Using GPU total-offload encoder...");
-                return self.encode_gpu_total_offload(mel);
-            } else if use_gpu_encoder {
-                eprintln!("[WAPR-PERF-005] Using GPU attention-only encoder...");
-                return self.encode_gpu(mel);
-            }
+        // whisper.apr#103: the GPU encoder is the default. This pipeline never
+        // falls back to the CPU encoder.
+        if std::env::var("WHISPER_GPU_ENCODER").is_ok() {
+            eprintln!("[WAPR-PERF-005] Using GPU attention-only encoder...");
+            return self.encode_gpu(mel);
         }
-        self.encoder.forward_mel(mel)
-    }
-
-    /// Run decoder prefill on initial tokens.
-    fn prefill_tokens(
-        &mut self,
-        tokens: &[u32],
-        encoder_output: &[f32],
-        cache: &mut DecoderKVCache,
-    ) -> WhisperResult<()> {
-        let prefill_start = std::time::Instant::now();
-        for &token in tokens {
-            let _ = self.decoder.forward_one(token, encoder_output, cache)?;
-        }
-        if std::env::var("WHISPER_PROFILE_DECODER").is_ok() {
-            let prefill_time = prefill_start.elapsed();
-            eprintln!(
-                "[PROFILE-PREFILL] {} tokens in {:.1}ms ({:.1}ms/token)",
-                tokens.len(),
-                prefill_time.as_millis(),
-                prefill_time.as_millis() as f64 / tokens.len() as f64
-            );
-        }
-        Ok(())
+        eprintln!("[WAPR-PERF-014] Using GPU total-offload encoder...");
+        self.encode_gpu_total_offload(mel)
     }
 
     /// Build the initial token sequence for decoder prefill.
@@ -3593,107 +3534,16 @@ impl WhisperCuda {
         tokens
     }
 
-    /// Prepare mel spectrogram from audio (pad/truncate + compute + frame normalization).
-    fn prepare_mel(
-        &self,
-        audio: &[f32],
-        n_samples_30s: usize,
-        n_frames: usize,
-        n_mels: usize,
-        profile: bool,
-    ) -> WhisperResult<Vec<f32>> {
-        let mel_start = std::time::Instant::now();
-        let padded_audio = match audio.len().cmp(&n_samples_30s) {
-            std::cmp::Ordering::Equal => audio.to_vec(),
-            std::cmp::Ordering::Less => {
-                let mut padded = vec![0.0_f32; n_samples_30s];
-                padded[..audio.len()].copy_from_slice(audio);
-                padded
-            }
-            std::cmp::Ordering::Greater => audio[..n_samples_30s].to_vec(),
-        };
-        let mut mel = self
-            .mel_filters
-            .compute(&padded_audio)
-            .map_err(|e| WhisperError::Audio(e.to_string()))?;
-        if profile {
-            eprintln!(
-                "[PROFILE-MEL] Mel spectrogram: {:.1}ms",
-                mel_start.elapsed().as_millis()
-            );
-        }
-        let actual_frames = mel.len() / n_mels;
-        if actual_frames < n_frames {
-            let mut padded_mel = vec![-1.0_f32; n_frames * n_mels];
-            padded_mel[..mel.len()].copy_from_slice(&mel);
-            mel = padded_mel;
-        } else if actual_frames > n_frames {
-            mel.truncate(n_frames * n_mels);
-        }
-        Ok(mel)
-    }
-
-    /// Print debug logits stats for early generation steps.
-    fn debug_logits(enabled: bool, gen_idx: usize, logits: &[f32]) {
-        if enabled && gen_idx < 3 {
-            let logits_mean = logits.iter().sum::<f32>() / logits.len() as f32;
-            let logits_max = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-            let argmax = logits
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .map_or(0, |(i, _)| i);
-            eprintln!(
-                "[DEBUG-LOGITS] gen_idx={gen_idx} len={} mean={logits_mean:.4} max={logits_max:.4} argmax={argmax}",
-                logits.len(),
-            );
-        }
-    }
-
-    /// Print decoder profiling summary if enabled.
-    fn print_decoder_profile(
-        enabled: bool,
-        token_times: &[u128],
-        decoder_start: &std::time::Instant,
-    ) {
-        if enabled && !token_times.is_empty() {
-            let decoder_total = decoder_start.elapsed();
-            let sum: u128 = token_times.iter().sum();
-            let avg = sum as f64 / token_times.len() as f64;
-            let max = token_times.iter().max().copied().unwrap_or(0);
-            let min = token_times.iter().min().copied().unwrap_or(0);
-            eprintln!(
-                "[PROFILE-DECODER] {} tokens, total {:.1}ms, avg {:.1}ms, min {:.1}ms, max {:.1}ms",
-                token_times.len(),
-                decoder_total.as_millis(),
-                avg / 1000.0,
-                min as f64 / 1000.0,
-                max as f64 / 1000.0
-            );
-        }
-    }
-
-    /// Build segments from decoded tokens (mirrors CPU path).
+    /// Build segments from decoded tokens (shared with the CPU path).
     fn build_segments(
         tokens: &[u32],
         text: &str,
         audio_len: usize,
         tokenizer: &BpeTokenizer,
     ) -> Vec<crate::Segment> {
-        if crate::timestamps::has_timestamps(tokens) {
-            crate::timestamps::extract_segments(tokens, |ts| tokenizer.decode(ts).ok())
-        } else if !text.trim().is_empty() {
-            let duration = audio_len as f32 / crate::audio::SAMPLE_RATE as f32;
-            let single = vec![crate::Segment {
-                start: 0.0,
-                end: duration,
-                text: text.to_string(),
-                tokens: tokens.to_vec(),
-            }];
-            crate::timestamps::split_long_segments(&single, 10.0)
-        } else {
-            Vec::new()
-        }
+        crate::WhisperApr::segments_from_tokens(tokens, text, audio_len, |ts| {
+            tokenizer.decode(ts).ok()
+        })
     }
 
     /// Print trace summary to stderr.
@@ -3794,7 +3644,7 @@ impl WhisperCuda {
             let block = &self.decoder.blocks()[layer_idx];
 
             // Self-attention Q/K/V/O (transposed for GPU: [in, out])
-            let w_q_t = transpose_weights(&block.self_attn.w_q().weight, d_model, d_model);
+            let w_q_t = transpose_weights(&block.self_attn.w_q().dense_weight(), d_model, d_model);
             total_bytes += self
                 .executor
                 .load_weights(&format!("dec.L{layer_idx}.self_w_q"), &w_q_t)
@@ -3807,7 +3657,7 @@ impl WhisperCuda {
                 )
                 .map_err(|e| WhisperError::Inference(format!("dec self_b_q L{layer_idx}: {e}")))?;
 
-            let w_k_t = transpose_weights(&block.self_attn.w_k().weight, d_model, d_model);
+            let w_k_t = transpose_weights(&block.self_attn.w_k().dense_weight(), d_model, d_model);
             total_bytes += self
                 .executor
                 .load_weights(&format!("dec.L{layer_idx}.self_w_k"), &w_k_t)
@@ -3820,7 +3670,7 @@ impl WhisperCuda {
                 )
                 .map_err(|e| WhisperError::Inference(format!("dec self_b_k L{layer_idx}: {e}")))?;
 
-            let w_v_t = transpose_weights(&block.self_attn.w_v().weight, d_model, d_model);
+            let w_v_t = transpose_weights(&block.self_attn.w_v().dense_weight(), d_model, d_model);
             total_bytes += self
                 .executor
                 .load_weights(&format!("dec.L{layer_idx}.self_w_v"), &w_v_t)
@@ -3833,7 +3683,7 @@ impl WhisperCuda {
                 )
                 .map_err(|e| WhisperError::Inference(format!("dec self_b_v L{layer_idx}: {e}")))?;
 
-            let w_o_t = transpose_weights(&block.self_attn.w_o().weight, d_model, d_model);
+            let w_o_t = transpose_weights(&block.self_attn.w_o().dense_weight(), d_model, d_model);
             total_bytes += self
                 .executor
                 .load_weights(&format!("dec.L{layer_idx}.self_w_o"), &w_o_t)
@@ -3847,7 +3697,8 @@ impl WhisperCuda {
                 .map_err(|e| WhisperError::Inference(format!("dec self_b_o L{layer_idx}: {e}")))?;
 
             // Cross-attention Q/K/V/O
-            let cross_w_q_t = transpose_weights(&block.cross_attn.w_q().weight, d_model, d_model);
+            let cross_w_q_t =
+                transpose_weights(&block.cross_attn.w_q().dense_weight(), d_model, d_model);
             total_bytes += self
                 .executor
                 .load_weights(&format!("dec.L{layer_idx}.cross_w_q"), &cross_w_q_t)
@@ -3860,7 +3711,8 @@ impl WhisperCuda {
                 )
                 .map_err(|e| WhisperError::Inference(format!("dec cross_b_q L{layer_idx}: {e}")))?;
 
-            let cross_w_k_t = transpose_weights(&block.cross_attn.w_k().weight, d_model, d_model);
+            let cross_w_k_t =
+                transpose_weights(&block.cross_attn.w_k().dense_weight(), d_model, d_model);
             total_bytes += self
                 .executor
                 .load_weights(&format!("dec.L{layer_idx}.cross_w_k"), &cross_w_k_t)
@@ -3873,7 +3725,8 @@ impl WhisperCuda {
                 )
                 .map_err(|e| WhisperError::Inference(format!("dec cross_b_k L{layer_idx}: {e}")))?;
 
-            let cross_w_v_t = transpose_weights(&block.cross_attn.w_v().weight, d_model, d_model);
+            let cross_w_v_t =
+                transpose_weights(&block.cross_attn.w_v().dense_weight(), d_model, d_model);
             total_bytes += self
                 .executor
                 .load_weights(&format!("dec.L{layer_idx}.cross_w_v"), &cross_w_v_t)
@@ -3886,7 +3739,8 @@ impl WhisperCuda {
                 )
                 .map_err(|e| WhisperError::Inference(format!("dec cross_b_v L{layer_idx}: {e}")))?;
 
-            let cross_w_o_t = transpose_weights(&block.cross_attn.w_o().weight, d_model, d_model);
+            let cross_w_o_t =
+                transpose_weights(&block.cross_attn.w_o().dense_weight(), d_model, d_model);
             total_bytes += self
                 .executor
                 .load_weights(&format!("dec.L{layer_idx}.cross_w_o"), &cross_w_o_t)
@@ -3900,7 +3754,7 @@ impl WhisperCuda {
                 .map_err(|e| WhisperError::Inference(format!("dec cross_b_o L{layer_idx}: {e}")))?;
 
             // FFN weights (fc1: d_model -> d_ff, fc2: d_ff -> d_model)
-            let fc1_t = transpose_weights(&block.ffn.fc1.weight, d_ff, d_model);
+            let fc1_t = transpose_weights(&block.ffn.fc1.dense_weight(), d_ff, d_model);
             total_bytes += self
                 .executor
                 .load_weights(&format!("dec.L{layer_idx}.ffn_fc1"), &fc1_t)
@@ -3910,7 +3764,7 @@ impl WhisperCuda {
                 .load_weights(&format!("dec.L{layer_idx}.ffn_b1"), &block.ffn.fc1.bias)
                 .map_err(|e| WhisperError::Inference(format!("dec ffn_b1 L{layer_idx}: {e}")))?;
 
-            let fc2_t = transpose_weights(&block.ffn.fc2.weight, d_model, d_ff);
+            let fc2_t = transpose_weights(&block.ffn.fc2.dense_weight(), d_model, d_ff);
             total_bytes += self
                 .executor
                 .load_weights(&format!("dec.L{layer_idx}.ffn_fc2"), &fc2_t)

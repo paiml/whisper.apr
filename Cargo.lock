@@ -252,6 +252,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1e0819cdd7aa880d7ad432414647dab6235c1a7ed90f57a8fbbd5a66f735612"
 dependencies = [
  "aprender-common",
+ "libloading",
  "thiserror 2.0.18",
 ]
 
@@ -284,6 +285,7 @@ checksum = "17199e6a92474e1976eca1341b451a7dbae1ad9a868e9196567dc5bbf8c8dcbb"
 dependencies = [
  "anyhow",
  "aprender-compute",
+ "aprender-gpu",
  "aprender-profile-core",
  "aprender-quant",
  "chrono",
@@ -301,6 +303,7 @@ dependencies = [
  "serde_yaml_ng",
  "smallvec",
  "thiserror 1.0.69",
+ "tracing",
  "uuid",
 ]
 

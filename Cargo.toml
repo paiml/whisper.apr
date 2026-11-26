@@ -74,7 +74,7 @@ default = ["std", "simd", "realizar-inference", "parallel", "cli"]
 std = []
 wasm = ["std", "wasm-bindgen", "js-sys", "web-sys", "console_error_panic_hook"]
 webgpu = ["wgpu", "bytemuck", "tokio", "pollster"]
-# cuda = ["dep:trueno-gpu"]
+cuda = ["dep:trueno-gpu", "trueno-gpu/cuda"]
 simd = []
 # Parallel execution via rayon (native multi-threading)
 # Enables trueno/parallel for multi-threaded BLIS GEMM in encoder matmul
@@ -96,7 +96,7 @@ realizar-inference = ["dep:realizar"]
 # Enable realizar's CUDA backend (50x speedup via trueno-gpu)
 # WAPR-PERF-004: Include cuda feature to enable GPU-resident tensor architecture
 # Note: realizar needs both 'gpu' and 'cuda' features for full CUDA support
-# realizar-gpu = ["dep:realizar", "cuda"]
+realizar-gpu = ["dep:realizar", "realizar/gpu", "realizar/cuda", "cuda"]
 # Experimental probar APIs (zero-js validation, worker harness)
 probar-experimental = []
 # Gate integration tests that load large models (run with: cargo test --features integration-tests)
@@ -316,7 +316,7 @@ harness = false
 unsafe_op_in_unsafe_fn = "warn"
 missing_docs = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
-unexpected_cfgs = { level = "allow", check-cfg = ['cfg(feature, values("cuda", "realizar-gpu", "realizar-inference", "probar-experimental", "benchmark-tui"))'] }
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(feature, values("realizar-gpu", "realizar-inference", "probar-experimental", "benchmark-tui"))'] }
 
 [lints.clippy]
 # Correctness (critical)
