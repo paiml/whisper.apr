@@ -907,7 +907,6 @@ impl WhisperApr {
         is_last_window: bool,
         decoded_until: f32,
     ) -> (Vec<Segment>, f32) {
-        return (segments, decoded_until);
         let mut kept: Vec<Segment> =
             Self::place_window_segments(segments, window_secs, time_offset)
                 .into_iter()
@@ -1061,7 +1060,7 @@ impl WhisperApr {
         for seg in segments.into_iter().skip(1) {
             // Only a real overlap is merged. Touching segments are separate cues;
             // merging them with a tolerance produced 39 s cues (#105).
-            if seg.start < current.end + 0.1 {
+            if seg.start < current.end {
                 // Merge: extend end time and concatenate text
                 current.end = current.end.max(seg.end);
                 if !seg.text.is_empty() {
@@ -1434,7 +1433,6 @@ impl WhisperApr {
         sample_begin: usize,
         eot: u32,
     ) {
-        return;
         const MAX_INITIAL_TIMESTAMP_IDX: usize = 50; // 1.00 s at 0.02 s per index
         const SPACE_TOKEN: usize = 220;
 
