@@ -388,3 +388,54 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod size_derived_suppression_tests {
+    use super::WhisperTokenSuppressor;
+    use crate::tokenizer::special_tokens::SpecialTokens;
+
+    /// whisper.apr#108 falsifier: on large-v3/turbo (51866) the suppressed
+    /// control ids are the v3 ids, not the v2 ids the suppressor hard-codes.
+    /// Fails on main: 50360 (v3 transcribe) and 50362 (v3 startofprev) are
+    /// not in the suppressed set, and the language range stops one id short.
+    #[test]
+    fn suppressor_v3_suppresses_v3_control_ids() {
+        let s = WhisperTokenSuppressor::new().with_vocab_size(51866);
+        let v3 = SpecialTokens::multilingual_v3();
+        let suppressed = s.suppressed_tokens();
+        for id in [
+            v3.sot,
+            v3.no_speech,
+            v3.translate,
+            v3.transcribe,
+            v3.prev,
+            v3.no_timestamps,
+        ] {
+            assert!(suppressed.contains(&id), "v3 id {id} not suppressed");
+        }
+        for lang in v3.lang_base..v3.translate {
+            assert!(
+                suppressed.contains(&lang),
+                "v3 language id {lang} not suppressed"
+            );
+        }
+    }
+
+    #[test]
+    fn suppressor_v2_suppresses_v2_control_ids() {
+        let s = WhisperTokenSuppressor::new().with_vocab_size(51865);
+        let v2 = SpecialTokens::multilingual();
+        for id in [v2.translate, v2.transcribe, v2.prev, v2.no_timestamps] {
+            assert!(
+                s.suppressed_tokens().contains(&id),
+                "v2 id {id} not suppressed"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported n_vocab")]
+    fn suppressor_unsupported_size_fails_loudly() {
+        let _ = WhisperTokenSuppressor::new().with_vocab_size(51000);
+    }
+}
