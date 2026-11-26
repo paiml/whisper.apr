@@ -283,7 +283,7 @@ fn convert_safetensors_to_apr(
     }
 
     // Load and embed vocabulary from vocab.json as binary tensor
-    if let Ok(vocab) = load_vocabulary_from_json(vocab_path, verbose) {
+    if let Ok(vocab) = load_vocabulary_from_json(vocab_path, config.n_vocab as usize, verbose) {
         if verbose {
             eprintln!("[INFO] Embedding vocabulary with {} tokens", vocab.len());
         }
@@ -552,6 +552,7 @@ fn map_tensor_name(hf_name: &str) -> String {
 /// - Timestamp tokens (1501 tokens for 30 seconds at 0.02s resolution)
 fn load_vocabulary_from_json(
     vocab_path: &std::path::Path,
+    n_vocab: usize,
     verbose: bool,
 ) -> ModelLoaderResult<Vocabulary> {
     use crate::tokenizer::special_tokens;
@@ -619,14 +620,20 @@ fn load_vocabulary_from_json(
     for lang in languages {
         vocab.add_token(format!("<|{lang}|>").into_bytes());
     }
+    // large-v3 and turbo (51866) add a 100th language, Cantonese, which
+    // shifts every later special id up by one (issue #108).
+    let specials = special_tokens::SpecialTokens::for_vocab_size(n_vocab);
+    if specials.n_languages > 99 {
+        vocab.add_token(b"<|yue|>".to_vec());
+    }
 
-    // Add task tokens (50358-50363)
-    vocab.add_token(b"<|translate|>".to_vec()); // 50358
-    vocab.add_token(b"<|transcribe|>".to_vec()); // 50359
-    vocab.add_token(b"<|startoflm|>".to_vec()); // 50360 - speaker turn/startoflm
-    vocab.add_token(b"<|startofprev|>".to_vec()); // 50361 - prev
-    vocab.add_token(b"<|nospeech|>".to_vec()); // 50362
-    vocab.add_token(b"<|notimestamps|>".to_vec()); // 50363
+    // Add task tokens (50358-50363 on v2; specials.translate onwards)
+    vocab.add_token(b"<|translate|>".to_vec());
+    vocab.add_token(b"<|transcribe|>".to_vec());
+    vocab.add_token(b"<|startoflm|>".to_vec());
+    vocab.add_token(b"<|startofprev|>".to_vec());
+    vocab.add_token(b"<|nospeech|>".to_vec());
+    vocab.add_token(b"<|notimestamps|>".to_vec());
 
     // Add timestamp tokens (50364-51864 = 1501 tokens for 30 seconds)
     // Each timestamp represents 0.02 seconds

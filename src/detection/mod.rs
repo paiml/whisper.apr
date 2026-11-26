@@ -24,7 +24,7 @@
 mod tests;
 
 use crate::error::WhisperResult;
-use crate::tokenizer::special_tokens;
+use crate::tokenizer::special_tokens::SpecialTokens;
 
 /// Language detection result with probabilities
 #[derive(Debug, Clone)]
@@ -38,16 +38,25 @@ pub struct LanguageProbs {
 impl LanguageProbs {
     /// Create new language probabilities from logits
     ///
+    /// v2 (51865) layout only; use [`LanguageProbs::from_logits_with`].
+    ///
     /// # Arguments
     /// * `logits` - Logits over vocabulary from decoder
     #[must_use]
     pub fn from_logits(logits: &[f32]) -> Self {
+        Self::from_logits_with(&SpecialTokens::multilingual(), logits)
+    }
+
+    /// Language probabilities from logits, reading the language block of
+    /// `specials`' vocabulary (issue #108).
+    #[must_use]
+    pub fn from_logits_with(specials: &SpecialTokens, logits: &[f32]) -> Self {
         // Get language token indices and their logits
         let lang_logits: Vec<(String, f32)> = SUPPORTED_LANGUAGES
             .iter()
             .enumerate()
             .filter_map(|(offset, &lang)| {
-                let token_id = special_tokens::LANG_BASE + offset as u32;
+                let token_id = specials.lang_base + offset as u32;
                 logits
                     .get(token_id as usize)
                     .map(|&logit| (lang.to_string(), logit))
@@ -179,13 +188,31 @@ impl LanguageDetector {
     ///
     /// # Returns
     /// Language probabilities or error
-    pub fn detect<F>(&self, mut logits_fn: F) -> WhisperResult<LanguageProbs>
+    ///
+    /// v2 (51865) layout only; use [`LanguageDetector::detect_with`].
+    pub fn detect<F>(&self, logits_fn: F) -> WhisperResult<LanguageProbs>
+    where
+        F: FnMut(&[u32]) -> WhisperResult<Vec<f32>>,
+    {
+        self.detect_with(&SpecialTokens::multilingual(), logits_fn)
+    }
+
+    /// Detect language with the sot and language ids of `specials`'
+    /// vocabulary (issue #108).
+    ///
+    /// # Errors
+    /// Returns the error of `logits_fn`.
+    pub fn detect_with<F>(
+        &self,
+        specials: &SpecialTokens,
+        mut logits_fn: F,
+    ) -> WhisperResult<LanguageProbs>
     where
         F: FnMut(&[u32]) -> WhisperResult<Vec<f32>>,
     {
         // Get logits for just the SOT token
-        let logits = logits_fn(&[special_tokens::SOT])?;
-        Ok(self.detect_from_logits(&logits))
+        let logits = logits_fn(&[specials.sot])?;
+        Ok(LanguageProbs::from_logits_with(specials, &logits))
     }
 
     /// Check if detection result is confident

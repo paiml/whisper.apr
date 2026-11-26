@@ -1,0 +1,118 @@
+metadata:
+  version: "1.0.0"
+  author: "Sovereign AI Stack"
+  description: "Whisper special-token ids: every special id is derived from the vocabulary size through one SpecialTokens source. 51864 = English-only, 51865 = multilingual v1/v2, 51866 = large-v3/turbo, whose 100th language (<|yue|>) moves every id from <|translate|> on up by one. Any other size is refused at model load"
+  crate: "whisper-apr"
+  references:
+    - "whisper.apr issue #108 (on 51866 the v2 constants put <|translate|> where <|transcribe|> belongs, <|yue|> as the translate token, <|startoflm|> as PREV, <|startofprev|> as NO_SPEECH, <|nospeech|> as NO_TIMESTAMPS and <|notimestamps|> as <|0.00|>)"
+    - "OpenAI whisper tokenizer.py: specials follow the BPE ranks in the order endoftext, startoftranscript, the languages, translate, transcribe, startoflm, startofprev, nospeech, notimestamps, then 1501 timestamps"
+    - "src/tokenizer/vocab/mod.rs SpecialTokens::from_vocab_size — single source of truth; WhisperApr::specials routes the prompt, PREV, detect-language, timestamps and the suppressor through it"
+
+equations:
+  id_table:
+    formula: "ids(n) = layout(eot, k) with (eot, k) = (50256, 99) if n = 51864, (50257, 99) if n = 51865, (50257, 100) if n = 51866, and ids(n) undefined (refused) for any other n; layout(eot, k): sot = eot + 1, lang_base = eot + 2, translate = lang_base + k, transcribe = translate + 1, start_of_lm = translate + 2, prev = translate + 3, no_speech = translate + 4, no_timestamps = translate + 5, timestamp_base = translate + 6"
+    domain: "n = the model's n_vocab from its .apr metadata"
+    codomain: "the special ids of that vocabulary"
+    invariants:
+      - "timestamp_base + 1501 = n: the 1501 timestamps <|0.00|>..<|30.00|> end the vocabulary"
+      - "51866: transcribe = 50360, translate = 50359, prev = 50362, no_timestamps = 50364, timestamp_base = 50365"
+      - "51865: the ids the legacy constants have always had (translate 50358, transcribe 50359, prev 50361, no_speech 50362, no_timestamps 50363, timestamp_base 50364)"
+      - "every special id the decoder emits, suppresses or parses comes from ids(n), never from a constant"
+  refusal:
+    formula: "load(apr) = Err when family(apr) = Whisper and n_vocab(apr) not in {51864, 51865, 51866}"
+    domain: "WhisperApr::load_from_apr on any .apr file"
+    invariants:
+      - "no Whisper model decodes with special ids guessed for an unknown vocabulary"
+
+proof_obligations:
+  - type: invariant
+    property: "The v3 task token is <|transcribe|>"
+    formal: "name(ids(51866).transcribe) = <|transcribe|>, where name(id) is the OpenAI special list indexed from eot"
+    applies_to: all
+  - type: invariant
+    property: "The v3 first timestamp is 50365"
+    formal: "ids(51866).timestamp_base = 50365 and name(50365) = <|0.00|>"
+    applies_to: all
+  - type: invariant
+    property: "The v3 PREV is 50362"
+    formal: "ids(51866).prev = 50362 and name(50362) = <|startofprev|>"
+    applies_to: all
+  - type: invariant
+    property: "The v2 ids are unchanged"
+    formal: "ids(51865) = (eot 50257, sot 50258, translate 50358, transcribe 50359, prev 50361, no_speech 50362, no_timestamps 50363, timestamp_base 50364)"
+    applies_to: all
+  - type: invariant
+    property: "An unknown vocabulary size is refused"
+    formal: "forall n not in {51864, 51865, 51866}: from_vocab_size(n) = None and load_from_apr fails"
+    applies_to: all
+  - type: invariant
+    property: "Every layout fills its vocabulary"
+    formal: "forall n in {51864, 51865, 51866}: ids(n).timestamp_base + 1501 = n"
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-SPECIAL-001
+    rule: "The v3 task token is <|transcribe|>"
+    test: "on_v3_the_task_token_decodes_to_transcribe"
+    prediction: "verified"
+    if_fails: "large-v3/turbo is prompted with <|translate|> where <|transcribe|> belongs (issue #108)"
+  - id: FALSIFY-SPECIAL-002
+    rule: "The v3 first timestamp is 50365"
+    test: "on_v3_the_first_timestamp_is_50365"
+    prediction: "verified"
+    if_fails: "<|notimestamps|> is parsed as <|0.00|> and every timestamp is 20ms early on large-v3/turbo"
+  - id: FALSIFY-SPECIAL-003
+    rule: "The v3 PREV is 50362"
+    test: "on_v3_prev_is_50362"
+    prediction: "verified"
+    if_fails: "A prompt is opened with <|startoflm|> instead of <|startofprev|> on large-v3/turbo"
+  - id: FALSIFY-SPECIAL-004
+    rule: "The v2 ids are unchanged"
+    test: "on_v2_the_old_ids_are_unchanged"
+    prediction: "verified"
+    if_fails: "The fix for v3 moved an id of the v1/v2 or English-only vocabulary"
+  - id: FALSIFY-SPECIAL-005
+    rule: "An unknown vocabulary size is refused"
+    test: "an_unknown_vocab_size_is_refused"
+    prediction: "verified"
+    if_fails: "A vocabulary whose special ids are unknown is decoded with guessed ids"
+  - id: FALSIFY-SPECIAL-006
+    rule: "An unknown vocabulary size is refused"
+    test: "loading_an_unknown_whisper_vocab_size_is_refused"
+    prediction: "verified"
+    if_fails: "load_from_apr accepts a Whisper .apr whose n_vocab is not 51864, 51865 or 51866"
+  - id: FALSIFY-SPECIAL-007
+    rule: "Every layout fills its vocabulary"
+    test: "every_layout_satisfies_the_id_table"
+    prediction: "verified"
+    if_fails: "A layout's ids are not the id_table equations, or its timestamps do not end the vocabulary"
+  - id: FALSIFY-SPECIAL-008
+    rule: "The v3 task token is <|transcribe|>"
+    test: "a_v3_model_builds_its_prompt_from_v3_ids"
+    prediction: "verified"
+    if_fails: "WhisperApr builds a 51866 model's prompt or PREV from the v2 constants"
+
+qa_gate:
+  id: QA-SPECIAL-TOKENS
+  name: "Whisper special-token ids per vocabulary size"
+  min_coverage: 0.90
+  max_complexity: 10
+  required_tests:
+    - on_v3_the_task_token_decodes_to_transcribe
+    - on_v3_the_first_timestamp_is_50365
+    - on_v3_prev_is_50362
+    - on_v2_the_old_ids_are_unchanged
+    - an_unknown_vocab_size_is_refused
+    - loading_an_unknown_whisper_vocab_size_is_refused
+    - every_layout_satisfies_the_id_table
+    - a_v3_model_builds_its_prompt_from_v3_ids
+
+kani_harnesses:
+  - id: special-tokens-kani-001
+    obligation: "Every layout fills its vocabulary"
+    bound: 3
+    strategy: exhaustive
+  - id: special-tokens-kani-002
+    obligation: "An unknown vocabulary size is refused"
+    bound: 8
+    strategy: exhaustive

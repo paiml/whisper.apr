@@ -82,6 +82,31 @@ fn gelu(x: f32) -> f32 {
     0.5 * x * (1.0 + ((2.0_f32 / std::f32::consts::PI).sqrt() * (x + 0.044715 * x * x * x)).tanh())
 }
 
+/// Row-wise softmax in place over a `[rows, row_len]` matrix (max-subtracted
+/// for stability; a row whose exponentials sum to 0 becomes all zeros).
+fn softmax_rows_in_place(scores: &mut [f32], row_len: usize) {
+    if row_len == 0 {
+        return;
+    }
+    for row_slice in scores.chunks_exact_mut(row_len) {
+        // Find max for numerical stability
+        let max_val = row_slice.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+
+        // Exp and sum
+        let mut sum = 0.0f32;
+        for val in row_slice.iter_mut() {
+            *val = (*val - max_val).exp();
+            sum += *val;
+        }
+
+        // Normalize
+        let inv_sum = if sum > 0.0 { 1.0 / sum } else { 0.0 };
+        for val in row_slice.iter_mut() {
+            *val *= inv_sum;
+        }
+    }
+}
+
 /// GPU-accelerated Whisper model.
 ///
 /// Wraps encoder and decoder with CUDA execution capability.
@@ -2213,25 +2238,6 @@ impl WhisperCuda {
         Ok(residual)
     }
 
-    /// Row-wise softmax in place over a `[width, width]` score matrix.
-    fn softmax_rows(scores: &mut [f32], width: usize) {
-        for row_slice in scores.chunks_mut(width) {
-            // Subtract the max for numerical stability
-            let max_val = row_slice.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-
-            let mut sum = 0.0f32;
-            for val in row_slice.iter_mut() {
-                *val = (*val - max_val).exp();
-                sum += *val;
-            }
-
-            let inv_sum = if sum > 0.0 { 1.0 / sum } else { 0.0 };
-            for val in row_slice.iter_mut() {
-                *val *= inv_sum;
-            }
-        }
-    }
-
     /// GPU attention using basic gemm primitives (WAPR-PERF-005).
     ///
     /// This is the "dumb but working" approach that bypasses the failing
@@ -2306,7 +2312,7 @@ impl WhisperCuda {
             }
 
             // Step 3: Softmax (CPU - simple row-wise softmax)
-            Self::softmax_rows(&mut scores, seq_len);
+            softmax_rows_in_place(&mut scores, seq_len);
 
             // Step 4: output_h = attn_weights @ V_h using GPU gemm
             // scores: [seq_len, seq_len], V_h: [seq_len, head_dim] -> output_h: [seq_len, head_dim]
@@ -2765,7 +2771,10 @@ impl WhisperCuda {
         let encoder_output = self.encode_cuda(mel)?;
 
         // Simple greedy decode
-        let mut tokens = vec![50258_u32]; // SOT token
+        let specials = crate::tokenizer::special_tokens::SpecialTokens::for_vocab_size(
+            self.config.n_vocab as usize,
+        );
+        let mut tokens = vec![specials.sot];
         let max_tokens = 448;
 
         for _ in 0..max_tokens {
@@ -2776,9 +2785,9 @@ impl WhisperCuda {
                 .iter()
                 .enumerate()
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .map_or(50257, |(idx, _)| idx as u32); // EOT fallback
+                .map_or(specials.eot, |(idx, _)| idx as u32); // EOT fallback
 
-            if next_token == 50257 {
+            if next_token == specials.eot {
                 // EOT
                 break;
             }
@@ -2848,7 +2857,7 @@ impl WhisperCuda {
 
         // Build initial tokens based on task and language using SpecialTokens
         #[allow(clippy::items_after_statements)]
-        use crate::tokenizer::special_tokens::{self, SpecialTokens};
+        use crate::tokenizer::special_tokens::SpecialTokens;
 
         let specials = SpecialTokens::for_vocab_size(self.config.n_vocab as usize);
         let mut tokens = vec![specials.sot];
@@ -2856,14 +2865,17 @@ impl WhisperCuda {
         // Add language token for multilingual models
         if specials.is_multilingual {
             let language = options.language.as_deref().unwrap_or("en");
-            let lang_offset = special_tokens::language_offset(language).unwrap_or(0);
-            tokens.push(specials.lang_base + lang_offset);
+            tokens.push(
+                specials
+                    .language_token(language)
+                    .unwrap_or(specials.lang_base),
+            );
         }
 
         // Add task token
         match options.task {
             Task::Transcribe => tokens.push(specials.transcribe),
-            Task::Translate => tokens.push(special_tokens::TRANSLATE),
+            Task::Translate => tokens.push(specials.translate),
         }
 
         // Timestamp mode: do NOT push no_timestamps token.
@@ -2881,7 +2893,7 @@ impl WhisperCuda {
         let mut cache = crate::model::DecoderKVCache::new(n_layers, d_model, max_tokens);
 
         // Create token suppressor — do NOT suppress timestamps
-        let suppressor = crate::inference::WhisperTokenSuppressor::new()
+        let suppressor = crate::inference::WhisperTokenSuppressor::for_specials(&specials)
             .with_timestamp_suppression(false)
             .with_vocab_size(n_vocab);
 
@@ -3337,12 +3349,14 @@ impl WhisperCuda {
     ) -> WhisperResult<TranscriptionResult> {
         const N_SAMPLES_30S: usize = 480_000; // 30 seconds at 16kHz
 
-        // Use chunked processing for audio longer than 30 seconds
-        if audio.len() > N_SAMPLES_30S {
-            return self.transcribe_gpu_chunked(audio, options);
-        }
+        crate::speech_gate::gated(audio, || {
+            // Use chunked processing for audio longer than 30 seconds
+            if audio.len() > N_SAMPLES_30S {
+                return self.transcribe_gpu_chunked(audio, options);
+            }
 
-        self.transcribe_gpu_single_chunk(audio, &options)
+            self.transcribe_gpu_single_chunk(audio, &options)
+        })
     }
 
     /// Transcribe a single chunk of audio (<=30 seconds) on GPU.
@@ -3357,6 +3371,10 @@ impl WhisperCuda {
 
         let profile_all = std::env::var("WHISPER_PROFILE_DECODER").is_ok();
         let transcribe_start = std::time::Instant::now();
+
+        if let Some((skipped, _)) = crate::speech_gate::silent_window(audio, options) {
+            return Ok(skipped);
+        }
 
         // === TRACE: Mel spectrogram (mapped to EMBED step) ===
         self.tracer.start_step(TraceStep::Embed);
@@ -3390,7 +3408,6 @@ impl WhisperCuda {
         use crate::tokenizer::special_tokens::SpecialTokens;
         let specials = SpecialTokens::for_vocab_size(self.config.n_vocab as usize);
         let initial_tokens = Self::build_initial_tokens(&specials, options);
-        let n_vocab = self.config.n_vocab as usize;
 
         // The encoder ran on the GPU; token generation is the same loop the CPU
         // pipeline uses (whisper.apr#103).
@@ -3398,7 +3415,7 @@ impl WhisperCuda {
         let tokens = crate::WhisperApr::decode_features(
             &self.decoder,
             &self.config,
-            specials.eot,
+            &specials,
             |word| self.tokenizer.encode(word).ok(),
             &encoder_output,
             &initial_tokens,
@@ -3412,7 +3429,8 @@ impl WhisperCuda {
 
         // Trace decode result (iteration=0 for final decode, last token, vocab_size)
         let last_token = tokens.last().copied().unwrap_or(0);
-        self.tracer.trace_decode(0, last_token, &text, n_vocab);
+        self.tracer
+            .trace_decode(0, last_token, &text, self.config.n_vocab as usize);
 
         let language = options.language.clone().unwrap_or_else(|| "en".to_string());
 
@@ -3423,7 +3441,8 @@ impl WhisperCuda {
             );
         }
 
-        let segments = Self::build_segments(&tokens, &text, audio.len(), &self.tokenizer);
+        let segments =
+            Self::build_segments(&specials, &tokens, &text, audio.len(), &self.tokenizer);
 
         Ok(TranscriptionResult {
             text,
@@ -3517,16 +3536,18 @@ impl WhisperCuda {
         specials: &crate::tokenizer::special_tokens::SpecialTokens,
         options: &TranscribeOptions,
     ) -> Vec<u32> {
-        use crate::tokenizer::special_tokens;
         let mut tokens = vec![specials.sot];
         if specials.is_multilingual {
             let language = options.language.as_deref().unwrap_or("en");
-            let lang_offset = special_tokens::language_offset(language).unwrap_or(0);
-            tokens.push(specials.lang_base + lang_offset);
+            tokens.push(
+                specials
+                    .language_token(language)
+                    .unwrap_or(specials.lang_base),
+            );
         }
         match options.task {
             Task::Transcribe => tokens.push(specials.transcribe),
-            Task::Translate => tokens.push(special_tokens::TRANSLATE),
+            Task::Translate => tokens.push(specials.translate),
         }
         // Timestamp mode: do NOT push no_timestamps token.
         // This enables the decoder to produce <|t.tt|> timestamp tokens
@@ -3536,12 +3557,13 @@ impl WhisperCuda {
 
     /// Build segments from decoded tokens (shared with the CPU path).
     fn build_segments(
+        specials: &crate::tokenizer::special_tokens::SpecialTokens,
         tokens: &[u32],
         text: &str,
         audio_len: usize,
         tokenizer: &BpeTokenizer,
     ) -> Vec<crate::Segment> {
-        crate::WhisperApr::segments_from_tokens(tokens, text, audio_len, |ts| {
+        crate::WhisperApr::segments_from_tokens(specials, tokens, text, audio_len, |ts| {
             tokenizer.decode(ts).ok()
         })
     }

@@ -1,0 +1,135 @@
+metadata:
+  version: "1.0.0"
+  author: "Sovereign AI Stack"
+  description: "Whisper timestamp decode rules (OpenAI ApplyTimestampRules + SuppressBlank): the first sampled token is a timestamp no later than max_initial_timestamp, timestamps come in pairs and never decrease, a dominant timestamp mass forces a timestamp, and blank/EOT cannot open a decode. Applied only on the timestamp path; a <|notimestamps|> decode is unchanged"
+  crate: "whisper-apr"
+  references:
+    - "whisper.apr issue #106 (a 30s window ending in silence decodes to \".\" + EOT on large-v3-turbo, GX10; 448000 samples correct, 472000-478400 lose the first words, 479680 and 480000 emit only \".\"; whisper.cpp 2551e4ce transcribes every row)"
+    - "OpenAI whisper decoding.py ApplyTimestampRules and SuppressBlank"
+    - "src/inference/processors.rs TimestampRules::apply — single source of truth; wired into WhisperApr::decode after every other logit transform"
+
+equations:
+  apply:
+    formula: "apply(T, b, L) = dominance(initial(pairing(notimestamps(blank(L)))))) where T = tokens so far, b = sample_begin, L = next-token logits; S = T[b..] are the sampled tokens"
+    domain: "T = the decode's tokens including the prompt, b = len(prompt), L = logits over the whole vocabulary, tb = the first timestamp id (50365 on a 51866-token vocabulary, 50364 on 51865, 50363 English-only), read from the one SpecialTokens source (contracts/special-tokens-v1.yaml)"
+    codomain: "L with some entries set to -inf; no entry is raised"
+    invariants:
+      - "only suppression: every output logit is the input logit or -inf"
+      - "applied only when the prompt does not contain <|notimestamps|>"
+  suppress_blank:
+    formula: "|S| = 0 implies L[t] = -inf for t in encode(\" \") and t = EOT"
+    domain: "the first sampled step"
+    invariants:
+      - "a decode cannot open with a blank or end before its first token"
+  notimestamps:
+    formula: "L[no_timestamps] = -inf at every step"
+    domain: "every sampled step on the timestamp path"
+    invariants:
+      - "the decode never switches itself into no-timestamp mode"
+  pairing:
+    formula: "last(S) >= tb and (|S| < 2 or S[-2] >= tb) implies L[tb..] = -inf; last(S) >= tb and S[-2] < tb implies L[..EOT] = -inf"
+    domain: "S = the sampled tokens"
+    invariants:
+      - "after a timestamp pair, or a timestamp that opened the decode, the next token is not a timestamp"
+      - "after a lone timestamp that follows text, the next token is a timestamp or EOT"
+  monotonic:
+    formula: "last_ts = the last timestamp in S; L[tb..last_ts] = -inf if last(S) >= tb and S[-2] < tb, else L[tb..last_ts + 1] = -inf"
+    domain: "S contains at least one timestamp"
+    invariants:
+      - "timestamps never decrease"
+      - "a timestamp repeats only as the start of the segment its predecessor closed, so every segment has a nonzero length"
+  initial:
+    formula: "|S| = 0 implies L[..tb] = -inf and L[tb + 51..] = -inf"
+    domain: "the first sampled step; max_initial_timestamp = 1.0s = index 50 at 20ms per timestamp"
+    invariants:
+      - "the first sampled token is a timestamp in <|0.00|>..<|1.00|>"
+  dominance:
+    formula: "logsumexp(log_softmax(L)[tb..]) > max(log_softmax(L)[..tb]) implies L[..tb] = -inf"
+    domain: "L after the rules above"
+    invariants:
+      - "when the timestamps are jointly more likely than the best token below them, a timestamp is sampled"
+
+proof_obligations:
+  - type: invariant
+    property: "First token is a timestamp no later than 1.0s"
+    formal: "|S| = 0 implies forall t: L'[t] > -inf implies tb <= t <= tb + 50"
+    applies_to: all
+  - type: invariant
+    property: "Timestamps come in pairs"
+    formal: "last(S) >= tb and S[-2] < tb implies forall t < EOT: L'[t] = -inf; last(S) >= tb and (|S| < 2 or S[-2] >= tb) implies forall t >= tb: L'[t] = -inf"
+    applies_to: all
+  - type: invariant
+    property: "Timestamps never decrease"
+    formal: "forall t in [tb, last_ts): L'[t] = -inf, and L'[last_ts] = -inf unless last(S) closes a segment"
+    applies_to: all
+  - type: invariant
+    property: "Dominant timestamp mass forces a timestamp"
+    formal: "logsumexp(L[tb..]) > max(L[..tb]) implies forall t < tb: L'[t] = -inf"
+    applies_to: all
+  - type: invariant
+    property: "Blank and EOT are banned at step 0"
+    formal: "|S| = 0 implies L'[EOT] = -inf and forall t in encode(\" \"): L'[t] = -inf"
+    applies_to: all
+  - type: invariant
+    property: "A leading period cannot open a window"
+    formal: "|S| = 0 and argmax(L) = \".\" implies tb <= argmax(apply(T, b, L)) <= tb + 50"
+    applies_to: all
+
+falsification_tests:
+  - id: FALSIFY-TSRULE-001
+    rule: "First token is a timestamp no later than 1.0s"
+    test: "the_first_token_is_a_timestamp_at_most_one_second"
+    prediction: "verified"
+    if_fails: "A text token, EOT or a timestamp past 1.0s can open a window, so a 30s window ending in silence decodes to \".\" (issue #106)"
+  - id: FALSIFY-TSRULE-002
+    rule: "Timestamps come in pairs"
+    test: "timestamps_come_in_pairs"
+    prediction: "verified"
+    if_fails: "Text follows a closing timestamp, or three timestamps run together, so segments lose their start or end"
+  - id: FALSIFY-TSRULE-003
+    rule: "Timestamps never decrease"
+    test: "timestamps_never_decrease"
+    prediction: "verified"
+    if_fails: "A segment ends before it starts or has zero length, and the decode can loop on one timestamp"
+  - id: FALSIFY-TSRULE-004
+    rule: "Dominant timestamp mass forces a timestamp"
+    test: "timestamp_probability_mass_beats_the_best_text_token"
+    prediction: "verified"
+    if_fails: "The model is jointly sure a segment boundary comes next, but a single text token wins and the boundary is lost"
+  - id: FALSIFY-TSRULE-005
+    rule: "Blank and EOT are banned at step 0"
+    test: "blank_and_eot_are_banned_at_step_zero"
+    prediction: "verified"
+    if_fails: "A window opens with a blank or ends before it decodes anything"
+  - id: FALSIFY-TSRULE-006
+    rule: "A leading period cannot open a window"
+    test: "a_leading_period_at_step_zero_yields_a_timestamp"
+    prediction: "verified"
+    if_fails: "The issue #106 rows 479680 and 480000: \".\" is the top logit at step 0 and the window emits only \".\""
+
+qa_gate:
+  id: QA-TIMESTAMP-RULES
+  name: "Whisper timestamp decode rules"
+  min_coverage: 0.90
+  max_complexity: 10
+  required_tests:
+    - the_first_token_is_a_timestamp_at_most_one_second
+    - timestamps_come_in_pairs
+    - timestamps_never_decrease
+    - timestamp_probability_mass_beats_the_best_text_token
+    - blank_and_eot_are_banned_at_step_zero
+    - a_leading_period_at_step_zero_yields_a_timestamp
+
+kani_harnesses:
+  - id: timestamp-rules-kani-001
+    obligation: "First token is a timestamp no later than 1.0s"
+    bound: 8
+    strategy: exhaustive
+  - id: timestamp-rules-kani-002
+    obligation: "Timestamps come in pairs"
+    bound: 8
+    strategy: exhaustive
+  - id: timestamp-rules-kani-003
+    obligation: "Timestamps never decrease"
+    bound: 8
+    strategy: exhaustive

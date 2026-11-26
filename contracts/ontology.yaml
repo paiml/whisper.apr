@@ -1,0 +1,54 @@
+# Σ: the signature file for this repository's contracts.
+# `pv ontology export --owl` and `pv ontology tbox` must both exit 0 on it.
+schema: ont-sigma-v1
+
+concepts:
+  Entity: {doc: "anything the ontology can name"}
+  Contract: {doc: "a pv contract file under contracts/"}
+  Code: {doc: "a Rust item in the whisper-apr crate"}
+  Test: {doc: "a test function a contract cites as its falsifier"}
+
+roles:
+  binds:
+    {domain: Contract, range: Code, symmetric: false, acyclic: false, doc: "the contract governs this code"}
+  falsified_by:
+    {domain: Contract, range: Test, symmetric: false, acyclic: false, doc: "the test that would refute the contract"}
+
+symbols:
+  - {name: "∀", kind: operator, doc: "for all"}
+  # Used in the formal obligations of beam-search, fft, mel-spectrogram,
+  # quantization and softmax-kernel.
+  - {name: "≤", kind: operator, doc: "less than or equal"}
+  - {name: "≥", kind: operator, doc: "greater than or equal"}
+  - {name: "²", kind: operator, doc: "square"}
+  - {name: "·", kind: operator, doc: "multiplication"}
+
+worlds:
+  committed: {doc: "the tree as committed"}
+agents:
+  - pv
+  - human
+entity_types:
+  - {name: pv-contract, extractor: pv_contract, implemented: true}
+extractors:
+  - {name: pv_contract, reader: pv, implemented: true}
+# Which pv module reads each Σ key (paths inside aprender-contracts, the crate that ships pv).
+readers:
+  concepts: ontology/sigma.rs
+  roles: lint/sigma_gate.rs, lint/relations_gate.rs
+  symbols: lint/sigma_symbols.rs
+  worlds: ontology/sigma.rs, lint/valid_under_gate.rs
+  agents: ontology/sigma.rs, lint/evidence_gate.rs
+  entity_types: lint/sigma_gate.rs
+  extractors: ontology/sigma.rs
+  not_expressible: ontology/sigma.rs
+  entity_type_target_class: ontology/shapes.rs
+not_expressible:
+  - {key: acyclic, reader: ontology/owl.rs}
+  - {key: symbols, reader: ontology/owl.rs}
+  - {key: worlds, reader: ontology/owl.rs}
+  - {key: agents, reader: ontology/owl.rs}
+  - {key: entity_types, reader: ontology/owl.rs}
+  - {key: extractors, reader: ontology/owl.rs}
+entity_type_target_class:
+  pv-contract: ont:Contract
