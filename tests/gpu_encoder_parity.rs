@@ -1,9 +1,9 @@
 //! The CUDA encoder must produce what the CPU encoder produces from the same weights
 //! (whisper.apr#103). Needs a CUDA device and a Whisper `.apr` model:
-//! `WAPR_MODEL=<model.apr> cargo test --release --features realizar-gpu --test gpu_encoder_parity -- --ignored --nocapture --test-threads=1`.
+//! `TRUENO_FORCE_FP32_GEMM=1 WAPR_MODEL=<model.apr> cargo test --release --features realizar-gpu
+//! --test gpu_encoder_parity -- --ignored --nocapture --test-threads=1`.
 #![cfg(feature = "realizar-gpu")]
 
-use whisper_apr::cuda::force_deterministic_gemm;
 use whisper_apr::{TranscribeOptions, WhisperApr};
 
 /// A swept tone with a syllable-like envelope, so every mel band moves.
@@ -18,6 +18,10 @@ fn signal(samples: usize) -> Vec<f32> {
 }
 
 fn model() -> WhisperApr {
+    assert!(
+        std::env::var("TRUENO_FORCE_FP32_GEMM").is_ok(),
+        "run with TRUENO_FORCE_FP32_GEMM=1"
+    );
     let path = std::env::var("WAPR_MODEL").expect("WAPR_MODEL");
     let bytes = std::fs::read(path).expect("model file");
     WhisperApr::load_from_apr(&bytes).expect("model")
@@ -37,7 +41,6 @@ fn gpu_encoder_matches_cpu_encoder() {
     let mel = whisper.compute_mel(&signal(480_000)).expect("mel");
     let want = whisper.encode(&mel).expect("CPU encoder");
 
-    force_deterministic_gemm(); // the binary runs with --test-threads=1
     let mut cuda = whisper.into_cuda(0).expect("CUDA model");
     let got = cuda.encode_gpu_total_offload(&mel).expect("GPU encoder");
 
@@ -55,7 +58,6 @@ fn gpu_encoder_matches_cpu_encoder() {
 #[test]
 #[ignore = "needs a CUDA device and WAPR_MODEL"]
 fn gpu_transcribes_audio_longer_than_the_window() {
-    force_deterministic_gemm();
     let mut cuda = model().into_cuda(0).expect("CUDA model");
     let audio = signal(31 * 16_000);
     cuda.transcribe_gpu(&audio, TranscribeOptions::default())

@@ -1,12 +1,12 @@
 //! Parity of the CUDA operations the GPU encoder is built from against plain Rust
 //! reference code (whisper.apr#103). Row counts are deliberately not multiples of 16:
 //! the encoder runs 1500 frames. Needs a CUDA device:
-//! `cargo test --features realizar-gpu --test gpu_op_parity -- --ignored`.
+//! `TRUENO_FORCE_FP32_GEMM=1 cargo test --features realizar-gpu --test gpu_op_parity -- --ignored`.
 #![cfg(feature = "realizar-gpu")]
 
 use trueno_gpu::driver::CudaContext;
 use trueno_gpu::memory::resident::{batched_multihead_attention_optimized, GpuResidentTensor};
-use whisper_apr::cuda::{conv3_gelu_gpu, conv3_weight_matrix, force_deterministic_gemm};
+use whisper_apr::cuda::{conv3_gelu_gpu, conv3_weight_matrix};
 
 /// Deterministic pseudo-random values in [-scale, scale].
 fn noise(len: usize, seed: u64, scale: f32) -> Vec<f32> {
@@ -59,7 +59,12 @@ fn assert_close(op: &str, got: &[f32], want: &[f32], tol: f32) {
     );
 }
 
+/// A device context, for a process started with the switch `WhisperCuda` requires.
 fn ctx() -> CudaContext {
+    assert!(
+        std::env::var("TRUENO_FORCE_FP32_GEMM").is_ok(),
+        "run with TRUENO_FORCE_FP32_GEMM=1"
+    );
     CudaContext::new(0).expect("CUDA device 0")
 }
 
@@ -182,7 +187,6 @@ fn dot(a: &[f32], b: &[f32]) -> f32 {
 #[test]
 #[ignore = "needs a CUDA device"]
 fn attention_matches_reference() {
-    force_deterministic_gemm(); // `WhisperCuda` requires it
     let ctx = ctx();
     let (heads, dim, len) = (4usize, 64usize, M);
     let size = len * heads * dim;

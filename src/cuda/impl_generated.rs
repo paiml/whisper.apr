@@ -177,7 +177,7 @@ pub fn force_deterministic_gemm() {
 /// Fail unless [`force_deterministic_gemm`] ran or the caller exported the switch.
 #[cfg(feature = "cuda")]
 fn require_deterministic_gemm() -> WhisperResult<()> {
-    std::env::var_os(FORCE_FP32).map(drop).ok_or_else(|| {
+    std::env::var(FORCE_FP32).map(drop).map_err(|_| {
         WhisperError::Inference(format!(
             "{FORCE_FP32} is not set: export {FORCE_FP32}=1, or call \
              cuda::force_deterministic_gemm() before starting any thread"
