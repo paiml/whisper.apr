@@ -162,14 +162,27 @@ pub struct WhisperCuda {
 
 /// aprender-gpu 0.63.0 multiplies in FP16 by default, and that kernel leaves output
 /// values at 0 when the row count is not a multiple of 16 (the encoder runs 1500
-/// frames), differently from run to run. This variable is the library's only switch
-/// to the FP32 kernel. Call it before the first GPU operation.
+/// frames), differently from run to run. This variable, when present, is the library's
+/// only switch to the FP32 kernel.
 #[cfg(feature = "cuda")]
-pub fn require_deterministic_gemm() {
-    const FORCE_FP32: &str = "TRUENO_FORCE_FP32_GEMM";
-    if std::env::var_os(FORCE_FP32).is_none() {
-        std::env::set_var(FORCE_FP32, "1");
-    }
+const FORCE_FP32: &str = "TRUENO_FORCE_FP32_GEMM";
+
+/// Turn the FP32 switch on for this process. Call it while the process has a single
+/// thread (the first line of `main`): it writes the process environment.
+#[cfg(feature = "cuda")]
+pub fn force_deterministic_gemm() {
+    std::env::set_var(FORCE_FP32, "1");
+}
+
+/// Fail unless [`force_deterministic_gemm`] ran or the caller exported the switch.
+#[cfg(feature = "cuda")]
+fn require_deterministic_gemm() -> WhisperResult<()> {
+    std::env::var_os(FORCE_FP32).map(drop).ok_or_else(|| {
+        WhisperError::Inference(format!(
+            "{FORCE_FP32} is not set: export {FORCE_FP32}=1, or call \
+             cuda::force_deterministic_gemm() before starting any thread"
+        ))
+    })
 }
 
 /// Reorder convolution weights `[out, in, 3]` into the `[in * 3, out]` matrix that
@@ -332,7 +345,7 @@ impl WhisperCuda {
             ));
         }
 
-        require_deterministic_gemm();
+        require_deterministic_gemm()?;
 
         let executor = CudaExecutor::new(device_ordinal)
             .map_err(|e| WhisperError::Inference(format!("CUDA initialization failed: {e}")))?;
