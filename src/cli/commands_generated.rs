@@ -191,8 +191,10 @@ fn resolve_gpu_backend(requested: bool, global: &Args) -> CliResult<bool> {
                 }
                 return Ok(true);
             }
-            eprintln!("[WARN] GPU requested but CUDA not available, falling back to CPU");
-            return Ok(false);
+            // whisper.apr#103: an explicit --gpu never runs on the CPU instead.
+            return Err(CliError::InvalidArgument(
+                "GPU requested but no CUDA device is available".to_string(),
+            ));
         }
         if global.verbose {
             eprintln!("[INFO] Using CPU backend (default)");
@@ -477,7 +479,7 @@ fn run_gpu_transcription(
     }
 
     // WAPR-PERF-004: Use GPU-accelerated transcription path
-    // This uses gemv_cached for output projection (the decoder bottleneck)
+    // The encoder runs on the GPU; token generation is shared with the CPU path.
     cuda_model
         .transcribe_gpu(samples, options)
         .map_err(|e| CliError::InvalidArgument(e.to_string()))

@@ -16,6 +16,10 @@ use whisper_apr::cli::{run, Args};
 
 #[allow(clippy::disallowed_methods)] // process::exit is appropriate in main()
 fn main() {
+    // Before any thread starts: the GPU pipeline needs it (whisper.apr#103).
+    #[cfg(feature = "realizar-gpu")]
+    whisper_apr::cuda::force_deterministic_gemm();
+
     // Initialize tracing if enabled
     #[cfg(feature = "tracing")]
     init_tracing();

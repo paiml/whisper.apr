@@ -462,20 +462,7 @@ impl WhisperApr {
     /// Segments for one decoded window: from timestamp tokens when the decode
     /// produced them, otherwise one cue split at sentence boundaries.
     fn segments_from_decode(&self, tokens: &[u32], text: &str, audio_len: usize) -> Vec<Segment> {
-        if timestamps::has_timestamps(tokens) {
-            timestamps::extract_segments(tokens, |ts| self.tokenizer.decode(ts).ok())
-        } else if !text.trim().is_empty() {
-            let duration = audio_len as f32 / audio::SAMPLE_RATE as f32;
-            let single = vec![Segment {
-                start: 0.0,
-                end: duration,
-                text: text.to_string(),
-                tokens: tokens.to_vec(),
-            }];
-            timestamps::split_long_segments(&single, Self::MAX_SUBTITLE_SECS)
-        } else {
-            Vec::new()
-        }
+        Self::segments_from_tokens(tokens, text, audio_len, |ts| self.tokenizer.decode(ts).ok())
     }
 
     fn transcribe_single_chunk(
@@ -1301,6 +1288,29 @@ impl WhisperApr {
         detector.detect(logits_fn)
     }
 
+    /// Timestamped segments from the token stream, or the whole text split by sentence
+    /// when the decoder emitted no timestamps.
+    pub(crate) fn segments_from_tokens(
+        tokens: &[u32],
+        text: &str,
+        audio_len: usize,
+        decode: impl Fn(&[u32]) -> Option<String>,
+    ) -> Vec<Segment> {
+        if timestamps::has_timestamps(tokens) {
+            return timestamps::extract_segments(tokens, decode);
+        }
+        if text.trim().is_empty() {
+            return Vec::new();
+        }
+        let single = vec![Segment {
+            start: 0.0,
+            end: audio_len as f32 / audio::SAMPLE_RATE as f32,
+            text: text.to_string(),
+            tokens: tokens.to_vec(),
+        }];
+        timestamps::split_long_segments(&single, Self::MAX_SUBTITLE_SECS)
+    }
+
     /// Decode tokens from audio features
     ///
     /// Uses KV cache for O(n) incremental decoding instead of O(n²) full recomputation.
@@ -1310,19 +1320,41 @@ impl WhisperApr {
         initial_tokens: &[u32],
         options: &TranscribeOptions,
     ) -> WhisperResult<Vec<u32>> {
+        Self::decode_features(
+            &self.decoder,
+            &self.config,
+            self.eot_token(),
+            |word| self.tokenizer.encode(word).ok(),
+            audio_features,
+            initial_tokens,
+            options,
+        )
+    }
+
+    /// The one token-generation loop, shared by the CPU and CUDA pipelines
+    /// (whisper.apr#103: a second loop in the CUDA path returned empty text).
+    pub(crate) fn decode_features(
+        model_decoder: &model::Decoder,
+        config: &model::ModelConfig,
+        eot: u32,
+        encode_word: impl Fn(&str) -> Option<Vec<u32>>,
+        audio_features: &[f32],
+        initial_tokens: &[u32],
+        options: &TranscribeOptions,
+    ) -> WhisperResult<Vec<u32>> {
         use std::cell::RefCell;
 
-        let n_vocab = self.config.n_vocab as usize;
-        let max_tokens = self.config.n_text_ctx as usize;
+        let n_vocab = config.n_vocab as usize;
+        let max_tokens = config.n_text_ctx as usize;
 
         // Create KV cache for incremental decoding (O(n) instead of O(n²))
         // Uses decoder's create_kv_cache() which dispatches GQA vs MHA automatically
-        let cache = RefCell::new(self.decoder.create_kv_cache());
+        let cache = RefCell::new(model_decoder.create_kv_cache());
         let processed_count = RefCell::new(0usize);
 
         // Create Whisper token suppressor using realizar's LogitProcessor architecture
         // This provides composable, reusable pre-sampling transforms
-        let whisper_timestamps = self.eot_token() == tokenizer::special_tokens::EOT;
+        let whisper_timestamps = eot == tokenizer::special_tokens::EOT;
         let eot_id_ts = tokenizer::special_tokens::EOT;
         let suppressor = inference::WhisperTokenSuppressor::new()
             .with_timestamp_suppression(false)
@@ -1332,7 +1364,7 @@ impl WhisperApr {
         let hotword_booster = if !options.hotwords.is_empty() {
             let mut booster = crate::vocabulary::HotwordBooster::new();
             for word in &options.hotwords {
-                if let Ok(tokens) = self.tokenizer.encode(word) {
+                if let Some(tokens) = encode_word(word) {
                     if !tokens.is_empty() {
                         booster.add_hotword_with_tokens_default(word, tokens);
                     }
@@ -1348,7 +1380,7 @@ impl WhisperApr {
         };
 
         // Pre-allocate decoder scratch buffers (PMAT-014 O1)
-        let scratch = std::cell::RefCell::new(self.decoder.create_decoder_scratch());
+        let scratch = std::cell::RefCell::new(model_decoder.create_decoder_scratch());
 
         let logits_fn = |tokens: &[u32]| -> WhisperResult<Vec<f32>> {
             let seq_len = tokens.len();
@@ -1358,7 +1390,7 @@ impl WhisperApr {
             let mut logits = vec![f32::NEG_INFINITY; n_vocab];
 
             for &token in tokens.iter().take(seq_len).skip(already_processed) {
-                logits = self.decoder.forward_one_with_scratch(
+                logits = model_decoder.forward_one_with_scratch(
                     token,
                     audio_features,
                     &mut cache.borrow_mut(),
@@ -1383,14 +1415,12 @@ impl WhisperApr {
             }
 
             // N-gram repetition suppression (prevents hallucinated loops)
-            let eot_id = self.eot_token();
-            Self::suppress_repetitions(&mut logits, tokens, eot_id, n_vocab);
+            Self::suppress_repetitions(&mut logits, tokens, eot, n_vocab);
 
             Ok(logits)
         };
 
         // Choose decoding strategy
-        let eot = self.eot_token();
         match options.strategy {
             DecodingStrategy::Greedy => {
                 let decoder = inference::GreedyDecoder::new(max_tokens);
