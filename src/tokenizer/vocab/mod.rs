@@ -193,16 +193,17 @@ pub mod special_tokens {
 
         /// Special tokens for an already validated vocabulary size.
         ///
-        /// Exact for 51864, 51865 and 51866. Model loading refuses any other
-        /// size, so another size only reaches this from an in-memory test
-        /// config; it then falls back to the v2 layout (>= 51865) or the
-        /// English-only layout.
+        /// Exact for 51864, 51865 and 51866. Any other size panics: a silent
+        /// fallback would decode with the wrong special ids (whisper.apr#108).
+        /// Use [`SpecialTokens::try_for_vocab_size`] to handle that case.
+        ///
+        /// # Panics
+        /// Panics when `n_vocab` is not 51864, 51865 or 51866.
         #[must_use]
+        #[allow(clippy::panic)]
         pub fn for_vocab_size(n_vocab: usize) -> Self {
-            Self::from_vocab_size(n_vocab).unwrap_or(if n_vocab >= MULTILINGUAL_VOCAB_THRESHOLD {
-                Self::multilingual()
-            } else {
-                Self::english_only()
+            Self::from_vocab_size(n_vocab).unwrap_or_else(|| {
+                panic!("unsupported n_vocab {n_vocab}: expected 51864, 51865 or 51866")
             })
         }
 
