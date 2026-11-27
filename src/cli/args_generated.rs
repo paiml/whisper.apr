@@ -291,6 +291,10 @@ pub struct TranscribeArgs {
     #[arg(long)]
     pub word_timestamps: bool,
 
+    /// Re-enable the legacy repetition penalty and trigram block (off by default, #107)
+    #[arg(long)]
+    pub repetition_penalty: bool,
+
     /// Include timestamps in output
     #[arg(long)]
     pub timestamps: bool,

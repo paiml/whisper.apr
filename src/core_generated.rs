@@ -104,6 +104,10 @@ pub struct TranscribeOptions {
     /// Hotwords to boost during decoding (WAPR-170).
     /// Each string is tokenized and biased positively in the logit space.
     pub hotwords: Vec<String>,
+    /// Re-enable the legacy per-token repetition penalty (-2.0 per recent
+    /// occurrence) and the trigram block (-10 on a completed trigram).
+    /// Off by default (#107): the reference decoder applies neither.
+    pub repetition_penalty: bool,
 }
 
 /// A timestamped segment of transcription
@@ -963,6 +967,7 @@ impl WhisperApr {
                 profile: options.profile,
                 prompt: options.prompt.clone(),
                 hotwords: options.hotwords.clone(),
+                repetition_penalty: options.repetition_penalty,
             };
 
             let chunk_result = self.transcribe_single_chunk(chunk, chunk_options)?;
@@ -1418,7 +1423,13 @@ impl WhisperApr {
             }
 
             // N-gram repetition suppression (prevents hallucinated loops)
-            Self::suppress_repetitions(&mut logits, tokens, eot, n_vocab);
+            Self::suppress_repetitions(
+                &mut logits,
+                tokens,
+                eot,
+                n_vocab,
+                options.repetition_penalty,
+            );
 
             Ok(logits)
         };
@@ -1450,9 +1461,9 @@ impl WhisperApr {
 
     /// Apply n-gram repetition suppression to logits
     ///
-    /// Prevents hallucinated loops by penalizing repeated tokens, blocking
-    /// trigram completions, forcing EOT on degenerate 4-gram loops, and
-    /// capping unigram frequency in recent output.
+    /// The per-token penalty and trigram block run only when `legacy_penalty`
+    /// is set (#107). Forced EOT on degenerate 4-gram loops and the unigram
+    /// frequency cap always run.
     /// Whisper `ApplyTimestampRules` (and `SuppressBlank`) on one step's logits (#106).
     ///
     /// `tokens` is the whole sequence and `sample_begin` the length of the
@@ -1523,7 +1534,13 @@ impl WhisperApr {
         }
     }
 
-    fn suppress_repetitions(logits: &mut [f32], tokens: &[u32], eot_id: u32, n_vocab: usize) {
+    fn suppress_repetitions(
+        logits: &mut [f32],
+        tokens: &[u32],
+        eot_id: u32,
+        n_vocab: usize,
+        legacy_penalty: bool,
+    ) {
         // Filter to only text tokens (exclude special tokens)
         // Whisper BPE: text tokens are < EOT (50257); specials are >= EOT
         // SentencePiece (Moonshine): text tokens are > EOS (2); specials are 0=unk,1=BOS,2=EOS
@@ -1533,21 +1550,23 @@ impl WhisperApr {
             tokens.iter().copied().filter(|&t| t < eot_id).collect()
         };
 
-        // Token-level penalty: penalize recently-seen tokens
-        let window_start = text_tokens.len().saturating_sub(50);
-        for &prev_tok in &text_tokens[window_start..] {
-            if (prev_tok as usize) < n_vocab {
-                logits[prev_tok as usize] -= 2.0;
+        if legacy_penalty {
+            // Token-level penalty: penalize recently-seen tokens
+            let window_start = text_tokens.len().saturating_sub(50);
+            for &prev_tok in &text_tokens[window_start..] {
+                if (prev_tok as usize) < n_vocab {
+                    logits[prev_tok as usize] -= 2.0;
+                }
             }
-        }
 
-        // Trigram blocking: if (prev2, prev1, X) already appeared, suppress X
-        if text_tokens.len() >= 3 {
-            let prev2 = text_tokens[text_tokens.len() - 2];
-            let prev1 = text_tokens[text_tokens.len() - 1];
-            for w in text_tokens[..text_tokens.len() - 2].windows(3) {
-                if w[0] == prev2 && w[1] == prev1 && (w[2] as usize) < n_vocab {
-                    logits[w[2] as usize] -= 10.0;
+            // Trigram blocking: if (prev2, prev1, X) already appeared, suppress X
+            if text_tokens.len() >= 3 {
+                let prev2 = text_tokens[text_tokens.len() - 2];
+                let prev1 = text_tokens[text_tokens.len() - 1];
+                for w in text_tokens[..text_tokens.len() - 2].windows(3) {
+                    if w[0] == prev2 && w[1] == prev1 && (w[2] as usize) < n_vocab {
+                        logits[w[2] as usize] -= 10.0;
+                    }
                 }
             }
         }
@@ -5287,6 +5306,7 @@ mod tests {
             profile: false,
             prompt: Some("domain-specific prompt".into()),
             hotwords: vec!["hotword1".into(), "hotword2".into()],
+            repetition_penalty: true,
         };
 
         assert_eq!(options.language, Some("fr".to_string()));
@@ -6707,5 +6727,47 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].len(), 7 * d_model);
         assert_eq!(results[1].len(), 5 * d_model);
+    }
+}
+
+/// #107: the legacy repetition penalty and trigram block are off by default.
+#[cfg(test)]
+mod repetition_default_107 {
+    use super::*;
+
+    const EOT: u32 = 50257;
+    const N_VOCAB: usize = 50300;
+
+    /// Tokens 11,12,13 then the pair 11,12 again: a trigram completion of 13 is
+    /// already on record, and tokens 11 and 12 recur in the recent window.
+    const REPEATED: [u32; 5] = [11, 12, 13, 11, 12];
+
+    #[test]
+    fn test_107_repetition_penalty_is_off_in_default_options() {
+        assert!(!TranscribeOptions::default().repetition_penalty);
+    }
+
+    #[test]
+    fn test_107_default_decode_applies_no_repetition_penalty() {
+        let mut logits = vec![0.0_f32; N_VOCAB];
+        WhisperApr::suppress_repetitions(&mut logits, &REPEATED, EOT, N_VOCAB, false);
+        assert_eq!(logits[11], 0.0, "cumulative penalty applied by default");
+        assert_eq!(logits[12], 0.0, "cumulative penalty applied by default");
+    }
+
+    #[test]
+    fn test_107_default_decode_applies_no_trigram_block() {
+        let mut logits = vec![0.0_f32; N_VOCAB];
+        WhisperApr::suppress_repetitions(&mut logits, &REPEATED, EOT, N_VOCAB, false);
+        assert_eq!(logits[13], 0.0, "trigram block applied by default");
+    }
+
+    #[test]
+    fn test_107_flag_enables_penalty_and_trigram_block() {
+        let mut logits = vec![0.0_f32; N_VOCAB];
+        WhisperApr::suppress_repetitions(&mut logits, &REPEATED, EOT, N_VOCAB, true);
+        assert_eq!(logits[11], -4.0);
+        assert_eq!(logits[12], -4.0);
+        assert_eq!(logits[13], -12.0, "-2 penalty plus -10 trigram block");
     }
 }
