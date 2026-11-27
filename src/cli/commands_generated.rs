@@ -2648,16 +2648,19 @@ const WHISPER_CONVERTER_REFUSAL: &str = "Whisper safetensors are not converted b
 
 /// True when `path` is a safetensors file or sharded directory holding Whisper tensors.
 /// Any other input, or one that does not parse, is not Whisper here and keeps its own error path.
+/// A directory is read through `ShardedSafeTensorsLoader`: `SafeTensorsLoader::load` errors on
+/// every directory, so a sharded Whisper model would otherwise pass the refusal (#113).
 fn is_whisper_safetensors(path: &Path) -> bool {
-    let candidate =
-        path.is_dir() || path.extension().and_then(|e| e.to_str()) == Some("safetensors");
-    candidate
-        && crate::format::SafeTensorsLoader::load(path).is_ok_and(|loader| {
-            loader
-                .tensor_names()
-                .iter()
-                .any(|n| n.starts_with("model.encoder.conv1."))
-        })
+    fn has_whisper_encoder(names: &[String]) -> bool {
+        names.iter().any(|n| n.starts_with("model.encoder.conv1."))
+    }
+    if path.is_dir() {
+        return crate::format::safetensors_loader::ShardedSafeTensorsLoader::load(path)
+            .is_ok_and(|loader| has_whisper_encoder(loader.tensor_names()));
+    }
+    path.extension().and_then(|e| e.to_str()) == Some("safetensors")
+        && crate::format::SafeTensorsLoader::load(path)
+            .is_ok_and(|loader| has_whisper_encoder(loader.tensor_names()))
 }
 
 /// Refuse a Whisper safetensors input before any output is written (#113).
@@ -2680,14 +2683,15 @@ fn run_model_convert(input: &Path, output: &Path, global: &Args) -> CliResult<Co
         return Err(CliError::FileNotFound(input.display().to_string()));
     }
 
+    // Refuse Whisper before the extension gate: a sharded directory has no .safetensors name.
+    refuse_whisper_input(input)?;
+
     let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext != "safetensors" {
         return Err(CliError::UnsupportedFormat(format!(
             "Expected .safetensors file, got .{ext}"
         )));
     }
-
-    refuse_whisper_input(input)?;
 
     let loader = crate::format::SafeTensorsLoader::load(input)
         .map_err(|e| CliError::InvalidArgument(format!("Failed to load: {e}")))?;
@@ -6120,6 +6124,45 @@ mod whisper_convert_refusal_tests {
         let path = dir.join("model.safetensors");
         std::fs::write(&path, bytes).expect("write fixture");
         path
+    }
+
+    /// The same Whisper tensor as a sharded directory: one shard plus `model.safetensors.index.json`.
+    fn whisper_sharded_dir(dir: &std::path::Path) -> PathBuf {
+        const SHARD: &str = "model-00001-of-00001.safetensors";
+        let single = whisper_safetensors(dir);
+        std::fs::rename(&single, dir.join(SHARD)).expect("name shard");
+        let index = format!(
+            r#"{{"metadata":{{"total_size":4}},"weight_map":{{"model.encoder.conv1.weight":"{SHARD}"}}}}"#
+        );
+        std::fs::write(dir.join("model.safetensors.index.json"), index).expect("write index");
+        dir.to_path_buf()
+    }
+
+    #[test]
+    fn is_whisper_safetensors_detects_sharded_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = whisper_sharded_dir(dir.path());
+        assert!(
+            is_whisper_safetensors(&input),
+            "sharded Whisper dir must be detected"
+        );
+    }
+
+    #[test]
+    fn model_convert_refuses_sharded_whisper_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = whisper_sharded_dir(dir.path());
+        let output = dir.path().join("out.apr");
+        let args = ModelArgs {
+            action: ModelAction::Convert {
+                input,
+                output: output.clone(),
+            },
+        };
+        let err = run_model(args, &quiet()).expect_err("sharded Whisper input must be refused");
+        let msg = err.to_string();
+        assert!(msg.contains("whisper-convert"), "{msg}");
+        assert!(!output.exists(), "a refused conversion writes no file");
     }
 
     #[test]
