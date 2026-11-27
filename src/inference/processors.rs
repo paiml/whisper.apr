@@ -50,18 +50,17 @@ pub struct WhisperTokenSuppressor {
 
 /// Default suppressions for one vocabulary layout (whisper.apr#108).
 fn default_suppressions(specials: &special_tokens::SpecialTokens) -> Vec<u32> {
+    // Every header control id. On the v2 layout start_of_lm is the old
+    // SPEAKER_TURN slot (50360), so the v2 set is unchanged from main.
     let mut ids = vec![
         specials.sot,
         specials.no_speech,
         specials.translate,
         specials.transcribe,
+        specials.start_of_lm,
         specials.prev,
         specials.no_timestamps,
     ];
-    // SPEAKER_TURN is not a v3 id; keep it only for the v2 layout.
-    if !specials.is_multilingual || specials.n_languages == 99 {
-        ids.push(special_tokens::SPEAKER_TURN);
-    }
     // Every language token, up to the task block.
     for lang_id in specials.lang_base..specials.translate {
         ids.push(lang_id);
@@ -444,5 +443,51 @@ mod size_derived_suppression_tests {
     #[should_panic(expected = "unsupported n_vocab")]
     fn suppressor_unsupported_size_fails_loudly() {
         let _ = WhisperTokenSuppressor::new().with_vocab_size(51000);
+    }
+}
+
+#[cfg(test)]
+mod suppression_layout_tests {
+    use super::WhisperTokenSuppressor;
+    use crate::tokenizer::special_tokens::{self, SpecialTokens};
+
+    /// The v2 default set must equal what main suppresses (no regression).
+    #[test]
+    fn v2_default_set_matches_main() {
+        let s = WhisperTokenSuppressor::new();
+        let mut expected = vec![
+            special_tokens::SOT,
+            special_tokens::NO_SPEECH,
+            special_tokens::TRANSLATE,
+            special_tokens::TRANSCRIBE,
+            special_tokens::PREV,
+            special_tokens::SPEAKER_TURN,
+            special_tokens::NO_TIMESTAMPS,
+        ];
+        expected.extend(special_tokens::LANG_BASE..special_tokens::TRANSLATE);
+        let mut got = s.suppressed_tokens().to_vec();
+        got.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(got, expected);
+    }
+
+    /// Each special id is suppressed once, on every supported layout.
+    #[test]
+    fn each_control_id_suppressed_once() {
+        for n in [51864usize, 51865, 51866] {
+            let s = WhisperTokenSuppressor::new().with_vocab_size(n);
+            let sp = SpecialTokens::for_vocab_size(n);
+            for id in [
+                sp.translate,
+                sp.transcribe,
+                sp.start_of_lm,
+                sp.prev,
+                sp.no_speech,
+                sp.no_timestamps,
+            ] {
+                let count = s.suppressed_tokens().iter().filter(|&&t| t == id).count();
+                assert_eq!(count, 1, "n_vocab {n}: id {id} suppressed {count} times");
+            }
+        }
     }
 }
