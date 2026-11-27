@@ -3863,6 +3863,10 @@ mod tests {
     #[test]
     fn test_load_from_apr_refuses_corrupted_checksum() {
         let mut data = format::create_test_apr();
+        assert!(
+            format::precheck_apr_bytes(&data).is_ok(),
+            "unmodified fixture must pass"
+        );
         let body_last = data.len() - 5; // last body byte, just before the 4-byte CRC trailer
         data[body_last] ^= 0xFF;
 
