@@ -2651,6 +2651,34 @@ fn run_model_download(
     )))
 }
 
+/// Refusal text for a Whisper safetensors input (#113). Both conversion commands write an LFM2
+/// layout for it, which `whisper-apr validate` rejects; the converter that works is named here.
+const WHISPER_CONVERTER_REFUSAL: &str = "Whisper safetensors are not converted by this command: it writes an LFM2 layout that `whisper-apr validate` rejects. Use the converter that works, from a source checkout: `cargo run --release --bin whisper-convert --features converter -- <size> -o <out.apr>`";
+
+/// True when `path` is a safetensors file or sharded directory holding Whisper tensors.
+/// Any other input, or one that does not parse, is not Whisper here and keeps its own error path.
+fn is_whisper_safetensors(path: &Path) -> bool {
+    let candidate =
+        path.is_dir() || path.extension().and_then(|e| e.to_str()) == Some("safetensors");
+    candidate
+        && crate::format::SafeTensorsLoader::load(path).is_ok_and(|loader| {
+            loader
+                .tensor_names()
+                .iter()
+                .any(|n| n.starts_with("model.encoder.conv1."))
+        })
+}
+
+/// Refuse a Whisper safetensors input before any output is written (#113).
+fn refuse_whisper_input(input: &Path) -> CliResult<()> {
+    if is_whisper_safetensors(input) {
+        return Err(CliError::InvalidArgument(
+            WHISPER_CONVERTER_REFUSAL.to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Convert safetensors to APR2 format
 fn run_model_convert(input: &Path, output: &Path, global: &Args) -> CliResult<CommandResult> {
     if !global.quiet {
@@ -2667,6 +2695,8 @@ fn run_model_convert(input: &Path, output: &Path, global: &Args) -> CliResult<Co
             "Expected .safetensors file, got .{ext}"
         )));
     }
+
+    refuse_whisper_input(input)?;
 
     let loader = crate::format::SafeTensorsLoader::load(input)
         .map_err(|e| CliError::InvalidArgument(format!("Failed to load: {e}")))?;
@@ -4041,6 +4071,8 @@ pub fn run_convert(args: ConvertArgs, global: &Args) -> CliResult<CommandResult>
         println!("Family: {}", args.family);
         println!("Quantization: {}", args.quantize);
     }
+
+    refuse_whisper_input(&args.input)?;
 
     // Dry run mode
     if args.dry_run {
@@ -6074,6 +6106,7 @@ mod whisper_convert_refusal_tests {
     //! layout. Both `convert --family whisper` and `model convert` exit with an error that
     //! names the converter path that works, and write no file.
     use super::*;
+    use std::path::PathBuf;
 
     fn quiet() -> Args {
         Args {
