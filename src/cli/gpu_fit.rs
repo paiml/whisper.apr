@@ -17,14 +17,29 @@ const F32_BYTES: u64 = 4;
 
 /// Free memory the GPU upload needs, in bytes: the FP32 weights, twice.
 pub fn gpu_upload_bytes_needed(parameter_count: u64) -> u64 {
-    parameter_count * F32_BYTES * 2
+    parameter_count.saturating_mul(F32_BYTES).saturating_mul(2)
+}
+
+/// True when the device-tree model string names a Jetson. Jetsons are the
+/// shared-memory devices of #145: the GPU allocates from the same RAM the host
+/// check reads. On a discrete GPU the weights live in VRAM, so the host check
+/// does not apply there and must not refuse.
+pub fn device_tree_model_is_jetson(model: &str) -> bool {
+    model.contains("Jetson")
+}
+
+/// True on a shared-memory (Jetson) device, read from `/proc/device-tree/model`.
+pub fn is_shared_memory_device() -> bool {
+    std::fs::read_to_string("/proc/device-tree/model")
+        .map(|m| device_tree_model_is_jetson(&m))
+        .unwrap_or(false)
 }
 
 /// Parse `MemAvailable` (kB in `/proc/meminfo`) into bytes.
 pub fn parse_mem_available(meminfo: &str) -> Option<u64> {
     let line = meminfo.lines().find(|l| l.starts_with("MemAvailable:"))?;
     let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
-    Some(kb * 1024)
+    kb.checked_mul(1024)
 }
 
 /// Free memory now, in bytes. `None` where `/proc/meminfo` is not readable,
@@ -84,6 +99,19 @@ mod tests {
     #[test]
     fn unknown_availability_does_not_refuse() {
         assert!(gpu_fit_refusal(10 * GB, None).is_none());
+    }
+
+    #[test]
+    fn jetson_model_string_is_shared_memory() {
+        assert!(device_tree_model_is_jetson(
+            "NVIDIA Jetson Orin Nano Developer Kit"
+        ));
+        assert!(!device_tree_model_is_jetson("Dell PowerEdge R750"));
+    }
+
+    #[test]
+    fn huge_parameter_count_saturates_instead_of_wrapping() {
+        assert_eq!(gpu_upload_bytes_needed(u64::MAX), u64::MAX);
     }
 
     #[test]

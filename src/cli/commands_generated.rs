@@ -451,13 +451,17 @@ fn run_gpu_transcription(
     options: TranscribeOptions,
     global: &Args,
 ) -> CliResult<crate::TranscriptionResult> {
-    // whisper.apr#145: refuse before the upload, naming the memory it needs.
-    let need =
-        crate::cli::gpu_fit::gpu_upload_bytes_needed(whisper.config().parameter_count() as u64);
-    if let Some(msg) =
-        crate::cli::gpu_fit::gpu_fit_refusal(need, crate::cli::gpu_fit::available_memory_bytes())
-    {
-        return Err(CliError::InvalidArgument(msg));
+    // whisper.apr#145: on a shared-memory (Jetson) device, refuse before the upload,
+    // naming the memory it needs. Discrete GPUs keep weights in VRAM: no host check.
+    if crate::cli::gpu_fit::is_shared_memory_device() {
+        let need =
+            crate::cli::gpu_fit::gpu_upload_bytes_needed(whisper.config().parameter_count() as u64);
+        if let Some(msg) = crate::cli::gpu_fit::gpu_fit_refusal(
+            need,
+            crate::cli::gpu_fit::available_memory_bytes(),
+        ) {
+            return Err(CliError::InvalidArgument(msg));
+        }
     }
 
     let mut cuda_model = whisper
