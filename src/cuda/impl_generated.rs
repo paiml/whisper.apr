@@ -2876,7 +2876,7 @@ impl WhisperCuda {
         // Add task token
         match options.task {
             Task::Transcribe => tokens.push(specials.transcribe),
-            Task::Translate => tokens.push(special_tokens::TRANSLATE),
+            Task::Translate => tokens.push(specials.translate),
         }
 
         // Timestamp mode: do NOT push no_timestamps token.
@@ -3539,7 +3539,7 @@ impl WhisperCuda {
         }
         match options.task {
             Task::Transcribe => tokens.push(specials.transcribe),
-            Task::Translate => tokens.push(special_tokens::TRANSLATE),
+            Task::Translate => tokens.push(specials.translate),
         }
         // Timestamp mode: do NOT push no_timestamps token.
         // This enables the decoder to produce <|t.tt|> timestamp tokens

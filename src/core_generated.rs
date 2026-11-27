@@ -1202,7 +1202,7 @@ impl WhisperApr {
         // Add task token
         match task {
             Task::Transcribe => tokens.push(specials.transcribe),
-            Task::Translate => tokens.push(special_tokens::TRANSLATE),
+            Task::Translate => tokens.push(specials.translate),
         }
 
         // Timestamp mode: do NOT push no_timestamps token
@@ -1239,7 +1239,10 @@ impl WhisperApr {
 
         // Whisper convention: <|startofprev|> + prompt_tokens + <|startoftranscript|> + ...
         let mut prefix = Vec::with_capacity(1 + truncated.len() + tokens.len());
-        prefix.push(tokenizer::special_tokens::PREV);
+        prefix.push(
+            tokenizer::special_tokens::SpecialTokens::for_vocab_size(self.config.n_vocab as usize)
+                .prev,
+        );
         prefix.extend_from_slice(truncated);
         prefix.append(&mut tokens);
         prefix
