@@ -241,7 +241,14 @@ pub mod special_tokens {
         /// Language token for a language code, if this vocabulary has it.
         #[must_use]
         pub fn language_token(&self, lang_code: &str) -> Option<u32> {
-            language_offset(lang_code)
+            // large-v3 adds <|yue|> as the 100th language (offset 99). It is
+            // not in the 99-entry detection table, so map it here.
+            let offset = if lang_code == "yue" {
+                Some(99)
+            } else {
+                language_offset(lang_code)
+            };
+            offset
                 .filter(|&offset| offset < self.n_languages)
                 .map(|offset| self.lang_base + offset)
         }
@@ -255,7 +262,8 @@ pub mod special_tokens {
         /// Whether `token` is a timestamp token.
         #[must_use]
         pub const fn is_timestamp(&self, token: u32) -> bool {
-            token >= self.timestamp_base
+            // 0.00 s to 30.00 s in 20 ms steps: 1501 ids from timestamp_base.
+            token >= self.timestamp_base && token - self.timestamp_base <= 1500
         }
 
         /// Timestamp token to seconds (20ms steps).

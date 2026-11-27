@@ -110,8 +110,21 @@ impl WhisperTokenSuppressor {
     /// 51866 (whisper.apr#108).
     #[must_use]
     pub fn with_vocab_size(mut self, n_vocab: usize) -> Self {
+        // Keep the caller's own suppressions; replace only the layout defaults.
+        let old_defaults = default_suppressions(&self.specials);
+        let extras: Vec<u32> = self
+            .suppress_ids
+            .iter()
+            .copied()
+            .filter(|t| !old_defaults.contains(t))
+            .collect();
         self.specials = special_tokens::SpecialTokens::for_vocab_size(n_vocab);
         self.suppress_ids = default_suppressions(&self.specials);
+        for t in extras {
+            if !self.suppress_ids.contains(&t) {
+                self.suppress_ids.push(t);
+            }
+        }
         self.n_vocab = n_vocab;
         self
     }
@@ -402,8 +415,8 @@ mod size_derived_suppression_tests {
 
     /// whisper.apr#108 falsifier: on large-v3/turbo (51866) the suppressed
     /// control ids are the v3 ids, not the v2 ids the suppressor hard-codes.
-    /// Fails on main: 50360 (v3 transcribe) and 50362 (v3 startofprev) are
-    /// not in the suppressed set, and the language range stops one id short.
+    /// Fails on main: the v3 no-timestamps id (50364) is not in the suppressed
+    /// set, because main's default list is the v2 layout.
     #[test]
     fn suppressor_v3_suppresses_v3_control_ids() {
         let s = WhisperTokenSuppressor::new().with_vocab_size(51866);
@@ -489,5 +502,33 @@ mod suppression_layout_tests {
                 assert_eq!(count, 1, "n_vocab {n}: id {id} suppressed {count} times");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod review_falsifier_tests {
+    use super::WhisperTokenSuppressor;
+    use crate::tokenizer::special_tokens::SpecialTokens;
+
+    #[test]
+    fn with_vocab_size_keeps_custom_tokens() {
+        let s = WhisperTokenSuppressor::with_tokens(vec![42]).with_vocab_size(51866);
+        assert!(s.suppressed_tokens().contains(&42), "custom token dropped");
+        let mut base = WhisperTokenSuppressor::new();
+        base.add_suppression(42);
+        let s2 = base.with_vocab_size(51866);
+        assert!(s2.suppressed_tokens().contains(&42), "custom token dropped");
+    }
+
+    #[test]
+    fn v3_apply_without_timestamp_suppression_keeps_timestamps_finite() {
+        let v3 = SpecialTokens::multilingual_v3();
+        let s = WhisperTokenSuppressor::new()
+            .with_vocab_size(51866)
+            .with_timestamp_suppression(false);
+        let mut logits = vec![1.0f32; 51866];
+        s.apply(&mut logits);
+        assert_eq!(logits[v3.no_timestamps as usize], f32::NEG_INFINITY);
+        assert!(logits[v3.timestamp_base as usize].is_finite());
     }
 }

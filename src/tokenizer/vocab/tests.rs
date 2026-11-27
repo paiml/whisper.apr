@@ -890,3 +890,23 @@ fn for_vocab_size_panics_on_unsupported_size() {
     // not fall back to the v2 layout.
     let _ = special_tokens::SpecialTokens::for_vocab_size(51000);
 }
+
+// whisper.apr#108 review falsifiers (lane 2 on ada8f778fb)
+#[test]
+fn v3_language_token_yue_is_50358() {
+    let v3 = special_tokens::SpecialTokens::multilingual_v3();
+    assert_eq!(v3.language_token("yue"), Some(50358));
+    assert!(v3.is_language_token(50358));
+    let v2 = special_tokens::SpecialTokens::multilingual();
+    assert_eq!(v2.language_token("yue"), None);
+    assert!(!v2.is_language_token(50358));
+}
+
+#[test]
+fn v3_is_timestamp_bounded_to_30_seconds() {
+    let v3 = special_tokens::SpecialTokens::multilingual_v3();
+    assert!(v3.is_timestamp(50365)); // <|0.00|>
+    assert!(v3.is_timestamp(51865)); // <|30.00|>, last id in vocab
+    assert!(!v3.is_timestamp(51866)); // out of vocab
+    assert_eq!(v3.timestamp_to_seconds(51866), None);
+}
