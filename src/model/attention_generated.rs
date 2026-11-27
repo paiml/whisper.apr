@@ -29,7 +29,9 @@
 //! - [FlashAttn2] Dao (2023): "FlashAttention-2: Faster Attention with Better Parallelism"
 
 use crate::error::{WhisperError, WhisperResult};
-use crate::parallel::{parallel_map, parallel_try_map};
+#[cfg(feature = "realizar-inference")]
+use crate::parallel::parallel_map;
+use crate::parallel::parallel_try_map;
 use crate::simd;
 use trueno::Matrix;
 
