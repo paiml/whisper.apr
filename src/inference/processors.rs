@@ -46,6 +46,11 @@ pub struct WhisperTokenSuppressor {
     n_vocab: usize,
     /// Size-derived special ids (whisper.apr#108)
     specials: special_tokens::SpecialTokens,
+    /// Caller-added tokens, kept apart from the layout defaults so that
+    /// `with_vocab_size` never drops or invents them.
+    custom_ids: Vec<u32>,
+    /// Whether the layout defaults are suppressed (false for `with_tokens`).
+    layout_defaults: bool,
 }
 
 /// Default suppressions for one vocabulary layout (whisper.apr#108).
@@ -83,18 +88,38 @@ impl WhisperTokenSuppressor {
             suppress_timestamps: true,
             n_vocab: 51865,
             specials,
+            custom_ids: Vec::new(),
+            layout_defaults: true,
         }
     }
 
-    /// Create with custom suppressions (layout 51865 for timestamp bounds).
+    /// Create with custom suppressions only (layout 51865 for timestamp bounds).
     #[must_use]
     pub fn with_tokens(tokens: Vec<u32>) -> Self {
         Self {
-            suppress_ids: tokens,
+            suppress_ids: tokens.clone(),
             suppress_timestamps: true,
             n_vocab: 51865,
             specials: special_tokens::SpecialTokens::multilingual(),
+            custom_ids: tokens,
+            layout_defaults: false,
         }
+    }
+
+    /// Recompute `suppress_ids` from the layout defaults (if enabled) and
+    /// the caller's tokens.
+    fn rebuild_suppress_ids(&mut self) {
+        let mut ids = if self.layout_defaults {
+            default_suppressions(&self.specials)
+        } else {
+            Vec::new()
+        };
+        for &t in &self.custom_ids {
+            if !ids.contains(&t) {
+                ids.push(t);
+            }
+        }
+        self.suppress_ids = ids;
     }
 
     /// Set whether to suppress timestamp tokens
@@ -105,35 +130,23 @@ impl WhisperTokenSuppressor {
     }
 
     /// Set the vocabulary size. Derives every special id from it and
-    /// resets the default suppressions to that layout; add custom tokens
-    /// after calling this. Panics on any size other than 51864, 51865 or
+    /// resets the layout defaults to that layout. Custom tokens added so
+    /// far are kept. Panics on any size other than 51864, 51865 or
     /// 51866 (whisper.apr#108).
     #[must_use]
     pub fn with_vocab_size(mut self, n_vocab: usize) -> Self {
-        // Keep the caller's own suppressions; replace only the layout defaults.
-        let old_defaults = default_suppressions(&self.specials);
-        let extras: Vec<u32> = self
-            .suppress_ids
-            .iter()
-            .copied()
-            .filter(|t| !old_defaults.contains(t))
-            .collect();
         self.specials = special_tokens::SpecialTokens::for_vocab_size(n_vocab);
-        self.suppress_ids = default_suppressions(&self.specials);
-        for t in extras {
-            if !self.suppress_ids.contains(&t) {
-                self.suppress_ids.push(t);
-            }
-        }
         self.n_vocab = n_vocab;
+        self.rebuild_suppress_ids();
         self
     }
 
     /// Add additional tokens to suppress
     pub fn add_suppression(&mut self, token: u32) {
-        if !self.suppress_ids.contains(&token) {
-            self.suppress_ids.push(token);
+        if !self.custom_ids.contains(&token) {
+            self.custom_ids.push(token);
         }
+        self.rebuild_suppress_ids();
     }
 
     /// Get the list of suppressed token IDs
@@ -511,13 +524,35 @@ mod review_falsifier_tests {
     use crate::tokenizer::special_tokens::SpecialTokens;
 
     #[test]
+    fn with_tokens_stays_custom_only_across_vocab_size() {
+        let s = WhisperTokenSuppressor::with_tokens(vec![42]).with_vocab_size(51866);
+        assert_eq!(s.suppressed_tokens(), &[42]);
+        let empty = WhisperTokenSuppressor::with_tokens(vec![]).with_vocab_size(51866);
+        assert!(empty.suppressed_tokens().is_empty());
+    }
+
+    #[test]
+    fn custom_token_in_old_default_set_survives_resize() {
+        // 50363 is no_timestamps on v2 but a timestamp slot on 51864.
+        let s = WhisperTokenSuppressor::with_tokens(vec![50363])
+            .with_vocab_size(51864)
+            .with_timestamp_suppression(false);
+        assert_eq!(s.suppressed_tokens(), &[50363]);
+        let mut logits = vec![1.0f32; 51864];
+        s.apply(&mut logits);
+        assert_eq!(logits[50363], f32::NEG_INFINITY);
+        assert!(logits[50257].is_finite());
+    }
+
+    #[test]
     fn with_vocab_size_keeps_custom_tokens() {
         let s = WhisperTokenSuppressor::with_tokens(vec![42]).with_vocab_size(51866);
-        assert!(s.suppressed_tokens().contains(&42), "custom token dropped");
+        assert_eq!(s.suppressed_tokens(), &[42]); // custom-only: no defaults
         let mut base = WhisperTokenSuppressor::new();
         base.add_suppression(42);
         let s2 = base.with_vocab_size(51866);
         assert!(s2.suppressed_tokens().contains(&42), "custom token dropped");
+        assert_eq!(s2.suppressed_tokens().len(), 108); // 107 v3 defaults + 42
     }
 
     #[test]
