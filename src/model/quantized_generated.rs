@@ -977,6 +977,7 @@ impl QuantizedLinearQ2K {
 
 /// Convert fp16 bits to f32 (IEEE 754 half-precision).
 #[inline]
+#[cfg(any(feature = "realizar-inference", test))]
 fn f16_to_f32(bits: u16) -> f32 {
     let sign = ((bits >> 15) as u32) << 31;
     let exp = ((bits >> 10) & 0x1F) as u32;
@@ -1004,6 +1005,7 @@ fn f16_to_f32(bits: u16) -> f32 {
 
 /// Convert f32 to fp16 bits (IEEE 754 half-precision, round-to-nearest-even).
 #[inline]
+#[cfg(any(feature = "realizar-inference", test))]
 fn f32_to_f16(value: f32) -> u16 {
     let bits = value.to_bits();
     let sign = ((bits >> 16) & 0x8000) as u16;
@@ -1389,12 +1391,13 @@ impl QuantizedMultiHeadAttention {
                 let mut scores = Vec::with_capacity(kv_len);
 
                 for ki in 0..kv_len {
-                    let mut score = 0.0f32;
-                    for d in 0..self.d_head {
-                        let q_idx = qi * self.d_model + head_offset + d;
-                        let k_idx = ki * self.d_model + head_offset + d;
-                        score += q[q_idx] * k[k_idx];
-                    }
+                    let mut score = head_dot(
+                        q,
+                        k,
+                        qi * self.d_model + head_offset,
+                        ki * self.d_model + head_offset,
+                        self.d_head,
+                    );
                     score *= self.scale;
 
                     // Apply mask if provided
@@ -1429,6 +1432,13 @@ impl QuantizedMultiHeadAttention {
         // Output projection
         self.w_o.forward_fused(&output)
     }
+}
+
+#[cfg(feature = "realizar-inference")]
+/// Sequential dot product of `d_head` elements starting at `q_base` and `k_base`.
+/// Summation order matches the inline loop it replaces, so results are bit-identical.
+fn head_dot(q: &[f32], k: &[f32], q_base: usize, k_base: usize, d_head: usize) -> f32 {
+    (0..d_head).fold(0.0f32, |acc, d| acc + q[q_base + d] * k[k_base + d])
 }
 
 // =============================================================================

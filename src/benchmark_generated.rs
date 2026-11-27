@@ -965,20 +965,11 @@ pub fn run_rtf_benchmark(config: &RtfBenchmarkConfig) -> RtfBenchmarkResult {
     RtfBenchmarkResult::new(config.clone(), decode_time_ms, None)
 }
 
-/// Run RTF benchmark without realizar-inference feature (fallback)
-#[cfg(not(feature = "realizar-inference"))]
-pub fn run_rtf_benchmark(config: &RtfBenchmarkConfig) -> RtfBenchmarkResult {
-    // Return simulated result when realizar-inference is not available
-    let simulated_ms_per_token = 215.79; // From Sprint 15 measurements
-    let decode_time_ms = simulated_ms_per_token * config.n_tokens as f64;
-    RtfBenchmarkResult::new(config.clone(), decode_time_ms, None)
-}
-
 /// Build the synthetic component breakdown from a measured total decode time.
 ///
 /// The per-component split is a fixed model of a typical transformer decode
 /// profile (proportions sum to 1.0): they are multipliers of `total_ns`, NOT
-/// independently measured. Both `run_rtf_benchmark_instrumented` variants share
+/// independently measured. `run_rtf_benchmark_instrumented` shares
 /// this so the proportion/bottleneck logic has a single definition that the
 /// fast unit tests can exercise directly without running any inference.
 #[must_use]
@@ -1049,18 +1040,6 @@ pub fn run_rtf_benchmark_instrumented(config: &RtfBenchmarkConfig) -> RtfBenchma
     let total_ns = elapsed.as_nanos() as f64;
 
     // Synthetic per-component split derived from transformer profiling.
-    let breakdown = synthetic_component_breakdown(total_ns);
-
-    RtfBenchmarkResult::new(config.clone(), decode_time_ms, Some(breakdown))
-}
-
-/// Run instrumented RTF benchmark without realizar-inference feature (fallback)
-#[cfg(not(feature = "realizar-inference"))]
-pub fn run_rtf_benchmark_instrumented(config: &RtfBenchmarkConfig) -> RtfBenchmarkResult {
-    let simulated_ms_per_token = 47.17; // From Sprint 19 release mode measurement
-    let decode_time_ms = simulated_ms_per_token * config.n_tokens as f64;
-    let total_ns = decode_time_ms * 1_000_000.0;
-
     let breakdown = synthetic_component_breakdown(total_ns);
 
     RtfBenchmarkResult::new(config.clone(), decode_time_ms, Some(breakdown))
@@ -2291,6 +2270,7 @@ mod tests {
 
     #[test]
     #[ignore = "Heavy: allocates large decoder model"]
+    #[cfg(feature = "realizar-inference")]
     fn test_rtf_measurement() {
         // Test: run_rtf_benchmark returns valid RTF measurement
         //
@@ -2490,6 +2470,7 @@ mod tests {
 
     #[test]
     #[ignore = "Heavy: allocates large decoder model"]
+    #[cfg(feature = "realizar-inference")]
     fn test_instrumented_forward_returns_breakdown() {
         // Test: run_rtf_benchmark_instrumented returns breakdown
         //
@@ -2607,6 +2588,7 @@ mod tests {
 
     #[test]
     #[ignore = "perf: nightly tier — runs real opt-level=0 Q4K decoder inference"]
+    #[cfg(feature = "realizar-inference")]
     fn test_component_timing_all_positive() {
         // Test: All component timings are positive
         //
@@ -2634,6 +2616,7 @@ mod tests {
 
     #[test]
     #[ignore = "perf: nightly tier — runs real opt-level=0 Q4K decoder inference"]
+    #[cfg(feature = "realizar-inference")]
     fn test_bottleneck_identification() {
         // Test: ComponentBreakdown correctly identifies bottleneck
         //
@@ -2675,6 +2658,7 @@ mod tests {
 
     #[test]
     #[ignore = "perf: nightly tier — runs real opt-level=0 Q4K decoder inference"]
+    #[cfg(feature = "realizar-inference")]
     fn test_component_proportions() {
         // Test: Component proportions match expected transformer profile
         //
@@ -2722,6 +2706,7 @@ mod tests {
 
     #[test]
     #[ignore = "Slow: requires release mode for accurate RTF measurement"]
+    #[cfg(feature = "realizar-inference")]
     fn test_release_mode_rtf_target() {
         // Test: Release mode RTF meets performance target
         //
