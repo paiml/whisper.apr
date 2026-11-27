@@ -451,6 +451,15 @@ fn run_gpu_transcription(
     options: TranscribeOptions,
     global: &Args,
 ) -> CliResult<crate::TranscriptionResult> {
+    // whisper.apr#145: refuse before the upload, naming the memory it needs.
+    let need =
+        crate::cli::gpu_fit::gpu_upload_bytes_needed(whisper.config().parameter_count() as u64);
+    if let Some(msg) =
+        crate::cli::gpu_fit::gpu_fit_refusal(need, crate::cli::gpu_fit::available_memory_bytes())
+    {
+        return Err(CliError::InvalidArgument(msg));
+    }
+
     let mut cuda_model = whisper
         .into_cuda(0)
         .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
@@ -6056,5 +6065,73 @@ mod export_refusal_tests {
             err.contains("incompatible") && err.contains("version 1"),
             "refusal must name the version: {err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod whisper_convert_refusal_tests {
+    //! Refusal contract for #113: a Whisper safetensors input is never written as an LFM2
+    //! layout. Both `convert --family whisper` and `model convert` exit with an error that
+    //! names the converter path that works, and write no file.
+    use super::*;
+
+    fn quiet() -> Args {
+        Args {
+            command: Command::Tui,
+            verbose: false,
+            quiet: true,
+            json: false,
+            trace: None,
+            no_color: false,
+        }
+    }
+
+    /// A one-tensor safetensors file holding a Whisper encoder weight.
+    fn whisper_safetensors(dir: &std::path::Path) -> PathBuf {
+        let header =
+            br#"{"model.encoder.conv1.weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#;
+        let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
+        bytes.extend_from_slice(header);
+        bytes.extend_from_slice(&1.0f32.to_le_bytes());
+        let path = dir.join("model.safetensors");
+        std::fs::write(&path, bytes).expect("write fixture");
+        path
+    }
+
+    #[test]
+    fn model_convert_refuses_whisper_input_and_names_working_converter() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = whisper_safetensors(dir.path());
+        let output = dir.path().join("out.apr");
+        let args = ModelArgs {
+            action: ModelAction::Convert {
+                input,
+                output: output.clone(),
+            },
+        };
+        let err = run_model(args, &quiet()).expect_err("Whisper input must be refused");
+        let msg = err.to_string();
+        assert!(msg.contains("whisper-convert"), "{msg}");
+        assert!(!output.exists(), "a refused conversion writes no file");
+    }
+
+    #[test]
+    fn convert_family_whisper_refuses_whisper_input_and_names_working_converter() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = whisper_safetensors(dir.path());
+        let output = dir.path().join("out.apr");
+        let args = ConvertArgs {
+            input,
+            output: output.clone(),
+            family: ModelFamilyArg::Whisper,
+            quantize: QuantizeMethodArg::F32,
+            group_size: 32,
+            verbose: false,
+            dry_run: false,
+        };
+        let err = run_convert(args, &quiet()).expect_err("Whisper input must be refused");
+        let msg = err.to_string();
+        assert!(msg.contains("whisper-convert"), "{msg}");
+        assert!(!output.exists(), "a refused conversion writes no file");
     }
 }
