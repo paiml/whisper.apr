@@ -6070,7 +6070,6 @@ mod export_refusal_tests {
     use super::*;
     use crate::cli::args::{Args, ExportArgs, ExportFormatArg};
     use clap::Parser;
-    use std::path::PathBuf;
 
     /// #94: `export` must refuse a shipped v1 (APR1) file by version, not a magic error.
     #[test]
