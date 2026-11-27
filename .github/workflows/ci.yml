@@ -32,18 +32,37 @@ jobs:
       test_via_coverage: true
     secrets: inherit
 
+  # whisper-convert (zip 9, #129): the reusable workflow never builds the
+  # `converter` feature, so its clippy and tests run here. Required via `gate`.
+  converter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: clippy (converter)
+        run: cargo clippy --locked --features converter --bin whisper-convert
+      - name: test (converter)
+        run: cargo test --locked --features converter --bin whisper-convert
+
   # Top-level gate: satisfies org ruleset which requires check named "gate".
   # The reusable workflow produces "ci / gate" but rulesets need exact match on "gate".
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 21
-    needs: [ci]
+    needs: [ci, converter]
     if: always()
     steps:
       - name: Check required jobs
         run: |
           if [ "${{ needs.ci.result }}" != "success" ]; then
             echo "ci failed: ${{ needs.ci.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.converter.result }}" != "success" ]; then
+            echo "converter failed: ${{ needs.converter.result }}"
             exit 1
           fi
           echo "All required jobs passed"
