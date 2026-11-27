@@ -3360,6 +3360,36 @@ fn find_whisper_cpp_binary(args: &ParityArgs) -> std::path::PathBuf {
     std::path::PathBuf::from("whisper-cli")
 }
 
+/// #95: whisper.cpp argv for parity. Greedy (`-bs 1 -bo 1`), no timestamps (`-nt`), no
+/// prints (`-nf`), in the language under test, so its text is comparable word for word.
+fn whisper_cpp_greedy_args(model: &Path, input: &Path, language: &str) -> Vec<String> {
+    vec![
+        "-m".to_string(),
+        model.to_string_lossy().to_string(),
+        "-f".to_string(),
+        input.to_string_lossy().to_string(),
+        "-bs".to_string(),
+        "1".to_string(),
+        "-bo".to_string(),
+        "1".to_string(),
+        "-nf".to_string(),
+        "-nt".to_string(),
+        "-l".to_string(),
+        language.to_string(),
+        "--no-prints".to_string(),
+    ]
+}
+
+/// #95: whisper-apr decode for parity: greedy, in the same language as whisper.cpp.
+fn parity_apr_greedy_options(language: &str) -> TranscribeOptions {
+    TranscribeOptions {
+        language: Some(language.to_string()),
+        strategy: DecodingStrategy::Greedy,
+        word_timestamps: false,
+        ..TranscribeOptions::default()
+    }
+}
+
 /// Execute whisper.cpp and return its text output
 fn run_whisper_cpp(whisper_cpp_path: &Path, args: &ParityArgs) -> CliResult<String> {
     if args.verbose {
@@ -3367,17 +3397,15 @@ fn run_whisper_cpp(whisper_cpp_path: &Path, args: &ParityArgs) -> CliResult<Stri
     }
 
     let model_path = args.cpp_model.as_ref().map_or_else(
-        || format!("models/ggml-{}.bin", args.model),
-        |p| p.to_string_lossy().to_string(),
+        || std::path::PathBuf::from(format!("models/ggml-{}.bin", args.model)),
+        std::clone::Clone::clone,
     );
     let cpp_output = std::process::Command::new(whisper_cpp_path)
-        .args([
-            "-m",
-            model_path.as_str(),
-            "-f",
-            &args.input.to_string_lossy(),
-            "--no-prints",
-        ])
+        .args(whisper_cpp_greedy_args(
+            &model_path,
+            &args.input,
+            &args.language,
+        ))
         .output();
 
     match cpp_output {
@@ -3479,7 +3507,7 @@ pub fn run_parity(args: ParityArgs, global: &Args) -> CliResult<CommandResult> {
     )
     .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
 
-    let options = crate::TranscribeOptions::default();
+    let options = parity_apr_greedy_options(&args.language);
     let result = whisper.transcribe(&samples, options)?;
     let apr_text = result.text;
 
@@ -6253,5 +6281,48 @@ mod whisper_convert_refusal_tests {
         let msg = err.to_string();
         assert!(msg.contains("whisper-convert"), "{msg}");
         assert!(!output.exists(), "a refused conversion writes no file");
+    }
+}
+
+#[cfg(test)]
+mod parity_like_for_like {
+    use super::*;
+
+    /// #95: whisper.cpp must run greedy (`-bs 1 -bo 1`), without timestamps (`-nt`),
+    /// without prints (`-nf`), in the language under test.
+    #[test]
+    fn cpp_argv_is_greedy_no_timestamps_in_language() {
+        let argv = whisper_cpp_greedy_args(
+            Path::new("models/ggml-tiny.bin"),
+            Path::new("clip.wav"),
+            "en",
+        );
+        assert_eq!(
+            argv,
+            vec![
+                "-m",
+                "models/ggml-tiny.bin",
+                "-f",
+                "clip.wav",
+                "-bs",
+                "1",
+                "-bo",
+                "1",
+                "-nf",
+                "-nt",
+                "-l",
+                "en",
+                "--no-prints",
+            ]
+        );
+    }
+
+    /// #95: whisper-apr runs the matching greedy decode in the same language.
+    #[test]
+    fn apr_options_match_cpp_greedy_decode() {
+        let opts = parity_apr_greedy_options("en");
+        assert_eq!(opts.language.as_deref(), Some("en"));
+        assert!(matches!(opts.strategy, DecodingStrategy::Greedy));
+        assert!(!opts.word_timestamps);
     }
 }

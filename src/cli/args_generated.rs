@@ -751,6 +751,10 @@ pub struct ParityArgs {
     #[arg(long)]
     pub model_path: Option<PathBuf>,
 
+    /// Language code passed to both engines (#95: like-for-like greedy parity)
+    #[arg(short = 'l', long = "language", default_value = "en")]
+    pub language: String,
+
     /// Maximum allowed Word Error Rate (0.0-1.0)
     #[arg(long = "max-wer", default_value = "0.01")]
     pub max_wer: f64,
