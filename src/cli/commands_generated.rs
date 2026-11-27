@@ -6127,25 +6127,27 @@ mod whisper_convert_refusal_tests {
         }
     }
 
-    /// A one-tensor safetensors file holding a Whisper encoder weight.
+    /// A safetensors file holding a Whisper encoder weight and a decoder weight. The decoder
+    /// tensor is what makes `has_whisper_encoder` a real `any`: an encoder-only fixture would
+    /// pass an `all(...)` mutant, since every name it holds starts with `model.encoder.conv1.`.
     fn whisper_safetensors(dir: &std::path::Path) -> PathBuf {
-        let header =
-            br#"{"model.encoder.conv1.weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#;
+        let header = br#"{"model.encoder.conv1.weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4]},"model.decoder.embed_tokens.weight":{"dtype":"F32","shape":[1],"data_offsets":[4,8]}}"#;
         let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
         bytes.extend_from_slice(header);
         bytes.extend_from_slice(&1.0f32.to_le_bytes());
+        bytes.extend_from_slice(&2.0f32.to_le_bytes());
         let path = dir.join("model.safetensors");
         std::fs::write(&path, bytes).expect("write fixture");
         path
     }
 
-    /// The same Whisper tensor as a sharded directory: one shard plus `model.safetensors.index.json`.
+    /// The same Whisper tensors as a sharded directory: one shard plus `model.safetensors.index.json`.
     fn whisper_sharded_dir(dir: &std::path::Path) -> PathBuf {
         const SHARD: &str = "model-00001-of-00001.safetensors";
         let single = whisper_safetensors(dir);
         std::fs::rename(&single, dir.join(SHARD)).expect("name shard");
         let index = format!(
-            r#"{{"metadata":{{"total_size":4}},"weight_map":{{"model.encoder.conv1.weight":"{SHARD}"}}}}"#
+            r#"{{"metadata":{{"total_size":8}},"weight_map":{{"model.encoder.conv1.weight":"{SHARD}","model.decoder.embed_tokens.weight":"{SHARD}"}}}}"#
         );
         std::fs::write(dir.join("model.safetensors.index.json"), index).expect("write index");
         dir.to_path_buf()
