@@ -1702,6 +1702,14 @@ impl WhisperApr {
 
         // Phase 1: Parsing header
         callback(&tracker.to_progress());
+        // #94: a v1 (APR1) artifact is refused by version, not by a generic magic error.
+        if data.len() >= 4 && &data[..4] == b"APR1" {
+            return Err(error::WhisperError::Format(
+                "incompatible APR version 1 (APR1 magic): this build reads APR v2 (APR\\0); \
+                 re-convert the model with the current converter"
+                    .to_string(),
+            ));
+        }
         let reader = format::AprV2ReaderRef::from_bytes(data)
             .map_err(|e| error::WhisperError::Format(e.to_string()))?;
         let config = format::metadata_to_model_config(reader.metadata());
@@ -3838,6 +3846,35 @@ mod tests {
 
         let result = WhisperApr::load_from_apr(&data);
         assert!(result.is_err());
+    }
+
+    // #94: a shipped v1 (APR1) artifact must be refused by version, naming it.
+    #[test]
+    fn test_load_from_apr_refuses_v1_artifact_by_version() {
+        let mut data = b"APR1".to_vec();
+        data.extend_from_slice(&[0u8; 256]);
+
+        let err = WhisperApr::load_from_apr(&data)
+            .err()
+            .expect("v1 must be refused");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("incompatible") && msg.contains("version 1"),
+            "refusal must name the version: {msg}"
+        );
+    }
+
+    // #94 must-RED: a file whose CRC32 trailer no longer matches its body is refused.
+    #[test]
+    fn test_load_from_apr_refuses_corrupted_checksum() {
+        let mut data = format::create_test_apr();
+        let mid = data.len() / 2;
+        data[mid] ^= 0xFF; // flip a body byte, leave the stored checksum
+
+        assert!(
+            WhisperApr::load_from_apr(&data).is_err(),
+            "a corrupted-checksum file must be refused"
+        );
     }
 
     #[test]
