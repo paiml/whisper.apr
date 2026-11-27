@@ -1811,6 +1811,22 @@ roadmap:
   estimated_effort: null
   labels: []
   notes: null
+- id: PMAT-1240
+  github_issue: null
+  item_type: task
+  title: 'New task: PMAT-1240'
+  status: inprogress
+  priority: medium
+  assigned_to: null
+  created: 2026-10-30T12:35:32.078631887+00:00
+  updated: 2026-10-30T12:35:32.078631887+00:00
+  spec: null
+  acceptance_criteria: []
+  phases: []
+  subtasks: []
+  estimated_effort: null
+  labels: []
+  notes: null
 - id: PMAT-127
   github_issue: 127
   item_type: task
