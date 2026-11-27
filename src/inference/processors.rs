@@ -556,6 +556,30 @@ mod review_falsifier_tests {
     }
 
     #[test]
+    fn v3_apply_timestamp_base_is_50365_not_50364() {
+        // Custom-only suppressor (no layout defaults), timestamps on: only
+        // the timestamp block is suppressed. 50364 (v2 base) must stay
+        // finite; reverting apply() to the v2 constant fails here.
+        let v3 = SpecialTokens::multilingual_v3();
+        let s = WhisperTokenSuppressor::with_tokens(vec![]).with_vocab_size(51866);
+        let mut logits = vec![1.0f32; 51866];
+        s.apply(&mut logits);
+        assert_eq!(logits[(v3.timestamp_base - 1) as usize], 1.0); // 50364
+        assert_eq!(logits[v3.timestamp_base as usize], f32::NEG_INFINITY); // 50365
+        assert_eq!(logits[51865], f32::NEG_INFINITY);
+    }
+
+    #[test]
+    fn default_then_custom_token_in_old_default_set_survives_resize() {
+        // 50363 is no_timestamps on v2 but timestamp_base on 51864.
+        let mut base = WhisperTokenSuppressor::new();
+        base.add_suppression(50363);
+        let s = base.with_vocab_size(51864);
+        assert!(s.suppressed_tokens().contains(&50363));
+        assert_eq!(s.suppressed_tokens().len(), 107); // 106 en defaults + 50363
+    }
+
+    #[test]
     fn v3_apply_without_timestamp_suppression_keeps_timestamps_finite() {
         let v3 = SpecialTokens::multilingual_v3();
         let s = WhisperTokenSuppressor::new()
