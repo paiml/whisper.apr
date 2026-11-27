@@ -887,7 +887,7 @@ fn every_layout_satisfies_the_id_table() {
 #[should_panic(expected = "unsupported n_vocab 51000")]
 fn for_vocab_size_panics_on_unsupported_size() {
     // Falsifier for whisper.apr#108: an unknown size must fail loudly,
-    // not fall back to the v2 layout.
+    // not fall back to the English-only (51864) layout.
     let _ = special_tokens::SpecialTokens::for_vocab_size(51000);
 }
 
