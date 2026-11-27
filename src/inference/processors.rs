@@ -428,8 +428,9 @@ mod size_derived_suppression_tests {
 
     /// whisper.apr#108 falsifier: on large-v3/turbo (51866) the suppressed
     /// control ids are the v3 ids, not the v2 ids the suppressor hard-codes.
-    /// Fails on main: the v3 no-timestamps id (50364) is not in the suppressed
-    /// set, because main's default list is the v2 layout.
+    /// Uses the v3 SpecialTokens API, so it does not compile on main. On
+    /// main's v2 default list the only v3 control id left unsuppressed is
+    /// the v3 no-timestamps id (50364).
     #[test]
     fn suppressor_v3_suppresses_v3_control_ids() {
         let s = WhisperTokenSuppressor::new().with_vocab_size(51866);
