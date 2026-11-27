@@ -1702,6 +1702,8 @@ impl WhisperApr {
 
         // Phase 1: Parsing header
         callback(&tracker.to_progress());
+        // #94 + checksum: refuse v1 by version and a corrupt trailer before parsing.
+        format::precheck_apr_bytes(data)?;
         let reader = format::AprV2ReaderRef::from_bytes(data)
             .map_err(|e| error::WhisperError::Format(e.to_string()))?;
         let config = format::metadata_to_model_config(reader.metadata());
@@ -3838,6 +3840,44 @@ mod tests {
 
         let result = WhisperApr::load_from_apr(&data);
         assert!(result.is_err());
+    }
+
+    // #94: a shipped v1 (APR1) artifact must be refused by version, naming it.
+    #[test]
+    fn test_load_from_apr_refuses_v1_artifact_by_version() {
+        let mut data = b"APR1".to_vec();
+        data.extend_from_slice(&[0u8; 256]);
+
+        let err = WhisperApr::load_from_apr(&data)
+            .err()
+            .expect("v1 must be refused");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("incompatible") && msg.contains("version 1"),
+            "refusal must name the version: {msg}"
+        );
+    }
+
+    // #94 must-RED: a body byte changed under an unchanged CRC32 trailer must be
+    // refused as a checksum failure, not by an incidental structural parse error.
+    #[test]
+    fn test_load_from_apr_refuses_corrupted_checksum() {
+        let mut data = format::create_test_apr();
+        assert!(
+            format::precheck_apr_bytes(&data).is_ok(),
+            "unmodified fixture must pass"
+        );
+        let body_last = data.len() - 5; // last body byte, just before the 4-byte CRC trailer
+        data[body_last] ^= 0xFF;
+
+        let err = WhisperApr::load_from_apr(&data)
+            .err()
+            .expect("a corrupted-checksum file must be refused");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("checksum"),
+            "refusal must name a checksum failure, got: {msg}"
+        );
     }
 
     #[test]

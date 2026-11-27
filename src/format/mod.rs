@@ -123,6 +123,75 @@ pub fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
+/// Refuse an APR artifact before parsing. Shared by every `.apr` reader.
+///
+/// - A v1 (`APR1`) artifact is refused by version, naming it incompatible (#94).
+/// - A CRC32 trailer that does not match the body is refused as corruption.
+///   The reader does not verify the trailer itself, so this check must run.
+///
+/// # Errors
+/// Returns `WhisperError::Format` for a v1 artifact or a checksum mismatch.
+pub fn precheck_apr_bytes(data: &[u8]) -> crate::error::WhisperResult<()> {
+    if data.len() >= 4 && &data[..4] == b"APR1" {
+        return Err(crate::error::WhisperError::Format(
+            "incompatible APR version 1 (APR1 magic): this build reads APR v2 (APR\\0); \
+             re-convert the model with the current converter"
+                .to_string(),
+        ));
+    }
+    // Only a v2 header (`APR\0`) carries the trailer checked here. Anything else
+    // is left to the reader, which refuses it with its own magic error.
+    if data.len() >= 8 && &data[..4] == b"APR\0" {
+        let (body, trailer) = data.split_at(data.len() - 4);
+        let stored = u32::from_le_bytes([trailer[0], trailer[1], trailer[2], trailer[3]]);
+        let computed = crc32(body);
+        if stored != computed {
+            return Err(crate::error::WhisperError::Format(format!(
+                "checksum mismatch: stored {stored:#010x}, computed {computed:#010x}; file is corrupt"
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod precheck_tests {
+    use super::{create_test_apr, precheck_apr_bytes};
+
+    #[test]
+    fn valid_v2_fixture_passes() {
+        assert!(precheck_apr_bytes(&create_test_apr()).is_ok());
+    }
+
+    #[test]
+    fn v1_is_refused_naming_version() {
+        let err = precheck_apr_bytes(b"APR1\0\0\0\0\0\0\0\0")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("incompatible") && err.contains("version 1"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn corrupt_trailer_is_refused_as_checksum() {
+        let mut data = create_test_apr();
+        let last = data.len() - 5;
+        data[last] ^= 0xFF;
+        let err = precheck_apr_bytes(&data)
+            .unwrap_err()
+            .to_string()
+            .to_lowercase();
+        assert!(err.contains("checksum"), "{err}");
+    }
+
+    #[test]
+    fn non_apr_bytes_are_left_to_the_parser() {
+        assert!(precheck_apr_bytes(b"XXXXnot an apr file at all").is_ok());
+    }
+}
+
 #[cfg(test)]
 mod crc32_tests {
     use super::crc32;
