@@ -6179,6 +6179,46 @@ mod whisper_convert_refusal_tests {
     }
 
     #[test]
+    fn convert_family_refuses_sharded_whisper_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = whisper_sharded_dir(dir.path());
+        let output = dir.path().join("out.apr");
+        let args = ConvertArgs {
+            input,
+            output: output.clone(),
+            family: ModelFamilyArg::Whisper,
+            quantize: QuantizeMethodArg::F32,
+            group_size: 32,
+            verbose: false,
+            dry_run: false,
+        };
+        let err = run_convert(args, &quiet()).expect_err("sharded Whisper input must be refused");
+        let msg = err.to_string();
+        assert!(msg.contains("whisper-convert"), "{msg}");
+        assert!(!output.exists(), "a refused conversion writes no file");
+    }
+
+    #[test]
+    fn sharded_non_whisper_and_empty_directories_are_not_refused() {
+        let lfm = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            lfm.path().join("model.safetensors.index.json"),
+            r#"{"weight_map":{"model.embed_tokens.weight":"model-00001-of-00001.safetensors"}}"#,
+        )
+        .expect("write index");
+        assert!(
+            !is_whisper_safetensors(lfm.path()),
+            "a sharded non-Whisper directory keeps its own error path"
+        );
+
+        let empty = tempfile::tempdir().expect("tempdir");
+        assert!(
+            !is_whisper_safetensors(empty.path()),
+            "a directory with no index is not Whisper"
+        );
+    }
+
+    #[test]
     fn model_convert_refuses_whisper_input_and_names_working_converter() {
         let dir = tempfile::tempdir().expect("tempdir");
         let input = whisper_safetensors(dir.path());
