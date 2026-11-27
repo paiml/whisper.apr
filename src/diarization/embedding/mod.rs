@@ -271,6 +271,18 @@ impl EmbeddingExtractor {
 
     /// Extract speaker embedding from audio
     pub fn extract(&self, audio: &[f32], sample_rate: u32) -> WhisperResult<SpeakerEmbedding> {
+        // Only the MFCC model is implemented. XVector and EcapaTdnn are declared but have no
+        // implementation, so refuse them here rather than silently running MFCC (#102).
+        match self.model {
+            SpeakerEmbeddingModel::MfccSimple => {}
+            SpeakerEmbeddingModel::XVector | SpeakerEmbeddingModel::EcapaTdnn => {
+                return Err(WhisperError::Diarization(format!(
+                    "Speaker embedding model {:?} is not implemented; only MfccSimple is available (#102)",
+                    self.model
+                )));
+            }
+        }
+
         if audio.is_empty() {
             return Err(WhisperError::Diarization(
                 "Empty audio for embedding extraction".to_string(),
