@@ -123,6 +123,35 @@ pub fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
+/// Refuse an APR artifact before parsing. Shared by every `.apr` reader.
+///
+/// - A v1 (`APR1`) artifact is refused by version, naming it incompatible (#94).
+/// - A CRC32 trailer that does not match the body is refused as corruption.
+///   The reader does not verify the trailer itself, so this check must run.
+///
+/// # Errors
+/// Returns `WhisperError::Format` for a v1 artifact or a checksum mismatch.
+pub fn precheck_apr_bytes(data: &[u8]) -> crate::error::WhisperResult<()> {
+    if data.len() >= 4 && &data[..4] == b"APR1" {
+        return Err(crate::error::WhisperError::Format(
+            "incompatible APR version 1 (APR1 magic): this build reads APR v2 (APR\\0); \
+             re-convert the model with the current converter"
+                .to_string(),
+        ));
+    }
+    if data.len() >= 4 {
+        let (body, trailer) = data.split_at(data.len() - 4);
+        let stored = u32::from_le_bytes([trailer[0], trailer[1], trailer[2], trailer[3]]);
+        let computed = crc32(body);
+        if stored != computed {
+            return Err(crate::error::WhisperError::Format(format!(
+                "checksum mismatch: stored {stored:#010x}, computed {computed:#010x}; file is corrupt"
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod crc32_tests {
     use super::crc32;

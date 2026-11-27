@@ -3068,6 +3068,8 @@ pub fn run_validate(args: ValidateArgs, global: &Args) -> CliResult<CommandResul
     }
 
     let data = fs::read(&args.file)?;
+    crate::format::precheck_apr_bytes(&data)
+        .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
     let reader =
         AprV2ReaderRef::from_bytes(&data).map_err(|e| CliError::InvalidArgument(e.to_string()))?;
 
@@ -4238,6 +4240,8 @@ pub fn run_export(args: ExportArgs, global: &Args) -> CliResult<CommandResult> {
     }
 
     // Load APR model
+    crate::format::precheck_apr_bytes(&data)
+        .map_err(|e| CliError::InvalidArgument(format!("Failed to parse APR: {e}")))?;
     let reader = AprV2ReaderRef::from_bytes(&data)
         .map_err(|e| CliError::InvalidArgument(format!("Failed to parse APR: {e}")))?;
 
