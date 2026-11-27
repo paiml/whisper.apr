@@ -174,3 +174,13 @@ mod tests {
         assert_eq!(config.frame_duration_ms(), 50.0);
     }
 }
+
+/// The window the Whisper encoder is trained on: 30 s at 16 kHz.
+pub const GPU_CHUNK_MAX: usize = 480_000;
+
+/// Sample count a chunk is padded to with silence before the CUDA encoder
+/// (whisper.apr#103). A longer buffer is returned unchanged.
+#[must_use]
+pub fn gpu_chunk_len(samples: usize) -> usize {
+    samples.max(GPU_CHUNK_MAX)
+}

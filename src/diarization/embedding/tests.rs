@@ -154,6 +154,20 @@ fn test_embedding_extractor_with_model() {
 }
 
 #[test]
+fn test_unimplemented_embedding_models_return_error() {
+    // #102: XVector and EcapaTdnn have no implementation. Selecting one must fail, not run MFCC.
+    let audio: Vec<f32> = (0..16000).map(|i| (i as f32 * 0.01).sin() * 0.5).collect();
+    for model in [
+        SpeakerEmbeddingModel::XVector,
+        SpeakerEmbeddingModel::EcapaTdnn,
+    ] {
+        let extractor = EmbeddingExtractor::new(EmbeddingConfig::default()).with_model(model);
+        let result = extractor.extract(&audio, 16000);
+        assert!(result.is_err(), "{model:?} silently fell back to MFCC");
+    }
+}
+
+#[test]
 fn test_embedding_extractor_extract_empty() {
     let extractor = EmbeddingExtractor::new(EmbeddingConfig::default());
     let result = extractor.extract(&[], 16000);

@@ -9,6 +9,15 @@ use crate::{
 };
 use aprender::format::AprV2DequantExt;
 pub use error::{WhisperError, WhisperResult};
+/// Log of the sum of exponentials, computed without overflow. `-inf` when empty or all masked.
+fn log_sum_exp(xs: &[f32]) -> f32 {
+    let max = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    if !max.is_finite() {
+        return max;
+    }
+    max + xs.iter().map(|x| (x - max).exp()).sum::<f32>().ln()
+}
+
 /// Whisper model configuration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelType {
@@ -95,6 +104,10 @@ pub struct TranscribeOptions {
     /// Hotwords to boost during decoding (WAPR-170).
     /// Each string is tokenized and biased positively in the logit space.
     pub hotwords: Vec<String>,
+    /// Re-enable the legacy per-token repetition penalty (-2.0 per recent
+    /// occurrence) and the trigram block (-10 on a completed trigram).
+    /// Off by default (#107): the reference decoder applies neither.
+    pub repetition_penalty: bool,
 }
 
 /// A timestamped segment of transcription
@@ -411,6 +424,13 @@ impl WhisperApr {
     /// Maximum subtitle segment duration (seconds) for SRT output
     const MAX_SUBTITLE_SECS: f32 = 10.0;
 
+    /// A segment that ends within this of a non-last window's edge may have
+    /// been cut by the window; the next window decodes it again (#105).
+    const WINDOW_EDGE_SECS: f32 = 1.0;
+
+    /// Slack when deciding a re-decoded segment is already on the timeline.
+    const SEEK_TOLERANCE_SECS: f32 = 0.05;
+
     /// Transcribe audio samples
     ///
     /// Automatically handles long audio by chunking with 5-second overlap.
@@ -443,6 +463,12 @@ impl WhisperApr {
     /// Transcribe a single chunk of audio (≤30 seconds)
     ///
     /// Internal method for processing audio that fits in a single chunk.
+    /// Segments for one decoded window: from timestamp tokens when the decode
+    /// produced them, otherwise one cue split at sentence boundaries.
+    fn segments_from_decode(&self, tokens: &[u32], text: &str, audio_len: usize) -> Vec<Segment> {
+        Self::segments_from_tokens(tokens, text, audio_len, |ts| self.tokenizer.decode(ts).ok())
+    }
+
     fn transcribe_single_chunk(
         &self,
         audio: &[f32],
@@ -565,20 +591,7 @@ impl WhisperApr {
         let text = self.tokenizer.decode(&tokens)?;
 
         // 7. Extract segments with timestamps (fallback: sentence-split for full audio)
-        let segments = if timestamps::has_timestamps(&tokens) {
-            timestamps::extract_segments(&tokens, |ts| self.tokenizer.decode(ts).ok())
-        } else if !text.trim().is_empty() {
-            let duration = audio.len() as f32 / audio::SAMPLE_RATE as f32;
-            let single = vec![Segment {
-                start: 0.0,
-                end: duration,
-                text: text.clone(),
-                tokens: tokens.clone(),
-            }];
-            timestamps::split_long_segments(&single, Self::MAX_SUBTITLE_SECS)
-        } else {
-            Vec::new()
-        };
+        let segments = self.segments_from_decode(&tokens, &text, audio.len());
 
         // 8. Build result with profiling from BrickProfiler (sovereign tooling)
         #[cfg(feature = "std")]
@@ -862,6 +875,52 @@ impl WhisperApr {
             .collect()
     }
 
+    /// Settle one window's segments onto the absolute timeline (#105).
+    ///
+    /// Windows overlap by `OVERLAP_SAMPLES`, so the next window re-decodes
+    /// audio the previous one already emitted. Like the reference seek, the
+    /// timeline is only extended up to `decoded_until` (absolute seconds),
+    /// the end of the last closed segment:
+    ///
+    /// * segments that end at or before `decoded_until` are the same speech
+    ///   again and are dropped;
+    /// * in a window that is not the last, a segment reaching the window edge
+    ///   may be cut off, so it is dropped with everything after it and the
+    ///   seek point moves to its start, and the next window decodes it again.
+    ///   The first segment is never dropped, so the seek always moves forward.
+    ///
+    /// Returns the kept segments (absolute times) and the new seek point.
+    #[must_use]
+    pub fn seek_window_segments(
+        segments: Vec<Segment>,
+        window_secs: f32,
+        time_offset: f32,
+        is_last_window: bool,
+        decoded_until: f32,
+    ) -> (Vec<Segment>, f32) {
+        let mut kept: Vec<Segment> =
+            Self::place_window_segments(segments, window_secs, time_offset)
+                .into_iter()
+                .filter(|seg| seg.end > decoded_until + Self::SEEK_TOLERANCE_SECS)
+                .collect();
+
+        if !is_last_window {
+            let edge = time_offset + window_secs - Self::WINDOW_EDGE_SECS;
+            if let Some(cut) = kept.iter().position(|seg| seg.end > edge) {
+                if cut > 0 {
+                    let seek = decoded_until.max(kept[cut].start);
+                    kept.truncate(cut);
+                    return (kept, seek);
+                }
+            }
+        }
+
+        let seek = kept
+            .last()
+            .map_or(decoded_until, |seg| decoded_until.max(seg.end));
+        (kept, seek)
+    }
+
     fn transcribe_chunked(
         &self,
         audio: &[f32],
@@ -874,11 +933,11 @@ impl WhisperApr {
 
         let mut all_segments: Vec<Segment> = Vec::new();
         let mut all_text = String::new();
-        let mut chunk_idx = 0;
 
-        // Absolute sample index the decode has actually reached. Everything
-        // before it is on the timeline; everything after it is still owed.
-        let mut decoded_until = 0usize;
+        // Absolute time (seconds) the timeline has reached: the end of the last
+        // closed segment. Everything before it is emitted; the next window
+        // decodes from here (#105).
+        let mut decoded_until = 0.0_f32;
 
         // Process audio in chunks
         let mut offset = 0;
@@ -908,6 +967,7 @@ impl WhisperApr {
                 profile: options.profile,
                 prompt: options.prompt.clone(),
                 hotwords: options.hotwords.clone(),
+                repetition_penalty: options.repetition_penalty,
             };
 
             let chunk_result = self.transcribe_single_chunk(chunk, chunk_options)?;
@@ -915,48 +975,45 @@ impl WhisperApr {
             // Calculate time offset for this chunk
             let time_offset = offset as f32 / audio::SAMPLE_RATE as f32;
 
-            // How much of THIS window the decode actually placed on the
-            // timeline, in window-local samples. A premature `<|endoftext|>`
-            // leaves this well short of `chunk.len()`.
-            let covered = Self::covered_samples(&chunk_result.segments, chunk.len());
+            // Settle this window onto the timeline: drop the audio the earlier
+            // windows already emitted (the overlap), and hand a segment cut at
+            // the window edge to the next window.
+            let window_secs = chunk.len() as f32 / audio::SAMPLE_RATE as f32;
+            let is_last_window = chunk_end >= audio.len();
+            let text_fallback = chunk_result.segments.is_empty();
+            let (kept, seek) = Self::seek_window_segments(
+                chunk_result.segments,
+                window_secs,
+                time_offset,
+                is_last_window,
+                decoded_until,
+            );
 
-            // How much of this window the PREVIOUS window already transcribed.
-            // Derived, not assumed: it is `OVERLAP_SAMPLES` only when the
-            // previous window decoded past the step.
-            let overlap_now = decoded_until.saturating_sub(offset);
-
-            // Merge text: trim the overlap that is really there
-            let chunk_text = if chunk_idx == 0 {
-                // First chunk: use full text
+            // Text comes from the kept segments, so the text and the cues agree
+            // and nothing emitted twice.
+            let chunk_text = if text_fallback {
                 chunk_result.text.clone()
             } else {
-                let words: Vec<&str> = chunk_result.text.split_whitespace().collect();
-                let skip = Self::overlap_skip_words(words.len(), overlap_now, chunk.len());
-                words.into_iter().skip(skip).collect::<Vec<_>>().join(" ")
+                kept.iter()
+                    .map(|seg| seg.text.trim())
+                    .filter(|t| !t.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ")
             };
-
-            // Append to accumulated text
             if !chunk_text.is_empty() {
                 if !all_text.is_empty() {
                     all_text.push(' ');
                 }
                 all_text.push_str(&chunk_text);
             }
+            all_segments.extend(kept);
 
-            // Adjust segment timestamps and add to all_segments
-            let window_secs = chunk.len() as f32 / audio::SAMPLE_RATE as f32;
-            all_segments.extend(Self::place_window_segments(
-                chunk_result.segments,
-                window_secs,
-                time_offset,
-            ));
-
-            // Advance to where this window's decode actually got, never past
-            // it. A constant stride here is what dropped 8s and 14s of speech
-            // in issue #84.
-            decoded_until = decoded_until.max(offset + covered);
-            offset += Self::window_advance(chunk.len(), covered);
-            chunk_idx += 1;
+            // Advance to where the timeline now ends, never past what the
+            // decode covered. A constant stride here is what dropped 8s and
+            // 14s of speech in issue #84.
+            let covered = ((seek - time_offset).max(0.0) * audio::SAMPLE_RATE as f32) as usize;
+            decoded_until = seek;
+            offset += Self::window_advance(chunk.len(), covered.min(chunk.len()));
         }
 
         // Merge overlapping segments if any
@@ -979,6 +1036,12 @@ impl WhisperApr {
     /// Combines segments that overlap in time, preferring the segment
     /// with more text content.
     fn merge_overlapping_segments(&self, segments: Vec<Segment>) -> Vec<Segment> {
+        Self::stitch_segments(segments)
+    }
+
+    /// Stitch per-window segments onto one timeline (see `merge_overlapping_segments`).
+    #[must_use]
+    pub fn stitch_segments(segments: Vec<Segment>) -> Vec<Segment> {
         if segments.is_empty() {
             return segments;
         }
@@ -987,8 +1050,9 @@ impl WhisperApr {
         let mut current = segments[0].clone();
 
         for seg in segments.into_iter().skip(1) {
-            // Check for overlap (with 0.1s tolerance)
-            if seg.start < current.end + 0.1 {
+            // Only a real overlap is merged. Touching segments are separate cues;
+            // merging them with a tolerance produced 39 s cues (#105).
+            if seg.start < current.end {
                 // Merge: extend end time and concatenate text
                 current.end = current.end.max(seg.end);
                 if !seg.text.is_empty() {
@@ -1143,7 +1207,7 @@ impl WhisperApr {
         // Add task token
         match task {
             Task::Transcribe => tokens.push(specials.transcribe),
-            Task::Translate => tokens.push(special_tokens::TRANSLATE),
+            Task::Translate => tokens.push(specials.translate),
         }
 
         // Timestamp mode: do NOT push no_timestamps token
@@ -1180,7 +1244,10 @@ impl WhisperApr {
 
         // Whisper convention: <|startofprev|> + prompt_tokens + <|startoftranscript|> + ...
         let mut prefix = Vec::with_capacity(1 + truncated.len() + tokens.len());
-        prefix.push(tokenizer::special_tokens::PREV);
+        prefix.push(
+            tokenizer::special_tokens::SpecialTokens::for_vocab_size(self.config.n_vocab as usize)
+                .prev,
+        );
         prefix.extend_from_slice(truncated);
         prefix.append(&mut tokens);
         prefix
@@ -1229,6 +1296,29 @@ impl WhisperApr {
         detector.detect(logits_fn)
     }
 
+    /// Timestamped segments from the token stream, or the whole text split by sentence
+    /// when the decoder emitted no timestamps.
+    pub(crate) fn segments_from_tokens(
+        tokens: &[u32],
+        text: &str,
+        audio_len: usize,
+        decode: impl Fn(&[u32]) -> Option<String>,
+    ) -> Vec<Segment> {
+        if timestamps::has_timestamps(tokens) {
+            return timestamps::extract_segments(tokens, decode);
+        }
+        if text.trim().is_empty() {
+            return Vec::new();
+        }
+        let single = vec![Segment {
+            start: 0.0,
+            end: audio_len as f32 / audio::SAMPLE_RATE as f32,
+            text: text.to_string(),
+            tokens: tokens.to_vec(),
+        }];
+        timestamps::split_long_segments(&single, Self::MAX_SUBTITLE_SECS)
+    }
+
     /// Decode tokens from audio features
     ///
     /// Uses KV cache for O(n) incremental decoding instead of O(n²) full recomputation.
@@ -1238,18 +1328,42 @@ impl WhisperApr {
         initial_tokens: &[u32],
         options: &TranscribeOptions,
     ) -> WhisperResult<Vec<u32>> {
+        Self::decode_features(
+            &self.decoder,
+            &self.config,
+            self.eot_token(),
+            |word| self.tokenizer.encode(word).ok(),
+            audio_features,
+            initial_tokens,
+            options,
+        )
+    }
+
+    /// The one token-generation loop, shared by the CPU and CUDA pipelines
+    /// (whisper.apr#103: a second loop in the CUDA path returned empty text).
+    pub(crate) fn decode_features(
+        model_decoder: &model::Decoder,
+        config: &model::ModelConfig,
+        eot: u32,
+        encode_word: impl Fn(&str) -> Option<Vec<u32>>,
+        audio_features: &[f32],
+        initial_tokens: &[u32],
+        options: &TranscribeOptions,
+    ) -> WhisperResult<Vec<u32>> {
         use std::cell::RefCell;
 
-        let n_vocab = self.config.n_vocab as usize;
-        let max_tokens = self.config.n_text_ctx as usize;
+        let n_vocab = config.n_vocab as usize;
+        let max_tokens = config.n_text_ctx as usize;
 
         // Create KV cache for incremental decoding (O(n) instead of O(n²))
         // Uses decoder's create_kv_cache() which dispatches GQA vs MHA automatically
-        let cache = RefCell::new(self.decoder.create_kv_cache());
+        let cache = RefCell::new(model_decoder.create_kv_cache());
         let processed_count = RefCell::new(0usize);
 
         // Create Whisper token suppressor using realizar's LogitProcessor architecture
         // This provides composable, reusable pre-sampling transforms
+        let whisper_timestamps = eot == tokenizer::special_tokens::EOT;
+        let eot_id_ts = tokenizer::special_tokens::EOT;
         let suppressor = inference::WhisperTokenSuppressor::new()
             .with_timestamp_suppression(false)
             .with_vocab_size(n_vocab);
@@ -1258,7 +1372,7 @@ impl WhisperApr {
         let hotword_booster = if !options.hotwords.is_empty() {
             let mut booster = crate::vocabulary::HotwordBooster::new();
             for word in &options.hotwords {
-                if let Ok(tokens) = self.tokenizer.encode(word) {
+                if let Some(tokens) = encode_word(word) {
                     if !tokens.is_empty() {
                         booster.add_hotword_with_tokens_default(word, tokens);
                     }
@@ -1274,7 +1388,7 @@ impl WhisperApr {
         };
 
         // Pre-allocate decoder scratch buffers (PMAT-014 O1)
-        let scratch = std::cell::RefCell::new(self.decoder.create_decoder_scratch());
+        let scratch = std::cell::RefCell::new(model_decoder.create_decoder_scratch());
 
         let logits_fn = |tokens: &[u32]| -> WhisperResult<Vec<f32>> {
             let seq_len = tokens.len();
@@ -1284,7 +1398,7 @@ impl WhisperApr {
             let mut logits = vec![f32::NEG_INFINITY; n_vocab];
 
             for &token in tokens.iter().take(seq_len).skip(already_processed) {
-                logits = self.decoder.forward_one_with_scratch(
+                logits = model_decoder.forward_one_with_scratch(
                     token,
                     audio_features,
                     &mut cache.borrow_mut(),
@@ -1298,20 +1412,29 @@ impl WhisperApr {
             // Suppresses: SOT, language tokens, task tokens, timestamps (if disabled)
             suppressor.apply(&mut logits);
 
+            // Whisper timestamp grammar (#106); Moonshine has no timestamps.
+            if whisper_timestamps {
+                Self::apply_timestamp_rules(&mut logits, tokens, initial_tokens.len(), eot_id_ts);
+            }
+
             // Apply hotword biasing (WAPR-170) — boost domain vocabulary
             if let Some(ref booster) = hotword_booster {
                 booster.apply_bias(&mut logits, tokens);
             }
 
             // N-gram repetition suppression (prevents hallucinated loops)
-            let eot_id = self.eot_token();
-            Self::suppress_repetitions(&mut logits, tokens, eot_id, n_vocab);
+            Self::suppress_repetitions(
+                &mut logits,
+                tokens,
+                eot,
+                n_vocab,
+                options.repetition_penalty,
+            );
 
             Ok(logits)
         };
 
         // Choose decoding strategy
-        let eot = self.eot_token();
         match options.strategy {
             DecodingStrategy::Greedy => {
                 let decoder = inference::GreedyDecoder::new(max_tokens);
@@ -1338,10 +1461,86 @@ impl WhisperApr {
 
     /// Apply n-gram repetition suppression to logits
     ///
-    /// Prevents hallucinated loops by penalizing repeated tokens, blocking
-    /// trigram completions, forcing EOT on degenerate 4-gram loops, and
-    /// capping unigram frequency in recent output.
-    fn suppress_repetitions(logits: &mut [f32], tokens: &[u32], eot_id: u32, n_vocab: usize) {
+    /// The per-token penalty and trigram block run only when `legacy_penalty`
+    /// is set (#107). Forced EOT on degenerate 4-gram loops and the unigram
+    /// frequency cap always run.
+    /// Whisper `ApplyTimestampRules` (and `SuppressBlank`) on one step's logits (#106).
+    ///
+    /// `tokens` is the whole sequence and `sample_begin` the length of the
+    /// SOT prefix; the rules look only at what the decoder sampled after it.
+    /// Without them a 30 s window with trailing silence decodes to "." + EOT,
+    /// because nothing requires timestamps to pair, to stay monotonic, or to
+    /// open the window with a timestamp of at most 1.00 s.
+    pub fn apply_timestamp_rules(
+        logits: &mut [f32],
+        tokens: &[u32],
+        sample_begin: usize,
+        eot: u32,
+    ) {
+        const MAX_INITIAL_TIMESTAMP_IDX: usize = 50; // 1.00 s at 0.02 s per index
+        const SPACE_TOKEN: usize = 220;
+
+        let ts_base = tokenizer::special_tokens::TIMESTAMP_BASE as usize;
+        let eot = eot as usize;
+        let n = logits.len();
+        if ts_base >= n || eot >= ts_base {
+            return;
+        }
+        let seq = tokens.get(sample_begin..).unwrap_or(&[]);
+        let is_ts = |t: u32| t as usize >= ts_base;
+        let last_is_ts = seq.last().is_some_and(|&t| is_ts(t));
+        let penult_is_ts = seq.len() < 2 || is_ts(seq[seq.len() - 2]);
+
+        // Timestamps come in pairs: a lone one is followed by a timestamp or
+        // EOT, a pair by text.
+        if last_is_ts {
+            if penult_is_ts {
+                logits[ts_base..].fill(f32::NEG_INFINITY);
+            } else {
+                logits[..eot].fill(f32::NEG_INFINITY);
+            }
+        }
+
+        // First step: a timestamp no later than 1.00 s, and no blank or EOT.
+        if seq.is_empty() {
+            logits[..ts_base].fill(f32::NEG_INFINITY);
+            logits[ts_base + MAX_INITIAL_TIMESTAMP_IDX + 1..].fill(f32::NEG_INFINITY);
+            logits[eot] = f32::NEG_INFINITY;
+            if SPACE_TOKEN < n {
+                logits[SPACE_TOKEN] = f32::NEG_INFINITY;
+            }
+        }
+
+        // When the timestamps together beat the best text token, the step is a
+        // timestamp.
+        let ts_mass = log_sum_exp(&logits[ts_base..]);
+        let best_text = logits[..eot]
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+        if ts_mass > best_text {
+            logits[..ts_base].fill(f32::NEG_INFINITY);
+        }
+
+        // Timestamps never go backwards.
+        if let Some(last_ts) = seq.iter().rev().copied().find(|&t| is_ts(t)) {
+            let last_ts = last_ts as usize;
+            let lower = if last_is_ts && !penult_is_ts {
+                last_ts
+            } else {
+                last_ts + 1
+            };
+            logits[ts_base..lower.min(n)].fill(f32::NEG_INFINITY);
+        }
+    }
+
+    fn suppress_repetitions(
+        logits: &mut [f32],
+        tokens: &[u32],
+        eot_id: u32,
+        n_vocab: usize,
+        legacy_penalty: bool,
+    ) {
         // Filter to only text tokens (exclude special tokens)
         // Whisper BPE: text tokens are < EOT (50257); specials are >= EOT
         // SentencePiece (Moonshine): text tokens are > EOS (2); specials are 0=unk,1=BOS,2=EOS
@@ -1351,21 +1550,23 @@ impl WhisperApr {
             tokens.iter().copied().filter(|&t| t < eot_id).collect()
         };
 
-        // Token-level penalty: penalize recently-seen tokens
-        let window_start = text_tokens.len().saturating_sub(50);
-        for &prev_tok in &text_tokens[window_start..] {
-            if (prev_tok as usize) < n_vocab {
-                logits[prev_tok as usize] -= 2.0;
+        if legacy_penalty {
+            // Token-level penalty: penalize recently-seen tokens
+            let window_start = text_tokens.len().saturating_sub(50);
+            for &prev_tok in &text_tokens[window_start..] {
+                if (prev_tok as usize) < n_vocab {
+                    logits[prev_tok as usize] -= 2.0;
+                }
             }
-        }
 
-        // Trigram blocking: if (prev2, prev1, X) already appeared, suppress X
-        if text_tokens.len() >= 3 {
-            let prev2 = text_tokens[text_tokens.len() - 2];
-            let prev1 = text_tokens[text_tokens.len() - 1];
-            for w in text_tokens[..text_tokens.len() - 2].windows(3) {
-                if w[0] == prev2 && w[1] == prev1 && (w[2] as usize) < n_vocab {
-                    logits[w[2] as usize] -= 10.0;
+            // Trigram blocking: if (prev2, prev1, X) already appeared, suppress X
+            if text_tokens.len() >= 3 {
+                let prev2 = text_tokens[text_tokens.len() - 2];
+                let prev1 = text_tokens[text_tokens.len() - 1];
+                for w in text_tokens[..text_tokens.len() - 2].windows(3) {
+                    if w[0] == prev2 && w[1] == prev1 && (w[2] as usize) < n_vocab {
+                        logits[w[2] as usize] -= 10.0;
+                    }
                 }
             }
         }
@@ -1520,6 +1721,8 @@ impl WhisperApr {
 
         // Phase 1: Parsing header
         callback(&tracker.to_progress());
+        // #94 + checksum: refuse v1 by version and a corrupt trailer before parsing.
+        format::precheck_apr_bytes(data)?;
         let reader = format::AprV2ReaderRef::from_bytes(data)
             .map_err(|e| error::WhisperError::Format(e.to_string()))?;
         let config = format::metadata_to_model_config(reader.metadata());
@@ -3658,6 +3861,44 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // #94: a shipped v1 (APR1) artifact must be refused by version, naming it.
+    #[test]
+    fn test_load_from_apr_refuses_v1_artifact_by_version() {
+        let mut data = b"APR1".to_vec();
+        data.extend_from_slice(&[0u8; 256]);
+
+        let err = WhisperApr::load_from_apr(&data)
+            .err()
+            .expect("v1 must be refused");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("incompatible") && msg.contains("version 1"),
+            "refusal must name the version: {msg}"
+        );
+    }
+
+    // #94 must-RED: a body byte changed under an unchanged CRC32 trailer must be
+    // refused as a checksum failure, not by an incidental structural parse error.
+    #[test]
+    fn test_load_from_apr_refuses_corrupted_checksum() {
+        let mut data = format::create_test_apr();
+        assert!(
+            format::precheck_apr_bytes(&data).is_ok(),
+            "unmodified fixture must pass"
+        );
+        let body_last = data.len() - 5; // last body byte, just before the 4-byte CRC trailer
+        data[body_last] ^= 0xFF;
+
+        let err = WhisperApr::load_from_apr(&data)
+            .err()
+            .expect("a corrupted-checksum file must be refused");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("checksum"),
+            "refusal must name a checksum failure, got: {msg}"
+        );
+    }
+
     #[test]
     #[ignore = "Allocates large model - run with --ignored"]
     fn test_encoder_mut_accessor() {
@@ -5065,6 +5306,7 @@ mod tests {
             profile: false,
             prompt: Some("domain-specific prompt".into()),
             hotwords: vec!["hotword1".into(), "hotword2".into()],
+            repetition_penalty: true,
         };
 
         assert_eq!(options.language, Some("fr".to_string()));
@@ -6041,6 +6283,100 @@ mod tests {
         assert_eq!(merged[1].start, 20.0);
     }
 
+    fn seg(start: f32, end: f32, text: &str) -> Segment {
+        Segment {
+            start,
+            end,
+            text: text.to_string(),
+            tokens: vec![],
+        }
+    }
+
+    /// #105 — the 5 s window overlap must not put the same phrase on the
+    /// timeline twice.
+    #[test]
+    fn window_seek_never_emits_the_overlap_twice() {
+        // Window 0 (0..30 s): "third" is cut at the window edge, so it is
+        // left for the next window to decode.
+        let w0 = vec![
+            seg(0.0, 14.0, "first"),
+            seg(14.0, 28.4, "second"),
+            seg(28.4, 30.0, "third"),
+        ];
+        let (kept0, until0) = WhisperApr::seek_window_segments(w0, 30.0, 0.0, false, 0.0);
+        let texts0: Vec<&str> = kept0.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(texts0, ["first", "second"]);
+        assert!((until0 - 28.4).abs() < 1e-3, "seek point {until0}");
+
+        // Window 1 starts at 25 s. Its local 0.9..3.4 is the same speech as
+        // "second" (25.9..28.4 abs) and must not be emitted again.
+        let w1 = vec![seg(0.9, 3.4, "second"), seg(3.4, 6.0, "third")];
+        let (kept1, _) = WhisperApr::seek_window_segments(w1, 30.0, 25.0, false, until0);
+        let texts1: Vec<&str> = kept1.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(texts1, ["third"]);
+    }
+
+    /// #105 — touching segments are two cues, not one 39 s blob.
+    #[test]
+    fn stitch_keeps_touching_segments_as_separate_cues() {
+        let out =
+            WhisperApr::stitch_segments(vec![seg(0.0, 5.0, "Hello"), seg(5.05, 10.0, "World")]);
+        assert_eq!(out.len(), 2, "touching cues were concatenated: {out:?}");
+        assert_eq!(out[0].text, "Hello");
+        assert_eq!(out[1].text, "World");
+    }
+
+    fn argmax(xs: &[f32]) -> usize {
+        let mut best = 0;
+        for (i, &x) in xs.iter().enumerate() {
+            if x > xs[best] {
+                best = i;
+            }
+        }
+        best
+    }
+
+    /// #106 — the first decoded step may only be a timestamp <= 1.0 s, never
+    /// text or EOT (a full window decoded to "." + EOT before this rule).
+    #[test]
+    fn first_step_is_a_timestamp_not_text_or_eot() {
+        let eot = tokenizer::special_tokens::EOT;
+        let ts = tokenizer::special_tokens::TIMESTAMP_BASE;
+        let mut logits = vec![0.0_f32; 51866];
+        logits[13] = 10.0; // "."
+        logits[eot as usize] = 9.0;
+        logits[(ts + 20) as usize] = 1.0;
+        let sot = [tokenizer::special_tokens::SOT, 50259, 50359, 50363];
+        WhisperApr::apply_timestamp_rules(&mut logits, &sot, sot.len(), eot);
+        let pick = argmax(&logits);
+        assert!(
+            (ts as usize..=ts as usize + 50).contains(&pick),
+            "first step picked token {pick}, want a timestamp <= 1.0 s"
+        );
+    }
+
+    /// #106 — after a lone timestamp the next token is a timestamp or EOT,
+    /// and a later timestamp may not go backwards.
+    #[test]
+    fn timestamps_pair_and_never_decrease() {
+        let eot = tokenizer::special_tokens::EOT;
+        let ts = tokenizer::special_tokens::TIMESTAMP_BASE;
+        let sot = [tokenizer::special_tokens::SOT, 50259, 50359, 50363];
+        let mut tokens = sot.to_vec();
+        tokens.extend_from_slice(&[ts + 100, 1000, ts + 200]); // lone ts after text
+        let mut logits = vec![0.0_f32; 51866];
+        logits[1000] = 10.0; // text where a timestamp is required
+        logits[(ts + 150) as usize] = 9.0; // earlier than the last timestamp
+        logits[(ts + 201) as usize] = 1.0;
+        logits[eot as usize] = 0.5;
+        WhisperApr::apply_timestamp_rules(&mut logits, &tokens, sot.len(), eot);
+        let pick = argmax(&logits);
+        assert!(
+            pick == eot as usize || pick == (ts + 201) as usize,
+            "picked {pick}; want EOT or a timestamp >= 4.00 s"
+        );
+    }
+
     #[test]
     fn test_chunk_boundary_calculation() {
         // Verify chunk boundaries are calculated correctly
@@ -6391,5 +6727,47 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].len(), 7 * d_model);
         assert_eq!(results[1].len(), 5 * d_model);
+    }
+}
+
+/// #107: the legacy repetition penalty and trigram block are off by default.
+#[cfg(test)]
+mod repetition_default_107 {
+    use super::*;
+
+    const EOT: u32 = 50257;
+    const N_VOCAB: usize = 50300;
+
+    /// Tokens 11,12,13 then the pair 11,12 again: a trigram completion of 13 is
+    /// already on record, and tokens 11 and 12 recur in the recent window.
+    const REPEATED: [u32; 5] = [11, 12, 13, 11, 12];
+
+    #[test]
+    fn test_107_repetition_penalty_is_off_in_default_options() {
+        assert!(!TranscribeOptions::default().repetition_penalty);
+    }
+
+    #[test]
+    fn test_107_default_decode_applies_no_repetition_penalty() {
+        let mut logits = vec![0.0_f32; N_VOCAB];
+        WhisperApr::suppress_repetitions(&mut logits, &REPEATED, EOT, N_VOCAB, false);
+        assert_eq!(logits[11], 0.0, "cumulative penalty applied by default");
+        assert_eq!(logits[12], 0.0, "cumulative penalty applied by default");
+    }
+
+    #[test]
+    fn test_107_default_decode_applies_no_trigram_block() {
+        let mut logits = vec![0.0_f32; N_VOCAB];
+        WhisperApr::suppress_repetitions(&mut logits, &REPEATED, EOT, N_VOCAB, false);
+        assert_eq!(logits[13], 0.0, "trigram block applied by default");
+    }
+
+    #[test]
+    fn test_107_flag_enables_penalty_and_trigram_block() {
+        let mut logits = vec![0.0_f32; N_VOCAB];
+        WhisperApr::suppress_repetitions(&mut logits, &REPEATED, EOT, N_VOCAB, true);
+        assert_eq!(logits[11], -4.0);
+        assert_eq!(logits[12], -4.0);
+        assert_eq!(logits[13], -12.0, "-2 penalty plus -10 trigram block");
     }
 }

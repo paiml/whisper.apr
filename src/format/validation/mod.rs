@@ -20,7 +20,7 @@ pub use stats::TensorStats;
 pub use validator::AprValidator;
 
 use crate::error::{WhisperError, WhisperResult};
-use crate::format::{metadata_to_model_config, AprV2ReaderRef};
+use crate::format::{metadata_to_model_config, precheck_apr_bytes, AprV2ReaderRef};
 use aprender::format::AprV2DequantExt;
 
 /// Validate an APR file from bytes
@@ -28,6 +28,7 @@ use aprender::format::AprV2DequantExt;
 /// # Errors
 /// Returns error if file cannot be parsed
 pub fn validate_apr_bytes(data: &[u8]) -> WhisperResult<ValidationReport> {
+    precheck_apr_bytes(data)?;
     let reader =
         AprV2ReaderRef::from_bytes(data).map_err(|e| WhisperError::Format(e.to_string()))?;
     let config = metadata_to_model_config(reader.metadata());

@@ -191,8 +191,10 @@ fn resolve_gpu_backend(requested: bool, global: &Args) -> CliResult<bool> {
                 }
                 return Ok(true);
             }
-            eprintln!("[WARN] GPU requested but CUDA not available, falling back to CPU");
-            return Ok(false);
+            // whisper.apr#103: an explicit --gpu never runs on the CPU instead.
+            return Err(CliError::InvalidArgument(
+                "GPU requested but no CUDA device is available".to_string(),
+            ));
         }
         if global.verbose {
             eprintln!("[INFO] Using CPU backend (default)");
@@ -265,6 +267,7 @@ fn build_transcribe_options(args: &TranscribeArgs, _verbose: bool) -> Transcribe
             .filter(|h| !h.is_empty())
             .cloned()
             .collect(),
+        repetition_penalty: args.repetition_penalty,
         ..Default::default()
     }
 }
@@ -448,6 +451,19 @@ fn run_gpu_transcription(
     options: TranscribeOptions,
     global: &Args,
 ) -> CliResult<crate::TranscriptionResult> {
+    // whisper.apr#145: on a shared-memory (Jetson) device, refuse before the upload,
+    // naming the memory it needs. Discrete GPUs keep weights in VRAM: no host check.
+    if crate::cli::gpu_fit::is_shared_memory_device() {
+        let need =
+            crate::cli::gpu_fit::gpu_upload_bytes_needed(whisper.config().parameter_count() as u64);
+        if let Some(msg) = crate::cli::gpu_fit::gpu_fit_refusal(
+            need,
+            crate::cli::gpu_fit::available_memory_bytes(),
+        ) {
+            return Err(CliError::InvalidArgument(msg));
+        }
+    }
+
     let mut cuda_model = whisper
         .into_cuda(0)
         .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
@@ -477,7 +493,7 @@ fn run_gpu_transcription(
     }
 
     // WAPR-PERF-004: Use GPU-accelerated transcription path
-    // This uses gemv_cached for output projection (the decoder bottleneck)
+    // The encoder runs on the GPU; token generation is shared with the CPU path.
     cuda_model
         .transcribe_gpu(samples, options)
         .map_err(|e| CliError::InvalidArgument(e.to_string()))
@@ -1319,6 +1335,7 @@ fn build_batch_transcribe_args(input_path: &Path, args: &BatchArgs) -> Transcrib
         split_on_word: false,
         word_thold: 0.01,
         word_timestamps: false,
+        repetition_penalty: false,
         timestamps: false,
         no_timestamps: false,
         entropy_thold: 2.40,
@@ -2638,6 +2655,37 @@ fn run_model_download(
     )))
 }
 
+/// Refusal text for a Whisper safetensors input (#113). Both conversion commands write an LFM2
+/// layout for it, which `whisper-apr validate` rejects; the converter that works is named here.
+const WHISPER_CONVERTER_REFUSAL: &str = "Whisper safetensors are not converted by this command: it writes an LFM2 layout that `whisper-apr validate` rejects. Use the converter that works, from a source checkout: `cargo run --release --bin whisper-convert --features converter -- <size> -o <out.apr>`";
+
+/// True when `path` is a safetensors file or sharded directory holding Whisper tensors.
+/// Any other input, or one that does not parse, is not Whisper here and keeps its own error path.
+/// A directory is read through `ShardedSafeTensorsLoader`: `SafeTensorsLoader::load` errors on
+/// every directory, so a sharded Whisper model would otherwise pass the refusal (#113).
+fn is_whisper_safetensors(path: &Path) -> bool {
+    fn has_whisper_encoder(names: &[String]) -> bool {
+        names.iter().any(|n| n.starts_with("model.encoder.conv1."))
+    }
+    if path.is_dir() {
+        return crate::format::safetensors_loader::ShardedSafeTensorsLoader::load(path)
+            .is_ok_and(|loader| has_whisper_encoder(loader.tensor_names()));
+    }
+    path.extension().and_then(|e| e.to_str()) == Some("safetensors")
+        && crate::format::SafeTensorsLoader::load(path)
+            .is_ok_and(|loader| has_whisper_encoder(loader.tensor_names()))
+}
+
+/// Refuse a Whisper safetensors input before any output is written (#113).
+fn refuse_whisper_input(input: &Path) -> CliResult<()> {
+    if is_whisper_safetensors(input) {
+        return Err(CliError::InvalidArgument(
+            WHISPER_CONVERTER_REFUSAL.to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Convert safetensors to APR2 format
 fn run_model_convert(input: &Path, output: &Path, global: &Args) -> CliResult<CommandResult> {
     if !global.quiet {
@@ -2647,6 +2695,9 @@ fn run_model_convert(input: &Path, output: &Path, global: &Args) -> CliResult<Co
     if !input.exists() {
         return Err(CliError::FileNotFound(input.display().to_string()));
     }
+
+    // Refuse Whisper before the extension gate: a sharded directory has no .safetensors name.
+    refuse_whisper_input(input)?;
 
     let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext != "safetensors" {
@@ -3066,6 +3117,8 @@ pub fn run_validate(args: ValidateArgs, global: &Args) -> CliResult<CommandResul
     }
 
     let data = fs::read(&args.file)?;
+    crate::format::precheck_apr_bytes(&data)
+        .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
     let reader =
         AprV2ReaderRef::from_bytes(&data).map_err(|e| CliError::InvalidArgument(e.to_string()))?;
 
@@ -4027,6 +4080,8 @@ pub fn run_convert(args: ConvertArgs, global: &Args) -> CliResult<CommandResult>
         println!("Quantization: {}", args.quantize);
     }
 
+    refuse_whisper_input(&args.input)?;
+
     // Dry run mode
     if args.dry_run {
         if !global.quiet {
@@ -4213,6 +4268,9 @@ pub fn run_export(args: ExportArgs, global: &Args) -> CliResult<CommandResult> {
     let data = std::fs::read(&args.input)
         .map_err(|e| CliError::Io(io::Error::new(e.kind(), format!("Failed to read APR: {e}"))))?;
 
+    // #94: refuse v1 by version and a corrupt trailer before the magic guard.
+    crate::format::precheck_apr_bytes(&data)
+        .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
     if data.get(0..4) != Some(b"APR\0".as_slice()) {
         return Err(CliError::InvalidArgument(
             "Invalid APR file: missing APR\\0 magic bytes".to_string(),
@@ -4318,6 +4376,7 @@ mod tests {
             split_on_word: false,
             word_thold: 0.01,
             word_timestamps: false,
+            repetition_penalty: false,
             timestamps: false,
             no_timestamps: false,
             entropy_thold: 2.40,
@@ -6011,5 +6070,188 @@ pub(crate) fn warn_ignored_global(global: &Args, cmd: &str) {
             "[WARN] Global flags are currently ignored by the '{}' command",
             cmd
         );
+    }
+}
+
+#[cfg(test)]
+mod export_refusal_tests {
+    use super::*;
+    use crate::cli::args::{Args, ExportArgs, ExportFormatArg};
+    use clap::Parser;
+
+    /// #94: `export` must refuse a shipped v1 (APR1) file by version, not a magic error.
+    #[test]
+    fn export_refuses_v1_by_version() {
+        let dir = std::env::temp_dir().join(format!("apr1-export-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let input = dir.join("v1.apr");
+        std::fs::write(&input, b"APR1\0\0\0\0\0\0\0\0\0\0\0\0").expect("write v1 fixture");
+
+        let args = ExportArgs {
+            input,
+            output: dir.join("out.bin"),
+            format: ExportFormatArg::Safetensors,
+            with_metadata: false,
+            verbose: false,
+        };
+        let global = Args::try_parse_from(["whisper-apr", "transcribe", "--file", "x.wav"])
+            .expect("parse global args");
+        let err = run_export(args, &global)
+            .err()
+            .expect("v1 must be refused")
+            .to_string();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            err.contains("incompatible") && err.contains("version 1"),
+            "refusal must name the version: {err}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod whisper_convert_refusal_tests {
+    //! Refusal contract for #113: a Whisper safetensors input is never written as an LFM2
+    //! layout. Both `convert --family whisper` and `model convert` exit with an error that
+    //! names the converter path that works, and write no file.
+    use super::*;
+    use std::path::PathBuf;
+
+    fn quiet() -> Args {
+        Args {
+            command: Command::Tui,
+            verbose: false,
+            quiet: true,
+            json: false,
+            trace: None,
+            no_color: false,
+        }
+    }
+
+    /// A one-tensor safetensors file holding a Whisper encoder weight.
+    fn whisper_safetensors(dir: &std::path::Path) -> PathBuf {
+        let header =
+            br#"{"model.encoder.conv1.weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#;
+        let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
+        bytes.extend_from_slice(header);
+        bytes.extend_from_slice(&1.0f32.to_le_bytes());
+        let path = dir.join("model.safetensors");
+        std::fs::write(&path, bytes).expect("write fixture");
+        path
+    }
+
+    /// The same Whisper tensor as a sharded directory: one shard plus `model.safetensors.index.json`.
+    fn whisper_sharded_dir(dir: &std::path::Path) -> PathBuf {
+        const SHARD: &str = "model-00001-of-00001.safetensors";
+        let single = whisper_safetensors(dir);
+        std::fs::rename(&single, dir.join(SHARD)).expect("name shard");
+        let index = format!(
+            r#"{{"metadata":{{"total_size":4}},"weight_map":{{"model.encoder.conv1.weight":"{SHARD}"}}}}"#
+        );
+        std::fs::write(dir.join("model.safetensors.index.json"), index).expect("write index");
+        dir.to_path_buf()
+    }
+
+    #[test]
+    fn is_whisper_safetensors_detects_sharded_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = whisper_sharded_dir(dir.path());
+        assert!(
+            is_whisper_safetensors(&input),
+            "sharded Whisper dir must be detected"
+        );
+    }
+
+    #[test]
+    fn model_convert_refuses_sharded_whisper_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = whisper_sharded_dir(dir.path());
+        let output = dir.path().join("out.apr");
+        let args = ModelArgs {
+            action: ModelAction::Convert {
+                input,
+                output: output.clone(),
+            },
+        };
+        let err = run_model(args, &quiet()).expect_err("sharded Whisper input must be refused");
+        let msg = err.to_string();
+        assert!(msg.contains("whisper-convert"), "{msg}");
+        assert!(!output.exists(), "a refused conversion writes no file");
+    }
+
+    #[test]
+    fn convert_family_refuses_sharded_whisper_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = whisper_sharded_dir(dir.path());
+        let output = dir.path().join("out.apr");
+        let args = ConvertArgs {
+            input,
+            output: output.clone(),
+            family: ModelFamilyArg::Whisper,
+            quantize: QuantizeMethodArg::F32,
+            group_size: 32,
+            verbose: false,
+            dry_run: false,
+        };
+        let err = run_convert(args, &quiet()).expect_err("sharded Whisper input must be refused");
+        let msg = err.to_string();
+        assert!(msg.contains("whisper-convert"), "{msg}");
+        assert!(!output.exists(), "a refused conversion writes no file");
+    }
+
+    #[test]
+    fn sharded_non_whisper_and_empty_directories_are_not_refused() {
+        let lfm = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            lfm.path().join("model.safetensors.index.json"),
+            r#"{"weight_map":{"model.embed_tokens.weight":"model-00001-of-00001.safetensors"}}"#,
+        )
+        .expect("write index");
+        assert!(
+            !is_whisper_safetensors(lfm.path()),
+            "a sharded non-Whisper directory keeps its own error path"
+        );
+
+        let empty = tempfile::tempdir().expect("tempdir");
+        assert!(
+            !is_whisper_safetensors(empty.path()),
+            "a directory with no index is not Whisper"
+        );
+    }
+
+    #[test]
+    fn model_convert_refuses_whisper_input_and_names_working_converter() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = whisper_safetensors(dir.path());
+        let output = dir.path().join("out.apr");
+        let args = ModelArgs {
+            action: ModelAction::Convert {
+                input,
+                output: output.clone(),
+            },
+        };
+        let err = run_model(args, &quiet()).expect_err("Whisper input must be refused");
+        let msg = err.to_string();
+        assert!(msg.contains("whisper-convert"), "{msg}");
+        assert!(!output.exists(), "a refused conversion writes no file");
+    }
+
+    #[test]
+    fn convert_family_whisper_refuses_whisper_input_and_names_working_converter() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = whisper_safetensors(dir.path());
+        let output = dir.path().join("out.apr");
+        let args = ConvertArgs {
+            input,
+            output: output.clone(),
+            family: ModelFamilyArg::Whisper,
+            quantize: QuantizeMethodArg::F32,
+            group_size: 32,
+            verbose: false,
+            dry_run: false,
+        };
+        let err = run_convert(args, &quiet()).expect_err("Whisper input must be refused");
+        let msg = err.to_string();
+        assert!(msg.contains("whisper-convert"), "{msg}");
+        assert!(!output.exists(), "a refused conversion writes no file");
     }
 }

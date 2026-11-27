@@ -11,6 +11,7 @@ no-default-features = false
 ignore = [
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error: unmaintained, transitive via derive macros" },
     { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2: unmaintained, transitive fork of proc-macro-error" },
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml: unmaintained (not a vulnerability), dev-only via jugar-probar 1.0.4 (latest) -> serde_yaml_ng; whisper.apr#127" },
     # Unmaintained transitive deps with no available fix.
     # Reviewed 2026-03-26 — all are deep transitive, no direct usage.
     { id = "RUSTSEC-2024-0384", reason = "instant: transitive via web-time, no replacement available" },

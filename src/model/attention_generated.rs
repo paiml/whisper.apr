@@ -29,7 +29,9 @@
 //! - [FlashAttn2] Dao (2023): "FlashAttention-2: Faster Attention with Better Parallelism"
 
 use crate::error::{WhisperError, WhisperResult};
-use crate::parallel::{parallel_map, parallel_try_map};
+#[cfg(feature = "realizar-inference")]
+use crate::parallel::parallel_map;
+use crate::parallel::parallel_try_map;
 use crate::simd;
 use trueno::Matrix;
 
@@ -141,6 +143,22 @@ impl LinearWeights {
             weight_i4: None,
             weight_i4_scales: None,
             weight_prepacked_b: None,
+        }
+    }
+
+    /// Dense f32 view of the weight matrix, whichever way it is stored.
+    ///
+    /// The fp16 path frees `weight`, so GPU uploads must read through this
+    /// (whisper.apr#103).
+    #[must_use]
+    pub fn dense_weight(&self) -> std::borrow::Cow<'_, [f32]> {
+        match self.weight_f16 {
+            Some(ref half) if self.weight.is_empty() => {
+                let mut full = vec![0.0_f32; half.len()];
+                simd::dequant_f16_row(half, &mut full);
+                std::borrow::Cow::Owned(full)
+            }
+            _ => std::borrow::Cow::Borrowed(&self.weight),
         }
     }
 
@@ -542,6 +560,21 @@ impl LinearWeights {
         Ok(output)
     }
 
+    /// Apply a single-token matrix-vector kernel to each of `total_tokens` rows.
+    fn for_each_token(
+        &self,
+        input: &[f32],
+        output: &mut [f32],
+        total_tokens: usize,
+        matvec: impl Fn(&[f32], &mut [f32]),
+    ) {
+        for t in 0..total_tokens {
+            let tok_in = &input[t * self.in_features..(t + 1) * self.in_features];
+            let tok_out = &mut output[t * self.out_features..(t + 1) * self.out_features];
+            matvec(tok_in, tok_out);
+        }
+    }
+
     /// Forward pass into a pre-allocated output buffer (PMAT-014 O1).
     ///
     /// For single-token decoder inference this avoids per-token allocation.
@@ -562,9 +595,7 @@ impl LinearWeights {
         // INT4 weight path (GPTQ/AWQ)
         if let (Some(ref w_i4), Some(ref scales)) = (&self.weight_i4, &self.weight_i4_scales) {
             let group_size = 128;
-            for t in 0..total_tokens {
-                let tok_in = &input[t * self.in_features..(t + 1) * self.in_features];
-                let tok_out = &mut output[t * self.out_features..(t + 1) * self.out_features];
+            self.for_each_token(input, output, total_tokens, |tok_in, tok_out| {
                 simd::tiled_matvec_i4_into(
                     w_i4,
                     scales,
@@ -574,16 +605,14 @@ impl LinearWeights {
                     self.in_features,
                     group_size,
                 );
-            }
+            });
             simd::broadcast_add_inplace(output, &self.bias, total_tokens, self.out_features);
             return Ok(());
         }
 
         // INT8 weight path (pv:int8-symmetric-quant-v1) — highest priority, lowest bandwidth
         if let (Some(ref w_i8), Some(ref scales)) = (&self.weight_i8, &self.weight_i8_scales) {
-            for t in 0..total_tokens {
-                let tok_in = &input[t * self.in_features..(t + 1) * self.in_features];
-                let tok_out = &mut output[t * self.out_features..(t + 1) * self.out_features];
+            self.for_each_token(input, output, total_tokens, |tok_in, tok_out| {
                 simd::tiled_matvec_i8_into(
                     w_i8,
                     scales,
@@ -592,7 +621,7 @@ impl LinearWeights {
                     self.out_features,
                     self.in_features,
                 );
-            }
+            });
             simd::broadcast_add_inplace(output, &self.bias, total_tokens, self.out_features);
             return Ok(());
         }
@@ -601,9 +630,7 @@ impl LinearWeights {
         if let Some(ref w_f16) = self.weight_f16 {
             const FP16_MATVEC_BATCH_LIMIT: usize = 8;
             if total_tokens <= FP16_MATVEC_BATCH_LIMIT {
-                for t in 0..total_tokens {
-                    let tok_in = &input[t * self.in_features..(t + 1) * self.in_features];
-                    let tok_out = &mut output[t * self.out_features..(t + 1) * self.out_features];
+                self.for_each_token(input, output, total_tokens, |tok_in, tok_out| {
                     simd::tiled_matvec_f16_into(
                         w_f16,
                         tok_in,
@@ -611,7 +638,7 @@ impl LinearWeights {
                         self.out_features,
                         self.in_features,
                     );
-                }
+                });
             } else if let Some(ref prepacked) = self.weight_prepacked_b {
                 let tmp = simd::matmul_with_prepacked(
                     input,
@@ -1193,14 +1220,7 @@ impl MultiHeadAttention {
         }
 
         // Apply mask if provided
-        if let Some(m) = mask {
-            if m.len() != seq_len * kv_len {
-                return Err(WhisperError::Model("mask size mismatch".into()));
-            }
-            for i in 0..scores.len() {
-                scores[i] += m[i];
-            }
-        }
+        Self::add_mask(&mut scores, mask)?;
 
         // Softmax over key dimension
         Self::apply_row_softmax(&mut scores, seq_len, kv_len);
@@ -1219,6 +1239,18 @@ impl MultiHeadAttention {
         }
 
         Ok(output)
+    }
+
+    /// Add an optional additive attention mask to the scores in place.
+    fn add_mask(scores: &mut [f32], mask: Option<&[f32]>) -> WhisperResult<()> {
+        let Some(m) = mask else { return Ok(()) };
+        if m.len() != scores.len() {
+            return Err(WhisperError::Model("mask size mismatch".into()));
+        }
+        for (score, add) in scores.iter_mut().zip(m) {
+            *score += add;
+        }
+        Ok(())
     }
 
     /// Apply row-wise softmax in-place over a (seq_len x kv_len) score matrix.
