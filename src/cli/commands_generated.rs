@@ -4217,6 +4217,9 @@ pub fn run_export(args: ExportArgs, global: &Args) -> CliResult<CommandResult> {
     let data = std::fs::read(&args.input)
         .map_err(|e| CliError::Io(io::Error::new(e.kind(), format!("Failed to read APR: {e}"))))?;
 
+    // #94: refuse v1 by version and a corrupt trailer before the magic guard.
+    crate::format::precheck_apr_bytes(&data)
+        .map_err(|e| CliError::InvalidArgument(e.to_string()))?;
     if data.get(0..4) != Some(b"APR\0".as_slice()) {
         return Err(CliError::InvalidArgument(
             "Invalid APR file: missing APR\\0 magic bytes".to_string(),
@@ -4240,8 +4243,6 @@ pub fn run_export(args: ExportArgs, global: &Args) -> CliResult<CommandResult> {
     }
 
     // Load APR model
-    crate::format::precheck_apr_bytes(&data)
-        .map_err(|e| CliError::InvalidArgument(format!("Failed to parse APR: {e}")))?;
     let reader = AprV2ReaderRef::from_bytes(&data)
         .map_err(|e| CliError::InvalidArgument(format!("Failed to parse APR: {e}")))?;
 
@@ -6016,6 +6017,41 @@ pub(crate) fn warn_ignored_global(global: &Args, cmd: &str) {
         eprintln!(
             "[WARN] Global flags are currently ignored by the '{}' command",
             cmd
+        );
+    }
+}
+
+#[cfg(test)]
+mod export_refusal_tests {
+    use super::*;
+    use crate::cli::args::{Args, ExportArgs, ExportFormatArg};
+    use clap::Parser;
+
+    /// #94: `export` must refuse a shipped v1 (APR1) file by version, not a magic error.
+    #[test]
+    fn export_refuses_v1_by_version() {
+        let dir = std::env::temp_dir().join(format!("apr1-export-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let input = dir.join("v1.apr");
+        std::fs::write(&input, b"APR1\0\0\0\0\0\0\0\0\0\0\0\0").expect("write v1 fixture");
+
+        let args = ExportArgs {
+            input,
+            output: dir.join("out.bin"),
+            format: ExportFormatArg::Safetensors,
+            with_metadata: false,
+            verbose: false,
+        };
+        let global = Args::try_parse_from(["whisper-apr", "transcribe", "--file", "x.wav"])
+            .expect("parse global args");
+        let err = run_export(args, &global)
+            .err()
+            .expect("v1 must be refused")
+            .to_string();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            err.contains("incompatible") && err.contains("version 1"),
+            "refusal must name the version: {err}"
         );
     }
 }
