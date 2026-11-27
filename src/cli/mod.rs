@@ -26,6 +26,7 @@ pub mod apr_args;
 pub mod apr_commands;
 pub mod args;
 pub mod commands;
+pub mod gpu_fit;
 pub mod model_loader;
 pub mod output;
 pub mod parity;
