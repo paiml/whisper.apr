@@ -3479,6 +3479,7 @@ impl WhisperCuda {
                 profile: options.profile,
                 prompt: options.prompt.clone(),
                 hotwords: options.hotwords.clone(),
+                repetition_penalty: options.repetition_penalty,
             };
 
             let chunk_result = self.transcribe_gpu_single_chunk(chunk, &chunk_options)?;

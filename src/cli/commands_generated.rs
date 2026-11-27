@@ -267,6 +267,7 @@ fn build_transcribe_options(args: &TranscribeArgs, _verbose: bool) -> Transcribe
             .filter(|h| !h.is_empty())
             .cloned()
             .collect(),
+        repetition_penalty: args.repetition_penalty,
         ..Default::default()
     }
 }
@@ -1321,6 +1322,7 @@ fn build_batch_transcribe_args(input_path: &Path, args: &BatchArgs) -> Transcrib
         split_on_word: false,
         word_thold: 0.01,
         word_timestamps: false,
+        repetition_penalty: false,
         timestamps: false,
         no_timestamps: false,
         entropy_thold: 2.40,
@@ -4325,6 +4327,7 @@ mod tests {
             split_on_word: false,
             word_thold: 0.01,
             word_timestamps: false,
+            repetition_penalty: false,
             timestamps: false,
             no_timestamps: false,
             entropy_thold: 2.40,
